@@ -40,7 +40,7 @@ const start = src.indexOf('function _getWorldVerts(el) {');
 assert.ok(start !== -1, '_getWorldVerts not found');
 const fnStart = src.indexOf('function _meshesIntersect(elA, elB) {', start);
 assert.ok(fnStart !== -1, '_meshesIntersect not found');
-const retLine = src.indexOf('return _postProcessIntersectPoints(pts, maxDepth[0], elA.box, elB.box, _MI_MARGIN);', fnStart);
+const retLine = src.indexOf('return _jsIntersectBVH(_getBVH(elA), _getBVH(elB), elA.box, elB.box);', fnStart);
 assert.ok(retLine !== -1, '_meshesIntersect body not found');
 const closeIdx = src.indexOf('\n  }', retLine) + '\n  }'.length;
 const _window = {};

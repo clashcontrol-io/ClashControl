@@ -6381,15 +6381,23 @@ function startApp() {
     return node;
   }
 
+  // Pure BVH construction for a flat world-triangle array (null when empty).
+  // Shared by the per-element cache below and by the narrow-phase worker
+  // kernel (_ccBuildNarrowWorkerSource) so both build the identical tree.
+  function _buildBVHForTris(tris) {
+    if (!tris || !tris.length) return null;
+    var n = tris.length/9;
+    var indices = new Int32Array(n);
+    for (var i=0; i<n; i++) indices[i]=i;
+    return { tris:tris, root:_buildBVHNode(tris, indices, 0, n) };
+  }
+
   function _getBVH(el) {
     if (el._bvhCache !== undefined) { _bvhLRUTouch(el); return el._bvhCache; }
     _bvhLRUEvict();
     var tris = _getWorldTris(el);
     if (!tris.length) return (el._bvhCache = null);
-    var n = tris.length/9;
-    var indices = new Int32Array(n);
-    for (var i=0; i<n; i++) indices[i]=i;
-    el._bvhCache = { tris:tris, root:_buildBVHNode(tris, indices, 0, n) };
+    el._bvhCache = _buildBVHForTris(tris);
     _bvhLRU.set(el, true);
     return el._bvhCache;
   }
@@ -6510,7 +6518,41 @@ function startApp() {
     for (var i=0; i<valid.length; i+=3) { sx+=valid[i]; sy+=valid[i+1]; sz+=valid[i+2]; }
     return [sx/n, sy/n, sz/n, maxDepth];
   }
+  // JS reference narrow phase over two ALREADY-BUILT BVHs: probe pass
+  // (early-exit, cap 3) then the collect pass (cap 24 floats), then the
+  // shared post-processing. Used by _meshesIntersect's JS fallback AND, via
+  // Function.prototype.toString, by the narrow-phase worker kernel — one
+  // implementation, two threads.
+  function _jsIntersectBVH(bA, bB, boxA, boxB) {
+    if (!bA || !bB) return false;
+    var probe = _miProbe, probeDepth = _miProbeDepth;
+    probe.length = 0; probeDepth[0] = 0;
+    _bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, probe, 3, probeDepth, true);
+    if (!probe.length) return false;
+    var pts = _miPts, maxDepth = _miMaxDepth;
+    pts.length = 0; maxDepth[0] = 0;
+    _bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, pts, 24, maxDepth, false);
+    if (!pts.length) return false;
+    return _postProcessIntersectPoints(pts, maxDepth[0], boxA, boxB, _MI_MARGIN);
+  }
   function _meshesIntersect(elA, elB) {
+    // Cached-BVH WASM engine first (addons/wasm-engine.js `_ccWasmEngine`):
+    // each element's triangles are copied into WASM and its BVH built ONCE
+    // (keyed by the identity of el._triCache), instead of on every pair.
+    // Returns false (no hit) / raw points / null (engine error -> fall
+    // through to the stateless WASM path, then JS, for this pair).
+    var _wEng = window._ccWasmEngine;
+    if (_wEng && typeof _wEng.intersect === 'function') {
+      var eA0 = _getWorldTris(elA), eB0 = _getWorldTris(elB);
+      if (!eA0.length || !eB0.length) return false;
+      var eRaw = _wEng.intersect(eA0, eB0);
+      if (eRaw === false) return false;
+      if (eRaw) {
+        var eDepth = eRaw[eRaw.length - 1];
+        return _postProcessIntersectPoints(eRaw.subarray(0, eRaw.length - 1), eDepth, elA.box, elB.box, _MI_MARGIN);
+      }
+      // eRaw === null -> engine trouble; keep going on the per-pair paths below
+    }
     // Try WASM engine first. Measured (own benchmark, corrected 8-point
     // collect cap — see engine/src/bvh.rs traverse_pair doc comment):
     //   48x12 tris  (product 576):        JS 0.033ms vs WASM 0.018ms  (x1.8)
@@ -6542,17 +6584,7 @@ function startApp() {
       }
     }
     // JS fallback
-    var bA = _getBVH(elA), bB = _getBVH(elB);
-    if (!bA || !bB) return false;
-    var probe = _miProbe, probeDepth = _miProbeDepth;
-    probe.length = 0; probeDepth[0] = 0;
-    _bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, probe, 3, probeDepth, true);
-    if (!probe.length) return false;
-    var pts = _miPts, maxDepth = _miMaxDepth;
-    pts.length = 0; maxDepth[0] = 0;
-    _bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, pts, 24, maxDepth, false);
-    if (!pts.length) return false;
-    return _postProcessIntersectPoints(pts, maxDepth[0], elA.box, elB.box, _MI_MARGIN);
+    return _jsIntersectBVH(_getBVH(elA), _getBVH(elB), elA.box, elB.box);
   }
 
   // ── True mesh-to-mesh minimum distance (soft/clearance clashes) ──
@@ -6840,7 +6872,30 @@ function startApp() {
     }
   }
   var _mmdBest = new Float64Array(1), _mmdOutA = new Float64Array(3), _mmdOutB = new Float64Array(3);
+  // JS reference min-distance over two ALREADY-BUILT BVHs (see _jsIntersectBVH:
+  // shared verbatim with the narrow-phase worker kernel).
+  function _jsMinDistBVH(bvhA, bvhB, outPair) {
+    if (!bvhA || !bvhB) return Infinity;
+    var best = _mmdBest; best[0] = Infinity;
+    _bvhMinDistTraverse(bvhA.root, bvhA.tris, bvhB.root, bvhB.tris, best, _mmdOutA, _mmdOutB);
+    if (best[0] === Infinity) return Infinity; // unreachable with 2 non-empty meshes, kept for symmetry with the empty-input early return
+    _meshMinDistContainmentFix(bvhA, bvhB, best, _mmdOutA, _mmdOutB);
+    if (outPair) {
+      outPair[0]=_mmdOutA[0]; outPair[1]=_mmdOutA[1]; outPair[2]=_mmdOutA[2];
+      outPair[3]=_mmdOutB[0]; outPair[4]=_mmdOutB[1]; outPair[5]=_mmdOutB[2];
+    }
+    return Math.sqrt(best[0]);
+  }
   function _meshMinDist(elA, elB, thresholdM, outPair) {
+    // Cached-BVH WASM engine first (see _meshesIntersect). null = engine
+    // trouble -> per-pair fall-through to the stateless WASM path, then JS.
+    var _wEng = window._ccWasmEngine;
+    if (_wEng && typeof _wEng.minDist === 'function') {
+      var eA0 = _getWorldTris(elA), eB0 = _getWorldTris(elB);
+      if (!eA0.length || !eB0.length) return Infinity;
+      var eD = _wEng.minDist(eA0, eB0, thresholdM, outPair);
+      if (eD !== null && eD !== undefined) return eD;
+    }
     // Try WASM engine first. Own benchmark (this machine, 2026-09-28, warm
     // cache, average of 200 runs per case via BVH-pruned tri-tri leaf pairs):
     //   48x12 tris  (product 576):       JS 0.21ms  vs WASM 0.06ms  (x3.5)
@@ -6860,17 +6915,207 @@ function startApp() {
       }
     }
     // JS fallback
-    var bvhA = _getBVH(elA), bvhB = _getBVH(elB);
-    if (!bvhA || !bvhB) return Infinity;
-    var best = _mmdBest; best[0] = Infinity;
-    _bvhMinDistTraverse(bvhA.root, bvhA.tris, bvhB.root, bvhB.tris, best, _mmdOutA, _mmdOutB);
-    if (best[0] === Infinity) return Infinity; // unreachable with 2 non-empty meshes, kept for symmetry with the empty-input early return above
-    _meshMinDistContainmentFix(bvhA, bvhB, best, _mmdOutA, _mmdOutB);
-    if (outPair) {
-      outPair[0]=_mmdOutA[0]; outPair[1]=_mmdOutA[1]; outPair[2]=_mmdOutA[2];
-      outPair[3]=_mmdOutB[0]; outPair[4]=_mmdOutB[1]; outPair[5]=_mmdOutB[2];
+    return _jsMinDistBVH(_getBVH(elA), _getBVH(elB), outPair);
+  }
+
+  // ── Narrow-phase worker kernel ────────────────────────────────────────
+  // The worker script is assembled from the REAL kernel functions above via
+  // Function.prototype.toString (same technique as the IFC/section workers) —
+  // the algorithm is not re-implemented; only the tiny scratch-buffer state
+  // the functions close over is re-declared (plain allocations; the constants
+  // are serialized from the live values so they cannot drift). Any helper the
+  // kernel gains later must be added to this list; tests/narrow-worker.test.js
+  // executes the generated source against the main-thread kernel so a missing
+  // dependency fails loudly instead of silently in production.
+  function _ccBuildNarrowWorkerSource() {
+    var fns = [
+      _triTriTest, _buildBVHNode, _buildBVHForTris, _bvhTraverseAll,
+      _pointInBothBoxes, _postProcessIntersectPoints, _jsIntersectBVH,
+      _closestPtOnTri, _segSegDistSq, _triTriDistSq, _aabbAabbDistSq, _bvhMinDistTraverse,
+      _rayTriHit, _rayAABBHit, _bvhRayCount, _pointInMeshBVH, _meshMinDistContainmentFix,
+      _jsMinDistBVH
+    ];
+    return [
+      'var _ttIvalA=new Float64Array(8),_ttIvalB=new Float64Array(8);',
+      'var _miProbe=[],_miPts=[],_miValid=[],_miProbeDepth=[0],_miMaxDepth=[0];',
+      'var _MI_MARGIN=' + JSON.stringify(_MI_MARGIN) + ';',
+      'var _ttdPtA=new Float64Array(3),_ttdPtB=new Float64Array(3);',
+      'var _bmdPtA=new Float64Array(3),_bmdPtB=new Float64Array(3);',
+      'var _mmdBest=new Float64Array(1),_mmdOutA=new Float64Array(3),_mmdOutB=new Float64Array(3);',
+      'var _PEN_RAY_DIRS=' + JSON.stringify(_PEN_RAY_DIRS) + ';',
+      fns.map(function(f) { return f.toString(); }).join('\n'),
+      '(' + _ccNarrowWorkerMain.toString() + ')();'
+    ].join('\n');
+  }
+  // Worker entry point (runs INSIDE the worker; only `self` and the kernel
+  // functions above exist there). Protocol (main -> worker):
+  //   {t:'init', wasmJs, wasmBin, useEngine}         -> {t:'ready', wasm, engine, err}
+  //   {t:'job', id, drop:[elId], add:[{id,tris,box}], pairs:Int32Array[idA,idB,flags]*m}
+  //        flags bit0 = run the hard test, bit1 = run min-distance when not a hit
+  //                                                  -> {t:'result', id, res:Float64Array(12*m)}
+  //   res record: [status, hx,hy,hz,hDepth, dist, p0..p5]; status bit0 hard done,
+  //   bit1 hard hit, bit2 soft done. Elements stay cached across jobs until dropped.
+  function _ccNarrowWorkerMain() {
+    var _wasm = null, _eng = null;
+    var _els = new Map();
+    function _post(msg, xfer) { self.postMessage(msg, xfer || []); }
+    function _boxTris(x0, x1, y0, y1, z0, z1) {
+      var v = [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]];
+      var f = [0,1,2, 0,2,3, 4,5,6, 4,6,7, 0,1,5, 0,5,4, 2,3,7, 2,7,6, 1,2,6, 1,6,5, 0,3,7, 0,7,4];
+      var t = [];
+      for (var i = 0; i < f.length; i++) t.push(v[f[i]][0], v[f[i]][1], v[f[i]][2]);
+      return new Float32Array(t);
     }
-    return Math.sqrt(best[0]);
+    function _same(a, b) {
+      if (a.length !== b.length) return false;
+      for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+      return true;
+    }
+    // Same contract as addons/wasm-engine.js's main-thread self-check, run
+    // per worker so this thread never trusts a binary it has not diffed
+    // against the JS kernel that ships in the same script.
+    function _selfCheck(mod, wantEngine) {
+      var cases = [
+        [_boxTris(-1, 21, 2.5, 2.9, -6.9, -6.1), _boxTris(9.925, 10.075, 0, 3.2, -11.85, -0.15)],
+        [_boxTris(0, 1, 0, 1, 0, 1), _boxTris(10, 11, 10, 11, 10, 11)],
+        [_boxTris(-5, 5, -5, 5, -5, 5), _boxTris(-1, 1, -1, 1, -1, 1)],
+        [_boxTris(-1, 21, 2.4, 2.6, -0.1, 0.1), _boxTris(9, 11, -1, 5, -1, 1)]
+      ];
+      var eng = null;
+      try {
+        if (wantEngine && typeof mod.Engine === 'function') eng = new mod.Engine();
+        for (var i = 0; i < cases.length; i++) {
+          var a = cases[i][0], b = cases[i][1];
+          var bA = _buildBVHForTris(a), bB = _buildBVHForTris(b);
+          var pts = [], dep = [0];
+          _bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, pts, 24, dep, false);
+          var raw = mod.mesh_intersect_raw(a, b);
+          if ((pts.length > 0) !== (raw.length > 0)) return { ok: false, engine: false };
+          if (pts.length && (!_same(pts, Array.prototype.slice.call(raw, 0, raw.length - 1)) || dep[0] !== raw[raw.length - 1])) return { ok: false, engine: false };
+          var o = [0, 0, 0, 0, 0, 0];
+          var jd = _jsMinDistBVH(bA, bB, o);
+          var md = mod.mesh_min_distance(a, b);
+          if (md[0] !== jd || !_same(o, Array.prototype.slice.call(md, 1, 7))) return { ok: false, engine: false };
+          if (eng) {
+            eng.register(1, a); eng.register(2, b);
+            var er = eng.intersect(1, 2), ed = eng.min_distance(1, 2);
+            if (!er || !ed || !_same(er, raw) || !_same(ed, md)) { try { eng.free(); } catch (e0) {} eng = null; }
+          }
+        }
+        if (eng) { try { eng.clear(); } catch (e1) {} }
+        return { ok: true, engine: eng };
+      } catch (e) {
+        try { if (eng) eng.free(); } catch (e2) {}
+        return { ok: false, engine: null };
+      }
+    }
+    function _init(d) {
+      if (!d.wasmJs) { _post({ t: 'ready', wasm: false, engine: false, err: null }); return; }
+      var p;
+      try { p = import(d.wasmJs); } catch (e) { p = Promise.reject(e); }
+      p.then(function(mod) {
+        return mod.default({ module_or_path: d.wasmBin }).then(function() {
+          var chk = _selfCheck(mod, !!d.useEngine);
+          if (chk.ok) { _wasm = mod; _eng = chk.engine || null; }
+          _post({ t: 'ready', wasm: !!chk.ok, engine: !!_eng, err: chk.ok ? null : 'worker self-check failed' });
+        });
+      }).catch(function(e) {
+        _wasm = null; _eng = null;
+        _post({ t: 'ready', wasm: false, engine: false, err: String((e && e.message) || e) });
+      });
+    }
+    function _bvh(E) {
+      if (E.bvh === undefined) E.bvh = _buildBVHForTris(E.tris);
+      return E.bvh;
+    }
+    function _reg(E) {
+      if (!E.reg) { _eng.register(E.id, E.tris); E.reg = true; }
+    }
+    function _wkHard(A, B) {
+      if (!A.tris.length || !B.tris.length) return false;
+      var raw;
+      if (_eng) {
+        try {
+          _reg(A); _reg(B);
+          raw = _eng.intersect(A.id, B.id);
+          if (raw === undefined) throw new Error('mesh id not registered');
+          if (!raw.length) return false;
+          return _postProcessIntersectPoints(raw.subarray(0, raw.length - 1), raw[raw.length - 1], A.box, B.box, _MI_MARGIN);
+        } catch (e) { _eng = null; }
+      }
+      if (_wasm) {
+        try {
+          raw = _wasm.mesh_intersect_raw(A.tris, B.tris);
+          if (!raw || !raw.length) return false;
+          return _postProcessIntersectPoints(raw.subarray(0, raw.length - 1), raw[raw.length - 1], A.box, B.box, _MI_MARGIN);
+        } catch (e2) { _wasm = null; }
+      }
+      return _jsIntersectBVH(_bvh(A), _bvh(B), A.box, B.box);
+    }
+    function _wkSoft(A, B, out) {
+      if (!A.tris.length || !B.tris.length) return Infinity;
+      var r, j;
+      if (_eng) {
+        try {
+          _reg(A); _reg(B);
+          r = _eng.min_distance(A.id, B.id);
+          if (r === undefined) throw new Error('mesh id not registered');
+          if (!r.length || r[0] === Infinity) return Infinity;
+          if (r.length >= 7) for (j = 0; j < 6; j++) out[j] = r[j + 1];
+          return r[0];
+        } catch (e) { _eng = null; }
+      }
+      if (_wasm) {
+        try {
+          r = _wasm.mesh_min_distance(A.tris, B.tris);
+          if (!r || !r.length || r[0] === Infinity) return Infinity;
+          if (r.length >= 7) for (j = 0; j < 6; j++) out[j] = r[j + 1];
+          return r[0];
+        } catch (e2) { _wasm = null; }
+      }
+      return _jsMinDistBVH(_bvh(A), _bvh(B), out);
+    }
+    function _runJob(d) {
+      var i, j;
+      if (d.drop) for (i = 0; i < d.drop.length; i++) {
+        var old = _els.get(d.drop[i]);
+        if (old) {
+          if (old.reg && _eng) { try { _eng.unregister(old.id); } catch (e) {} }
+          _els.delete(d.drop[i]);
+        }
+      }
+      if (d.add) for (i = 0; i < d.add.length; i++) {
+        var a = d.add[i], bx = a.box;
+        _els.set(a.id, { id: a.id, tris: a.tris, bvh: undefined, reg: false,
+          box: { min: { x: bx[0], y: bx[1], z: bx[2] }, max: { x: bx[3], y: bx[4], z: bx[5] } } });
+      }
+      var pairs = d.pairs, m = pairs.length / 3;
+      var res = new Float64Array(m * 12), out = [0, 0, 0, 0, 0, 0];
+      for (i = 0; i < m; i++) {
+        var A = _els.get(pairs[i * 3]), B = _els.get(pairs[i * 3 + 1]), fl = pairs[i * 3 + 2], o = i * 12;
+        if (!A || !B) throw new Error('element not cached in worker');
+        var st = 0, hard = false;
+        if (fl & 1) {
+          hard = _wkHard(A, B); st |= 1;
+          if (hard) { st |= 2; res[o + 1] = hard[0]; res[o + 2] = hard[1]; res[o + 3] = hard[2]; res[o + 4] = hard[3]; }
+        }
+        if ((fl & 2) && !hard) {
+          res[o + 5] = _wkSoft(A, B, out); st |= 4;
+          for (j = 0; j < 6; j++) res[o + 6 + j] = out[j];
+        }
+        res[o] = st;
+      }
+      _post({ t: 'result', id: d.id, res: res }, [res.buffer]);
+    }
+    self.onmessage = function(e) {
+      var d = e.data;
+      if (!d) return;
+      if (d.t === 'init') { _init(d); return; }
+      if (d.t === 'job') {
+        try { _runJob(d); }
+        catch (err) { _post({ t: 'error', id: d.id, msg: String((err && err.message) || err) }); }
+      }
+    };
   }
 
   // Pure-JS narrow-phase reference, deliberately independent of
@@ -7379,6 +7624,7 @@ function startApp() {
     self.onmessage = function(e) {
       var models = e.data.models; // [{id, buffer, globalIdMap}]
       var results = {}; // modelId → { globalId → { wv: Float32Array, tris: Float32Array } }
+      var transferList = []; // every wv/tris buffer below is freshly built here and never reused by the worker
       models.forEach(function(modelData) {
         var gltf = parseGLB(modelData.buffer);
         if (!gltf || !gltf.json) return;
@@ -7424,7 +7670,6 @@ function startApp() {
         });
 
         var finalResult = {};
-        var transferList = [];
         Object.keys(modelResult).forEach(function(gid) {
           var r = modelResult[gid];
           var wv = new Float32Array(r.verts);
@@ -7434,7 +7679,7 @@ function startApp() {
         });
         results[modelData.id] = finalResult;
       });
-      self.postMessage({results: results});
+      self.postMessage({results: results}, transferList);
     };
   }.toString();
   var _glbGeoWorkerSrc = _glbGeoWorkerCode.slice(_glbGeoWorkerCode.indexOf('{') + 1, _glbGeoWorkerCode.lastIndexOf('}'));
@@ -7524,6 +7769,218 @@ function startApp() {
     return (candidates.length || 0) * _CANDIDATE_COMPACT_BYTES +
            (candidates._nItems || 0) * _CANDIDATE_ITEM_EST_BYTES;
   }
+  // ── Narrow-phase worker pool (safety flag `detectWorkerPool`) ──────────
+  // The chunked main-thread narrow phase is the dominant cost of a browser
+  // detection run. With the pool on, BVH build + tri-tri traversal (hard) and
+  // min-distance (soft) for candidate pairs run in Web Workers using the same
+  // kernel (WASM Engine inside the worker when the main thread trusts it, else
+  // the very same JS reference functions, serialized via toString). Workers
+  // only PRE-COMPUTE per-pair results into a cache; _processCandidate still
+  // runs on the main thread in candidate order and consumes them, so clash
+  // order, filtering, pen-depth, merging and caches are untouched and the
+  // output is identical to the main-thread path by construction. Any worker
+  // problem (spawn/CSP failure, WASM load failure, job error, timeout) drops
+  // the pool and the remaining pairs are computed on the main thread. No
+  // SharedArrayBuffer (the app is not cross-origin isolated): triangle
+  // buffers are COPIED once per worker and transferred; workers keep a
+  // bounded per-worker element cache that main mirrors exactly.
+  //
+  // Test/diagnostic knobs live on the single object window._ccNarrowPool:
+  // {minCandidates, disabled, forceJs, maxWorkers, last (stats of the last run)}.
+  // minCandidates: engage threshold when the run does min-distance (clearance)
+  // tests — the expensive kind (measured ~1.9x over the cached engine on 3
+  // workers). minCandidatesHardOnly: hard-only runs only offload the cheap
+  // hit/miss test (pen-depth, clash building and merging stay on the main
+  // thread), so they need a much larger run before worker start-up + buffer
+  // copies pay off.
+  var _ccNarrowPoolCfg = window._ccNarrowPool = { minCandidates: 800, minCandidatesHardOnly: 20000, disabled: false, forceJs: false, maxWorkers: 0, last: null };
+  var _NP_JOB_PAIRS = 40;                    // pairs per worker job
+  var _NP_WINDOW_CHUNKS = 16;                // detection chunks per prefetch window
+  var _NP_WORKER_FLOATS = 4 * 1024 * 1024;   // per-worker triangle-cache budget (floats, ~16 MB; the worker's WASM copy + BVH come on top)
+  var _NP_INIT_TIMEOUT_MS = 10000;
+  var _activeNarrowPool = null;
+
+  function _ccNarrowPoolWorkerCount() {
+    var hc = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 2;
+    var n = Math.min(4, hc - 1);
+    if (_ccNarrowPoolCfg.maxWorkers > 0) n = _ccNarrowPoolCfg.maxWorkers;
+    if (typeof navigator !== 'undefined' && navigator.deviceMemory && navigator.deviceMemory <= 4) n = Math.min(n, 2);
+    return Math.max(0, n);
+  }
+  // Returns null when the pool may be used, else a short reason string.
+  function _ccNarrowPoolBlocker(totalCandidates, softIncluded) {
+    var cfg = _ccNarrowPoolCfg;
+    if (cfg.disabled) return 'disabled';
+    if (!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('detectWorkerPool'))) return 'flag-off';
+    if (typeof Worker !== 'function' || typeof Blob !== 'function' || !window.URL || typeof URL.createObjectURL !== 'function') return 'no-worker-support';
+    // Worker heaps are invisible to the main-thread pressure relief, so don't
+    // add several hundred MB of worker memory to a heap that is already tight.
+    try {
+      var _pm = performance.memory;
+      if (_pm && _pm.jsHeapSizeLimit && _pm.usedJSHeapSize / _pm.jsHeapSizeLimit > 0.7) return 'memory-pressure';
+    } catch (e) {}
+    if (totalCandidates < (softIncluded ? cfg.minCandidates : cfg.minCandidatesHardOnly)) return 'too-few-candidates';
+    if (_ccNarrowPoolWorkerCount() < 1) return 'no-spare-cores';
+    return null;
+  }
+  // A new detection run supersedes any pool still alive and clears the last-run stats.
+  var _ccNarrowPoolRunSeq = 0;
+  function _ccNarrowPoolRunStart() {
+    _ccNarrowPoolAbortActive('superseded');
+    _ccNarrowPoolCfg.last = null;
+    return ++_ccNarrowPoolRunSeq;
+  }
+  function _ccNarrowPoolAbortActive(reason) {
+    if (_activeNarrowPool) { try { _activeNarrowPool.terminate(reason); } catch (e) {} }
+  }
+
+  function _ccNarrowPoolCreate(nWorkers) {
+    var wasmUrls = null;
+    if (!_ccNarrowPoolCfg.forceJs && typeof window._ccWasmIntersect === 'function' && typeof window._ccWasmModuleUrls === 'function') {
+      try { wasmUrls = window._ccWasmModuleUrls(); } catch (e) { wasmUrls = null; }
+    }
+    var useEngine = !!(wasmUrls && window._ccWasmEngine);
+    var blobUrl = URL.createObjectURL(new Blob([_ccBuildNarrowWorkerSource()], { type: 'application/javascript' }));
+    var t0 = performance.now();
+    var pool = {
+      dead: false, reason: null, failed: false, ready: false,
+      results: new Map(),          // candidate index -> Float64Array(12) record
+      stats: { workers: nWorkers, jobs: 0, jobsDone: 0, pairs: 0, pairsDone: 0, wasmWorkers: 0, engineWorkers: 0, initMs: 0, copiedFloats: 0, reason: null }
+    };
+    var slots = [], queue = [], openWindows = [], elIds = new Map(), nextElId = 1, nextJobId = 1, readyCount = 0;
+    var resolveReady, initTimer = null;
+    pool.readyP = new Promise(function(res) { resolveReady = res; });
+
+    function finish(reason, failed) {
+      if (pool.dead) return;
+      pool.dead = true; pool.reason = reason; pool.failed = !!failed; pool.stats.reason = reason;
+      if (initTimer) { clearTimeout(initTimer); initTimer = null; }
+      slots.forEach(function(sl) { try { sl.w.terminate(); } catch (e) {} });
+      try { URL.revokeObjectURL(blobUrl); } catch (e) {}
+      queue.length = 0;
+      openWindows.forEach(function(w) { if (!w.done) { w.done = true; w.resolve(); } });
+      openWindows.length = 0;
+      if (_activeNarrowPool === pool) _activeNarrowPool = null;
+      resolveReady();
+    }
+    pool.terminate = function(reason) { finish(reason || 'finished', false); };
+    pool.fail = function(reason) {
+      if (!pool.dead) console.warn('[Detect] narrow-phase worker pool dropped, finishing on the main thread:', reason);
+      finish(reason, true);
+    };
+    function idOf(el) {
+      var id = elIds.get(el);
+      if (id === undefined) { id = nextElId++; elIds.set(el, id); }
+      return id;
+    }
+    // Build the message for `slot`: the elements the job needs that the worker
+    // does not hold yet (copied — main keeps its own arrays — and transferred),
+    // plus the ids the mirrored LRU evicts. Main is the single source of truth
+    // for what a worker caches, so no acknowledgement round-trip is needed.
+    function buildPayload(slot, job) {
+      var need = new Map(), add = [], xfer = [], drop = [], i;
+      for (i = 0; i < job.eA.length; i++) { need.set(idOf(job.eA[i]), job.eA[i]); need.set(idOf(job.eB[i]), job.eB[i]); }
+      need.forEach(function(el, id) {
+        var ent = slot.cache.get(id);
+        if (ent) { slot.cache.delete(id); slot.cache.set(id, ent); return; }
+        var tris = _getWorldTris(el);
+        var copy = tris.slice(); // own buffer; the source array stays valid for main
+        var b = el.box;
+        var box = new Float64Array([b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z]);
+        add.push({ id: id, tris: copy, box: box });
+        xfer.push(copy.buffer, box.buffer);
+        slot.cache.set(id, { floats: copy.length });
+        slot.floats += copy.length;
+        pool.stats.copiedFloats += copy.length;
+      });
+      if (slot.floats > _NP_WORKER_FLOATS) {
+        var keys = Array.from(slot.cache.keys());
+        for (i = 0; i < keys.length && slot.floats > _NP_WORKER_FLOATS; i++) {
+          if (need.has(keys[i])) continue;
+          slot.floats -= slot.cache.get(keys[i]).floats;
+          slot.cache.delete(keys[i]);
+          drop.push(keys[i]);
+        }
+      }
+      var pairs = new Int32Array(job.cidx.length * 3);
+      for (i = 0; i < job.cidx.length; i++) {
+        pairs[i * 3] = idOf(job.eA[i]); pairs[i * 3 + 1] = idOf(job.eB[i]); pairs[i * 3 + 2] = job.fl[i];
+      }
+      xfer.push(pairs.buffer);
+      return { msg: { t: 'job', id: job.id, drop: drop, add: add, pairs: pairs }, xfer: xfer };
+    }
+    function pump() {
+      if (pool.dead) return;
+      for (var i = 0; i < slots.length && queue.length; i++) {
+        var sl = slots[i];
+        if (sl.busy || !sl.ready) continue;
+        var job = queue.shift(), payload;
+        try { payload = buildPayload(sl, job); }
+        catch (e) { pool.fail('payload: ' + ((e && e.message) || e)); return; }
+        sl.busy = true; sl.job = job;
+        try { sl.w.postMessage(payload.msg, payload.xfer); }
+        catch (e2) { pool.fail('postMessage: ' + ((e2 && e2.message) || e2)); return; }
+      }
+    }
+    function onResult(sl, d) {
+      var job = sl.job;
+      if (!job || job.id !== d.id || !d.res || d.res.length !== job.cidx.length * 12) { pool.fail('protocol-error'); return; }
+      sl.job = null; sl.busy = false;
+      for (var k = 0; k < job.cidx.length; k++) pool.results.set(job.cidx[k], d.res.subarray(k * 12, k * 12 + 12));
+      pool.stats.jobsDone++; pool.stats.pairsDone += job.cidx.length;
+      if (--job.win.pending === 0) { job.win.done = true; job.win.resolve(); }
+      pump();
+    }
+    // specs: [{cidx:[], eA:[], eB:[], fl:[]}] -> window {done, promise}
+    pool.addWindow = function(specs) {
+      var win = { pending: specs.length, done: false, resolve: null };
+      win.promise = new Promise(function(res) { win.resolve = res; });
+      if (!specs.length || pool.dead) { win.done = true; win.resolve(); return win; }
+      specs.forEach(function(sp) {
+        sp.id = nextJobId++; sp.win = win;
+        queue.push(sp); pool.stats.jobs++; pool.stats.pairs += sp.cidx.length;
+      });
+      openWindows.push(win);
+      pump();
+      return win;
+    };
+
+    try {
+      for (var w = 0; w < nWorkers; w++) {
+        (function() {
+          var sl = { w: new Worker(blobUrl), busy: false, ready: false, job: null, cache: new Map(), floats: 0 };
+          slots.push(sl);
+          sl.w.onmessage = function(ev) {
+            var d = ev.data;
+            if (!d || pool.dead) return;
+            if (d.t === 'ready') {
+              sl.ready = true;
+              if (d.wasm) pool.stats.wasmWorkers++;
+              if (d.engine) pool.stats.engineWorkers++;
+              if (++readyCount === slots.length) {
+                pool.ready = true; pool.stats.initMs = Math.round(performance.now() - t0);
+                if (initTimer) { clearTimeout(initTimer); initTimer = null; }
+                resolveReady(); pump();
+              }
+            } else if (d.t === 'result') onResult(sl, d);
+            else if (d.t === 'error') pool.fail('worker job error: ' + d.msg);
+          };
+          sl.w.onerror = function(ev) { pool.fail('worker error: ' + ((ev && ev.message) || 'unknown')); };
+          sl.w.onmessageerror = function() { pool.fail('worker message error'); };
+        })();
+      }
+      slots.forEach(function(sl) {
+        sl.w.postMessage({ t: 'init', wasmJs: wasmUrls && wasmUrls.js, wasmBin: wasmUrls && wasmUrls.wasm, useEngine: useEngine });
+      });
+    } catch (e) {
+      pool.fail('spawn: ' + ((e && e.message) || e));
+      return null;
+    }
+    initTimer = setTimeout(function() { if (!pool.ready) pool.fail('init-timeout'); }, _NP_INIT_TIMEOUT_MS);
+    _activeNarrowPool = pool;
+    return pool;
+  }
+
   var _ccDetectGeneration = 0; // incremented each detection run to cancel stale async chunks
   var _ccDetectionCoordinator = window._ccSafetyMigrations &&
     window._ccSafetyMigrations.createRunCoordinator ?
@@ -7694,6 +8151,7 @@ function startApp() {
   var _detectCancelled = false;
   function cancelDetection() {
     _ccDetectGeneration++;
+    _ccNarrowPoolAbortActive('cancelled');
     if (_ccDetectionCoordinator) _ccDetectionCoordinator.cancel();
     _detectCancelled = true;
     if (window._ccDispatch) window._ccDispatch({t:'STOP_DETECT'});
@@ -7819,6 +8277,10 @@ function startApp() {
 
   function _detectClashesCore(models, rules, onProgress, resolveAsync) {
     var _prof = {t0:performance.now(), phases:{}}; // profiling
+    var _npSeq = _ccNarrowPoolRunStart(); // lets a superseded run's late cleanup avoid clobbering the live run's stats
+    var _np = null;               // narrow-phase worker pool for this run (async runs only), see _ccNarrowPoolCreate
+    var _npWin = [];              // prefetch windows by index
+    var _npStats = null;
     function _mark(name) { _prof.phases[name] = performance.now(); }
     function _phase(label) {
       try {
@@ -8042,8 +8504,58 @@ function startApp() {
     }
     _phase(candidates.length.toLocaleString() + ' pairs to test');
 
+    // True when the WASM narrow phase (cached engine or stateless) handles the
+    // pair tests, so the per-chunk JS BVH pre-build would be pure waste: every
+    // consumer that DOES need a JS BVH (pen-depth on hits, JS fallback on a
+    // WASM error) builds it lazily through _getBVH, so results are unchanged.
+    function _wasmNarrowActive() {
+      return !!(window._ccWasmEngine || typeof window._ccWasmIntersect === 'function' || (_np && !_np.dead));
+    }
+
     // ── Per-candidate timing accumulators ─────────────────────────
-    var _tHard = 0, _tSoft = 0, _tFilters = 0, _nHardTests = 0, _nSoftTests = 0, _nHardTestsBatched = 0;
+    var _tHard = 0, _tSoft = 0, _tFilters = 0, _nHardTests = 0, _nSoftTests = 0, _nHardTestsBatched = 0, _nHardTestsPooled = 0, _nSoftTestsPooled = 0;
+
+    // ── Shared per-pair helpers (also used by the worker-pool prefilter) ──
+    var _wantsSoftRule = (!rules.hard) || (rules.maxGap || 0) > 0;
+    // Per-type-pair tolerance override of the soft gap (metres).
+    function _pairGapMFor(eA, eB) {
+      var g = maxGapM;
+      if (rules.toleranceByTypePair) {
+        var _pA2 = eA.props, _pB2 = eB.props;
+        if (_pA2 && _pB2 && _pA2.ifcType && _pB2.ifcType) {
+          var tpKey = _pA2.ifcType < _pB2.ifcType ? _pA2.ifcType+':'+_pB2.ifcType : _pB2.ifcType+':'+_pA2.ifcType;
+          if (rules.toleranceByTypePair[tpKey] !== undefined) g = rules.toleranceByTypePair[tpKey] / 1000;
+        }
+      }
+      return g;
+    }
+    // Type-pair impossibility memo (Phase 2.4): true when this pair is skipped.
+    function _memoSuppresses(eA, eB) {
+      if (_activeMemoSet && eA.props && eB.props && eA.props.ifcType && eB.props.ifcType) {
+        if (_activeMemoSet.has(_tpPairKey(eA.props.ifcType, eB.props.ifcType))) {
+          // Don't memo-suppress a pair Loam flagged as eating real clashes.
+          if (!(_protectedPairs && _protectedPairs[_normTypePairKey(eA.props.ifcType, eB.props.ifcType)])) return true;
+        }
+      }
+      return false;
+    }
+    // Cheap pre-filter mirroring the early returns at the top of
+    // _processCandidate (smart re-run carry-over, excluded type pair, default clash
+    // matrix, type-pair memo). Only used to avoid SPECULATIVE narrow-phase
+    // work (batch warm-up / worker pool); the authoritative checks stay in
+    // _processCandidate, so a pair wrongly let through here is merely wasted
+    // work, never a wrong result.
+    function _narrowPrefilterSkips(c) {
+      // Smart re-run: an unchanged pair is carried from the memo, never computed.
+      if (_pairUnchanged(c.mA, c.eA, c.mB, c.eB)) return true;
+      if (_exPairSet && c.eA.props && c.eB.props && c.eA.props.ifcType && c.eB.props.ifcType) {
+        var _ek = c.eA.props.ifcType < c.eB.props.ifcType ? c.eA.props.ifcType+':'+c.eB.props.ifcType : c.eB.props.ifcType+':'+c.eA.props.ifcType;
+        if (_exPairSet[_ek]) return true;
+      }
+      if (_ccMatrixSkipsSameDiscipline(c.eA, c.mA, c.eB, c.mB, c.sameModel, rules)) return true;
+      if (_memoSuppresses(c.eA, c.eB)) return true;
+      return false;
+    }
 
     // ── WASM batch hard-clash warmup ──  See docs/INTERNALS.md § 21.15
     var _chunkBatchCache = null;
@@ -8053,6 +8565,10 @@ function startApp() {
     function _warmChunkBatch(startIdx, endIdx) {
       if (!rules.hard) return;
       if (typeof window._ccWasmBatchIntersect !== 'function') return;
+      // The cached-BVH engine makes the per-pair path strictly cheaper than a
+      // batch call (no per-call triangle copy, every BVH built once per
+      // element, not once per batch) — leave those pairs to _meshesIntersect.
+      if (window._ccWasmEngine) return;
       if (typeof window._ccWasmReady === 'function' && !window._ccWasmReady()) return;
 
       // Group by elA. Pre-filter pairs we'd skip anyway so the batch
@@ -8060,14 +8576,9 @@ function startApp() {
       var groups = new Map();
       for (var i = startIdx; i < endIdx; i++) {
         var c = _candidateAt(candidates, i);
-        if (_pairUnchanged(c.mA, c.eA, c.mB, c.eB)) continue;
-        if (_exPairSet && c.eA.props && c.eB.props && c.eA.props.ifcType && c.eB.props.ifcType) {
-          var _ek = c.eA.props.ifcType < c.eB.props.ifcType ? c.eA.props.ifcType+':'+c.eB.props.ifcType : c.eB.props.ifcType+':'+c.eA.props.ifcType;
-          if (_exPairSet[_ek]) continue;
-        }
-        // Default clash matrix — cheap pre-filter; the authoritative check is
-        // the same call inside _processCandidate below.
-        if (_ccMatrixSkipsSameDiscipline(c.eA, c.mA, c.eB, c.mB, c.sameModel, rules)) continue;
+        // Cheap pre-filter (change-aware / excluded pair / default matrix /
+        // memo); the authoritative checks are inside _processCandidate.
+        if (_narrowPrefilterSkips(c)) continue;
         var gkey = c.mA.id + ':' + c.eA.expressId;
         var g = groups.get(gkey);
         if (!g) { g = { eA:c.eA, mA:c.mA, items:[] }; groups.set(gkey, g); }
@@ -8142,8 +8653,12 @@ function startApp() {
     }
 
     // ── Process candidate pairs (chunkable) ───────────────────────
-    function _processCandidate(pair) {
+    function _processCandidate(pair, poolIdx) {
       var eA=pair.eA, mA=pair.mA, eB=pair.eB, mB=pair.mB, sameModel=pair.sameModel;
+      // Pre-computed narrow-phase record from the worker pool, if any:
+      // [status(bit0 hard done, bit1 hard hit, bit2 soft done), hx,hy,hz,hDepth, dist, p0..p5].
+      var _pr;
+      if (_np && poolIdx !== undefined) { _pr = _np.results.get(poolIdx); if (_pr) _np.results.delete(poolIdx); }
 
       // ── Smart re-run carry-over ──────────────────────────────────
       // Neither element changed since the last completed run (same
@@ -8179,15 +8694,7 @@ function startApp() {
       // Active only when the model fingerprint + rules hash both match
       // the snapshot when the memo was built — any geometric change
       // invalidates it automatically (memo not applied, just rebuilt).
-      if (_activeMemoSet && eA.props && eB.props && eA.props.ifcType && eB.props.ifcType) {
-        if (_activeMemoSet.has(_tpPairKey(eA.props.ifcType, eB.props.ifcType))) {
-          // Don't memo-suppress a pair Loam flagged as eating real clashes.
-          if (!(_protectedPairs && _protectedPairs[_normTypePairKey(eA.props.ifcType, eB.props.ifcType)])) {
-            _nMemoSkipped++;
-            return;
-          }
-        }
-      }
+      if (_memoSuppresses(eA, eB)) { _nMemoSkipped++; return; }
 
       var bA=eA.box, bB=eB.box;
 
@@ -8232,14 +8739,7 @@ function startApp() {
       // models heavy with those, not a correctness regression.
 
       // ── L1+L2: BVH dual-tree + Möller tri-tri ──────────────────
-      var pairGapM = maxGapM;
-      if (rules.toleranceByTypePair) {
-        var _pA2 = eA.props, _pB2 = eB.props;
-        if (_pA2 && _pB2 && _pA2.ifcType && _pB2.ifcType) {
-          var tpKey = _pA2.ifcType < _pB2.ifcType ? _pA2.ifcType+':'+_pB2.ifcType : _pB2.ifcType+':'+_pA2.ifcType;
-          if (rules.toleranceByTypePair[tpKey] !== undefined) pairGapM = rules.toleranceByTypePair[tpKey] / 1000;
-        }
-      }
+      var pairGapM = _pairGapMFor(eA, eB);
       var _semanticSkipHard = false;
       if (sameModel && _modelRelPairs[mA.id]) {
         // By-design hosted relationship (opening↔host wall, hosted family, fill) →
@@ -8273,7 +8773,11 @@ function startApp() {
       var _t1 = performance.now();
       if (rules.hard && !_semanticSkipHard) {
         var _bpk = _chunkBatchCache && (mA.id + ':' + eA.expressId + '|' + mB.id + ':' + eB.expressId);
-        if (_bpk && _chunkBatchCache.has(_bpk)) {
+        if (_pr && (_pr[0] & 1)) {
+          // Worker-computed: exactly what _meshesIntersect(eA, eB) returns.
+          hardPt = (_pr[0] & 2) ? [_pr[1], _pr[2], _pr[3], _pr[4]] : false;
+          _nHardTestsPooled++;
+        } else if (_bpk && _chunkBatchCache.has(_bpk)) {
           hardPt = _chunkBatchCache.get(_bpk) || false;
           _nHardTestsBatched++;
         } else {
@@ -8286,10 +8790,17 @@ function startApp() {
         if (_aabbOverlap(bA, bB).vol < rules.minOverlapVolM3) hardPt = false;
       }
       // only" run (rules.hard=true, rules.maxGap=0) MUST NOT emit any
-      var _wantsSoft = (!rules.hard) || (rules.maxGap || 0) > 0;
+      var _wantsSoft = _wantsSoftRule;
       if (!hardPt && pairGapM>0 && _wantsSoft) {
         var _t2 = performance.now();
-        geoDist = _meshMinDist(eA, eB, pairGapM, _softPairBuf);
+        if (_pr && (_pr[0] & 4)) {
+          // Worker-computed: exactly what _meshMinDist(eA, eB, ..., _softPairBuf) yields.
+          geoDist = _pr[5];
+          if (geoDist !== Infinity) { for (var _pj = 0; _pj < 6; _pj++) _softPairBuf[_pj] = _pr[6 + _pj]; }
+          _nSoftTestsPooled++;
+        } else {
+          geoDist = _meshMinDist(eA, eB, pairGapM, _softPairBuf);
+        }
         _tSoft += performance.now() - _t2;
         _nSoftTests++;
         isSoft = geoDist<=pairGapM && geoDist>=minGapM;
@@ -8565,6 +9076,9 @@ function startApp() {
       elements: _prof._nElements,
       hard_tests: _nHardTests,
       hard_tests_batched: _nHardTestsBatched,
+      hard_tests_pooled: _nHardTestsPooled,
+      soft_tests_pooled: _nSoftTestsPooled,
+      narrow_pool: _npStats,
       soft_tests: _nSoftTests,
       memo_skipped: _nMemoSkipped,
       memo_active_pairs: _activeMemoSet ? _activeMemoSet.size : 0,
@@ -8592,7 +9106,7 @@ function startApp() {
       _pcts[k.replace('_ms','')] = _totalMs>0 ? Math.round(profile[k]/_totalMs*100)+'%' : '0%';
     });
     try {
-      var _engineLabel = (typeof window._ccWasmIntersect === 'function') ? 'WASM' : 'JS';
+      var _engineLabel = window._ccWasmEngine ? 'WASM+cached-BVH' : (typeof window._ccWasmIntersect === 'function') ? 'WASM' : 'JS';
       console.log('%c ClashControl Detection Profile (' + _engineLabel + ' engine) ', 'background:#2563eb;color:#fff;font-weight:bold;padding:2px 8px;border-radius:4px');
       console.table([
         {Phase:'Sweep & Prune',    Time:profile.sweep_and_prune_ms+'ms', Pct:_pcts.sweep_and_prune, Detail:profile.elements+' elements → '+profile.candidates+' candidates'},
@@ -8616,7 +9130,7 @@ function startApp() {
       _warmChunkBatch(0, totalCandidates);
       for (var si=0; si<totalCandidates; si++) {
         var _sc=_candidateAt(candidates, si);
-        _getBVH(_sc.eA); _getBVH(_sc.eB);
+        if (!_wasmNarrowActive()) { _getBVH(_sc.eA); _getBVH(_sc.eB); }
         var _cBefore = clashes.length;
         _processCandidate(_sc);
         if (clashes.length > _cBefore && !_lastCarried) _recordSnap(_sc, clashes[clashes.length - 1]);
@@ -8627,25 +9141,76 @@ function startApp() {
     _phase('Testing intersections');
     var chunkIdx = 0;
     var _myGen = _ccDetectGeneration; // snapshot generation at start
+
+    // ── Optional narrow-phase worker pool (see _ccNarrowPoolCreate) ──
+    var _NP_W = _NP_WINDOW_CHUNKS * _DETECT_CHUNK_SIZE; // candidates per prefetch window (chunk-aligned)
+    var _npSoft = maxGapM > 0 || !!(rules.toleranceByTypePair && Object.keys(rules.toleranceByTypePair).some(function(k) { return rules.toleranceByTypePair[k] > 0; }));
+    var _npBlocker = _ccNarrowPoolBlocker(totalCandidates, _npSoft);
+    if (!_npBlocker && !(rules.hard || _npSoft)) _npBlocker = 'no-narrow-phase-work';
+    if (!_npBlocker) {
+      try { _np = _ccNarrowPoolCreate(_ccNarrowPoolWorkerCount()); } catch (e) { _np = null; _npBlocker = 'create-failed'; }
+      if (!_np) _npBlocker = _npBlocker || 'spawn-failed';
+    }
+    _ccNarrowPoolCfg.last = _npBlocker ? { used: false, reason: _npBlocker } : null;
+    function _npBuildWindow(k) {
+      var ws = k * _NP_W, we = Math.min(ws + _NP_W, totalCandidates);
+      var specs = [], cur = null;
+      for (var i = ws; i < we; i++) {
+        try {
+          var c = _candidateAt(candidates, i);
+          if (_narrowPrefilterSkips(c)) continue;
+          if (!c.eA.box || !c.eB.box) continue;
+          var fl = (rules.hard ? 1 : 0) | ((_pairGapMFor(c.eA, c.eB) > 0 && _wantsSoftRule) ? 2 : 0);
+          if (!fl) continue;
+          if (!cur || cur.cidx.length >= _NP_JOB_PAIRS) { cur = { cidx: [], eA: [], eB: [], fl: [] }; specs.push(cur); }
+          cur.cidx.push(i); cur.eA.push(c.eA); cur.eB.push(c.eB); cur.fl.push(fl);
+        } catch (e) { /* a malformed candidate is simply not offloaded; _processCandidate handles it as before */ }
+      }
+      return _np.addWindow(specs);
+    }
+    function _npStop(reason) {
+      if (!_np) return;
+      _np.terminate(reason);
+      var st = _np.stats;
+      _npStats = { used: true, workers: st.workers, jobs: st.jobs, jobsDone: st.jobsDone, pairs: st.pairs, pairsDone: st.pairsDone,
+        wasmWorkers: st.wasmWorkers, engineWorkers: st.engineWorkers, initMs: st.initMs, copiedMB: Math.round(st.copiedFloats * 4 / 1048576 * 10) / 10,
+        fellBack: _np.failed, reason: _np.reason };
+      if (_npSeq === _ccNarrowPoolRunSeq) _ccNarrowPoolCfg.last = _npStats;
+      _np.results.clear();
+      _npWin = [];
+    }
     function _runChunk() {
-      if (_myGen !== _ccDetectGeneration) { resolveAsync(_ccTagDetectionResult([], _myGen, _detectCancelled ? 'cancelled' : 'stale-generation')); return; } // no longer the live generation — either cancelled or superseded by a newer run
+      if (_myGen !== _ccDetectGeneration) { _npStop('cancelled'); resolveAsync(_ccTagDetectionResult([], _myGen, _detectCancelled ? 'cancelled' : 'stale-generation')); return; } // no longer the live generation — either cancelled or superseded by a newer run
       try {
       var end = Math.min(chunkIdx + _DETECT_CHUNK_SIZE, totalCandidates);
+      if (_np && !_np.dead) {
+        // Wait for workers to come up, then for this chunk's prefetch window
+        // (keeping the next two windows in flight). Progress/cancel keep
+        // working: _runChunk re-checks the generation each time it resumes,
+        // and cancelDetection() terminates the pool, which releases waiters.
+        if (!_np.ready) { _np.readyP.then(_runChunk); return; }
+        var _wk = Math.floor(chunkIdx / _NP_W);
+        for (var _wj = _wk; _wj <= _wk + 2 && _wj * _NP_W < totalCandidates && !_np.dead; _wj++) {
+          if (!_npWin[_wj]) _npWin[_wj] = _npBuildWindow(_wj);
+        }
+        if (!_np.dead && _npWin[_wk] && !_npWin[_wk].done) { _npWin[_wk].promise.then(_runChunk); return; }
+        if (_wk > 0) _npWin[_wk - 1] = null;
+      }
       var _chunkEls = {};
       for (var bi=chunkIdx; bi<end; bi++) {
         var _cp=_candidateAt(candidates, bi);
         var _kA=_cp.mA.id+':'+_cp.eA.expressId, _kB=_cp.mB.id+':'+_cp.eB.expressId;
-        if (!_chunkEls[_kA]) { _chunkEls[_kA]=_cp.eA; _getBVH(_cp.eA); }
-        if (!_chunkEls[_kB]) { _chunkEls[_kB]=_cp.eB; _getBVH(_cp.eB); }
+        if (!_chunkEls[_kA]) { _chunkEls[_kA]=_cp.eA; if (!_wasmNarrowActive()) _getBVH(_cp.eA); }
+        if (!_chunkEls[_kB]) { _chunkEls[_kB]=_cp.eB; if (!_wasmNarrowActive()) _getBVH(_cp.eB); }
       }
       _prof._nElements += Object.keys(_chunkEls).length;
       _chunkBatchCache = new Map();
-      _warmChunkBatch(chunkIdx, end);
+      if (!_np || _np.dead) _warmChunkBatch(chunkIdx, end);
       for (var i=chunkIdx; i<end; i++) {
         try {
           var _cp2 = _candidateAt(candidates, i);
           var _cBef = clashes.length;
-          _processCandidate(_cp2);
+          _processCandidate(_cp2, i);
           if (clashes.length > _cBef && !_lastCarried) _recordSnap(_cp2, clashes[clashes.length - 1]);
         } catch(e) { _runOK = false; /* skip bad candidate — but a run that dropped a pair must not become the smart re-run baseline */ }
       }
@@ -8656,10 +9221,12 @@ function startApp() {
       if (chunkIdx < totalCandidates) {
         setTimeout(_runChunk, 0); // yield to UI
       } else {
+        _npStop('finished');
         _phase('Classifying results');
         resolveAsync(_finalize());
       }
       } catch(e) {
+        _npStop('error');
         // CLAUDE.md Item 1 (R2 follow-up): _browserDetect's own try/catch
         // only wraps the SYNCHRONOUS first call into this core — once
         // setTimeout(_runChunk, 0) above yields, a throw in a later chunk

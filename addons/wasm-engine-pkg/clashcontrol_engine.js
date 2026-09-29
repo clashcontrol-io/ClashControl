@@ -1,6 +1,140 @@
 /* @ts-self-types="./clashcontrol_engine.d.ts" */
 
 /**
+ * Registry of meshes whose triangle data and BVH are built ONCE and reused
+ * across many pair queries. Every query goes through exactly the same
+ * internals as the stateless `mesh_intersect_raw` / `mesh_min_distance`
+ * (`intersect_raw_prebuilt` / `min_distance_prebuilt`), and `BvhNode::build`
+ * is a pure function of the triangle data, so results are bit-identical to
+ * the free functions (and therefore to the JS reference).
+ */
+export class Engine {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        EngineFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_engine_free(ptr, 0);
+    }
+    /**
+     * Drop every registered mesh.
+     */
+    clear() {
+        wasm.engine_clear(this.__wbg_ptr);
+    }
+    /**
+     * @param {number} id
+     * @returns {boolean}
+     */
+    has(id) {
+        const ret = wasm.engine_has(this.__wbg_ptr, id);
+        return ret !== 0;
+    }
+    /**
+     * Same return value as `mesh_intersect_raw(tris(id_a), tris(id_b))`:
+     * the raw point list with `max_depth` appended, or an empty Vec on a
+     * miss / empty mesh. `None` (JS `undefined`) when either id is not
+     * registered, so a caller bug can never masquerade as "no clash".
+     * @param {number} id_a
+     * @param {number} id_b
+     * @returns {Float64Array | undefined}
+     */
+    intersect(id_a, id_b) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.engine_intersect(retptr, this.__wbg_ptr, id_a, id_b);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            let v1;
+            if (r0 !== 0) {
+                v1 = getArrayF64FromWasm0(r0, r1).slice();
+                wasm.__wbindgen_export2(r0, r1 * 8, 8);
+            }
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * @returns {boolean}
+     */
+    is_empty() {
+        const ret = wasm.engine_is_empty(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * Number of registered meshes.
+     * @returns {number}
+     */
+    len() {
+        const ret = wasm.engine_len(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Same return value as `mesh_min_distance(tris(id_a), tris(id_b))`
+     * (`[distance, ax,ay,az, bx,by,bz]`, or `[Infinity]` for an empty
+     * mesh). `None` when either id is not registered.
+     * @param {number} id_a
+     * @param {number} id_b
+     * @returns {Float64Array | undefined}
+     */
+    min_distance(id_a, id_b) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.engine_min_distance(retptr, this.__wbg_ptr, id_a, id_b);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            let v1;
+            if (r0 !== 0) {
+                v1 = getArrayF64FromWasm0(r0, r1).slice();
+                wasm.__wbindgen_export2(r0, r1 * 8, 8);
+            }
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    constructor() {
+        const ret = wasm.engine_new();
+        this.__wbg_ptr = ret;
+        EngineFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Register (or replace) mesh `id`: copies `tris` (9 floats/triangle) and
+     * builds its BVH with the same code the free functions use.
+     * @param {number} id
+     * @param {Float32Array} tris
+     */
+    register(id, tris) {
+        const ptr0 = passArrayF32ToWasm0(tris, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.engine_register(this.__wbg_ptr, id, ptr0, len0);
+    }
+    /**
+     * Total registered triangle floats (for the JS side's memory budget).
+     * @returns {number}
+     */
+    total_floats() {
+        const ret = wasm.engine_total_floats(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Drop mesh `id`. Returns whether it was registered.
+     * @param {number} id
+     * @returns {boolean}
+     */
+    unregister(id) {
+        const ret = wasm.engine_unregister(this.__wbg_ptr, id);
+        return ret !== 0;
+    }
+}
+if (Symbol.dispose) Engine.prototype[Symbol.dispose] = Engine.prototype.free;
+
+/**
  * Batch intersection test: test one mesh against many.
  * Legacy/back-compat entry point (pre-averaged centroids, no AABB filter).
  * Prefer `batch_intersect_raw` for parity with the JS reference.
@@ -213,12 +347,19 @@ export function sweep_and_prune(box_min, box_max, model_idx, in_a, in_b, same_mo
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
+        __wbg___wbindgen_throw_41e9ee4f547fc59a: function(arg0, arg1) {
+            throw new Error(getStringFromWasm0(arg0, arg1));
+        },
     };
     return {
         __proto__: null,
         "./clashcontrol_engine_bg.js": import0,
     };
 }
+
+const EngineFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_engine_free(ptr, 1));
 
 function getArrayF32FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
@@ -257,6 +398,10 @@ function getFloat64ArrayMemory0() {
         cachedFloat64ArrayMemory0 = new Float64Array(wasm.memory.buffer);
     }
     return cachedFloat64ArrayMemory0;
+}
+
+function getStringFromWasm0(ptr, len) {
+    return decodeText(ptr >>> 0, len);
 }
 
 let cachedUint32ArrayMemory0 = null;
@@ -301,6 +446,20 @@ function passArrayF64ToWasm0(arg, malloc) {
     getFloat64ArrayMemory0().set(arg, ptr / 8);
     WASM_VECTOR_LEN = arg.length;
     return ptr;
+}
+
+let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
+cachedTextDecoder.decode();
+const MAX_SAFARI_DECODE_BYTES = 2146435072;
+let numBytesDecoded = 0;
+function decodeText(ptr, len) {
+    numBytesDecoded += len;
+    if (numBytesDecoded >= MAX_SAFARI_DECODE_BYTES) {
+        cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
+        cachedTextDecoder.decode();
+        numBytesDecoded = len;
+    }
+    return cachedTextDecoder.decode(getUint8ArrayMemory0().subarray(ptr, ptr + len));
 }
 
 let WASM_VECTOR_LEN = 0;

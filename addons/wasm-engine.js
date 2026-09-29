@@ -18,6 +18,8 @@
   var _loadTime = 0;
   var _selfCheckFailed = false; // narrow-phase (intersect/minDist/batch) self-check
   var _sweepCheckFailed = false; // sweep-and-prune self-check (independent)
+  var _engineCheckFailed = false; // cached-BVH Engine self-check (independent)
+  var _eng = null;                // shared wasm Engine instance (cached-BVH path); null until self-check passes
 
   // ── Runtime differential self-check ──────────────────────────────
   // Diffs a freshly-loaded WASM binary against the pure-JS reference
@@ -75,6 +77,24 @@
       { name: 'dense-cylinders', a: cylA, b: cylB }
     ];
   }
+  function _minDistCases() {
+    var slabTri = new Float32Array([-5,-5,0, 5,-5,0, -5,5,0]); // 10x10 slab quad's first tri
+    var deviceTri = new Float32Array([-0.1,-0.1,0.1, 0.1,-0.1,0.1, -0.1,0.1,0.1]); // 0.2x0.2 device face, 0.1m above slab center
+    // Crossing case (verified bug: a duct actually piercing a column
+    // reported a small nonzero gap instead of the true 0) — must land on
+    // exactly 0 in both engines. See _triTriDistSq's intersection
+    // short-circuit and mesh_dist::tri_tri_dist_sq's mirror in Rust.
+    var crossA = _box(-1, 21, 2.4, 2.6, -0.1, 0.1);
+    var crossB = _box(9, 11, -1, 5, -1, 1);
+    var mdCases = [
+      { a: _box(-1, 21, 2.5, 2.9, -6.9, -6.1), b: _box(9.925, 10.075, 0, 3.2, -11.85, -0.15) },
+      { a: new Float32Array([0,0,0, 3,0,0, 0,4,0]), b: new Float32Array([3,4,0, 6,4,0, 3,8,0]) },
+      { a: new Float32Array([0,0,0, 1,0,0, 0,1,0]), b: new Float32Array([50,50,50, 51,50,50, 50,51,50]) },
+      { a: slabTri, b: deviceTri },
+      { a: crossA, b: crossB }
+    ];
+    return mdCases;
+  }
   function _runNarrowPhaseSelfCheck() {
     var ref = window._ccJsMeshIntersectRef;
     if (!ref || typeof ref.intersectRaw !== 'function' || typeof ref.minDist !== 'function') {
@@ -109,21 +129,7 @@
     // sitting 0.1m above the middle of a 10x10m slab face — the OLD
     // vertex-to-vertex spatial hash reported this as far/Infinity because
     // no vertex of the device is near any vertex of the slab.
-    var slabTri = new Float32Array([-5,-5,0, 5,-5,0, -5,5,0]); // 10x10 slab quad's first tri
-    var deviceTri = new Float32Array([-0.1,-0.1,0.1, 0.1,-0.1,0.1, -0.1,0.1,0.1]); // 0.2x0.2 device face, 0.1m above slab center
-    // Crossing case (verified bug: a duct actually piercing a column
-    // reported a small nonzero gap instead of the true 0) — must land on
-    // exactly 0 in both engines. See _triTriDistSq's intersection
-    // short-circuit and mesh_dist::tri_tri_dist_sq's mirror in Rust.
-    var crossA = _box(-1, 21, 2.4, 2.6, -0.1, 0.1);
-    var crossB = _box(9, 11, -1, 5, -1, 1);
-    var mdCases = [
-      { a: _box(-1, 21, 2.5, 2.9, -6.9, -6.1), b: _box(9.925, 10.075, 0, 3.2, -11.85, -0.15) },
-      { a: new Float32Array([0,0,0, 3,0,0, 0,4,0]), b: new Float32Array([3,4,0, 6,4,0, 3,8,0]) },
-      { a: new Float32Array([0,0,0, 1,0,0, 0,1,0]), b: new Float32Array([50,50,50, 51,50,50, 50,51,50]) },
-      { a: slabTri, b: deviceTri },
-      { a: crossA, b: crossB }
-    ];
+    var mdCases = _minDistCases();
     for (var j = 0; j < mdCases.length; j++) {
       var mc = mdCases[j];
       var jsMd = ref.minDist(mc.a, mc.b);
@@ -135,6 +141,70 @@
       }
     }
     return true;
+  }
+
+  // Cached-BVH Engine self-check. The Engine must return EXACTLY what the
+  // stateless free functions return (same internals, BVHs built once) and
+  // therefore exactly what the JS reference returns. Uses a private Engine
+  // instance so a failing check can never poison the shared one; exercises
+  // register -> repeated queries -> unregister (must read as "unknown") ->
+  // re-register, since that lifecycle is the whole point of the cache.
+  function _runEngineSelfCheck() {
+    if (typeof _wasm.Engine !== 'function') return false;
+    var ref = window._ccJsMeshIntersectRef;
+    var haveRef = !!(ref && typeof ref.intersectRaw === 'function' && typeof ref.minDist === 'function');
+    var eng = null;
+    try {
+      eng = new _wasm.Engine();
+      var ic = _selfCheckCases(), mc = _minDistCases();
+      var id = 1;
+      function ptsOf(raw) { return Array.prototype.slice.call(raw, 0, raw.length - 1); }
+      function same(x, y) { return _flatEq(Array.prototype.slice.call(x), Array.prototype.slice.call(y)); }
+      var k, c, ia, ib, got, free, jsRaw;
+      for (k = 0; k < ic.length; k++) {
+        c = ic[k]; ia = id++; ib = id++;
+        eng.register(ia, c.a); eng.register(ib, c.b);
+        free = _wasm.mesh_intersect_raw(c.a, c.b);
+        for (var rep = 0; rep < 3; rep++) { // repeated queries must not drift
+          got = eng.intersect(ia, ib);
+          if (!got || !same(got, free)) { console.warn('[WASM Engine] engine self-check FAILED (intersect vs free fn): ' + c.name); return false; }
+        }
+        if (haveRef) {
+          jsRaw = ref.intersectRaw(c.a, c.b);
+          if (!!jsRaw !== !!got.length) { console.warn('[WASM Engine] engine self-check FAILED (hit/miss vs JS): ' + c.name); return false; }
+          if (jsRaw && (!_flatEq(jsRaw.pts, ptsOf(got)) || jsRaw.depth !== got[got.length - 1])) {
+            console.warn('[WASM Engine] engine self-check FAILED (points/depth vs JS): ' + c.name); return false;
+          }
+        }
+      }
+      for (k = 0; k < mc.length; k++) {
+        c = mc[k]; ia = id++; ib = id++;
+        eng.register(ia, c.a); eng.register(ib, c.b);
+        free = _wasm.mesh_min_distance(c.a, c.b);
+        got = eng.min_distance(ia, ib);
+        if (!got || !same(got, free)) { console.warn('[WASM Engine] engine self-check FAILED (min-distance vs free fn), case ' + k); return false; }
+        if (haveRef && !_flatEq(ref.minDist(c.a, c.b), Array.prototype.slice.call(got))) {
+          console.warn('[WASM Engine] engine self-check FAILED (min-distance vs JS), case ' + k); return false;
+        }
+      }
+      // Lifecycle: unregister must make the id unknown (undefined, never a
+      // silent "no clash"); re-registering different data must replace it.
+      var d0 = ic[0];
+      eng.register(9001, d0.a); eng.register(9002, d0.b);
+      var before = eng.intersect(9001, 9002);
+      if (!eng.unregister(9002) || eng.intersect(9001, 9002) !== undefined) { console.warn('[WASM Engine] engine self-check FAILED (unregister)'); return false; }
+      eng.register(9002, ic[2].b); // far-away mesh under the same id
+      var replaced = eng.intersect(9001, 9002);
+      if (!replaced || !same(replaced, _wasm.mesh_intersect_raw(d0.a, ic[2].b))) { console.warn('[WASM Engine] engine self-check FAILED (re-register)'); return false; }
+      eng.register(9002, d0.b);
+      if (!same(eng.intersect(9001, 9002), before)) { console.warn('[WASM Engine] engine self-check FAILED (re-register restore)'); return false; }
+      return true;
+    } catch (e) {
+      console.warn('[WASM Engine] engine self-check threw:', e && e.message);
+      return false;
+    } finally {
+      try { if (eng) eng.free(); } catch (_) {}
+    }
   }
   function _runSweepSelfCheck() {
     if (typeof _wasm.sweep_and_prune !== 'function') return true;
@@ -170,6 +240,14 @@
     return 'addons/';
   }
 
+  // Absolute URLs of the WASM glue + binary, so the narrow-phase Web Workers
+  // (core, blob: origin) can load the SAME module this thread self-checked.
+  function _moduleUrls() {
+    var base = _getAddonBaseUrl() + 'wasm-engine-pkg/';
+    function abs(u) { try { return new URL(u, document.baseURI).href; } catch (e) { return u; } }
+    return { js: abs(base + 'clashcontrol_engine.js'), wasm: abs(base + 'clashcontrol_engine_bg.wasm') };
+  }
+
   // Publishes only the globals whose self-check passed. A narrow-phase
   // regression never disables sweep-and-prune (or vice versa) — they are
   // independently gated, matching their independent fallback contract
@@ -179,9 +257,16 @@
       window._ccWasmIntersect = _wasmIntersect;
       window._ccWasmMinDist = _wasmMinDist;
       window._ccWasmBatchIntersect = _wasmBatchIntersect;
+      window._ccWasmModuleUrls = _moduleUrls;
     }
     if (!_sweepCheckFailed) {
       window._ccWasmSweepAndPrune = _wasmSweepAndPrune;
+    }
+    // The cached-BVH engine is only trusted when BOTH the narrow-phase check
+    // and its own check passed (it is a strict superset of the narrow-phase
+    // contract, and a broken Engine must never shadow a healthy stateless path).
+    if (!_selfCheckFailed && !_engineCheckFailed && _eng) {
+      window._ccWasmEngine = _engineApi;
     }
   }
 
@@ -212,8 +297,12 @@
         // core clash loop transparently keeps using the JS engine.
         _selfCheckFailed = !_runNarrowPhaseSelfCheck();
         _sweepCheckFailed = !_runSweepSelfCheck();
+        _engineCheckFailed = _selfCheckFailed || !_runEngineSelfCheck() || !_initEngine();
         if (_selfCheckFailed) {
           console.warn('[WASM Engine] narrow-phase self-check failed — NOT publishing WASM intersect/minDist/batch; using JS engine.');
+        }
+        if (!_selfCheckFailed && _engineCheckFailed) {
+          console.warn('[WASM Engine] cached-BVH engine unavailable/self-check failed — using stateless WASM path.');
         }
         if (_sweepCheckFailed) {
           console.warn('[WASM Engine] sweep-and-prune self-check failed — NOT publishing WASM sweep; using JS broad phase.');
@@ -221,7 +310,7 @@
         _publishGlobals();
         _loading = false;
         _loadTime = Math.round(performance.now() - t0);
-        console.log('%c[WASM Engine] Loaded in ' + _loadTime + 'ms (47 KB)' + (_selfCheckFailed ? ' — narrow-phase self-check FAILED, JS fallback in use' : ''), 'color:#22c55e;font-weight:bold');
+        console.log('%c[WASM Engine] Loaded in ' + _loadTime + 'ms (59 KB)' + (_selfCheckFailed ? ' — narrow-phase self-check FAILED, JS fallback in use' : ''), 'color:#22c55e;font-weight:bold');
         return _wasm;
       });
     }).catch(function(e) {
@@ -326,6 +415,130 @@
     }
   };
 
+  // ── Cached-BVH engine (per-element registration) ────────────────
+  // Same results as _wasmIntersect/_wasmMinDist, but each element's triangle
+  // data is copied into WASM and its BVH built ONCE, then reused by every
+  // pair that involves it. Elements are keyed by the IDENTITY of their
+  // triangle Float32Array (core replaces `el._triCache` with a new array
+  // whenever geometry changes and never mutates one in place), so a changed
+  // element simply gets a fresh id; the stale entry is dropped when the old
+  // array is garbage collected (FinalizationRegistry) or by the LRU budget.
+  //
+  // Contract differences from the stateless functions (so the core can tell
+  // "no hit" from "engine trouble"): intersect() returns false (no hit) or a
+  // Float64Array (raw points + trailing depth), and null on ANY error;
+  // minDist() returns a number (Infinity for an empty mesh), or null on ANY
+  // error. On the first error the engine unpublishes itself (a trapped WASM
+  // instance is not safe to reuse) and the core falls back per pair.
+  var _ENGINE_BUDGET_FLOATS = 16 * 1024 * 1024; // ~64 MB of triangle copies (+ BVHs) resident in WASM
+  var _engIds = null;     // WeakMap<Float32Array, id>
+  var _engLru = null;     // Map<id, {ref: WeakRef<Float32Array>, floats}> in least-recently-used-first order
+  var _engFinal = null;   // FinalizationRegistry<id>
+  var _engNextId = 1;
+  var _engFloats = 0;
+  var _engStats = { registered: 0, evicted: 0, collected: 0, queries: 0 };
+
+  function _initEngine() {
+    if (typeof WeakMap !== 'function' || typeof WeakRef !== 'function' || typeof FinalizationRegistry !== 'function') return false;
+    try { _eng = new _wasm.Engine(); } catch (e) { _eng = null; return false; }
+    _engIds = new WeakMap();
+    _engLru = new Map();
+    _engNextId = 1;
+    _engFloats = 0;
+    _engFinal = new FinalizationRegistry(function(id) { _engDrop(id, 'collected'); });
+    return true;
+  }
+  function _engDrop(id, why) {
+    var ent = _engLru && _engLru.get(id);
+    if (!ent || !_eng) return;
+    _engLru.delete(id);
+    _engFloats -= ent.floats;
+    try { _eng.unregister(id); } catch (e) { /* engine unpublished by the caller path */ }
+    var t = ent.ref.deref();
+    if (t && _engIds) _engIds.delete(t);
+    if (why === 'evicted') _engStats.evicted++; else _engStats.collected++;
+  }
+  // Returns the engine id for `tris`, registering it if needed and marking
+  // it most-recently-used. Evicts LRU entries beyond the budget, never the
+  // (at most two) entries touched by the current query.
+  function _engEnsure(tris) {
+    var id = _engIds.get(tris);
+    if (id !== undefined && _engLru.has(id)) {
+      var ent = _engLru.get(id);
+      _engLru.delete(id); _engLru.set(id, ent); // move to MRU end
+      return id;
+    }
+    // Ids are never reused within a session: a pending FinalizationRegistry
+    // callback for an old id must not be able to drop a newer registration.
+    if (_engNextId > 0xFFFFFFF0) throw new Error('engine id space exhausted');
+    id = _engNextId++;
+    _eng.register(id, tris);
+    _engIds.set(tris, id);
+    _engLru.set(id, { ref: new WeakRef(tris), floats: tris.length });
+    _engFinal.register(tris, id);
+    _engFloats += tris.length;
+    _engStats.registered++;
+    return id;
+  }
+  function _engEvictOver() {
+    // Keep the two most recent entries (the current pair) regardless of budget.
+    while (_engFloats > _ENGINE_BUDGET_FLOATS && _engLru.size > 2) {
+      _engDrop(_engLru.keys().next().value, 'evicted');
+    }
+  }
+  function _engReset() {
+    try { if (_eng) _eng.clear(); } catch (e) {}
+    if (_engLru) _engLru.forEach(function(ent) { var t = ent.ref.deref(); if (t && _engIds) _engIds.delete(t); });
+    if (_engLru) _engLru.clear();
+    _engFloats = 0;
+  }
+  function _engFail(where, e) {
+    console.warn('[WASM Engine] cached engine ' + where + ' error — unpublishing it, falling back per pair:', e && e.message);
+    _engineCheckFailed = true;
+    if (window._ccWasmEngine === _engineApi) delete window._ccWasmEngine;
+    _engReset();
+  }
+  var _engineApi = {
+    intersect: function(trisA, trisB) {
+      if (!_eng || _engineCheckFailed || !trisA || !trisB) return null;
+      try {
+        var ia = _engEnsure(trisA), ib = _engEnsure(trisB);
+        _engEvictOver();
+        _engStats.queries++;
+        var raw = _eng.intersect(ia, ib);
+        if (raw === undefined) throw new Error('mesh id not registered');
+        return raw.length === 0 ? false : raw;
+      } catch (e) { _engFail('intersect', e); return null; }
+    },
+    minDist: function(trisA, trisB, threshold, outPair) {
+      if (!_eng || _engineCheckFailed || !trisA || !trisB) return null;
+      try {
+        var ia = _engEnsure(trisA), ib = _engEnsure(trisB);
+        _engEvictOver();
+        _engStats.queries++;
+        var r = _eng.min_distance(ia, ib);
+        if (r === undefined) throw new Error('mesh id not registered');
+        if (!r.length || r[0] === Infinity) return Infinity;
+        if (outPair && r.length >= 7) {
+          outPair[0]=r[1]; outPair[1]=r[2]; outPair[2]=r[3];
+          outPair[3]=r[4]; outPair[4]=r[5]; outPair[5]=r[6];
+        }
+        return r[0];
+      } catch (e) { _engFail('minDist', e); return null; }
+    },
+    // Explicitly forget one element's registration (e.g. its triangle array is being dropped).
+    release: function(tris) {
+      if (!_eng || !_engIds) return;
+      var id = _engIds.get(tris);
+      if (id !== undefined) _engDrop(id, 'collected');
+    },
+    clear: function() { _engReset(); },
+    stats: function() {
+      return { registered: _engStats.registered, evicted: _engStats.evicted, collected: _engStats.collected,
+               queries: _engStats.queries, resident: _engLru ? _engLru.size : 0, residentFloats: _engFloats };
+    }
+  };
+
   /**
    * Broad-phase sweep-and-prune (candidate pair generation), mirroring
    * index.html's _sweepAndPrune's geometry exactly. The self-clash rule's
@@ -403,7 +616,10 @@
         delete window._ccWasmIntersect;
         delete window._ccWasmMinDist;
         delete window._ccWasmBatchIntersect;
+        delete window._ccWasmModuleUrls;
         delete window._ccWasmSweepAndPrune;
+        delete window._ccWasmEngine;
+        _engReset();
         if (typeof window._ccDispatch === 'function') {
           try { window._ccDispatch({ t: 'UPD_WASM_ENGINE', u: { active: false } }); } catch (_) {}
         }
