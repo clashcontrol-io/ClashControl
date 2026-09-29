@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.6.1 (2026-09-29)
+- MEMORY.md: native desktop engine state + open items; Active Work closed
+
 ## v7.5.0 (2026-09-08)
 - Fix detection data-loss bugs, close browser/local-engine rule parity gaps, remove an unsafe geometry shortcut (#711)
 
