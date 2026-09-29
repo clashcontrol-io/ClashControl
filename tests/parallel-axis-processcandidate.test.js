@@ -70,6 +70,7 @@ function loadProcessCandidateFactory() {
     function uid() { return 'TESTID'; }
     function _ccElementDiscipline() { return 'other'; }
     function _ccMatrixSkipsSameDiscipline() { return false; }
+    function _ccNarrowPoolRunStart() {}
     function _ccStableJSON() { return ''; }
     function _tpMemoModelsKey() { return ''; }
     function _tpModelFingerprint() { return ''; }
@@ -182,6 +183,7 @@ function loadProcessCandidateWithClashSink() {
     function uid() { return 'TESTID'; }
     function _ccElementDiscipline() { return 'other'; }
     function _ccMatrixSkipsSameDiscipline() { return false; }
+    function _ccNarrowPoolRunStart() {}
     function _ccStableJSON() { return ''; }
     function _tpMemoModelsKey() { return ''; }
     function _tpModelFingerprint() { return ''; }

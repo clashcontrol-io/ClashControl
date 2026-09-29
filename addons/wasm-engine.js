@@ -240,6 +240,14 @@
     return 'addons/';
   }
 
+  // Absolute URLs of the WASM glue + binary, so the narrow-phase Web Workers
+  // (core, blob: origin) can load the SAME module this thread self-checked.
+  function _moduleUrls() {
+    var base = _getAddonBaseUrl() + 'wasm-engine-pkg/';
+    function abs(u) { try { return new URL(u, document.baseURI).href; } catch (e) { return u; } }
+    return { js: abs(base + 'clashcontrol_engine.js'), wasm: abs(base + 'clashcontrol_engine_bg.wasm') };
+  }
+
   // Publishes only the globals whose self-check passed. A narrow-phase
   // regression never disables sweep-and-prune (or vice versa) — they are
   // independently gated, matching their independent fallback contract
@@ -249,6 +257,7 @@
       window._ccWasmIntersect = _wasmIntersect;
       window._ccWasmMinDist = _wasmMinDist;
       window._ccWasmBatchIntersect = _wasmBatchIntersect;
+      window._ccWasmModuleUrls = _moduleUrls;
     }
     if (!_sweepCheckFailed) {
       window._ccWasmSweepAndPrune = _wasmSweepAndPrune;
@@ -607,6 +616,7 @@
         delete window._ccWasmIntersect;
         delete window._ccWasmMinDist;
         delete window._ccWasmBatchIntersect;
+        delete window._ccWasmModuleUrls;
         delete window._ccWasmSweepAndPrune;
         delete window._ccWasmEngine;
         _engReset();
