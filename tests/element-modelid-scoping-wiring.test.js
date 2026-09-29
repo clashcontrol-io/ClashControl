@@ -64,8 +64,7 @@ test('3D-canvas element selection stamps modelId onto selectedEl (both the singl
 });
 
 test('hide (hh) / isolate (hi) chord hotkeys build model-scoped refs, not bare expressIds', () => {
-  const body = sliceFrom("function getActiveEids(){", 4600);
-  assert.match(body, /function getActiveRefs\(\)\{/);
+  const body = sliceFrom("function getActiveRefs(){", 4600);
   assert.match(body, /if\(it\) _itemRefs\(it\)\.forEach\(function\(r\)\{refs\.push\(r\);\}\);/);
   assert.match(body, /if\(chord==='hh'\)\{/);
   assert.match(body, /var hhRefs=getActiveRefs\(\);/);
@@ -114,4 +113,22 @@ test('the visibility-application effect parses the scoped byStorey key and restr
   const body = sliceFrom('var hiddenIds = new Set();', 1300);
   assert.match(body, /if \(view === 'byStorey' && grpKey\.indexOf\('::'\) !== -1\) \{/);
   assert.match(body, /if \(scopedModelId && it\.modelId !== scopedModelId\) return;/);
+});
+
+test('no chord path uses bare expressIds: getActiveEids is gone, BX section box uses refs', () => {
+  assert.ok(!html.includes('function getActiveEids('), 'flat-id helper must not come back');
+  const body = sliceFrom("if(chord==='bx'){", 700);
+  assert.match(body, /var bxRefs=getActiveRefs\(\);/);
+  assert.match(body, /_sboxAroundElements\(bxRefs\)/);
+});
+
+test('section box from the context menu / toolbar is model-scoped', () => {
+  assert.match(html, /_sboxAroundElements\(\[\{expressId:ctxMenu\.expressId, modelId:ctxMenu\.modelId\|\|null\}\]\)/);
+  assert.match(html, /_sboxAroundElements\(\[\{expressId:selEid, modelId:window\._ccSelectedModelId\|\|null\}\]\)/);
+  assert.ok(!/_sboxAroundElements\(\[(ctxMenu\.expressId|selEid)\]\)/.test(html));
+});
+
+test('data-quality highlight groups ghost with model-scoped refs', () => {
+  assert.ok(!/eids\.push\(el\.expressId\)/.test(html), 'no bare expressId pushes into highlight lists');
+  assert.equal((html.match(/eids\.push\(\{expressId:it\.expressId, modelId:it\.modelId\|\|null\}\)/g) || []).length, 2);
 });

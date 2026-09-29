@@ -1850,9 +1850,14 @@ function startApp() {
     window.dispatchEvent(new Event('cc-locale-changed'));
   };
 
-  window._ccSetLocale = function(lang) {
+  // opts.persist === false: activate without remembering it — used by the
+  // loader's navigator.languages auto-detect, so a detected language never
+  // masquerades as the user's own choice ('' stored = user picked English).
+  window._ccSetLocale = function(lang, opts) {
     _ccActiveLocale = (lang && _ccLocalePacks[lang]) ? lang : null;
-    try { localStorage.setItem('cc_locale', _ccActiveLocale || ''); } catch(e){}
+    if (!opts || opts.persist !== false) {
+      try { localStorage.setItem('cc_locale', _ccActiveLocale || ''); } catch(e){}
+    }
     window.dispatchEvent(new Event('cc-locale-changed'));
   };
 
@@ -18014,7 +18019,7 @@ function startApp() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>
             Make Section
           </button>
-          ${ctxMenu.expressId!=null && html`<button onClick=${function(){if(_sboxAroundElements)_sboxAroundElements([ctxMenu.expressId]);setCtxMenu(null);}}
+          ${ctxMenu.expressId!=null && html`<button onClick=${function(){if(_sboxAroundElements)_sboxAroundElements([{expressId:ctxMenu.expressId, modelId:ctxMenu.modelId||null}]);setCtxMenu(null);}}
             style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.5rem .7rem',background:'transparent',color:'var(--text-primary)',fontSize:'0.86rem',borderRadius:0,borderTop:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'.5rem'}}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" stroke-dasharray="3 2"/></svg>
             Section Box
@@ -18452,7 +18457,7 @@ function startApp() {
       if(active){d({t:A.SECTION_BOX,v:null});return;}
       var selEid = window._ccSelectedExpressId;
       if(selEid!=null && _sboxAroundElements){
-        _sboxAroundElements([selEid]);
+        _sboxAroundElements([{expressId:selEid, modelId:window._ccSelectedModelId||null}]);
         return;
       }
       if(_getSectionBoxFromScene){
@@ -24599,7 +24604,7 @@ function startApp() {
       var gids = {}; (items||[]).forEach(function(it){ if(it.globalId) gids[it.globalId]=1; });
       var eids = [];
       (s.models||[]).forEach(function(m){ (m.elements||[]).forEach(function(el){
-        var g=el.props&&el.props.globalId; if(g&&gids[g]) eids.push(el.expressId); }); });
+        var g=el.props&&el.props.globalId; if(g&&gids[g]) eids.push({expressId:el.expressId, modelId:m.id}); }); });
       if (eids.length && typeof _ghostOthers==='function') _ghostOthers(eids);
       invalidate();
     }
@@ -24840,7 +24845,7 @@ function startApp() {
       (s.models||[]).forEach(function(m) {
         (m.elements||[]).forEach(function(el) {
           var gid = el.props && el.props.globalId;
-          if (checkObj.ex.some(function(it){return it.gid === gid;})) eids.push(el.expressId);
+          if (checkObj.ex.some(function(it){return it.gid === gid;})) eids.push({expressId:el.expressId, modelId:m.id});
         });
       });
       if (eids.length && _ghostOthers) _ghostOthers(eids);
@@ -24872,9 +24877,14 @@ function startApp() {
     function highlightDistGroup(distKey, value) {
       if (!bim || !bim._dist || !bim._dist[distKey]) return;
       var items = bim._dist[distKey][value] || [];
-      var eidSet = {};
-      items.forEach(function(it){eidSet[it.expressId] = true;});
-      var eids = Object.keys(eidSet).map(Number);
+      // Model-scoped refs (items carry modelId) so a shared expressId in
+      // another model isn't highlighted too; deduped per model+id.
+      var eidSet = {}, eids = [];
+      items.forEach(function(it){
+        var k = (it.modelId||'') + '_' + it.expressId;
+        if (eidSet[k]) return; eidSet[k] = true;
+        eids.push({expressId:it.expressId, modelId:it.modelId||null});
+      });
       if (eids.length && _ghostOthers) _ghostOthers(eids);
       invalidate();
     }
@@ -24883,9 +24893,14 @@ function startApp() {
       var src = distKey === 'nlsfb' ? (ils ? ils._nlsfbDist : null) : (ils ? ils._compDist : null);
       if (!src) return;
       var items = src[value] || [];
-      var eidSet = {};
-      items.forEach(function(it){eidSet[it.expressId] = true;});
-      var eids = Object.keys(eidSet).map(Number);
+      // Model-scoped refs (items carry modelId) so a shared expressId in
+      // another model isn't highlighted too; deduped per model+id.
+      var eidSet = {}, eids = [];
+      items.forEach(function(it){
+        var k = (it.modelId||'') + '_' + it.expressId;
+        if (eidSet[k]) return; eidSet[k] = true;
+        eids.push({expressId:it.expressId, modelId:it.modelId||null});
+      });
       if (eids.length && _ghostOthers) _ghostOthers(eids);
       invalidate();
     }
@@ -41348,24 +41363,8 @@ function startApp() {
           clearTimeout(ch.timer);
           ch.key=null; ch.timer=null;
 
-          function getActiveEids(){
-            var all=s.clashes.concat(s.issues);
-            var ids=[];
-            var selKeys=Object.keys(s.selected||{});
-            if(selKeys.length>0){
-              selKeys.forEach(function(sid){
-                var it=all.find(function(c){return c.id===sid;});
-                if(it) _itemEids(it).forEach(function(eid){ids.push(eid);});
-              });
-            }
-            if(!ids.length && s.activeId){
-              var item=all.find(function(c){return c.id===s.activeId;});
-              if(item) ids=_itemEids(item);
-            }
-            return ids.length?ids:null;
-          }
-          // Model-scoped counterpart of getActiveEids — {expressId,modelId}
-          // refs via _itemRefs, so hide/isolate hotkeys don't hit the wrong
+          // Active clash/issue element refs — {expressId,modelId} via
+          // _itemRefs, so hide/isolate hotkeys don't hit the wrong
           // model's element when two loaded models share an expressId.
           function getActiveRefs(){
             var all=s.clashes.concat(s.issues);
@@ -41390,8 +41389,8 @@ function startApp() {
             // The middle step was missing: BX previously went straight
             // from "no clash selected" to "full model", surprising users
             // who had clicked an IFC element expecting it to take focus.
-            var eids=getActiveEids();
-            if(eids&&_sboxAroundElements){ _sboxAroundElements(eids); return; }
+            var bxRefs=getActiveRefs();
+            if(bxRefs&&_sboxAroundElements){ _sboxAroundElements(bxRefs); return; }
             if(window._ccActivateSectionBox && window._ccActivateSectionBox()) return;
             if(_getSectionBoxFromScene){var box=_getSectionBoxFromScene();if(box&&window._ccDispatch)window._ccDispatch({t:A.SECTION_BOX,v:{enabled:true,min:[box.min.x,box.min.y,box.min.z],max:[box.max.x,box.max.y,box.max.z]}});}
             return;

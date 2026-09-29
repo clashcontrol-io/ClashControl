@@ -51,6 +51,53 @@
     });
   };
 
+  // Best pack for the browser's language preferences, or null. Walks
+  // navigator.languages in the user's order; each tag matches a pack
+  // exactly (case-insensitive) or by primary subtag ('ja-JP' -> 'ja',
+  // 'pt' -> 'pt-BR'). English (no pack — it's the built-in fallback)
+  // ranked above every pack language wins, i.e. returns null.
+  function matchBrowserLanguage(packLangs, browserLangs) {
+    var lower = packLangs.map(function (l) { return String(l).toLowerCase(); });
+    for (var i = 0; i < browserLangs.length; i++) {
+      var tag = String(browserLangs[i] || '').toLowerCase();
+      if (!tag) continue;
+      var primary = tag.split('-')[0];
+      if (primary === 'en') return null;
+      var exact = lower.indexOf(tag);
+      if (exact >= 0) return packLangs[exact];
+      for (var j = 0; j < lower.length; j++) {
+        if (lower[j].split('-')[0] === primary) return packLangs[j];
+      }
+    }
+    return null;
+  }
+
+  // Startup: the core restores a saved `cc_locale` id but nothing loaded the
+  // pack itself until the Settings panel was opened, so a returning user who
+  // had picked a language saw English. Load it here. With no saved choice
+  // at all, auto-detect from navigator.languages and activate WITHOUT
+  // persisting (the user never chose it). '' saved = user explicitly picked
+  // English — never override that.
+  function restoreOrDetect() {
+    var saved = null;
+    try { saved = window.localStorage.getItem('cc_locale'); } catch (e) {}
+    if (saved === '') return;
+    loadManifest().then(function (list) {
+      var langs = (list || []).map(function (p) { return p.lang; }).filter(Boolean);
+      var pick = null;
+      if (saved) pick = langs.indexOf(saved) >= 0 ? saved : null;
+      else {
+        var nav = window.navigator || {};
+        pick = matchBrowserLanguage(langs, (nav.languages && nav.languages.length) ? nav.languages : [nav.language]);
+      }
+      if (!pick) return;
+      return window._ccLoadLocalePack(pick).then(function () {
+        if (typeof window._ccSetLocale === 'function') window._ccSetLocale(pick, { persist: !!saved });
+      });
+    }).catch(function (e) { console.warn('[Locales] startup locale not applied', e); });
+  }
+  restoreOrDetect();
+
   if (typeof window._ccRegisterAddon === 'function') {
     window._ccRegisterAddon({
       id: 'locales',
