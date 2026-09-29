@@ -104,7 +104,21 @@
         // number directly (by the resulting id, which is set to prev.id)
         // instead of re-deriving it from _identityKey later.
         prevIdToNumber[prev.id] = prev.number;
-        return Object.assign({}, c, {
+        // A severity the rule model derived (clash-classification-core.js stamps
+        // _sevSource:'rule') is a pure function of the clash's current depth /
+        // gap / roles, so a re-run must re-derive it from the fresh geometry —
+        // carrying the previous verdict forward would leave a clash that got
+        // deeper (or was fixed to a graze) at its stale severity. Only human /
+        // AI-authored verdicts (_sevSource:'ai', or legacy records with no
+        // marker) are carried.
+        var carrySev = prev._sevSource !== 'rule';
+        var sevCarry = carrySev ? {
+          aiSeverity: prev.aiSeverity,
+          aiCategory: prev.aiCategory,
+          aiReason: prev.aiReason,
+          _sevSource: prev._sevSource
+        } : {};
+        return Object.assign({}, c, sevCarry, {
           id: prev.id,
           _identityKey: key,
           _delta: 'persisting',
@@ -121,9 +135,6 @@
           aiReasons: prev.aiReasons,
           aiResolution: prev.aiResolution,
           aiNote: prev.aiNote,
-          aiSeverity: prev.aiSeverity,
-          aiCategory: prev.aiCategory,
-          aiReason: prev.aiReason,
           _clusterGroup: prev._clusterGroup,
           _clusterSize: prev._clusterSize,
           clashTypeConfirmed: prev.clashTypeConfirmed,

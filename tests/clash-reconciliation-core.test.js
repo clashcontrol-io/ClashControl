@@ -214,3 +214,32 @@ test('a neighbouring-grid-cell fallback match keeps the previous clash number', 
   assert.equal(out[0]._delta, 'persisting');
   assert.equal(out[0].number, 7);
 });
+
+// ── Smarter clashes: rule-derived severity must be re-derived on a re-run ──
+
+test('a rule-derived severity (_sevSource:"rule") is NOT carried over: the fresh geometry decides', () => {
+  const prev = clash('stable','a','b',[0,0,0],{
+    aiSeverity:'minor',aiCategory:'penetration',aiReason:'old reason',_sevSource:'rule',
+    status:'in_progress',assignee:'jane'
+  });
+  const fresh = clash('temporary','a','b',[0,0,0],{
+    distance:-80,aiSeverity:'critical',aiCategory:'penetration',aiReason:'new reason',_sevSource:'rule'
+  });
+  const out = core.mergeDetectionResults([fresh], [prev], deps()).clashes[0];
+  assert.equal(out.id, 'stable');
+  assert.equal(out.aiSeverity, 'critical', 'a clash that got deeper must not keep its old, lower severity');
+  assert.equal(out.aiReason, 'new reason');
+  assert.equal(out._sevSource, 'rule');
+  // human review state still survives
+  assert.equal(out.status, 'in_progress');
+  assert.equal(out.assignee, 'jane');
+});
+
+test('an AI-authored severity (_sevSource:"ai") survives a re-run and overrides the rule model', () => {
+  const prev = clash('stable','a','b',[0,0,0],{ aiSeverity:'info', aiCategory:'triage', aiReason:'AI says fine', _sevSource:'ai' });
+  const fresh = clash('temporary','a','b',[0,0,0],{ aiSeverity:'critical', aiCategory:'penetration', aiReason:'rule', _sevSource:'rule' });
+  const out = core.mergeDetectionResults([fresh], [prev], deps()).clashes[0];
+  assert.equal(out.aiSeverity, 'info');
+  assert.equal(out.aiReason, 'AI says fine');
+  assert.equal(out._sevSource, 'ai');
+});

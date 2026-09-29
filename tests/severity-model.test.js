@@ -14,11 +14,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-const start = src.indexOf('var _SEV_DISC_WEIGHT = {');
-assert.ok(start !== -1, '_SEV_DISC_WEIGHT not found');
+// The model lives in clash-classification-core.js (deterministicSeverity);
+// index.html keeps a thin delegate, extracted here and bound to the real core.
+const start = src.indexOf('function _ccDeterministicSeverity(c) {');
+assert.ok(start !== -1, '_ccDeterministicSeverity not found');
 const end = src.indexOf('\n  function _clearElCaches', start);
 assert.ok(end !== -1, '_ccDeterministicSeverity closing point not found');
-const _ccDeterministicSeverity = new Function(src.slice(start, end) + '; return _ccDeterministicSeverity;')();
+const window = { _ccClashClassificationCore: require('../clash-classification-core') };
+const _ccDeterministicSeverity = new Function('window', src.slice(start, end) + '; return _ccDeterministicSeverity;')(window);
 assert.equal(typeof _ccDeterministicSeverity, 'function');
 
 const VALID = ['critical', 'major', 'minor', 'info'];
@@ -77,9 +80,13 @@ test('hard clash ≥20mm involving structural is critical', () => {
   assert.equal(_ccDeterministicSeverity(hard(['architectural', 'structural'], 25)), 'critical');
 });
 
-test('any hard clash ≥50mm is critical regardless of discipline', () => {
-  assert.equal(_ccDeterministicSeverity(hard(['architectural', 'other'], 50)), 'critical');
-  assert.equal(_ccDeterministicSeverity(hard(['architectural', 'other'], 200)), 'critical');
+test('a deep hard clash is critical: >=50mm with a MEP run / civil, >=100mm even between low-criticality roles', () => {
+  // Role-aware since the "smarter clashes" pass: architectural/other pairs
+  // need >=100mm; a MEP run (or civil) needs >=50mm.
+  assert.equal(_ccDeterministicSeverity(hard(['architectural', 'other'], 50)), 'major');
+  assert.equal(_ccDeterministicSeverity(hard(['architectural', 'other'], 100)), 'critical');
+  assert.equal(_ccDeterministicSeverity(hard(['mep', 'architectural'], 50)), 'critical');
+  assert.equal(_ccDeterministicSeverity(hard(['civil', 'architectural'], 50)), 'critical');
 });
 
 test('discipline weight uses the MAX of the pair, not an average or the first element', () => {

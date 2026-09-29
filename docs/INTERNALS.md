@@ -380,11 +380,21 @@ The Splat reference-layers panel (just above) shows what's loaded via `_ccLoadSp
 
 Propagates type-level psets/quantities to instances. The main loop builds `propMap` entries for type entities (`IfcBeamType`, `IfcColumnType`, etc.) because they can be targets of `IfcRelDefinesByProperties`. We then copy those entries down to each related instance without overwriting instance-level assignments — so structural profile psets (`Pset_ProfileProperties`, `Pset_BeamCommon`, …) that live on the type become visible on each beam/column instance.
 
-### 21.19 Pair-result cache (narrow-phase)
+### 21.19 Smart re-run memo (narrow-phase)
 
-**Code reference:** `_pairResultCache` / `_PAIR_CACHE_MAX`.
+**Code reference:** `_ccRunMemo`, `_ccRunSignature`, `_hashElement`, the "Smart re-run" block in `_detectClashesCore`.
 
-Stores clash objects from previous detection runs, keyed by `(mA:eidA | mB:eidB | rulesHash)`. When changeAware is on and neither element changed since last run, re-emit the cached clash instead of dropping it silently (legacy `changeAware` behaviour). Misses are not cached — undefined lookup falls through naturally.
+Re-runs are change-aware **by default** (`rules.fullRerun` = false; the UI toggle is "Full re-run"). The memo holds the last *completed* browser run: a signature (every rule except `fullRerun`/`hideProvidedOpenings`, the resolved engine, model ids/names/disciplines/element counts, detection-feedback protected pairs), a per-element content hash (identity, box, every mesh's world matrix + vertex/index counts, identity props, LoadBearing, opening boxes) and an immutable shallow snapshot of every raw hit per pair (`mA:eidA|mB:eidB`).
+
+A run whose signature matches only recomputes pairs that involve a changed element; every other pair carries over — a previous hit is re-emitted as a fresh clone of its snapshot (new id/createdAt, so merge/classify/reconcile may mutate it), a previous miss stays a miss. Candidates are still visited in the same order, so the merged result equals a full run's exactly (proved in `tests/browser/office-clash-parity.mjs`). The memo is committed only by a run that finished (a failed chunk marks the run incomplete first), is dropped — never evicted — if it would exceed `_CC_RUNMEMO_MAX` snapshots, and is cleared on model delete/replace, project switch and local-engine runs. The old LRU `_pairResultCache` (raw objects by reference, evictable, mutated later by merge/classify — it could silently lose or double-annotate carried clashes) no longer exists.
+
+Rule-derived severity (`_sevSource:'rule'`) is re-derived on every re-run by the reconciler; only AI/human verdicts are carried.
+
+### 21.19b Provision for void (clashes through openings)
+
+**Code reference:** `extractOpeningRecords` (loader/worker), `_ccOpeningStatusForPair`, `classifyOpening` in `clash-classification-core.js`.
+
+web-ifc never streams `IfcOpeningElement`, but `GetFlatMesh(opening)` returns its geometry. For every `IfcRelVoidsElement` the loader stores each opening as a flat 15-number oriented box (`props.openings` on the host: centre, 3 unit axes, 3 half extents; scene space, 0.1 mm) — this survives the geo cache (whole `props` is serialised); geo caches written before this version carry no openings until the model is re-imported. After the engine reports a clash the *other* element's triangles are clipped to the host's AABB and tested against the host's openings (20 mm tolerance): whole region inside one opening = `opening:'provided'`; hard clash overlapping an opening but poking out = `'partial'` ("Opening too small"). Classification only — hard/soft detection is untouched. `rules.hideProvidedOpenings` (default on) hides provided clashes from the list behind an "N pass through provided openings — show" notice; they stay in state, reports and exports.
 
 ### 21.20 Walk-mode vertical ground-snap
 

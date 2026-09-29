@@ -75,7 +75,12 @@ function loadProcessCandidateFactory() {
     function _tpModelFingerprint() { return ''; }
     function _tpMemoLoad() { return null; }
     function _hashElement() { return ''; }
-    var _prevElementHashes = {};
+    function _ccRunSignature() { return ''; }
+    var _ccRunMemo = null;
+    var _CC_RUNMEMO_MAX = 250000;
+    function _pairKey(mA, eA, mB, eB) { return mA.id + ':' + eA.expressId + '|' + mB.id + ':' + eB.expressId; }
+    function _ccRoleOfElement() { return undefined; }
+    function _ccOpeningStatusForPair() { return null; }
     ${coreBlock}
     return _detectClashesCore;
   `;
@@ -187,7 +192,12 @@ function loadProcessCandidateWithClashSink() {
     function _tpModelFingerprint() { return ''; }
     function _tpMemoLoad() { return null; }
     function _hashElement() { return ''; }
-    var _prevElementHashes = {};
+    function _ccRunSignature() { return ''; }
+    var _ccRunMemo = null;
+    var _CC_RUNMEMO_MAX = 250000;
+    function _pairKey(mA, eA, mB, eB) { return mA.id + ':' + eA.expressId + '|' + mB.id + ':' + eB.expressId; }
+    function _ccRoleOfElement() { return undefined; }
+    function _ccOpeningStatusForPair() { return null; }
     ${coreBlock.replace('\n    return _processCandidate;\n  }', '\n    return {processCandidate:_processCandidate, clashes:clashes};\n  }')}
     return _detectClashesCore;
   `;

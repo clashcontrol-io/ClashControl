@@ -146,7 +146,16 @@ async function runDetectionInPage(page, rulesOverride, disableWasmNarrowPhase) {
       const pair = [[c.modelAId, c.elemA], [c.modelBId, c.elemB]].sort((x, y) =>
         x[0] === y[0] ? x[1] - y[1] : (x[0] < y[0] ? -1 : 1));
       const pairKey = pair[0][0] + ':' + pair[0][1] + ':' + pair[1][0] + ':' + pair[1][1] + ':' + (c.selfClash ? 1 : 0);
-      return { key: pairKey + ':' + c.type, pairKey, type: c.type, clearanceMm: c.clearanceMm, distance: c.distance };
+      return {
+        key: pairKey + ':' + c.type, pairKey, type: c.type, clearanceMm: c.clearanceMm, distance: c.distance,
+        // Smart-clash fields (openings / severity) + a stable identity for the
+        // change-aware equality checks below (ids and timestamps are minted
+        // fresh per run, everything else must be reproduced exactly).
+        opening: c.opening || null, nameA: c.elemAName, nameB: c.elemBName, severity: c.aiSeverity,
+        roleA: c.roleA, roleB: c.roleB,
+        sig: [pairKey, c.type, c.distance, c.clearanceMm, (c.point || []).map((v) => Math.round(v * 1000)).join(','),
+          c.opening || '', c.aiSeverity, c.aiCategory, c.roleA, c.roleB, c.mergedCount, c.description].join('~'),
+      };
     });
   }, { rules: rulesOverride, disableWasm: disableWasmNarrowPhase });
 }
@@ -183,7 +192,16 @@ try {
   // update EXPECTED_HARD_COUNT to N only after confirming the new number is
   // geometrically correct (e.g. an intentional fixture or rule change), not
   // just "the assertion failed so I copied the new number in".
-  const EXPECTED_HARD_COUNT = 56;
+  // 56 -> 54 with the "provision for void" fixture: the architecture model now
+  // carries three IfcOpeningElement/IfcRelVoidsElement voids on level 0 (see
+  // generate-office-ifc.js). web-ifc cuts them into the host meshes, so the two
+  // ducts/pipes that pass CLEANLY through an opening sized for them (Supply duct
+  // x Corridor wall L0, Sprinkler main x Facade South L0) no longer touch the
+  // wall solid: -2 hard clashes (they become 30 mm / 20 mm clearance clashes,
+  // i.e. soft, and are classified 'provided' below). The third opening is
+  // UNDERSIZED (0.6x0.3 for a 0.8x0.4 duct) so Supply duct x Facade West L0 is
+  // still a hard clash (classified 'partial'). 56 - 2 = 54.
+  const EXPECTED_HARD_COUNT = 54;
   if (wasmHard.length !== EXPECTED_HARD_COUNT) {
     fail('expected exactly ' + EXPECTED_HARD_COUNT + ' hard clashes with default rules, got ' + wasmHard.length);
   } else {
@@ -279,6 +297,152 @@ try {
   if (jsZeroClearanceChecked > 0) {
     console.log('ZERO-CLEARANCE OK — same holds for the JS fallback engine (' + jsZeroClearanceChecked + ' pairs)');
   }
+
+  // ── Case 5: provision for void — clashes through IFC openings ──
+  const page3 = await newPage();
+  await loadFixtures(page3);
+  const openRules = { excludeSameDiscipline: false, selfClashModels: 'none', hard: true, minGap: 0, maxGap: 50 };
+  const openRun = await runDetectionInPage(page3, openRules, false);
+  const pairName = (c) => [c.nameA, c.nameB].sort().join(' | ');
+  const provided = openRun.filter((c) => c.opening === 'provided').map((c) => pairName(c) + ' [' + c.type + ']').sort();
+  const partial = openRun.filter((c) => c.opening === 'partial').map((c) => pairName(c) + ' [' + c.type + ']').sort();
+  const expectProvided = [
+    'Corridor wall L0 | Supply duct L0 [soft]',
+    'Facade South L0 | Sprinkler main L0 [soft]',
+  ];
+  const expectPartial = ['Facade West L0 | Supply duct L0 [hard]'];
+  if (JSON.stringify(provided) !== JSON.stringify(expectProvided)) {
+    fail('provided-opening clashes: expected ' + JSON.stringify(expectProvided) + ' got ' + JSON.stringify(provided));
+  } else {
+    console.log('OPENINGS OK — ' + provided.length + ' clashes classified as passing through provided openings: ' + provided.join('; '));
+  }
+  if (JSON.stringify(partial) !== JSON.stringify(expectPartial)) {
+    fail('partial-opening clashes: expected ' + JSON.stringify(expectPartial) + ' got ' + JSON.stringify(partial));
+  } else {
+    console.log('OPENINGS OK — undersized opening classified partial ("Opening too small"): ' + partial.join('; '));
+  }
+  // Severity inputs: element roles are stamped on every clash (structural /
+  // MEP run / architectural ...; LoadBearing pset read for walls and slabs).
+  const roleOf = (c, nm) => (c.nameA === nm ? c.roleA : c.nameB === nm ? c.roleB : undefined);
+  const roleChecks = [['Floor slab L0', 'structural'], ['Column 5/3 L0', 'structural'], ['Facade West L0', 'architectural'], ['Supply duct L0', 'mep-main']];
+  for (const [nm, want] of roleChecks) {
+    const rows = openRun.filter((c) => roleOf(c, nm) !== undefined);
+    if (!rows.length || rows.some((c) => roleOf(c, nm) !== want)) fail('element role of ' + nm + ' should be ' + want + ', got ' + JSON.stringify([...new Set(rows.map((c) => roleOf(c, nm)))]));
+  }
+  console.log('SEVERITY OK — element roles stamped on clashes (slab/column structural, non-load-bearing facade architectural, duct mep-main)');
+  const stray = openRun.filter((c) => c.opening && c.opening !== 'provided' && c.opening !== 'partial');
+  if (stray.length) fail('unexpected opening status values: ' + JSON.stringify(stray.slice(0, 3)));
+  // The un-opened level-1/2 copies of the same walls and ducts must NOT be classified.
+  const l1 = openRun.filter((c) => c.opening && /L[12]/.test(c.nameA + c.nameB));
+  if (l1.length) fail('clashes on levels without openings were classified: ' + JSON.stringify(l1.slice(0, 3)));
+
+  // The loader stored the openings on the host elements (flat oriented boxes).
+  const hostInfo = await page3.evaluate(() => {
+    const arch = window._ccLatestState.models.find((m) => /architecture/i.test(m.name));
+    return arch.elements.filter((e) => e.props.openings && e.props.openings.length)
+      .map((e) => ({ name: e.props.name, n: e.props.openings.length / 15, box: e.props.openings.slice(0, 3) }));
+  });
+  if (hostInfo.length !== 3 || hostInfo.some((h) => h.n !== 1)) fail('expected 3 host walls with 1 opening each, got ' + JSON.stringify(hostInfo));
+  else console.log('OPENINGS OK — loader extracted ' + hostInfo.length + ' host walls with 1 opening each: ' + hostInfo.map((h) => h.name).join(', '));
+
+  // Default hides provided clashes from the list and says so; nothing is dropped.
+  const uiState = await page3.evaluate(async () => {
+    const s = window._ccLatestState;
+    const total = s.clashes.length;
+    const prov = s.clashes.filter((c) => c.opening === 'provided').length;
+    window._ccDispatch({ t: 'TAB', v: 'clashes' });
+    await new Promise((r) => setTimeout(r, 600));
+    return { total, prov, hideRule: s.rules.hideProvidedOpenings, text: document.body.innerText };
+  });
+  if (uiState.hideRule === false) fail('hideProvidedOpenings must default to true/undefined, got ' + uiState.hideRule);
+  if (uiState.prov !== 2 || uiState.total !== openRun.length) {
+    fail('state must keep every clash (provided ones included): total=' + uiState.total + ' provided=' + uiState.prov + ' run=' + openRun.length);
+  }
+  if (!/2 pass through provided openings/.test(uiState.text)) fail('clash list is missing the "2 pass through provided openings" notice');
+  else console.log('OPENINGS OK — list shows the "2 pass through provided openings" notice; all ' + uiState.total + ' clashes remain in state');
+
+  // A HARD clash inside a provided opening (host mesh NOT cut — the "provision
+  // for void" case where the architect's wall still carries the solid): give the
+  // uncut Facade East L0 an opening box sized for the Supply duct crossing it and
+  // re-run. Editing the host's openings must also invalidate the smart re-run
+  // baseline for its pairs (the hash covers them).
+  await page3.evaluate(() => {
+    const arch = window._ccLatestState.models.find((m) => /architecture/i.test(m.name));
+    const wall = arch.elements.find((e) => e.props.name === 'Facade East L0');
+    // scene space (Y up): duct centre x=20, y=2.7 (IFC z), z=-6.5 (IFC -y); 0.86 wide x 0.46 high x 0.4 deep
+    wall.props.openings = [20, 2.7, -6.5, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0.2, 0.23, 0.43];
+  });
+  const uncut = await runDetectionInPage(page3, openRules, false);
+  const eastSupply = uncut.filter((c) => pairName(c) === 'Facade East L0 | Supply duct L0');
+  if (eastSupply.length !== 1 || eastSupply[0].type !== 'hard' || eastSupply[0].opening !== 'provided') {
+    fail('a hard clash whose whole intersection lies inside an opening of the uncut host should be provided, got ' + JSON.stringify(eastSupply.map((c) => [c.type, c.opening])));
+  } else {
+    console.log('OPENINGS OK — hard clash (uncut host, ' + eastSupply[0].distance + ' mm deep) whose region lies inside its opening is classified provided');
+  }
+  const eastReturn = uncut.filter((c) => pairName(c) === 'Facade East L0 | Return duct L0');
+  if (eastReturn.length !== 1 || eastReturn[0].opening) fail('the Return duct crosses the same wall away from the opening and must stay unclassified');
+
+  // ── Case 6: change-aware ("smart") re-runs are exactly equal to full runs ──
+  const smartRules = { excludeSameDiscipline: false, selfClashModels: 'none', hard: true, minGap: 0, maxGap: 50 };
+  async function detect(rules, disableWasm) {
+    const rows = await runDetectionInPage(page3, rules, !!disableWasm);
+    const prof = await page3.evaluate(() => Object.assign({}, window._ccDetectProfile));
+    return { rows, prof, sigs: rows.map((c) => c.sig).sort() };
+  }
+  const sameSet = (a, b) => JSON.stringify(a.sigs) === JSON.stringify(b.sigs);
+  const full0 = await detect({ ...smartRules, fullRerun: true });
+  const run1 = await detect(smartRules); // memo was just committed by the full run -> already a smart run
+  if (!run1.prof.smart_rerun || run1.prof.changed_elements !== 0 || run1.prof.hard_tests !== 0) {
+    fail('an unchanged re-run should be smart with 0 changed elements and 0 hard tests, got ' + JSON.stringify({ s: run1.prof.smart_rerun, c: run1.prof.changed_elements, h: run1.prof.hard_tests }));
+  }
+  if (!sameSet(full0, run1)) fail('unchanged smart re-run differs from the full run (' + run1.rows.length + ' vs ' + full0.rows.length + ')');
+  else console.log('SMART OK — unchanged re-run: 0 elements recomputed, all ' + run1.rows.length + ' clashes carried over, identical to the full run');
+
+  // Modify ONE element: lift "Sensor device L0" 0.2 m so it now penetrates its floor slab.
+  await page3.evaluate(() => {
+    const mep = window._ccLatestState.models.find((m) => /mep/i.test(m.name));
+    const el = mep.elements.find((e) => e.props.name === 'Sensor device L0');
+    const dy = 0.2; // scene Y is up
+    el.meshes.forEach((m) => { m.matrix.elements[13] += dy; m.matrixWorld.elements[13] += dy; m.position.y += dy; });
+    el.box.min.y += dy; el.box.max.y += dy;
+    delete el._wvCache; delete el._triCache; delete el._bvhCache;
+  });
+  const smart2 = await detect(smartRules);
+  const full2 = await detect({ ...smartRules, fullRerun: true });
+  if (!smart2.prof.smart_rerun) fail('the re-run after a single-element edit should have been smart');
+  if (smart2.prof.changed_elements !== 1) fail('expected exactly 1 changed element, got ' + smart2.prof.changed_elements);
+  if (!(smart2.prof.hard_tests < full2.prof.hard_tests)) fail('smart re-run should test fewer pairs than the full run (' + smart2.prof.hard_tests + ' vs ' + full2.prof.hard_tests + ')');
+  if (!sameSet(smart2, full2)) {
+    const a = new Set(smart2.sigs), b = new Set(full2.sigs);
+    console.error('only in smart:', smart2.sigs.filter((x) => !b.has(x)), 'only in full:', full2.sigs.filter((x) => !a.has(x)));
+    fail('smart re-run after editing one element is NOT identical to the full run');
+  } else console.log('SMART OK — after editing 1 element: smart re-run (' + smart2.prof.hard_tests + ' hard tests, ' + smart2.prof.pair_cache_reemits + ' carried) == full re-run (' + full2.prof.hard_tests + ' hard tests): ' + full2.rows.length + ' clashes');
+  if (sameSet(full0, full2)) fail('editing the element should have changed the result set (the check above would be vacuous)');
+  const newHard = full2.rows.filter((c) => c.type === 'hard' && /Sensor device L0/.test(c.nameA + c.nameB));
+  if (newHard.length !== 1) fail('the lifted sensor should now hard-clash with its slab, got ' + newHard.length);
+  else console.log('SMART OK — the edit is reflected: Sensor device L0 x slab is now a hard clash (' + newHard[0].distance + ' mm)');
+
+  // Full invalidation: a rules change, an engine change and a model-set change each force a full run.
+  const ruleChange = await detect({ ...smartRules, maxGap: 80 });
+  if (ruleChange.prof.smart_rerun) fail('changing maxGap must invalidate the smart re-run baseline');
+  const ruleBack = await detect({ ...smartRules, maxGap: 80 });
+  if (!ruleBack.prof.smart_rerun) fail('an identical follow-up run after a rules change should be smart again');
+  const engineChange = await detect({ ...smartRules, maxGap: 80 }, true); // WASM removed = different engine
+  if (engineChange.prof.smart_rerun) fail('switching engine (WASM -> JS) must invalidate the smart re-run baseline');
+  if (!sameSet(ruleBack, engineChange)) fail('WASM and JS engines disagree after invalidation');
+  // model-set change: park the MEP model (the run then sees a different model set)
+  const mepId = await page3.evaluate(() => window._ccLatestState.models.find((m) => /mep/i.test(m.name)).id);
+  await page3.evaluate((id) => window.ClashControl.parkModel(id), mepId);
+  await page3.waitForFunction((id) => window.ClashControl.isModelParked(id), mepId, { timeout: 30_000 });
+  const parkedRun = await detect({ ...smartRules, maxGap: 80 });
+  const modelChange = { smart: parkedRun.prof.smart_rerun };
+  if (modelChange.smart) fail('changing the model set must invalidate the smart re-run baseline');
+  console.log('SMART OK — a rules change, an engine change (WASM->JS)' + (modelChange ? ' and a model-set change' : '') + ' each forced a full run; identical follow-ups were smart again');
+
+  // A default run with the shipped rules (no explicit fullRerun) is smart by default.
+  const defaultRules = await page3.evaluate(() => ({ full: window._ccLatestState.rules.fullRerun, hide: window._ccLatestState.rules.hideProvidedOpenings }));
+  if (defaultRules.full) fail('fullRerun must default to off (smart re-runs are the default)');
+  await page3.close();
 
   if (errors.length) fail('browser emitted uncaught page or console errors: ' + JSON.stringify(errors.slice(0, 10)));
 } finally {

@@ -6,14 +6,16 @@ const core = require('../clash-classification-core');
 function clash(id, extra) {
   return Object.assign({
     id, type:'hard', elemAType:'IfcDuctSegment', elemBType:'IfcBeam',
-    disciplines:['MEP','Structural'], point:[0,0,0], elemAStorey:'L1'
+    disciplines:['MEP','Structural'], point:[0,0,0], elemAStorey:'L1', distance:-30
   }, extra || {});
 }
 
 test('classification core is an immutable one-function contract', () => {
-  assert.equal(core.contractVersion, 1);
+  assert.equal(core.contractVersion, 2);
   assert.equal(Object.isFrozen(core), true);
   assert.equal(typeof core.classifyClashes, 'function');
+  assert.equal(typeof core.deterministicSeverity, 'function');
+  assert.equal(typeof core.classifyOpening, 'function');
 });
 
 test('classification mutates the supplied records and returns undefined', () => {
@@ -40,8 +42,10 @@ test('opening/space and extreme size-ratio pairs remain false positives', () => 
 
 test('duplicates and soft-clearance boundary preserve their categories', () => {
   const duplicate = clash('duplicate',{type:'duplicate'});
-  const near = clash('near',{type:'soft',clearanceMm:24});
-  const boundary = clash('boundary',{type:'soft',clearanceMm:25});
+  // Soft severity is the shared deterministic model: gap <= 30% of the
+  // required clearance (50mm default -> 15mm) is a near miss.
+  const near = clash('near',{type:'soft',clearanceMm:15});
+  const boundary = clash('boundary',{type:'soft',clearanceMm:16});
   core.classifyClashes([duplicate,near,boundary]);
   assert.deepEqual([duplicate.aiSeverity,duplicate.aiCategory], ['info','duplicate']);
   assert.deepEqual([near.aiSeverity,near.aiCategory], ['major','clearance']);
@@ -51,8 +55,8 @@ test('duplicates and soft-clearance boundary preserve their categories', () => {
 
 test('structural, cross-discipline and same-discipline hard paths stay distinct', () => {
   const structural = clash('structural');
-  const cross = clash('cross',{disciplines:['MEP','Civil']});
-  const same = clash('same',{disciplines:['MEP','MEP']});
+  const cross = clash('cross',{disciplines:['MEP','Civil'],elemBType:'IfcBuildingElementProxy'});
+  const same = clash('same',{disciplines:['MEP','MEP'],elemBType:'IfcFlowTerminal',distance:-5});
   core.classifyClashes([structural,cross,same]);
   assert.deepEqual([structural.aiSeverity,structural.aiCategory], ['critical','penetration']);
   assert.deepEqual([cross.aiSeverity,cross.aiCategory], ['major','penetration']);
