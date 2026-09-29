@@ -24,7 +24,9 @@ test('all three load triggers (file input, drag-drop, pending-files) route throu
   assert.match(body, /function maybeScopeThenProcess\(files\) \{/);
   // onFiles, the cc-pending-files listener, and onDrop all call the wrapper —
   // none call processFiles(files) directly anymore for user-facing triggers.
-  const wrapperCalls = (body.match(/maybeScopeThenProcess\(/g) || []).length;
+  // The mount-only cc-pending-files listener calls it through maybeScopeRef.current (a ref, so it
+  // never runs a stale mount-time closure) — that counts as a call site.
+  const wrapperCalls = (body.match(/maybeScopeThenProcess\(|maybeScopeRef\.current\(/g) || []).length;
   assert.ok(wrapperCalls >= 4, 'expected the definition plus 3 call sites, got ' + wrapperCalls);
 });
 

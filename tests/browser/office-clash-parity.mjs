@@ -173,9 +173,9 @@ async function runDetectionInPage(page, rulesOverride, disableWasmNarrowPhase) {
         // change-aware equality checks below (ids and timestamps are minted
         // fresh per run, everything else must be reproduced exactly).
         opening: c.opening || null, nameA: c.elemAName, nameB: c.elemBName, severity: c.aiSeverity,
-        roleA: c.roleA, roleB: c.roleB,
+        roleA: c.roleA, roleB: c.roleB, title: c.title, titleAuto: c.titleAuto,
         sig: [pairKey, c.type, c.distance, c.clearanceMm, (c.point || []).map((v) => Math.round(v * 1000)).join(','),
-          c.opening || '', c.aiSeverity, c.aiCategory, c.roleA, c.roleB, c.mergedCount, c.description].join('~'),
+          c.opening || '', c.aiSeverity, c.aiCategory, c.roleA, c.roleB, c.mergedCount, c.description, c.title].join('~'),
       };
     });
   }, { rules: rulesOverride, disableWasm: disableWasmNarrowPhase });
@@ -351,6 +351,21 @@ try {
     if (!rows.length || rows.some((c) => roleOf(c, nm) !== want)) fail('element role of ' + nm + ' should be ' + want + ', got ' + JSON.stringify([...new Set(rows.map((c) => roleOf(c, nm)))]));
   }
   console.log('SEVERITY OK — element roles stamped on clashes (slab/column structural, non-load-bearing facade architectural, duct mep-main)');
+  // Default titles: specific + human (names, opening classification), not the bare type pair.
+  const titleOf = (nmA, nmB) => (openRun.find((c) => pairName(c) === [nmA, nmB].sort().join(' | ')) || {}).title;
+  const expectTitles = [
+    [['Facade West L0', 'Supply duct L0'], 'Supply duct L0 through Facade West L0 — opening too small'],
+    [['Corridor wall L0', 'Supply duct L0'], 'Supply duct L0 through Corridor wall L0 — provided opening'],
+    [['Column 5/3 L0', 'Sprinkler main L0'], 'Sprinkler main L0 crosses Column 5/3 L0'],
+    [['Facade North L0', 'Sprinkler main L0'], 'Sprinkler main L0 crosses Facade North L0'],
+  ];
+  for (const [pair, want] of expectTitles) {
+    const got = titleOf(pair[0], pair[1]);
+    if (got !== want) fail('default title for ' + pair.join(' + ') + ': expected "' + want + '" got "' + got + '"');
+  }
+  const legacyTitled = openRun.filter((c) => / × | vs /.test(c.title || '') || !c.title || c.titleAuto !== c.title);
+  if (legacyTitled.length) fail('clashes still carry a type-pair/legacy title: ' + JSON.stringify(legacyTitled.slice(0, 3).map((c) => c.title)));
+  else console.log('TITLES OK — all ' + openRun.length + ' default titles are specific (names + opening classification), e.g. "' + expectTitles[0][1] + '"');
   const stray = openRun.filter((c) => c.opening && c.opening !== 'provided' && c.opening !== 'partial');
   if (stray.length) fail('unexpected opening status values: ' + JSON.stringify(stray.slice(0, 3)));
   // The un-opened level-1/2 copies of the same walls and ducts must NOT be classified.
