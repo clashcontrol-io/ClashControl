@@ -118,7 +118,18 @@
           aiReason: prev.aiReason,
           _sevSource: prev._sevSource
         } : {};
-        return Object.assign({}, c, sevCarry, {
+        // Titles: an AI title (aiTitle) or a user-edited title belongs to the
+        // clash, not to the run — carry it. A default title (the engine's own
+        // "Supply duct through Wall" text) is regenerated from the fresh run.
+        // options.isDefaultTitle (clash-classification-core) tells them apart;
+        // without it only AI titles are carried.
+        var titleCarry = {};
+        if (prev.aiTitle) {
+          titleCarry = { aiTitle: prev.aiTitle, title: prev.title, aiProvenance: prev.aiProvenance };
+        } else if (typeof options.isDefaultTitle === 'function' && prev.title && !options.isDefaultTitle(prev)) {
+          titleCarry = { title: prev.title };
+        }
+        return Object.assign({}, c, sevCarry, titleCarry, {
           id: prev.id,
           _identityKey: key,
           _delta: 'persisting',

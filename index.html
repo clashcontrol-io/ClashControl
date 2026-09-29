@@ -6119,6 +6119,14 @@ function startApp() {
     var p = el.props || {};
     return core.elementRole(p.ifcType, { loadBearing: core.loadBearingOf(p), discipline: _ccElementDiscipline(el, m && m.discipline) });
   }
+  // Stamps the human default title ("Supply duct L0 through Corridor wall L0 —
+  // opening too small") on a clash unless an AI/user title owns it. Shared
+  // implementation: clash-classification-core.js (also used by the local engine).
+  function _ccApplyDefaultTitle(c) {
+    var core = window._ccClashClassificationCore;
+    if (core && typeof core.applyDefaultTitle === 'function') core.applyDefaultTitle(c);
+    return c;
+  }
   // Results that did not come from the browser engine's clash-object builder
   // (the local engine) get the same role + opening annotations after the fact.
   function _ccAnnotateClashes(clashes, models) {
@@ -6140,6 +6148,9 @@ function startApp() {
         try { st = _ccOpeningStatusForPair(eA, eB, c.type); } catch (e) { st = null; }
         if (st) c.opening = st;
       }
+      // Roles + opening are now known: regenerate the default title so a
+      // local-engine clash is titled exactly like the browser engine's.
+      _ccApplyDefaultTitle(c);
     });
   }
   // ── Provision for void: is a clash's passing element inside a host opening? ──
@@ -7876,15 +7887,25 @@ function startApp() {
     function _bboxMm(sz) {
       return {dx:Math.round(sz.x*1000*10)/10, dy:Math.round(sz.y*1000*10)/10, dz:Math.round(sz.z*1000*10)/10};
     }
+    // Type-label / default-title logic lives in clash-classification-core.js
+    // (shared with addons/local-engine.js so both engines title a pair
+    // identically). The fallbacks only cover the core script failing to load.
     function _niceTypeLabel(t) {
+      var core = window._ccClashClassificationCore;
+      if (core && typeof core.niceTypeLabel === 'function') return core.niceTypeLabel(t);
       if (!t) return 'Element';
       return String(t).replace(/^Ifc/i, '').replace(/([a-z])([A-Z])/g, '$1 $2') || 'Element';
     }
+    // Legacy "Wall × Pipe Segment" — now the secondary line/tooltip, and the
+    // placeholder title until _ccApplyDefaultTitle stamps the specific one.
     function _niceClashTitle(tA, tB, sameModel) {
+      var core = window._ccClashClassificationCore;
+      if (core && typeof core.typePairTitle === 'function') return core.typePairTitle(tA, tB, sameModel);
       var a = _niceTypeLabel(tA), b = _niceTypeLabel(tB);
-      var core = a === b ? (a + ' vs ' + b) : (a + ' × ' + b);
-      return sameModel ? (core + ' (self)') : core;
+      var t = a === b ? (a + ' vs ' + b) : (a + ' × ' + b);
+      return sameModel ? (t + ' (self)') : t;
     }
+
     // Exposed so the clash-list grouping/row UI (window._cc* plumbing, far
     // below in the same startApp closure but nested in a sibling function —
     // see CLAUDE.md globals discipline) can reuse the same IFC-type→human-
@@ -8344,7 +8365,7 @@ function startApp() {
         if (isSoft) b.obj.requiredClearanceMm = Math.round(pairGapM*1000);
         clashes.push(Object.assign(b.obj, {
           type:hardPt?'hard':'soft', distance:dist,
-          title:_niceClashTitle(b.tA, b.tB, sameModel),
+          title:_niceClashTitle(b.tA, b.tB, sameModel), // placeholder: replaced by _ccApplyDefaultTitle right after the push
           description:b.tA+': '+b.nA+' ('+mA.name+') vs '+b.tB+': '+b.nB+' ('+mB.name+')',
           overlapVolM3:ov.vol, clearanceMm:clrMm,
           _trainFV:function(){
@@ -8378,6 +8399,7 @@ function startApp() {
             };
           }()
         }));
+        _ccApplyDefaultTitle(clashes[clashes.length - 1]);
       }
     }
 
@@ -8801,7 +8823,11 @@ function startApp() {
     var deps = {
       computeClashIdentityKey:computeClashIdentityKey,
       computeClashPair:computeClashPair,
-      isDeniedClash:_isDeniedClash
+      isDeniedClash:_isDeniedClash,
+      isDefaultTitle:function(c){
+        var core = window._ccClashClassificationCore;
+        return core && typeof core.isDefaultTitle === 'function' ? core.isDefaultTitle(c) : true;
+      }
     };
     if (now != null) deps.now = now;
     return deps;
@@ -28137,7 +28163,12 @@ function startApp() {
           <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',minWidth:0}}>
             ${isClash && it.number != null && html`<span title=${_cc_t('issueRow.clashNumberTip','Clash number (stable across runs) — copy or share this to identify the clash')}
               style=${{color:'var(--text-faint)',fontSize:'var(--text-2xs)',fontVariantNumeric:'tabular-nums',flexShrink:0}}>#${it.number}</span>`}
-            <span title=${it.title} style=${{color:'var(--text-primary)',fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',flex:1,minWidth:0,lineHeight:'var(--leading-base)'}}>${it.title}</span>
+            <span title=${function(){
+                // Tooltip keeps the type pair ("Wall × Pipe Segment") that used to be the whole title.
+                var _pc = window._ccClashClassificationCore;
+                var _pair = (isClash && _pc && typeof _pc.typePairTitle === 'function' && (it.elemAType || it.elemBType)) ? _pc.typePairTitle(it.elemAType, it.elemBType, !!it.selfClash) : '';
+                return _pair && _pair !== it.title ? (it.title + '\n' + _pair) : it.title;
+              }()} style=${{color:'var(--text-primary)',fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',overflowWrap:'anywhere',flex:1,minWidth:0,lineHeight:'var(--leading-base)'}}>${it.title}</span>
             <span class="cc-status-pill" style=${{background:stEntry.tintBg||(stBg+'22'),color:stEntry.fg||stBg,flexShrink:0}}>${stEntry.label}</span>
             ${isClash && trainingMode && function(){
               var fb=it.aiFeedback;

@@ -743,12 +743,13 @@ clashcontrol-engine --install</pre>
     } else {
       distMm = Math.round(Math.abs(rawDist));
     }
-    // Title: reuse the same "Wall × Pipe Segment" format the browser
-    // engine emits via _niceClashTitle so the clash list looks
-    // identical between backends.
-    function nice(t){ if(!t) return 'Element'; return String(t).replace(/^Ifc/i,'').replace(/([a-z])([A-Z])/g,'$1 $2')||'Element'; }
-    var la = nice(tA), lb = nice(tB);
-    var title = (la === lb ? (la + ' vs ' + lb) : (la + ' × ' + lb)) + (sameModel ? ' (self)' : '');
+    // Title: placeholder type pair ("Wall × Pipe Segment") from the shared
+    // clash-classification-core — the SAME implementation the browser engine
+    // uses — replaced below by the specific default title (element names,
+    // storey, opening). _ccAnnotateClashes regenerates it once roles + opening
+    // status are known, so both engines title a pair identically.
+    var _cls = (typeof window !== 'undefined' && window._ccClashClassificationCore) || null;
+    var title = _cls && _cls.typePairTitle ? _cls.typePairTitle(tA, tB, sameModel) : (tA + ' × ' + tB + (sameModel ? ' (self)' : ''));
     var description = tA + ': ' + nA + ' (' + mA.name + ') vs ' + tB + ': ' + nB + ' (' + mB.name + ')';
     // Classify discipline per ELEMENT (IfcType → STR/ARC/MEP/CIV, model
     // discipline as fallback) exactly like the browser engine does at detection
@@ -760,7 +761,7 @@ clashcontrol-engine --install</pre>
     var _elDisc = (typeof window !== 'undefined' && window._ccElementDiscipline) || null;
     var discA = _elDisc ? _elDisc(elA, mA.discipline) : (mA.discipline || '');
     var discB = _elDisc ? _elDisc(elB, mB.discipline) : (mB.discipline || '');
-    return {
+    var out = {
       id: c.id || ((elA.expressId||elA.id) + '_' + (elB.expressId||elB.id)),
       source: 'local_engine',
       status: 'open',
@@ -786,6 +787,8 @@ clashcontrol-engine --install</pre>
       overlapVolM3: c.volume || 0,
       clearanceMm: (type === 'soft' || type === 'clearance') ? Math.round(Math.abs(rawDist)) : null
     };
+    if (_cls && _cls.applyDefaultTitle) _cls.applyDefaultTitle(out);
+    return out;
   }
 
   // ── Capability gate ────────────────────────────────────────────

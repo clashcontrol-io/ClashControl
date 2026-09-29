@@ -408,8 +408,133 @@
   // provided. none(3) > partial(2) > provided(1).
   function openingVisibility(status) { return status === 'provided' ? 1 : status === 'partial' ? 2 : 3; }
 
+  // ════════════════════════════════════════════════════════════════════
+  // Default clash titles
+  // ════════════════════════════════════════════════════════════════════
+  // ONE implementation for every engine (browser, local engine, BCF export reads
+  // the stored title). Inputs are only fields both engines produce identically:
+  // element names/types/storeys, roles, opening status, clash type, selfClash.
+  // Severity is deliberately NOT a title input: the depth behind it is a
+  // browser-only estimate (the local engine has no _estimatePenetrationDepthM),
+  // so a severity word would make the same pair title differently per engine.
+  // The result is symmetric in A/B (a swapped pair titles identically).
+  //   "Supply duct L0 through Corridor wall L0 — opening too small"
+  //   "Sprinkler main crosses Beam B-12 (L1)"
+  //   "Duct segment too close to Slab"           (no meaningful names, soft)
+  function niceTypeLabel(t) {
+    if (!t) return 'Element';
+    return String(t).replace(/^Ifc/i, '').replace(/([a-z])([A-Z])/g, '$1 $2') || 'Element';
+  }
+  // The pre-2026-09-29 default ("Wall × Pipe Segment"): kept as the secondary
+  // line / tooltip, and to recognise an untouched legacy default title.
+  function typePairTitle(tA, tB, sameModel) {
+    var a = niceTypeLabel(tA), b = niceTypeLabel(tB);
+    var core = a === b ? (a + ' vs ' + b) : (a + ' × ' + b);
+    return sameModel ? (core + ' (self)') : core;
+  }
+  // Same list as addons/data-quality.js GENERIC_RE (asserted equal by a test).
+  var GENERIC_NAME_RE = /^(basic\s+)?(wall|floor|ceiling|roof|column|beam|slab|door|window|generic model|furniture|curtain wall|curtain panel|railing|stair|ramp|mass|component|panel|mullion|structural framing|structural column)(\s+[\d\-]+)?$/i;
+  var GUID_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32}|[0-9A-Za-z_$]{22})$/i;
+  // Returns the (truncated) name when it says something about THIS element,
+  // '' when it is empty, a "#id" fallback, a GUID, a Revit "Family:Type:id"
+  // string, a bare category word ("Basic Wall 3") or just the IFC type.
+  function meaningfulName(name, ifcType) {
+    var n = String(name == null ? '' : name).trim();
+    if (!n) return '';
+    if (/^#?\d+$/.test(n)) return '';
+    if (!/\s/.test(n) && GUID_RE.test(n) && (n.length !== 22 || (/\d/.test(n) && /[A-Z]/.test(n) && /[a-z]/.test(n)))) return '';
+    if (/:\d{4,}$/.test(n)) return '';
+    if (GENERIC_NAME_RE.test(n)) return '';
+    var bare = n.replace(/[\s_\-:.#]*\d+$/, '').replace(/\s+/g, ' ').toLowerCase();
+    var label = niceTypeLabel(ifcType).toLowerCase();
+    if (bare === label || bare === label.replace(/\s+/g, '') || bare === 'ifc' + label.replace(/\s+/g, '')) return '';
+    return n.length > 40 ? n.slice(0, 39).replace(/\s+$/, '') + '…' : n;
+  }
+  // "Level 1" / "L1" / "01 - Level 1" -> "L1"; other storeys keep their own
+  // (short) name; '' when unknown.
+  function storeyShort(storey) {
+    var s = String(storey == null ? '' : storey).trim();
+    if (!s) return '';
+    var m = s.match(/(?:\blevel|\blvl|\bfloor|\bstorey|\bstory|\bverdieping|\bniveau|\bl)\s*[_:]?\s*(-?\d+)\b/i);
+    if (m) return 'L' + m[1];
+    return s.length > 14 ? s.slice(0, 13) + '…' : s;
+  }
+  function _isMepRole(r) { return r === 'mep-main' || r === 'mep-terminal'; }
+  function _titleSide(c, side) {
+    var A = side === 'A';
+    var type = A ? c.elemAType : c.elemBType;
+    var role = _clashRole(c, side);
+    var name = meaningfulName(A ? c.elemAName : c.elemBName, type);
+    return {
+      text: name || niceTypeLabel(type),
+      role: role,
+      mep: _isMepRole(role),
+      storey: storeyShort(A ? c.elemAStorey : c.elemBStorey)
+    };
+  }
+  function clashTitle(c) {
+    if (!c) return 'Clash';
+    var a = _titleSide(c, 'A'), b = _titleSide(c, 'B');
+    var verb;
+    var opening = (c.type === 'hard' || c.type === 'soft') ? c.opening : null;
+    // The MEP element is the passing one; otherwise order alphabetically so
+    // the title does not depend on which engine called a given side "A".
+    var first = a, second = b;
+    if (a.mep !== b.mep) { if (b.mep) { first = b; second = a; } }
+    else if (b.text.toLowerCase() < a.text.toLowerCase()) { first = b; second = a; }
+    var directed = a.mep !== b.mep;
+    if (c.type === 'duplicate') verb = 'duplicates';
+    else if (opening === 'partial') verb = directed ? 'through' : 'in';
+    else if (opening === 'provided') verb = directed ? 'through' : 'in';
+    else if (c.type === 'soft') verb = 'too close to';
+    else verb = directed ? 'crosses' : 'clashes with';
+    var title = first.text + ' ' + verb + ' ' + second.text;
+    if (opening === 'partial') title += ' — opening too small';
+    else if (opening === 'provided') title += ' — provided opening';
+    // Storey: only when it adds information — i.e. neither name already carries
+    // a level ("Supply duct L0"). One label when both share it, "L0 / L1" when
+    // the two elements sit on different storeys.
+    var s1 = first.storey, s2 = second.storey, tag = '';
+    var lower = (first.text + ' ' + second.text).toLowerCase();
+    function known(s) { return !!s && lower.indexOf(s.toLowerCase()) !== -1; }
+    if (!known(s1) && !known(s2)) tag = (s1 && s2 && s1 !== s2) ? (s1 + ' / ' + s2) : (s1 || s2);
+    if (tag) title += ' (' + tag + ')';
+    if (c.selfClash) title += ' (self)';
+    return title;
+  }
+  // A title is "default" (safe to regenerate) when it is empty, equals the
+  // stored auto title, or is the untouched legacy type-pair form. AI titles
+  // (aiTitle) and user edits are therefore never overwritten.
+  function isDefaultTitle(c) {
+    if (!c) return true;
+    if (c.aiTitle) return false;
+    var t = c.title;
+    if (!t) return true;
+    if (c.titleAuto != null && t === c.titleAuto) return true;
+    if (c.elemAType != null || c.elemBType != null) {
+      if (t === typePairTitle(c.elemAType, c.elemBType, !!c.selfClash)) return true;
+      if (t === typePairTitle(c.elemBType, c.elemAType, !!c.selfClash)) return true;
+    }
+    return false;
+  }
+  // Stamp the default title (+ titleAuto) unless the title is AI/user owned.
+  function applyDefaultTitle(c) {
+    if (!c || !isDefaultTitle(c)) return c;
+    var t = clashTitle(c);
+    c.title = t; c.titleAuto = t;
+    return c;
+  }
+
   return Object.freeze({
     contractVersion: 2,
+    niceTypeLabel: niceTypeLabel,
+    typePairTitle: typePairTitle,
+    meaningfulName: meaningfulName,
+    storeyShort: storeyShort,
+    clashTitle: clashTitle,
+    isDefaultTitle: isDefaultTitle,
+    applyDefaultTitle: applyDefaultTitle,
+    GENERIC_NAME_RE: GENERIC_NAME_RE,
     classifyClashes: classifyClashes,
     elementRole: elementRole,
     roleCriticality: roleCriticality,
