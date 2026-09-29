@@ -22307,12 +22307,12 @@ function startApp() {
       </div>
       ${!collapsed && html`<div style=${{marginTop:'.35rem'}}>
         <div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap',alignItems:'center',marginBottom:'.25rem'}}>
-          ${SEV_CHIP('critical', counts.critical, '#7f1d1d', '#fca5a5')}
-          ${SEV_CHIP('major', counts.major, '#78350f', '#fcd34d')}
+          ${SEV_CHIP('critical', counts.critical, 'var(--color-danger-bg)', 'var(--color-danger-fg)')}
+          ${SEV_CHIP('major', counts.major, 'var(--color-warning-bg)', 'var(--color-warning-fg)')}
           ${SEV_CHIP('minor', counts.minor, 'var(--accent-bg)', 'var(--accent-subtle)')}
-          ${SEV_CHIP('likely false positive', counts.info, '#1e293b', '#94a3b8')}
+          ${SEV_CHIP('likely false positive', counts.info, 'var(--bg-tertiary)', 'var(--text-muted)')}
         </div>
-        ${bigClusterSize >= 3 && html`<p style=${{fontSize:'0.69rem',color:'#fbbf24',margin:'.15rem 0',lineHeight:1.3}}>⚠ ${bigClusterSize} clustered clashes${bigCluster.storey ? ' on '+bigCluster.storey : ''} (${bigCluster.typePair})</p>`}
+        ${bigClusterSize >= 3 && html`<p style=${{fontSize:'0.69rem',color:'var(--color-warning-fg)',margin:'.15rem 0',lineHeight:1.3}}>⚠ ${bigClusterSize} clustered clashes${bigCluster.storey ? ' on '+bigCluster.storey : ''} (${bigCluster.typePair})</p>`}
         ${worstCount >= 2 && html`<p style=${{fontSize:'0.69rem',color:'var(--accent)',margin:'.15rem 0',lineHeight:1.3}}>→ Recommend reviewing ${worstStorey} first (${worstCount} critical/major)</p>`}
       </div>`}
     </div>`;
@@ -22415,10 +22415,10 @@ function startApp() {
            Total/Open/Resolved now live in the summary line above) -->
       <div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap',alignItems:'center'}}>
         ${isClash && hard > 0 && html`<span style=${{width:1,height:12,background:'var(--border)',margin:'0 .1rem'}}></span>`}
-        ${isClash && hard > 0 && CHIP('Hard', hard, '#7f1d1d', '#fca5a5')}
-        ${isClash && soft > 0 && CHIP('Soft', soft, '#78350f', '#fcd34d')}
+        ${isClash && hard > 0 && CHIP('Hard', hard, 'var(--color-danger-bg)', 'var(--color-danger-fg)')}
+        ${isClash && soft > 0 && CHIP('Soft', soft, 'var(--color-warning-bg)', 'var(--color-warning-fg)')}
         ${isClash && dup > 0 && CHIP('Dup', dup, 'var(--bg-tertiary)', 'var(--text-muted)')}
-        ${isClash && vis > 0 && CHIP('Vis', vis, '#1e3a8a', '#93c5fd')}
+        ${isClash && vis > 0 && CHIP('Vis', vis, 'var(--color-info-bg)', 'var(--color-info-fg)')}
         ${isClash && untitled > 0 && html`<button onClick=${function(){
           if (titlesBusy || !window._ccGenerateAITitles) return;
           setTitlesBusy(true);
@@ -22451,8 +22451,8 @@ function startApp() {
         <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',flexShrink:0}}>This run:</span>
         ${delta.newCount > 0 && CHIP('New', delta.newCount, 'var(--accent-bg)', 'var(--accent)')}
         ${delta.persisting > 0 && CHIP('Unchanged', delta.persisting, 'var(--tag-bg)', 'var(--text-secondary)')}
-        ${delta.autoResolved > 0 && CHIP('Auto-res', delta.autoResolved, '#0f172a', '#64748b')}
-        ${delta.autoResolvedTruncated > 0 && CHIP('Capped', delta.autoResolvedTruncated, '#78350f', '#fcd34d')}
+        ${delta.autoResolved > 0 && CHIP('Auto-res', delta.autoResolved, 'var(--bg-tertiary)', 'var(--text-muted)')}
+        ${delta.autoResolvedTruncated > 0 && CHIP('Capped', delta.autoResolvedTruncated, 'var(--color-warning-bg)', 'var(--color-warning-fg)')}
         <${_RunTrendSparkline} history=${props.history}/>
       </div>`}
     </div>`;
@@ -23757,7 +23757,7 @@ function startApp() {
       ${isClashTab && providedCount > 0 && html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-tertiary)',fontSize:'0.68rem',color:'var(--text-muted)'}}>
         <span style=${{flex:1}}>${providedCount} ${_cc_t('opening.passThrough','pass through provided openings')} —</span>
         <button onClick=${function(){d({t:A.UPD_FILTERS,u:{showProvided:!f.showProvided}})}}
-          style=${{...S_BTN,padding:'.1rem .4rem',fontSize:'0.68rem',color:'var(--accent)',background:'none',border:'none',textDecoration:'underline',cursor:'pointer'}}>${f.showProvided ? _cc_t('opening.hide','hide') : _cc_t('opening.show','show')}</button>
+          style=${{...S_BTN,padding:'.1rem .4rem',fontSize:'0.68rem',color:'var(--accent-hover)',background:'none',border:'none',textDecoration:'underline',cursor:'pointer'}}>${f.showProvided ? _cc_t('opening.hide','hide') : _cc_t('opening.show','show')}</button>
       </div>`}
       ${isClashTab && rawItems.length > 0 && rawItems.some(function(c){return c.aiSeverity;}) && html`<${ClashAISummary} items=${rawItems} />`}
       ${!isExplorerTab && !isStandardsTab && rawItems.length > 0 && html`<${ClashStatsBar} items=${rawItems} isClash=${isClashTab} delta=${isClashTab ? s.lastDeltaSummary : null} history=${isClashTab ? (s.runHistory||null) : null}
@@ -25442,8 +25442,8 @@ function startApp() {
             ${(s.models||[]).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}</option>`})}
           </select>
           ${qc && html`<span style=${{fontSize:'0.63rem',padding:'2px 6px',borderRadius:99,
-            background:totalIssues+totalBim+totalIls===0?'#052e16':'#78350f',
-            color:totalIssues+totalBim+totalIls===0?'#4ade80':'#fcd34d',fontWeight:600,flexShrink:0}}>
+            background:totalIssues+totalBim+totalIls===0?'var(--color-success-bg)':'var(--color-warning-bg)',
+            color:totalIssues+totalBim+totalIls===0?'var(--color-success-fg)':'var(--color-warning-fg)',fontWeight:600,flexShrink:0}}>
             ${totalIssues+totalBim+totalIls===0?_cc_t('dq.allPassed','All passed'):_cc_t('dq.issuesCount','{n} issues',{n:totalIssues+totalBim+totalIls})}
           </span>`}
           <button onClick=${runChecks} disabled=${isRunning || !hasModels}
@@ -25562,13 +25562,14 @@ function startApp() {
                   if (items.length === 0) return null;
                   var totalN = 0; ['Compliant','Minor issues','Major issues'].forEach(function(k){totalN+=(ils._compDist[k]||[]).length;});
                   var pct = totalN > 0 ? Math.round(items.length / totalN * 100) : 0;
-                  var compColor = val==='Compliant'?'#4ade80':val==='Minor issues'?'#fbbf24':'#ef4444';
+                  var compColor = val==='Compliant'?'var(--color-success)':val==='Minor issues'?'var(--color-warning)':'var(--color-danger)';
+                  var compFg = val==='Compliant'?'var(--color-success-fg)':val==='Minor issues'?'var(--color-warning-fg)':'var(--color-danger-fg)';
                   return html`<div key=${val}
                     onClick=${function(){highlightILSDistGroup('compliance', val);}}
                     style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.25rem 0',cursor:'pointer',borderBottom:'1px solid var(--border-subtle)'}}>
                     <span style=${{width:8,height:8,borderRadius:'50%',background:compColor,flexShrink:0}}></span>
                     <span style=${{fontSize:'0.66rem',color:'var(--text-secondary)',flex:1}}>${val}</span>
-                    <span style=${{fontSize:'0.63rem',fontWeight:600,color:compColor}}>${items.length}</span>
+                    <span style=${{fontSize:'0.63rem',fontWeight:600,color:compFg}}>${items.length}</span>
                     <div style=${{width:50,height:5,background:'var(--bg-secondary)',borderRadius:2,overflow:'hidden',flexShrink:0}}>
                       <div style=${{width:pct+'%',height:'100%',background:compColor,borderRadius:2}}></div>
                     </div>
@@ -25795,10 +25796,10 @@ function startApp() {
           return html`<div key=${sn} style=${{marginBottom: '.2rem'}}>
             <div style=${{display: 'flex', justifyContent: 'space-between', fontSize: '0.63rem'}}>
               <span style=${{color: 'var(--text-secondary)'}}>${sn}</span>
-              <span style=${{color: pct >= 80 ? '#4ade80' : pct >= 50 ? '#fbbf24' : '#f87171'}}>${pct}%</span>
+              <span style=${{color: pct >= 80 ? 'var(--color-success-fg)' : pct >= 50 ? 'var(--color-warning-fg)' : 'var(--color-danger-fg)'}}>${pct}%</span>
             </div>
             <div style=${{height: 3, background: 'var(--bg-primary)', borderRadius: 2, overflow: 'hidden'}}>
-              <div style=${{height: '100%', width: pct + '%', background: pct >= 80 ? '#4ade80' : pct >= 50 ? '#fbbf24' : '#f87171', borderRadius: 2}}></div>
+              <div style=${{height: '100%', width: pct + '%', background: pct >= 80 ? 'var(--color-success)' : pct >= 50 ? 'var(--color-warning)' : 'var(--color-danger)', borderRadius: 2}}></div>
             </div>
             ${(ss.note || ss.unchecked > 0) && html`<div style=${{fontSize: '0.57rem', color: 'var(--text-faint)', marginTop: 1}}>
               ${ss.note}${ss.unchecked > 0 ? ((ss.note ? ' · ' : '') + _cc_t('ids.partiallyChecked','{n} element{s} partially checked',{n:ss.unchecked,s:ss.unchecked !== 1 ? 's' : ''})) : ''}
@@ -25834,8 +25835,8 @@ function startApp() {
             var count = f === 'all' ? ids.results.length : ids.results.filter(function(r) { return r.severity === f; }).length;
             return html`<button key=${f} onClick=${function() { setViewFilter(f); }}
               style=${{...S_BTN, fontSize: '0.63rem', padding: '.1rem .3rem',
-                background: viewFilter === f ? (f === 'error' ? '#7f1d1d' : f === 'warning' ? '#78350f' : 'var(--accent-bg)') : 'var(--bg-primary)',
-                color: viewFilter === f ? '#fff' : 'var(--text-faint)'}}>${f === 'all' ? _cc_t('common.all','All') : (_cc_t('ids.severity.'+f, f.charAt(0).toUpperCase() + f.slice(1)))} (${count})</button>`;
+                background: viewFilter === f ? (f === 'error' ? 'var(--color-danger-bg)' : f === 'warning' ? 'var(--color-warning-bg)' : 'var(--accent-bg)') : 'var(--bg-primary)',
+                color: viewFilter === f ? (f === 'error' ? 'var(--color-danger-fg)' : f === 'warning' ? 'var(--color-warning-fg)' : 'var(--accent)') : 'var(--text-faint)'}}>${f === 'all' ? _cc_t('common.all','All') : (_cc_t('ids.severity.'+f, f.charAt(0).toUpperCase() + f.slice(1)))} (${count})</button>`;
           })}
         </div>
         <div style=${{maxHeight: '300px', overflowY: 'auto'}}>
@@ -25853,7 +25854,7 @@ function startApp() {
                 background: isSel ? 'var(--accent-bg-deep)' : 'transparent',
                 borderLeft: isSel ? '2px solid var(--accent)' : '2px solid transparent'}}>
               <span style=${{flexShrink: 0, width: 6, height: 6, borderRadius: '50%',
-                background: r.severity === 'error' ? '#ef4444' : r.severity === 'warning' ? '#f59e0b' : '#60a5fa'}}></span>
+                background: r.severity === 'error' ? 'var(--color-danger)' : r.severity === 'warning' ? 'var(--color-warning)' : 'var(--color-info)'}}></span>
               <span style=${{color: 'var(--text-muted)', flexShrink: 0}}>${r.ifcType}</span>
               <span style=${{color: 'var(--text-secondary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>${r.elementName}</span>
               <span style=${{color: 'var(--text-faint)', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 80}}>${r.ruleDesc}</span>
@@ -26004,7 +26005,7 @@ function startApp() {
           ↑ ${_cc_t('standards.importRules','Import rules')}
         </button>
       </div>
-      ${importErrMsg && html`<div style=${{fontSize:'0.63rem',color:'#fca5a5',marginBottom:'.5rem',padding:'.25rem .4rem',background:'rgba(239,68,68,.08)',borderRadius:4}}>${importErrMsg}</div>`}
+      ${importErrMsg && html`<div style=${{fontSize:'0.63rem',color:'var(--color-danger-fg)',marginBottom:'.5rem',padding:'.25rem .4rem',background:'var(--color-danger-bg)',borderRadius:4}}>${importErrMsg}</div>`}
 
       <div style=${{marginBottom:'.8rem'}}>
         <span style=${LS}>${_cc_t('standards.defaultClearance','Default minimum clearance (mm)')}</span>
@@ -26042,8 +26043,8 @@ function startApp() {
 
       ${data.typeRules.map(function(r,i){
         var dup=isTypeDuplicate(i);
-        return html`<div key=${'t'+i} style=${{padding:'.4rem',background:dup?'rgba(239,68,68,.08)':'var(--bg-secondary)',borderRadius:6,marginBottom:'.35rem',border:dup?'1px solid #ef444466':'1px solid var(--border-subtle)'}}>
-          ${dup && html`<div style=${{fontSize:'0.57rem',color:'#fca5a5',marginBottom:'.2rem',fontWeight:600}}>${_cc_t('standards.duplicatePair','⚠ Duplicate pair — overridden by earlier rule')}</div>`}
+        return html`<div key=${'t'+i} style=${{padding:'.4rem',background:dup?'var(--color-danger-bg)':'var(--bg-secondary)',borderRadius:6,marginBottom:'.35rem',border:dup?'1px solid var(--color-danger-border)':'1px solid var(--border-subtle)'}}>
+          ${dup && html`<div style=${{fontSize:'0.57rem',color:'var(--color-danger-fg)',marginBottom:'.2rem',fontWeight:600}}>${_cc_t('standards.duplicatePair','⚠ Duplicate pair — overridden by earlier rule')}</div>`}
           <div style=${{display:'flex',gap:'.3rem',alignItems:'center',marginBottom:'.25rem'}}>
             <input type="text" list="cc-ifc-types" placeholder=${_cc_t('standards.ifcTypeAPlaceholder','IFC Type A (e.g. IfcPipe)')} value=${r.ifc_type_a||''}
               onInput=${function(e){updTypeRow(i,'ifc_type_a',e.target.value);}}
@@ -26053,7 +26054,7 @@ function startApp() {
               onInput=${function(e){updTypeRow(i,'ifc_type_b',e.target.value);}}
               style=${Object.assign({},rowInputStyle,{flex:1})} />
             <button onClick=${function(){delTypeRow(i);}} title=${_cc_t('standards.removeRule','Remove rule')}
-              style=${{background:'none',border:'none',color:'#f87171',cursor:'pointer',fontSize:'0.86rem',padding:'0 .2rem',lineHeight:1}}>×</button>
+              style=${{background:'none',border:'none',color:'var(--color-danger-fg)',cursor:'pointer',fontSize:'0.86rem',padding:'0 .2rem',lineHeight:1}}>×</button>
           </div>
           <div style=${{display:'flex',gap:'.4rem',alignItems:'center'}}>
             <div style=${{flex:1}}>
@@ -26090,8 +26091,8 @@ function startApp() {
 
       ${data.rules.map(function(r,i){
         var dup=isDuplicate(i);
-        return html`<div key=${'d'+i} style=${{padding:'.4rem',background:dup?'rgba(239,68,68,.08)':'var(--bg-secondary)',borderRadius:6,marginBottom:'.35rem',border:dup?'1px solid #ef444466':'1px solid var(--border-subtle)'}}>
-          ${dup && html`<div style=${{fontSize:'0.57rem',color:'#fca5a5',marginBottom:'.2rem',fontWeight:600}}>⚠ Duplicate pair — overridden by earlier rule</div>`}
+        return html`<div key=${'d'+i} style=${{padding:'.4rem',background:dup?'var(--color-danger-bg)':'var(--bg-secondary)',borderRadius:6,marginBottom:'.35rem',border:dup?'1px solid var(--color-danger-border)':'1px solid var(--border-subtle)'}}>
+          ${dup && html`<div style=${{fontSize:'0.57rem',color:'var(--color-danger-fg)',marginBottom:'.2rem',fontWeight:600}}>⚠ Duplicate pair — overridden by earlier rule</div>`}
           <div style=${{display:'flex',gap:'.3rem',alignItems:'center',marginBottom:'.25rem'}}>
             <select value=${r.discipline_a} onChange=${function(e){updRow(i,'discipline_a',e.target.value);}}
               style=${selStyle}>
@@ -26105,7 +26106,7 @@ function startApp() {
               ${STANDARD_DISCIPLINES.map(function(dd){return html`<option key=${dd} value=${dd}>${dd.charAt(0).toUpperCase()+dd.slice(1)}</option>`})}
             </select>
             <button onClick=${function(){delRow(i);}} title=${_cc_t('standards.removeRule','Remove rule')}
-              style=${{background:'none',border:'none',color:'#f87171',cursor:'pointer',fontSize:'0.86rem',padding:'0 .2rem',lineHeight:1}}>×</button>
+              style=${{background:'none',border:'none',color:'var(--color-danger-fg)',cursor:'pointer',fontSize:'0.86rem',padding:'0 .2rem',lineHeight:1}}>×</button>
           </div>
           <div style=${{display:'flex',gap:'.4rem',alignItems:'center'}}>
             <div style=${{flex:1}}>
@@ -26158,7 +26159,7 @@ function startApp() {
                   ${DISC.map(function(dd){return html`<option key=${dd.id} value=${dd.id}>${dd.label}</option>`})}
                 </select>
                 <button onClick=${function(){d({t:'DEL_ASSIGN_RULE',id:r.id});}} title=${_cc_t('rules.removeRule','Remove rule')}
-                  style=${{background:'none',border:'none',color:'#f87171',cursor:'pointer',fontSize:'0.86rem',padding:'0 .2rem',lineHeight:1}}>×</button>
+                  style=${{background:'none',border:'none',color:'var(--color-danger-fg)',cursor:'pointer',fontSize:'0.86rem',padding:'0 .2rem',lineHeight:1}}>×</button>
               </div>
               <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
                 <select value=${r.storey||'any'} onChange=${function(e){d({t:'UPD_ASSIGN_RULE',id:r.id,u:{storey:e.target.value}});}} style=${selStyle} title=${_cc_t('rules.storey','Storey')}>
@@ -26345,7 +26346,7 @@ function startApp() {
         <span style=${{...LS,fontWeight:700,color:'var(--color-danger-fg)'}}>B</span>
       </div>
       ${rows.map(function(r,idx){
-        var VS={fontSize:'0.63rem',color:r.same?'var(--text-primary)':'#fbbf24',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'};
+        var VS={fontSize:'0.63rem',color:r.same?'var(--text-primary)':'var(--color-warning-fg)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'};
         return html`<div key=${idx} style=${{...GRID,background:r.same?'none':'rgba(245,158,11,.08)'}}>
           <span style=${LS} title=${r.label}>${r.label}</span>
           <span style=${VS} title=${r.a||''}>${r.a==null?'—':r.a}</span>
@@ -26404,20 +26405,20 @@ function startApp() {
             background:'var(--color-info-bg)',color:'var(--color-info-fg)',
             padding:'.1rem .4rem',borderRadius:'var(--radius-pill)',
             fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',fontVariantNumeric:'tabular-nums'}}>#${it.number}</span>`}
-        ${!isSingle && html`${_idChip('A', it.revitIdA != null ? it.revitIdA : (pA && pA.revitId), it.elemA, 'var(--accent-subtle)')}${_idChip('B', it.revitIdB != null ? it.revitIdB : (pB && pB.revitId), it.elemB, '#fca5a5')}`}
+        ${!isSingle && html`${_idChip('A', it.revitIdA != null ? it.revitIdA : (pA && pA.revitId), it.elemA, 'var(--accent-subtle)')}${_idChip('B', it.revitIdB != null ? it.revitIdB : (pB && pB.revitId), it.elemB, 'var(--color-danger-fg)')}`}
         ${isSingle && _idChip('EL', pEl && pEl.revitId, it.elementId, 'var(--accent-subtle)')}
       </div>`}
       <div style=${{display:'flex',gap:'.2rem',marginBottom:'.2rem'}}>
         ${isSingle ? html`
           <button onClick=${function(){var mid=it.modelId||it.modelAId; if(_fitToElement&&it.elementId)_fitToElement(it.elementId,null,mid); if(_highlightById&&it.elementId)_highlightById(it.elementId,true,mid);}}
-            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'#0f3a5f',color:'var(--accent-subtle)',flex:1}}>${_cc_t('clashProps.zoom','Zoom')}</button>
+            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--accent-bg)',color:'var(--accent-subtle)',flex:1}}>${_cc_t('clashProps.zoom','Zoom')}</button>
           <button onClick=${function(){var mid=it.modelId||it.modelAId; if(_fitToElement&&it.elementId)_fitToElement(it.elementId,null,mid); if(_highlightById&&it.elementId)_highlightById(it.elementId,false,mid); _sboxAroundElements&&_sboxAroundElements([{modelId:mid,expressId:it.elementId}]);}}
             style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--accent-bg-deep)',color:'var(--accent)',flex:1}} title=${_cc_t('clashProps.sectionBoxElementTip','Section box around element')}>${_cc_t('clashProps.box','Box')}</button>
         ` : html`
           <button onClick=${function(){_zoomToggle(it.elemA,'A');}}
-            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='A'?'#1e40af':'#0f3a5f',color:'var(--accent-subtle)',flex:1}}>${zoomedTo==='A'?_cc_t('clashProps.zoomBoth','Zoom Both'):_cc_t('clashProps.zoomA','Zoom A')}</button>
+            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='A'?'var(--accent-bg-deep)':'var(--accent-bg)',color:'var(--accent-subtle)',flex:1}}>${zoomedTo==='A'?_cc_t('clashProps.zoomBoth','Zoom Both'):_cc_t('clashProps.zoomA','Zoom A')}</button>
           <button onClick=${function(){_zoomToggle(it.elemB,'B');}}
-            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='B'?'#1e40af':'#0f3a5f',color:'var(--accent-subtle)',flex:1}}>${zoomedTo==='B'?_cc_t('clashProps.zoomBoth','Zoom Both'):_cc_t('clashProps.zoomB','Zoom B')}</button>
+            style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:zoomedTo==='B'?'var(--accent-bg-deep)':'var(--accent-bg)',color:'var(--accent-subtle)',flex:1}}>${zoomedTo==='B'?_cc_t('clashProps.zoomBoth','Zoom Both'):_cc_t('clashProps.zoomB','Zoom B')}</button>
           <button onClick=${function(){var refs=_itemRefs(it); if(_fitToElement&&it.elemA)_fitToElement(it.elemA,null,it.modelAId); if(refs.length&&_highlightRefs)_highlightRefs(refs,false); _sboxAroundElements&&_sboxAroundElements(refs);}}
             style=${{...S_BTN,fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--accent-bg-deep)',color:'var(--accent)',flex:1}} title=${_cc_t('clashProps.sectionBoxBothTip','Section box around both elements')}>${_cc_t('clashProps.box','Box')}</button>
         `}
@@ -27582,7 +27583,7 @@ function startApp() {
     // Severity → semantic color token. Maps to --color-danger/warning/info/text-muted.
     // 'duplicate' is purple (no token exists) — matches the existing inline-statusColors palette below for visual continuity.
     var SEV_COLOR = {critical:'var(--color-danger)',major:'var(--color-warning)',hard:'var(--color-danger)',soft:'var(--color-warning)',minor:'var(--text-muted)',duplicate:'#8558ec',info:'var(--text-faint)'};
-    var statusColors = {open:'#ef4444',in_progress:'#f59e0b',resolved:'#22c55e',closed:'#64748b',hard:'#ef4444',soft:'#f59e0b',duplicate:'#8b5cf6'};
+    var statusColors = {open:'var(--color-danger)',in_progress:'var(--color-warning)',resolved:'var(--color-success)',closed:'var(--text-muted)',hard:'var(--color-danger)',soft:'var(--color-warning)',duplicate:'#8b5cf6'};
     var modelById = {}; (models||[]).forEach(function(m){modelById[m.id]=m;});
     function isClusterGroup(g) { return !!(isClash && window._ccClusterDisplay && window._ccClusterDisplay[g.label]); }
 
@@ -27820,7 +27821,7 @@ function startApp() {
           var isCreated = entry.type === 'issue_created' || entry.type === 'detection_run';
           return html`<div key=${entry.id} style=${{display:'flex',gap:'.3rem',padding:'.15rem 0',borderBottom:'1px solid var(--border-subtle)',alignItems:'flex-start',fontSize:'0.6rem'}}>
             <span style=${{color:'var(--text-faint)',whiteSpace:'nowrap',flexShrink:0,minWidth:50}}>${fmtTime(entry.ts)}</span>
-            <span style=${{color:'#60a5fa',fontWeight:600,flexShrink:0,minWidth:55}}>${entry.user || _cc_t('history.anonymous','anonymous')}</span>
+            <span style=${{color:'var(--color-info-fg)',fontWeight:600,flexShrink:0,minWidth:55}}>${entry.user || _cc_t('history.anonymous','anonymous')}</span>
             ${isCreated ? html`<span style=${{color:'var(--text-secondary)'}}>${entry.type === 'detection_run' ? _cc_t('history.ranDetection','Ran detection') : _cc_t('history.createdIssue','Created issue')}</span>`
             : html`<span style=${{color:'var(--text-secondary)'}}>
               ${label}: <span style=${{color:'var(--text-faint)',textDecoration:'line-through'}}>${fmtVal(entry.prev)}</span>
@@ -27860,15 +27861,15 @@ function startApp() {
             d({t:A.UPD_CLASH,id:it.id,u:{userToleranceMm:v===''?null:v}});
           }}
           style=${{fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:3,color:'var(--text-primary)',width:'5rem'}} />
-        <label style=${{display:'flex',alignItems:'center',gap:'.15rem',fontSize:'0.57rem',color:isExpected?'#f59e0b':'var(--text-faint)',cursor:'pointer',whiteSpace:'nowrap',marginLeft:'.2rem'}}>
+        <label style=${{display:'flex',alignItems:'center',gap:'.15rem',fontSize:'0.57rem',color:isExpected?'var(--color-warning-fg)':'var(--text-faint)',cursor:'pointer',whiteSpace:'nowrap',marginLeft:'.2rem'}}>
           <input type="checkbox" checked=${isExpected}
             onClick=${function(e){e.stopPropagation();}}
             onChange=${function(e){d({t:A.UPD_CLASH,id:it.id,u:{expectedClash:e.target.checked}});}}
-            style=${{accentColor:'#f59e0b'}} />
+            style=${{accentColor:'var(--color-warning)'}} />
           ${_cc_t('tolEditor.expectedClash','Expected clash')}
         </label>
       </div>
-      ${changed && tolState.promptAction!=='dismissed' && html`<div style=${{fontSize:'0.57rem',color:'var(--accent-subtle)',background:'#0f172a',padding:'.25rem .4rem',borderRadius:4,marginBottom:'.2rem',display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
+      ${changed && tolState.promptAction!=='dismissed' && html`<div style=${{fontSize:'0.57rem',color:'var(--accent-subtle)',background:'var(--accent-bg)',padding:'.25rem .4rem',borderRadius:4,marginBottom:'.2rem',display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
         <span>${_cc_t(standardVal!=null?'tolEditor.updateStandard':'tolEditor.addStandard',(standardVal!=null?'Update':'Add')+' standard for {pair} to {val}mm?',{pair:typeA&&typeB?typeA+' vs '+typeB:discA+' vs '+discB,val:curVal})}</span>
         <button onClick=${function(e){e.stopPropagation();
           if(typeA&&typeB){
@@ -27888,7 +27889,7 @@ function startApp() {
         <button onClick=${function(e){e.stopPropagation();setTolState(function(p){return Object.assign({},p,{promptAction:'dismissed'});});}}
           style=${{fontSize:'0.57rem',padding:'.1rem .3rem',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:3,cursor:'pointer'}}>${_cc_t('tolEditor.keepLocal','Keep local')}</button>
       </div>`}
-      ${tolState.promptAction==='updated' && html`<div style=${{fontSize:'0.57rem',color:'#4ade80',marginBottom:'.2rem'}}>${_cc_t('tolEditor.standardUpdated','Standard updated.')}</div>`}
+      ${tolState.promptAction==='updated' && html`<div style=${{fontSize:'0.57rem',color:'var(--color-success-fg)',marginBottom:'.2rem'}}>${_cc_t('tolEditor.standardUpdated','Standard updated.')}</div>`}
     </div>`;
   }
 
@@ -28092,8 +28093,8 @@ function startApp() {
               var fb=it.aiFeedback;
               return html`<span style=${{display:'inline-flex',alignItems:'center',gap:'2px',flexShrink:0}}>
                 ${fb && html`<span style=${{fontSize:'var(--text-xs)',padding:'.02rem .2rem',borderRadius:3,lineHeight:1,fontWeight:700,
-                  background:fb==='real_clash'?'#166534':fb==='acceptable'?'var(--accent-bg)':'#7f1d1d',
-                  color:fb==='real_clash'?'#4ade80':fb==='acceptable'?'var(--accent-subtle)':'#fca5a5'}}>${fb==='real_clash'?'+':fb==='acceptable'?'-':'×'}</span>`}
+                  background:fb==='real_clash'?'var(--color-success-bg)':fb==='acceptable'?'var(--accent-bg)':'var(--color-danger-bg)',
+                  color:fb==='real_clash'?'var(--color-success-fg)':fb==='acceptable'?'var(--accent-subtle)':'var(--color-danger-fg)'}}>${fb==='real_clash'?'+':fb==='acceptable'?'-':'×'}</span>`}
                 ${!active && html`<button onClick=${function(e){e.stopPropagation();d({t:A.ACTIVE,id:it.id});}}
                   title=${_cc_t('issueRow.expandTrainingFeedback','Expand training feedback')} style=${{background:'transparent',color:'var(--accent)',border:'none',cursor:'pointer',fontSize:'0.69rem',padding:'1px 4px',borderRadius:'var(--radius-xs)',lineHeight:1}}>▼</button>`}
               </span>`;
@@ -28219,9 +28220,9 @@ function startApp() {
           var curRes=it.aiResolution||[]; if(typeof curRes==='string') curRes=curRes?[curRes]:[];
           var RES_LABELS={move_a:_cc_t('issueRow.res.moveA','Move A'),move_b:_cc_t('issueRow.res.moveB','Move B'),redesign:_cc_t('issueRow.res.redesign','Redesign'),accept:_cc_t('issueRow.res.accept','Accept')};
           var VERDICT_LABELS={real_clash:_cc_t('issueRow.verdict.realClash','Real clash'),acceptable:_cc_t('issueRow.verdict.acceptable','Acceptable'),false_positive:_cc_t('issueRow.verdict.falsePositive','False positive')};
-          var VERDICTS=[{k:'real_clash',l:_cc_t('issueRow.verdict.realClash','Real clash'),bg:'#166534',col:'#4ade80',brd:'#22c55e44'},
+          var VERDICTS=[{k:'real_clash',l:_cc_t('issueRow.verdict.realClash','Real clash'),bg:'var(--color-success-bg)',col:'var(--color-success-fg)',brd:'var(--color-success-border)'},
             {k:'acceptable',l:_cc_t('issueRow.verdict.acceptable','Acceptable'),bg:'var(--accent-bg)',col:'var(--accent-subtle)',brd:'rgba(26,107,74,.27)'},
-            {k:'false_positive',l:_cc_t('issueRow.verdict.falsePositive','False positive'),bg:'#7f1d1d',col:'#fca5a5',brd:'#ef444444'}];
+            {k:'false_positive',l:_cc_t('issueRow.verdict.falsePositive','False positive'),bg:'var(--color-danger-bg)',col:'var(--color-danger-fg)',brd:'var(--color-danger-border)'}];
           function updItem(u){ d(isClash ? {t:A.UPD_CLASH,id:it.id,u:u} : {t:A.UPD_ISSUE,id:it.id,u:u}); }
           function setVerdict(v){ isClash ? d({t:A.AI_FEEDBACK,id:it.id,v:v}) : d({t:A.UPD_ISSUE,id:it.id,u:{aiFeedback:v}}); }
 
