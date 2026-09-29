@@ -140,6 +140,7 @@ addons/shared-project.js    — File System Access folder-sync collaboration
 addons/smart-bridge.js      — LLM bridge (MCP / ChatGPT / REST) — executes tool calls from AI assistants
 addons/splat.js             — Gaussian Splat as-built captures as a first-class scene layer (.splat/.ply/.ksplat/.spz)
 addons/tiles.js              — Streams photorealistic 3D Tiles (Google/Cesium/any tileset) as real-world context around a georeferenced model
+addons/tauri-bridge.js      — Desktop (Tauri) only, never fetched in the browser: verifies the native Rust clash commands against the JS reference, then publishes `window._ccNativeNarrow` so the narrow-phase pool layer runs multi-core natively
 addons/training-data.js     — Training data storage, JSONL export, sharing
 addons/visibility.js        — Visibility (sight-line) clash detection — ray-cast against BVH for viewer/target/obstructer rules + regulation presets
 addons/wasm-engine.js       — Rust WASM clash accelerator (mesh_intersect / mesh_min_distance), JS fallback
@@ -169,8 +170,8 @@ analytics-consent.js        — Non-addon core module: consent-gated analytics, 
 mcp-server.js                — MCP server (stdio) implementing Model Context Protocol for Claude Desktop/Code — distributed via GitHub Releases, not served from clashcontrol.io
 smart-bridge-server.js      — Standalone Smart Bridge binary source — REST/WS bridge that `addons/smart-bridge.js` connects to; distributed via GitHub Releases
 bridge-audit.js, bridge-governance.js, bridge-update.js, bridge-version.json — Smart Bridge binary build/update/governance tooling
-engine/                     — Rust source for the WASM clash accelerator (`addons/wasm-engine-pkg/`) and the native-speed local engine's shared algorithm
-desktop/                    — Tauri desktop app scaffold (see `docs/TAURI.md`)
+engine/                     — Rust source for the WASM clash accelerator (`addons/wasm-engine-pkg/`) and the native-speed local engine's shared algorithm; the off-by-default `native` cargo feature (rayon `NativeEngine`, `engine/src/native.rs`) is what the desktop app links. Add new code at the END of `engine/src/lib.rs` (panic line numbers end up in the committed wasm; after a wasm-pack rebuild `addons/wasm-engine-pkg` must show no diff)
+desktop/                    — Tauri desktop app (shell + native clash-engine commands; see `docs/TAURI.md`, `desktop/README.md`)
 ```
 
 ## Addons — how they plug in
@@ -202,6 +203,7 @@ Each addon is a plain IIFE loaded at runtime by the core via `addons/<name>.js` 
 - `smart-bridge.js` — LLM bridge connecting ClashControl to AI assistants over WebSocket: Claude Desktop/Code via the bundled MCP server, ChatGPT via a REST bridge + OpenAPI Actions, or any function-calling LLM via REST. Receives tool calls from the bridge server (localhost:19802) and executes them through `window._ccDispatch` and friends.
 - `splat.js` — Loads 3D Gaussian Splat as-built captures (.splat/.ply/.ksplat/.spz) as a first-class scene layer alongside IFC and point clouds, via Spark.js on its own r180 ESM canvas synced to the core camera.
 - `tiles.js` — Streams photorealistic 3D Tiles (Google Photorealistic, Cesium ion, or any tileset URL) as real-world context around a georeferenced model via NASA-AMMOS 3DTilesRendererJS. The model never moves; the tileset is placed in ENU/ECEF space around the anchor.
+- `tauri-bridge.js` — Inert outside the ClashControl desktop app (the core skips fetching it unless `__TAURI_INTERNALS__`/`__TAURI__` exists). In Tauri it self-checks the native commands (`desktop/src-tauri/src/engine_cmds.rs`, the same `engine/` crate built with its `native` rayon feature) against `window._ccJsMeshIntersectRef` and only then publishes `window._ccNativeNarrow`; `_ccNarrowPoolCreate` in `index.html` uses it in place of the Web Worker pool (same pool interface and per-pair records, so output is identical). Any IPC error drops the run's pool and unpublishes it (fallback: main-thread WASM/JS). Status/limits: `docs/TAURI.md` Phase 2.
 - `training-data.js` — Pure data layer for clash + NL training data: ring-buffer storage (cap 5000 clash / 2000 NL), JSONL export, share helpers.
 - `wasm-engine.js` — Loads the Rust WASM module for hardware-accelerated clash detection, exposing `window._ccWasmIntersect` / `window._ccWasmMinDist` as drop-in replacements for the JS BVH+Möller engine, plus `window._ccWasmEngine`: a cached-BVH variant (each element's triangles copied + BVH built once, keyed by the identity of its triangle array; only published after its own JS-reference self-check, unpublishes itself on any error). Falls back per pair to the stateless WASM path, then to the built-in JS engine. The browser detection loop can also run the narrow phase in a Web Worker pool (safety flag `detectWorkerPool`, on by default, off via `?ccSafety=-detectWorkerPool`; workers only pre-compute per-pair results that `_processCandidate` consumes in order, so output is identical; any worker failure falls back to the main thread; knobs/last-run stats on `window._ccNarrowPool`). `tests/browser/office-clash-parity.mjs` asserts identical results across JS / stateless WASM / cached Engine / worker-pool paths.
 
