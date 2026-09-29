@@ -1395,7 +1395,7 @@
       var ils = runILSChecks(elements);
       var ilsTotal = ils._total || (elements||[]).length || 1;
       var noNLSfBCount = (ils.noNLSfB && ils.noNLSfB.count) || 0;
-      var nlsfbAdopted = (ilsTotal - noNLSfBCount) / ilsTotal >= 0.2;
+      var nlsfbAdopted = ilsNlsfbAdopted(ils, elements);
       _foldCheckMap('ILS / NL-SfB', ils, nlsfbAdopted);
     } catch(e) {}
 
@@ -1441,6 +1441,39 @@
     return entry;
   }
   window._ccComputeQualityScore = computeQualityScore;
+
+  // ── ILS / NL-SfB applicability (Dutch NL-BIM Basis ILS v2) ─────────
+  // Adopted = at least 20% of elements carry an NL-SfB code — the same
+  // threshold computeQualityScore uses to fold ILS into the headline score.
+  function ilsNlsfbAdopted(ils, elements) {
+    if (!ils) return false;
+    var total = ils._total || (elements || []).length || 1;
+    var missing = (ils.noNLSfB && ils.noNLSfB.count) || 0;
+    return (total - missing) / total >= 0.2;
+  }
+  // Rough NL bounding box (mainland + Wadden islands, excl. Caribbean NL).
+  function _inNetherlands(lat, lon) {
+    return lat != null && lon != null && lat >= 50.7 && lat <= 53.7 && lon >= 3.2 && lon <= 7.3;
+  }
+  // The Data Quality panel shows the ILS section as applicable when the
+  // project uses NL-SfB, a model's IfcSite lies in the Netherlands, or the
+  // active regulation region is NL; otherwise its findings are informational
+  // (a non-Dutch project with no NL-SfB would otherwise show every element
+  // failing "no NL-SfB code" as an issue).
+  function ilsApplicability(ils, models) {
+    var adopted = ilsNlsfbAdopted(ils, null);
+    var located = (models || []).some(function (m) {
+      var sites = (m && m.spatialHierarchy && m.spatialHierarchy.sites) || [];
+      return sites.some(function (st) { var g = st && st.georef; return g && _inNetherlands(g.refLat, g.refLon); });
+    });
+    var region = (typeof window._ccGetRegulationRegion === 'function' && window._ccGetRegulationRegion()) || '';
+    var regionNL = String(region).toUpperCase() === 'NL';
+    return {
+      applicable: adopted || located || regionNL,
+      reason: adopted ? 'nlsfb' : located ? 'site-in-nl' : regionNL ? 'region-nl' : 'none'
+    };
+  }
+  window._ccIlsApplicability = ilsApplicability;
 
   // ── DQ re-run reconciliation ──────────────────────────────────────
   // Clash detection has full GUID-identity reconciliation (new/persisting/

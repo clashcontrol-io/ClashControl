@@ -24804,6 +24804,9 @@ function startApp() {
     var qcSt = useState(null), qc = qcSt[0], setQc = qcSt[1];
     var bimSt = useState(null), bim = bimSt[0], setBim = bimSt[1];
     var ilsSt = useState(null), ils = ilsSt[0], setIls = ilsSt[1];
+    // Show ILS findings even when the section is "not applicable" (no NL-SfB,
+    // not located in NL, region not NL — see window._ccIlsApplicability).
+    var ilsAnywaySt = useState(false), ilsAnyway = ilsAnywaySt[0], setIlsAnyway = ilsAnywaySt[1];
     var rvbSt = useState(null), rvb = rvbSt[0], setRvb = rvbSt[1];
     // DQ re-run reconciliation - session-local (not persisted like clash
     // runHistory): compares this run's per-check counts against the
@@ -25068,7 +25071,7 @@ function startApp() {
       }
       addFromChecks(qc, ['guidCollision','noGlobalId','proxy','genericName','duplicateName','noMaterial','noStorey','emptyGeometry','zeroLayers','unhostedOpenings','noProperties','noDescription']);
       addFromChecks(bim, ['thicknessMismatch','noFireRating','noIsExternal','noLoadBearing','missingCommonPset','noClassification','noObjectType','invalidName','missingArea','missingVolume']);
-      addFromChecks(ils, ILS_KEYS);
+      if (ilsCounts) addFromChecks(ils, ILS_KEYS);
       addFromChecks(rvb, RVB_KEYS);
       if (created > 0) d({t:A.TAB, v:'issues'});
     }
@@ -25085,7 +25088,11 @@ function startApp() {
       var bimKeys = Object.keys(bim).filter(function(k){return k!=='_total'&&k!=='_dist';});
       bimKeys.forEach(function(k){totalBim += bim[k].count||0;});
     }
-    if (ils) {
+    var ilsApp = (ils && typeof window._ccIlsApplicability === 'function') ? window._ccIlsApplicability(ils, s.models) : {applicable:true, reason:'unknown'};
+    // Not-applicable ILS findings stay out of the "N issues" badge and
+    // "Create all issues" unless the user asked to see them anyway.
+    var ilsCounts = ilsApp.applicable || ilsAnyway;
+    if (ils && ilsCounts) {
       var ilsKeys = Object.keys(ils).filter(function(k){return k[0]!=='_';});
       ilsKeys.forEach(function(k){totalIls += ils[k].count||0;});
     }
@@ -25207,11 +25214,17 @@ function startApp() {
           <div onClick=${function(){toggleSection('ils');}} style=${SEC}>
             <span>${_cc_t('dq.ilsChecks','ILS / NL-SfB')}</span>
             <span style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
-              ${totalIls > 0 ? html`<span style=${{fontSize:'0.57rem',padding:'1px 5px',borderRadius:99,background:'#78350f',color:'#fcd34d',fontWeight:600}}>${totalIls}</span>` : null}
+              ${!ilsCounts ? html`<span style=${{fontSize:'0.57rem',padding:'1px 5px',borderRadius:99,border:'1px solid var(--border)',color:'var(--text-faint)',fontWeight:600}}>${_cc_t('dq.ilsNotApplicable','not applicable')}</span>`
+                : totalIls > 0 ? html`<span style=${{fontSize:'0.57rem',padding:'1px 5px',borderRadius:99,background:'#78350f',color:'#fcd34d',fontWeight:600}}>${totalIls}</span>` : null}
               <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${sections.ils?'▲':'▼'}</span>
             </span>
           </div>
-          ${sections.ils && html`<div>
+          ${sections.ils && !ilsCounts && html`<div style=${{padding:'.45rem .6rem',fontSize:'0.65rem',color:'var(--text-secondary)',display:'flex',flexDirection:'column',gap:'.3rem',alignItems:'flex-start'}}>
+            <span>${_cc_t('dq.ilsNotApplicableHelp','Dutch ILS / NL-SfB checks: this project uses no NL-SfB classification, no model is located in the Netherlands and the regulation region isn’t NL, so these findings aren’t counted as issues.')}</span>
+            <button onClick=${function(){setIlsAnyway(true);}}
+              style=${{fontSize:'0.65rem',padding:'.15rem .45rem',background:'none',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>${_cc_t('dq.ilsShowAnyway','Check against ILS anyway')}</button>
+          </div>`}
+          ${sections.ils && ilsCounts && html`<div>
             ${renderCheckGroup(ils, ILS_KEYS, 'ILS')}
 
             ${ils._nlsfbDist && html`<div style=${{borderTop:'1px solid var(--border-subtle)'}}>
