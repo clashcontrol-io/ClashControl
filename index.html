@@ -1942,6 +1942,63 @@ function startApp() {
     if (item._groupedElems) item._groupedElems.forEach(function(eid){ refs.push({modelId: null, expressId: eid, role: 'grouped'}); });
     return refs;
   }
+  // ── Legacy selection-set refs (saved before refs carried modelId) ──
+  // A {expressId} with no modelId matches that id in EVERY loaded model;
+  // when two models share the id the set silently covers both. These two
+  // pure helpers find such entries and rewrite them once the user decides.
+  // expressId -> [modelId] over the loaded models, cached per models array.
+  var _ccEidModelsCache = new WeakMap();
+  function _ccEidModelsIndex(models) {
+    if (!models) return {};
+    var hit = _ccEidModelsCache.get(models);
+    if (hit) return hit;
+    var idx = Object.create(null);
+    models.forEach(function(m) {
+      (m.elements || []).forEach(function(el) {
+        if (el.expressId == null) return;
+        var list = idx[el.expressId] || (idx[el.expressId] = []);
+        if (list[list.length - 1] !== m.id) list.push(m.id);
+      });
+    });
+    _ccEidModelsCache.set(models, idx);
+    return idx;
+  }
+  // {ambiguous:[{expressId, modelIds}], pinnable:n, modelIds:[union]} —
+  // pinnable = legacy refs present in exactly one loaded model.
+  function _ccSelSetAmbiguity(refs, models) {
+    var idx = _ccEidModelsIndex(models), out = {ambiguous: [], pinnable: 0, modelIds: []}, seen = {};
+    (refs || []).forEach(function(r) {
+      if (!r || r.modelId || r.expressId == null) return;
+      var mids = idx[r.expressId] || [];
+      if (mids.length === 1) out.pinnable++;
+      else if (mids.length > 1) {
+        out.ambiguous.push({expressId: r.expressId, modelIds: mids.slice()});
+        mids.forEach(function(mid) { if (!seen[mid]) { seen[mid] = true; out.modelIds.push(mid); } });
+      }
+    });
+    return out;
+  }
+  // choice: a modelId (ambiguous refs present in that model are pinned to it;
+  // ones absent from it keep matching every model) or '*' (each ambiguous ref
+  // is expanded into one explicit ref per matching model — today's behaviour,
+  // made explicit). Legacy refs that match exactly one model are pinned to it
+  // either way; refs matching no loaded model are left untouched.
+  function _ccResolveSelSetRefs(refs, models, choice) {
+    var idx = _ccEidModelsIndex(models), out = [], have = {};
+    function add(r) {
+      var k = (r.modelId || '') + '_' + r.expressId;
+      if (have[k]) return; have[k] = true; out.push(r);
+    }
+    (refs || []).forEach(function(r) {
+      if (!r || r.modelId || r.expressId == null) { if (r) add(r); return; }
+      var mids = idx[r.expressId] || [];
+      if (mids.length === 1) add(Object.assign({}, r, {modelId: mids[0]}));
+      else if (mids.length > 1 && choice === '*') mids.forEach(function(mid) { add(Object.assign({}, r, {modelId: mid})); });
+      else if (mids.length > 1 && mids.indexOf(choice) >= 0) add(Object.assign({}, r, {modelId: choice}));
+      else add(r);
+    });
+    return out;
+  }
   // Stamp the participating-element identities from a clash onto an issue so every
   // issue (manual or clash-promoted) can be joined back to the model and to
   // finance/spec sources. uniqueIdA/B (Revit UniqueId) is the primary cross-doc
@@ -21321,6 +21378,8 @@ function startApp() {
     var _selProp = useState(null), selectedElProps=_selProp[0], setSelectedElProps=_selProp[1];
     var _ef = useState(null), explorerFocus=_ef[0], setExplorerFocus=_ef[1];
     var _ms = useState([]), multiSel=_ms[0], setMultiSel=_ms[1];
+    // Selection set whose legacy (no-modelId) ambiguous entries are being resolved.
+    var _ssr = useState(null), selSetResolving=_ssr[0], setSelSetResolving=_ssr[1];
     var explorerScrollRef = useRef(null);
     function _elClick(e, el, p, eKey, modelId) {
       // `modelId` is the containing model's id from the tree render closure
@@ -21756,10 +21815,19 @@ function startApp() {
           ? html`<div style=${{fontSize:'0.65rem',color:'var(--text-faint)'}}>${_cc_t('nav.noSavedSets','No saved sets. Multi-select with Shift-click in the navigator, then Save.')}</div>`
           : html`<div style=${{display:'flex',flexDirection:'column',gap:'.15rem',maxHeight:140,overflowY:'auto'}}>
               ${s.selectionSets.map(function(ss){
-                return html`<div key=${ss.id} style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.2rem .3rem',background:'var(--bg-primary)',border:'1px solid var(--border-subtle)',borderRadius:4}}>
+                var amb = _ccSelSetAmbiguity(ss.refs, s.models);
+                var resolving = selSetResolving === ss.id && amb.ambiguous.length > 0;
+                function modelName(mid){ var m=(s.models||[]).find(function(x){return x.id===mid;}); return (m&&m.name)||mid; }
+                function resolveTo(choice){ d({t:'UPD_SELSET_REFS',id:ss.id,refs:_ccResolveSelSetRefs(ss.refs, s.models, choice)}); setSelSetResolving(null); }
+                return html`<div key=${ss.id}>
+                <div style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.2rem .3rem',background:'var(--bg-primary)',border:'1px solid var(--border-subtle)',borderRadius:4}}>
                   <span onClick=${function(){var nm=prompt(_cc_t('nav.renameSelectionSet','Rename selection set:'),ss.name);if(nm&&nm.trim())d({t:'REN_SELSET',id:ss.id,name:nm.trim()});}}
                     title=${_cc_t('nav.clickToRename','{name} ({n}) — click to rename',{name:ss.name,n:ss.refs.length})} style=${{fontSize:'0.7rem',color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}}>${ss.name}</span>
                   <span style=${{fontSize:'0.6rem',color:'var(--text-faint)',flexShrink:0}}>${ss.refs.length}</span>
+                  ${amb.ambiguous.length > 0 && html`<button onClick=${function(){setSelSetResolving(resolving?null:ss.id);}}
+                    aria-expanded=${resolving}
+                    title=${_cc_t('nav.selSetAmbiguousTitle','{n} saved element(s) exist in more than one loaded model — choose which model this set means',{n:amb.ambiguous.length})}
+                    style=${{fontSize:'0.6rem',padding:'0 .3rem',background:'none',border:'1px solid var(--color-warning-border)',color:'var(--color-warning-fg)',borderRadius:'var(--radius-xs)',cursor:'pointer',flexShrink:0,fontFamily:'inherit'}}>⚠ ${amb.ambiguous.length}</button>`}
                   <button onClick=${function(){if(_highlightRefs)_highlightRefs(ss.refs,true);}}
                     title=${_cc_t('nav.isolate','Isolate')} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>◉</button>
                   <button onClick=${function(){if(_highlightRefs)_highlightRefs(ss.refs,false);}}
@@ -21786,7 +21854,18 @@ function startApp() {
                     }}
                     title=${_cc_t('nav.removeCurrentSelFromSet','Remove current selection from this set')} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.75rem',padding:'0 .2rem',fontWeight:700}}>−</button>
                   <button onClick=${function(){d({t:'DEL_SELSET',id:ss.id});}}
-                    title=${_cc_t('common.delete','Delete')} style=${{background:'none',border:'none',cursor:'pointer',color:'#f87171',fontSize:'0.7rem',padding:'0 .2rem'}}>×</button>
+                    title=${_cc_t('common.delete','Delete')} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--color-danger)',fontSize:'0.7rem',padding:'0 .2rem'}}>×</button>
+                </div>
+                ${resolving && html`<div role="group" aria-label=${_cc_t('nav.selSetResolveLabel','Resolve ambiguous entries')}
+                    style=${{margin:'.15rem 0 .2rem .4rem',padding:'.3rem .4rem',border:'1px solid var(--border-subtle)',borderRadius:4,background:'var(--bg-secondary)',fontSize:'0.65rem',color:'var(--text-secondary)',display:'flex',flexDirection:'column',gap:'.2rem'}}>
+                  <span>${_cc_t('nav.selSetResolveHelp','This set was saved before element references included their model. {n} of its elements share an ID across models. Which model did you mean?',{n:amb.ambiguous.length})}</span>
+                  <div style=${{display:'flex',flexWrap:'wrap',gap:'.25rem'}}>
+                    ${amb.modelIds.map(function(mid){ return html`<button key=${mid} onClick=${function(){resolveTo(mid);}}
+                      style=${{fontSize:'0.65rem',padding:'.15rem .4rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>${modelName(mid)}</button>`; })}
+                    <button onClick=${function(){resolveTo('*');}}
+                      style=${{fontSize:'0.65rem',padding:'.15rem .4rem',background:'none',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>${_cc_t('nav.selSetKeepAll','Keep in all models')}</button>
+                  </div>
+                </div>`}
                 </div>`;
               })}
             </div>`}
