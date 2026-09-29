@@ -183,7 +183,16 @@ try {
   // update EXPECTED_HARD_COUNT to N only after confirming the new number is
   // geometrically correct (e.g. an intentional fixture or rule change), not
   // just "the assertion failed so I copied the new number in".
-  const EXPECTED_HARD_COUNT = 56;
+  // 56 -> 54 with the "provision for void" fixture: the architecture model now
+  // carries three IfcOpeningElement/IfcRelVoidsElement voids on level 0 (see
+  // generate-office-ifc.js). web-ifc cuts them into the host meshes, so the two
+  // ducts/pipes that pass CLEANLY through an opening sized for them (Supply duct
+  // x Corridor wall L0, Sprinkler main x Facade South L0) no longer touch the
+  // wall solid: -2 hard clashes (they become 30 mm / 20 mm clearance clashes,
+  // i.e. soft, and are classified 'provided' below). The third opening is
+  // UNDERSIZED (0.6x0.3 for a 0.8x0.4 duct) so Supply duct x Facade West L0 is
+  // still a hard clash (classified 'partial'). 56 - 2 = 54.
+  const EXPECTED_HARD_COUNT = 54;
   if (wasmHard.length !== EXPECTED_HARD_COUNT) {
     fail('expected exactly ' + EXPECTED_HARD_COUNT + ' hard clashes with default rules, got ' + wasmHard.length);
   } else {
