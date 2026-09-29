@@ -1682,6 +1682,7 @@ function startApp() {
     'splat':'addons/splat.js', 'align':'addons/align.js',
     'openaec-bridge':'addons/openaec-bridge.js', 'visibility':'addons/visibility.js',
     'wasm-engine':'addons/wasm-engine.js', 'tiles':'addons/tiles.js',
+    'tauri-bridge':'addons/tauri-bridge.js',
     'locales':'locales/loader.js', 'regulations':'regulations/loader.js'
   };
   // These integrations are inactive by default and carry substantial code.
@@ -1832,6 +1833,8 @@ function startApp() {
     loadOne('wasm-engine');
     Object.keys(_ccAddonFiles).forEach(function(id) {
       if (id === 'wasm-engine') return;
+      // Desktop-only (Tauri) native engine: never even fetched in the browser.
+      if (id === 'tauri-bridge' && !window.__TAURI_INTERNALS__ && !window.__TAURI__) return;
       var lazy = Object.prototype.hasOwnProperty.call(_ccLazyAddonMeta, id);
       if (lazy && !_ccAddonActive[id]) return;
       loadOne(id);
@@ -7804,7 +7807,7 @@ function startApp() {
   // hit/miss test (pen-depth, clash building and merging stay on the main
   // thread), so they need a much larger run before worker start-up + buffer
   // copies pay off.
-  var _ccNarrowPoolCfg = window._ccNarrowPool = { minCandidates: 800, minCandidatesHardOnly: 20000, disabled: false, forceJs: false, maxWorkers: 0, last: null };
+  var _ccNarrowPoolCfg = window._ccNarrowPool = { minCandidates: 800, minCandidatesHardOnly: 20000, nativeMinCandidates: 400, disabled: false, forceJs: false, maxWorkers: 0, last: null };
   var _NP_JOB_PAIRS = 40;                    // pairs per worker job
   var _NP_WINDOW_CHUNKS = 16;                // detection chunks per prefetch window
   var _NP_WORKER_FLOATS = 4 * 1024 * 1024;   // per-worker triangle-cache budget (floats, ~16 MB; the worker's WASM copy + BVH come on top)
@@ -7819,10 +7822,16 @@ function startApp() {
     return Math.max(0, n);
   }
   // Returns null when the pool may be used, else a short reason string.
+  // Native (Tauri desktop) engine published by addons/tauri-bridge.js after its
+  // JS-reference self-check; replaces the Web Worker pool when present.
+  function _ccNativeNarrowAvailable() {
+    return !_ccNarrowPoolCfg.forceJs && !!window._ccNativeNarrow && typeof window._ccNativeNarrow.createPool === 'function';
+  }
   function _ccNarrowPoolBlocker(totalCandidates, softIncluded) {
     var cfg = _ccNarrowPoolCfg;
     if (cfg.disabled) return 'disabled';
     if (!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('detectWorkerPool'))) return 'flag-off';
+    if (_ccNativeNarrowAvailable()) return totalCandidates < cfg.nativeMinCandidates ? 'too-few-candidates' : null;
     if (typeof Worker !== 'function' || typeof Blob !== 'function' || !window.URL || typeof URL.createObjectURL !== 'function') return 'no-worker-support';
     // Worker heaps are invisible to the main-thread pressure relief, so don't
     // add several hundred MB of worker memory to a heap that is already tight.
@@ -7846,6 +7855,14 @@ function startApp() {
   }
 
   function _ccNarrowPoolCreate(nWorkers) {
+    if (_ccNativeNarrowAvailable()) {
+      var _natPool = null;
+      try {
+        _natPool = window._ccNativeNarrow.createPool({ getWorldTris: _getWorldTris, postProcess: _postProcessIntersectPoints, margin: _MI_MARGIN });
+      } catch (e) { _natPool = null; }
+      if (_natPool) { _activeNarrowPool = _natPool; return _natPool; }
+      // native unavailable for this run -> fall through to the Web Worker pool
+    }
     var wasmUrls = null;
     if (!_ccNarrowPoolCfg.forceJs && typeof window._ccWasmIntersect === 'function' && typeof window._ccWasmModuleUrls === 'function') {
       try { wasmUrls = window._ccWasmModuleUrls(); } catch (e) { wasmUrls = null; }
@@ -9196,7 +9213,7 @@ function startApp() {
       var st = _np.stats;
       _npStats = { used: true, workers: st.workers, jobs: st.jobs, jobsDone: st.jobsDone, pairs: st.pairs, pairsDone: st.pairsDone,
         wasmWorkers: st.wasmWorkers, engineWorkers: st.engineWorkers, initMs: st.initMs, copiedMB: Math.round(st.copiedFloats * 4 / 1048576 * 10) / 10,
-        fellBack: _np.failed, reason: _np.reason };
+        fellBack: _np.failed, reason: _np.reason, native: !!st.native };
       if (_npSeq === _ccNarrowPoolRunSeq) _ccNarrowPoolCfg.last = _npStats;
       _np.results.clear();
       _npWin = [];
@@ -23962,6 +23979,10 @@ function startApp() {
               engineLabel = 'ClashControlEngine'; engineDot = 'var(--color-success)';
               engineHint = _cc_t('run.engineLocalHint','Local server · exact mesh intersection');
               onClickEngine = function(){ try{ if(window._ccDeactivateAddon) window._ccDeactivateAddon('local-engine'); }catch(e){} };
+            } else if (window._ccNativeNarrow) {
+              engineLabel = _cc_t('run.engineNative','Native engine'); engineDot = 'var(--color-success)';
+              engineHint = _cc_t('run.engineNativeHint','All CPU cores · desktop app');
+              onClickEngine = function(){ try{ if(window._ccActivateAddon) window._ccActivateAddon('local-engine'); }catch(e){} };
             } else if (we.active) {
               engineLabel = _cc_t('run.engineWasm','WASM engine'); engineDot = 'var(--color-success)';
               engineHint = _cc_t('run.engineWasmHint','Hardware-accelerated · in-browser');

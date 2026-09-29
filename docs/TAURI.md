@@ -76,18 +76,76 @@ alone — it additionally needs the Phase 3 parsing/streaming work.
   desktop users get Ollama/Claude/MCP with **zero extra installs**, retiring
   the separate Connector download on desktop.
 
-### Phase 2 — Native clash engine (~1 week)
-- Wire `engine/` directly as Tauri commands: `mesh_intersect`,
-  `mesh_min_distance`, `batch_intersect` + a new `detect_pairs` that takes the
-  broad-phase pair list and fans out across cores with rayon.
-- JS side: publish the same `window._ccWasmIntersect`-shaped functions from
-  `tauri-bridge.js` (the core clash loop already prefers them when present —
-  the exact mechanism the WASM addon uses today). WASM remains the web path.
-- Geometry transfer: keep world-space triangle buffers cached on the Rust
-  side keyed by element id, so repeat runs send ids, not floats.
-- **Exit criterion:** `_ccBenchEngine()` desktop vs web on the same model
-  shows the multicore win; detection on a 10k+ element federation stays
-  responsive.
+### Phase 2 — Native clash engine (status: implemented, unit/integration-tested; NOT yet exercised in a packaged installer on all 3 OSes)
+What exists (all verified in CI-style runs, see "Verified" below):
+- `engine/` has an off-by-default `native` cargo feature (`engine/src/native.rs`,
+  rayon). `NativeEngine` wraps the SAME `Engine` (cached BVHs) the WASM build
+  uses — no second algorithm — and adds `register_many` (parallel BVH build)
+  and `detect_pairs(pairs, Hard|MinDist)` returning results in input order.
+  cargo tests assert f64-bit equality with the single-pair free functions on
+  randomized and dense meshes, 1 and N threads. The wasm-pack output
+  (`addons/wasm-engine-pkg/`) is byte-identical with the feature off
+  (the additions sit at the end of `lib.rs` so panic-location line numbers,
+  which end up in the wasm, do not move).
+- `desktop/src-tauri/src/engine_cmds.rs`: Tauri commands `register_meshes`,
+  `register_mesh`, `unregister_mesh`, `clear_meshes`, `intersect_batch`,
+  `min_dist_batch`, `engine_info`. Payloads are raw little-endian bytes
+  (`InvokeBody::Raw` in, `ipc::Response` out; layouts in `native::wire`), not
+  JSON float arrays. Commands are `async` (off the UI thread); the rayon pool
+  uses `cores - 1` threads. Only these commands are allowed: `build.rs`
+  declares them and `capabilities/default.json` grants exactly those
+  `allow-*` permissions (no `core:*` plugin permissions; a unit test keeps
+  build.rs, the handler list and the capability file in sync). `csp` stays
+  `null` as before.
+- `addons/tauri-bridge.js` (loaded only when `__TAURI_INTERNALS__`/`__TAURI__`
+  exists — the core does not even fetch it in the browser). On start it runs
+  a self-check of the native commands against `window._ccJsMeshIntersectRef`
+  (hit/miss, every raw point, depth, min-distance + closest pair, batch order,
+  unknown-id handling); only if everything matches does it publish
+  `window._ccNativeNarrow = {api, createPool, info}`. `index.html`'s
+  `_ccNarrowPoolCreate` uses it (guarded hook) in place of the Web Worker
+  pool: the bridge returns a pool with the worker pool's interface
+  (`addWindow`/`results`/`terminate`/`fail`), registers each element's world
+  triangles once (keyed by array identity, so a repeat run sends ids, not
+  floats), and hands back the same per-pair records the workers produce; the
+  core keeps doing post-processing, ordering, filtering on the main thread, so
+  output is identical by construction. Any invoke/decode/protocol error drops
+  the run's pool (the core finishes the remaining pairs on the main thread
+  with WASM/JS) and unpublishes the native path for the session. A pair whose
+  id the native side does not know gets no record (main thread computes it) —
+  never a silent "no clash". The per-pair sync `_meshesIntersect` is untouched
+  (IPC is async).
+- `addons/local-engine.js`: with the native engine active it no longer shows
+  Install/Download prompts (the panel says the Python engine isn't needed;
+  "Connect to a running engine" stays available and never triggers a
+  download); the Run-panel engine label shows "Native engine".
+
+Verified: `cargo test` (36) and `cargo test --features native` (41) in
+`engine/`; wasm-pack rebuild byte-identical; `cargo test`/`check`/`build` in
+`desktop/src-tauri` (commands exercised directly incl. the wire codec and
+the capability/build.rs consistency test); the built debug app was run under
+`xvfb-run` and its real webview called the real commands through the real
+bridge (self-check passed, 576 pairs compared with the JS reference:
+0 mismatches, second run sent 0 floats); `node --test tests/tauri-bridge.test.js`
+(mocked invoke: inert in browser, self-check gate, fallback on error);
+`tests/browser/office-clash-parity.mjs` has a `native` mode (real bridge,
+in-page mock commands) proving identical ordered clash output.
+
+Not done / honest limits:
+- No multicore win has been measured END TO END inside the app on a real
+  federation yet. Engine-level numbers only (`cargo test --release --features
+  native bench_parallel -- --ignored --nocapture`, 48 dense meshes / 1128
+  pairs, 4-core box: hard 24 ms on 1 thread -> 10 ms on 3 threads; the
+  stateless free functions take 847 ms for the same pairs because they
+  rebuild BVHs per pair). The post-processing / clash building still runs on
+  the JS main thread, so Amdahl applies; `_ccBenchEngine()` desktop vs web on
+  a 10k+ element federation is still to do.
+- Triangles are duplicated in Rust memory (f32 copy per registered element,
+  reset above ~384 MB; garbage-collected elements are unregistered lazily).
+  Geometry still originates in the WebView (web-ifc); Rust-side geometry
+  ownership belongs to Phase 3.
+- Windows/macOS were not built or run; only Linux (WebKitGTK) was.
+- CI (`release-desktop.yml`) does not yet run the desktop cargo tests.
 
 ### Phase 3 — Big-model loading (research → ~2 weeks, the real ceiling-breaker)
 - Storey-/discipline-scoped loading: parse the full IFC on the Rust side once

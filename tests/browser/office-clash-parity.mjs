@@ -483,23 +483,67 @@ try {
   // ════════════════════════════════════════════════════════════════════
   // Case 5-7: every narrow-phase PATH must produce the identical result.
   // ════════════════════════════════════════════════════════════════════
-  const MODES = ['js', 'wasm', 'engine', 'pool-wasm', 'pool-js'];
+  // 'native' = the desktop path: the REAL addons/tauri-bridge.js against an
+  // in-page mock of the Tauri commands (same wire format; backed by the WASM
+  // Engine, i.e. the same Rust code the native commands run). It exercises the
+  // core's native-pool hook end to end, incl. the bridge's self-check gate.
+  const MODES = ['js', 'wasm', 'engine', 'pool-wasm', 'pool-js', 'native'];
   // Installed once per page. setMode() restores every WASM global first, then
   // removes what the mode excludes; the pool is off except for pool-* modes
   // (minCandidates 0 so even the tiny office fixture goes through workers).
   async function installHarness(page) {
+    const bridgeSrc = await readFile(join(root, 'addons', 'tauri-bridge.js'), 'utf8');
+    await page.evaluate(async (bridgeSrc) => {
+      // ── mock Tauri commands + the real bridge addon (published after its self-check) ──
+      let natErr = null;
+      try {
+        const urls = window._ccWasmModuleUrls();
+        const mod = await import(urls.js);
+        await mod.default({ module_or_path: urls.wasm });
+        const eng = new mod.Engine();
+        const enc = (rs) => { const o = [rs.length]; rs.forEach((r) => { if (r === undefined) o.push(-1); else { o.push(r.length); for (const x of r) o.push(x); } }); return new Float64Array(o).buffer; };
+        window.__natCalls = { register: 0, intersect: 0, mindist: 0 };
+        window.__TAURI_INTERNALS__ = { invoke: async (cmd, args) => {
+          if (cmd === 'engine_info') return { api: 1, threads: 4, meshes: 0, floats: 0 };
+          if (cmd === 'register_meshes') {
+            window.__natCalls.register++;
+            const dv = new DataView(args.buffer, args.byteOffset, args.byteLength), n = dv.getUint32(0, true);
+            let off = 4 + 8 * n;
+            for (let i = 0; i < n; i++) { const id = dv.getUint32(4 + 8 * i, true), len = dv.getUint32(8 + 8 * i, true); eng.register(id, new Float32Array(args.buffer.slice(args.byteOffset + off, args.byteOffset + off + len * 4))); off += len * 4; }
+            return n;
+          }
+          if (cmd === 'unregister_mesh') return eng.unregister(args.id);
+          if (cmd === 'clear_meshes') { eng.clear(); return null; }
+          if (cmd === 'intersect_batch' || cmd === 'min_dist_batch') {
+            window.__natCalls[cmd === 'intersect_batch' ? 'intersect' : 'mindist']++;
+            const u = new Uint32Array(args.buffer.slice(args.byteOffset, args.byteOffset + args.byteLength)), out = [];
+            for (let i = 0; i < u.length; i += 2) out.push(cmd === 'intersect_batch' ? eng.intersect(u[i], u[i + 1]) : eng.min_distance(u[i], u[i + 1]));
+            return enc(out);
+          }
+          throw new Error('command not allowed: ' + cmd);
+        } };
+        (0, eval)(bridgeSrc);
+        for (let i = 0; i < 200 && !window._ccNativeNarrow; i++) await new Promise((r) => setTimeout(r, 50));
+        if (!window._ccNativeNarrow) natErr = 'bridge did not publish the native path (self-check failed?)';
+      } catch (e) { natErr = String((e && e.message) || e); }
+      window.__natErr = natErr;
+    }, bridgeSrc);
+    const natErr = await page.evaluate(() => window.__natErr);
+    if (natErr) fail('native mock setup: ' + natErr);
     await page.evaluate(() => {
       const orig = {
         _ccWasmIntersect: window._ccWasmIntersect, _ccWasmMinDist: window._ccWasmMinDist,
         _ccWasmBatchIntersect: window._ccWasmBatchIntersect, _ccWasmEngine: window._ccWasmEngine,
         _ccWasmModuleUrls: window._ccWasmModuleUrls,
       };
+      const nat = window._ccNativeNarrow;
       const T = window.__ccT = {
         orig,
         setMode(mode) {
           for (const k of Object.keys(orig)) { if (orig[k]) window[k] = orig[k]; else delete window[k]; }
           const P = window._ccNarrowPool;
-          P.disabled = !mode.startsWith('pool'); P.minCandidates = 0; P.minCandidatesHardOnly = 0; P.forceJs = false; P.maxWorkers = 0;
+          P.disabled = !(mode.startsWith('pool') || mode === 'native'); P.minCandidates = 0; P.minCandidatesHardOnly = 0; P.nativeMinCandidates = 0; P.forceJs = false; P.maxWorkers = 0;
+          if (mode === 'native') { if (nat) window._ccNativeNarrow = nat; } else delete window._ccNativeNarrow;
           if (mode === 'js' || mode === 'pool-js') {
             for (const k of Object.keys(orig)) delete window[k];
             P.forceJs = mode === 'pool-js';
@@ -599,12 +643,17 @@ try {
         times.push(last.ms);
         if (last.outcome !== 'complete') fail(label + ' [' + mode + ']: run outcome ' + last.outcome);
       }
-      if (mode.startsWith('pool') && last.candidates > 80) { // <=80 candidates take the (synchronous) single-chunk path, which never pools
+      if (mode === 'native' && last.candidates > 80) {
+        const pl = last.pool;
+        if (!pl || !pl.used || !pl.native || pl.fellBack || !(pl.pairsDone > 0)) fail(label + ' [native]: native pool did not do the narrow phase: ' + JSON.stringify(pl));
+        const calls = await page.evaluate(() => window.__natCalls);
+        if (!(calls.intersect > 0) && rules.hard) fail(label + ' [native]: no intersect_batch IPC calls seen');
+      } else if (mode.startsWith('pool') && last.candidates > 80) { // <=80 candidates take the (synchronous) single-chunk path, which never pools
         const pl = last.pool;
         if (!pl || !pl.used || pl.fellBack || !(pl.pairsDone > 0)) fail(label + ' [' + mode + ']: worker pool did not do the narrow phase: ' + JSON.stringify(pl));
         else if (mode === 'pool-wasm' && !(pl.wasmWorkers === pl.workers && pl.engineWorkers === pl.workers)) fail(label + ' [pool-wasm]: workers not on WASM+Engine: ' + JSON.stringify(pl));
         else if (mode === 'pool-js' && pl.wasmWorkers !== 0) fail(label + ' [pool-js]: workers unexpectedly on WASM: ' + JSON.stringify(pl));
-      } else if (!mode.startsWith('pool') && last.pool && last.pool.used) fail(label + ' [' + mode + ']: pool ran although disabled');
+      } else if (!mode.startsWith('pool') && mode !== 'native' && last.pool && last.pool.used) fail(label + ' [' + mode + ']: pool ran although disabled');
       if (mode === 'engine' && !(last.engineStats && last.engineStats.queries > 0)) fail(label + ' [engine]: cached engine served no queries');
       if (ref === null) ref = { mode, clashes: last.clashes };
       else if (JSON.stringify(last.clashes) !== JSON.stringify(ref.clashes)) {
@@ -618,7 +667,7 @@ try {
     }
     console.log('\n' + label + ' — ' + ref.clashes.length + ' clashes' + (differs ? ' (PATHS DIFFER, see failures)' : ', identical (ordered, every field) across ' + MODES.join(' / ')));
     console.log('  path        first ms   best ms  candidates  pooled-tests   main-thread ms: hard/soft/other');
-    for (const r of table) console.log('  ' + r.mode.padEnd(10) + fmt(r.first) + fmt(r.best) + String(r.cand).padStart(11) + String(r.pooled).padStart(13) + '   ' + [r.phases.hard, r.phases.soft, r.phases.rest].join('/').padEnd(14) + (r.pool && r.pool.used ? '   workers=' + r.pool.workers + ' jobs=' + r.pool.jobs + ' copiedMB=' + r.pool.copiedMB + ' init=' + r.pool.initMs + 'ms' : ''));
+    for (const r of table) console.log('  ' + r.mode.padEnd(10) + fmt(r.first) + fmt(r.best) + String(r.cand).padStart(11) + String(r.pooled).padStart(13) + '   ' + [r.phases.hard, r.phases.soft, r.phases.rest].join('/').padEnd(14) + (r.pool && r.pool.used ? (r.pool.native ? '   native' : '') + '   workers=' + r.pool.workers + ' jobs=' + r.pool.jobs + ' copiedMB=' + r.pool.copiedMB + ' init=' + r.pool.initMs + 'ms' : ''));
     return { ref, table };
   }
 

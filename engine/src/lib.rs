@@ -549,3 +549,20 @@ mod tests {
         assert!(mesh_min_distance(&[0.0; 9], &[0.0; 3])[0].is_infinite());
     }
 }
+
+// ── Native (desktop) multi-core wrapper — `native` feature only ─────
+// Kept at the END of the file, and cfg-gated, so no line above shifts: the
+// wasm build embeds panic source locations, and the committed
+// addons/wasm-engine-pkg must stay byte-identical.
+#[cfg(feature = "native")]
+pub mod native;
+
+#[cfg(feature = "native")]
+impl RegisteredMesh {
+    /// Builds a registered mesh for the native (rayon) registry; identical
+    /// construction to `Engine::register`.
+    fn build(tris: Vec<f32>) -> RegisteredMesh {
+        let bvh = if tris.len() < 9 { None } else { Some(BvhNode::build(&tris)) };
+        RegisteredMesh { tris, bvh }
+    }
+}
