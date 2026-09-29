@@ -1445,7 +1445,8 @@ function startApp() {
     deltaState:'all', // 'all','new','persisting','auto_resolved'
     priority:'all', category:'all', assignee:'all', issueElementType:'all', issueStorey:'all',
     modelPair:null, // {a:modelId, b:modelId} set by clicking a Model clash matrix cell
-    showHandled:false // "Show resolved/denied" toggle — default OFF, see ccUiClashListSummary
+    showHandled:false, // "Show resolved/denied" toggle — default OFF, see ccUiClashListSummary
+    showProvided:false // "pass through provided openings — show" toggle — default OFF (rules.hideProvidedOpenings)
   };
   var _ccLoadPref = function(key,fallback){try{var v=localStorage.getItem('cc_'+key);return v!==null?JSON.parse(v):fallback;}catch(e){return fallback;}};
 
@@ -1514,7 +1515,7 @@ function startApp() {
   var _savedSection=(function(){try{return JSON.parse(localStorage.getItem('cc_section')||'null');}catch(e){return null;}})();
   var INIT = {
     models:[], parkedModels:[], clashes:[], issues:[], activeId:null, lastActiveClashId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false, selectionSets:[], searchSets:[], assignmentRules:[],
-    rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, changeAware:false, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true, includeSpaces:false, excludeSameDiscipline:true },
+    rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, fullRerun:false, hideProvidedOpenings:true, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true, includeSpaces:false, excludeSameDiscipline:true },
     detectionSettings:null, // Captured at detection run time: {clearance_mm, discipline_filters, scope:{complete, partialModels?}}
     trainingMode:(function(){try{var v=localStorage.getItem('cc_trainingMode');return v===null?true:v==='1';}catch(e){return true;}}()),
     clashGroupBy:(function(){var v=_ccLoadPref('clashGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), clashSortBy:(function(){var v=_ccLoadPref('clashSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
@@ -2017,24 +2018,17 @@ function startApp() {
   // into every existing rank table / color map / sort comparator - callers
   // should read `c.aiSeverity || _ccDeterministicSeverity(c)`, never this
   // alone, so a real AI verdict always wins.
-  var _SEV_DISC_WEIGHT = { structural: 3, mep: 2, civil: 2, architectural: 1, other: 1 };
+  // The model itself (penetration depth x element-role table, soft gap vs
+  // required clearance) lives in clash-classification-core.js as
+  // deterministicSeverity() — pure and unit-tested there; the role table is
+  // documented at its definition. Kept as a thin delegate so every existing
+  // `c.aiSeverity || _ccDeterministicSeverity(c)` call site is unchanged.
   function _ccDeterministicSeverity(c) {
     if (!c) return 'info';
-    if (c.type === 'duplicate') return 'info'; // data-quality noise, not a coordination problem
-    if (c.type === 'visibility') return 'major'; // real design/code issue, but not a depth-measurable one
-    if (c.type !== 'hard') {
-      // Soft/clearance: a near-touching gap is a near-miss (more urgent to
-      // review) than a wide maintenance-clearance note.
-      var gapMm = typeof c.clearanceMm === 'number' ? c.clearanceMm : null;
-      return (gapMm != null && gapMm <= 15) ? 'major' : 'minor';
-    }
-    var discs = (c.disciplines || []).map(function (d) { return _SEV_DISC_WEIGHT[d] || 1; });
-    var maxDisc = discs.length ? Math.max.apply(null, discs) : 1;
-    var depthMm = (typeof c.distance === 'number' && c.distance < 0) ? -c.distance : 0;
-    if (depthMm < 10) return 'minor'; // shallow hard clash — likely tolerance/rounding, matches the
-    // industry-convention "hard clash, penetration ≥ 10mm" floor (docs/IMPROVEMENT_PLAN.md §F).
-    if (depthMm >= 50 || (maxDisc >= 3 && depthMm >= 20)) return 'critical'; // deep, or structural + real overlap
-    return 'major'; // a genuine ≥10mm hard clash
+    var core = window._ccClashClassificationCore;
+    if (core && typeof core.deterministicSeverity === 'function') return core.deterministicSeverity(c);
+    // Core script failed to load: keep the list usable with a flat guess.
+    return c.type === 'hard' ? 'major' : c.type === 'duplicate' ? 'info' : 'minor';
   }
   function _clearElCaches(model) {
     _bvhLRURemoveModel(model);
@@ -3901,6 +3895,72 @@ function startApp() {
     return props;
   }
 
+  // ── Openings ("provision for void") ──────────────────────────────────
+  // web-ifc never streams IfcOpeningElement (they are void cutters, cut into
+  // the host mesh and skipped by the renderer/clash engine), but their
+  // geometry is still available on demand via GetFlatMesh. For every
+  // IfcRelVoidsElement we record, per HOST element, each opening's tight box
+  // in its own local frame + the local->world matrix; the main thread turns
+  // that into a compact oriented box (clash-classification-core.js
+  // obbFromLocalBox) stored in host.props.openings. Only a handful of numbers
+  // per opening — geometry is decoded, boxed and released immediately.
+  // Self-contained (no THREE, no closure state): it is stringified into the
+  // IFC worker exactly like the other extract* helpers.
+  function extractOpeningRecords(api, modelID) {
+    var out = {};
+    try {
+      if (!IFC.IFCRELVOIDSELEMENT) return out;
+      var rels = api.GetLineIDsWithType(modelID, IFC.IFCRELVOIDSELEMENT);
+      // Time budget: every door/window is a void too, so big models have
+      // thousands. Past the budget the remaining hosts simply carry no opening
+      // data (no classification for them) — never a slow load.
+      var t0 = Date.now();
+      for (var i = 0; i < rels.size(); i++) {
+        if ((i & 63) === 0 && Date.now() - t0 > 6000) break;
+        try {
+          var rel = api.GetLine(modelID, rels.get(i));
+          var hostId = rel.RelatingBuildingElement ? (rel.RelatingBuildingElement.value || rel.RelatingBuildingElement) : null;
+          var openId = rel.RelatedOpeningElement ? (rel.RelatedOpeningElement.value || rel.RelatedOpeningElement) : null;
+          if (!hostId || !openId) continue;
+          var list = out[hostId] || (out[hostId] = []);
+          if (list.length >= 200) continue; // pathological host (e.g. perforated deck) — cap memory
+          var fm = api.GetFlatMesh(modelID, openId);
+          for (var g = 0; g < fm.geometries.size(); g++) {
+            var placed = fm.geometries.get(g);
+            var gd = null;
+            try {
+              gd = api.GetGeometry(modelID, placed.geometryExpressID);
+              var verts = api.GetVertexArray(gd.GetVertexData(), gd.GetVertexDataSize());
+              var mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+              for (var v = 0; v + 2 < verts.length; v += 6) {
+                for (var a = 0; a < 3; a++) {
+                  var c = verts[v + a];
+                  if (c < mn[a]) mn[a] = c;
+                  if (c > mx[a]) mx[a] = c;
+                }
+              }
+              if (isFinite(mn[0]) && isFinite(mx[0])) list.push({ lmin: mn, lmax: mx, m: Array.prototype.slice.call(placed.flatTransformation, 0, 16) });
+            } catch (e1) {}
+            finally { if (gd) { try { gd.delete(); } catch (e2) {} } }
+          }
+          try { fm.delete(); } catch (e3) {}
+        } catch (e) {}
+      }
+    } catch (e) {}
+    return out;
+  }
+  // Main-thread side: raw records -> flat oriented boxes (15 numbers each).
+  function _ccOpeningsFlat(records) {
+    var core = window._ccClashClassificationCore;
+    if (!core || typeof core.obbFromLocalBox !== 'function' || !records || !records.length) return null;
+    var flat = [];
+    for (var i = 0; i < records.length; i++) {
+      var o = core.obbFromLocalBox(records[i].lmin, records[i].lmax, records[i].m);
+      for (var k = 0; k < o.length; k++) flat.push(o[k]);
+    }
+    return flat.length ? flat : null;
+  }
+
   function extractStoreys(api, modelID) {
     var storeyMap = {};
     var storeyData = []; // [{name, elevation}]
@@ -4820,6 +4880,15 @@ function startApp() {
         console.log('%c[IFC] Skipped ' + _skippedPredecode + ' non-renderable elements before geometry decode (IfcOpeningElement / IfcSpace / IfcVirtualElement / IfcAnnotation / IfcGrid)', 'color:#94a3b8');
       }
 
+      // Provision for void: attach each host's opening boxes (see extractOpeningRecords).
+      try {
+        var _opRecs = extractOpeningRecords(api, modelID);
+        for (var _ori = 0; _ori < rawElements.length; _ori++) {
+          var _orec = _opRecs[rawElements[_ori].expressId];
+          if (_orec) { var _oflat = _ccOpeningsFlat(_orec); if (_oflat) rawElements[_ori].props.openings = _oflat; }
+        }
+      } catch (_opE) { console.warn('[IFC] opening extraction failed:', _opE); }
+
       var _reAddTypes = [IFC.IFCSPACE, IFC.IFCVIRTUALELEMENT, IFC.IFCANNOTATION, IFC.IFCGRID];
       var _reAddNames = ['IFCSPACE','IFCVIRTUALELEMENT','IFCANNOTATION','IFCGRID'];
       for (var _rti = 0; _rti < _reAddTypes.length; _rti++) {
@@ -5316,6 +5385,9 @@ function startApp() {
           }
         });
 
+        // Provision for void: opening boxes per host, converted on the main thread.
+        var openingRecs = {};
+        try { openingRecs = extractOpeningRecords(api, modelID); } catch (_opE) { openingRecs = {}; }
         // below, because that function also calls api.GetLine and needs the
         mark('Geometry stream');
         var streamSub = {
@@ -5348,7 +5420,7 @@ function startApp() {
           packedEls.placementColors.buffer, packedEls.placementTransforms.buffer);
 
         var _geoUnique = Object.keys(_geoTable).length;
-        _emit({type:'result', packedEls:packedEls, geoTable:_geoTable,
+        _emit({type:'result', packedEls:packedEls, geoTable:_geoTable, openingRecs:openingRecs,
           loadedScope:(_scopeSet ? _scope.storeys : null), scopedOutCount:_scopedOut,
           geoUnique:_geoUnique, geoReused:_geoReused,
           storeys:Object.keys(allStoreys).sort(), storeyData:storeyData,
@@ -5391,6 +5463,7 @@ function startApp() {
       + 'var safeStr=' + safeStr.toString() + ';\n'
       + 'var _extractAxis=' + _extractAxis.toString() + ';\n'
       + 'var extractProperties=' + extractProperties.toString() + ';\n'
+      + 'var extractOpeningRecords=' + extractOpeningRecords.toString() + ';\n'
       + 'var extractStoreys=' + extractStoreys.toString() + ';\n'
       + 'var extractSpatialHierarchy=' + extractSpatialHierarchy.toString() + ';\n'
       + 'var resolveMaterialName=' + resolveMaterialName.toString() + ';\n'
@@ -5579,6 +5652,7 @@ function startApp() {
                 quantities: _ccCanonQuantities({}), psets: _ccCanonPsets({})
               };
               if (pk.typeId[i] !== -1) props.typeId = pk.typeId[i];
+              if (msg.openingRecs && msg.openingRecs[eid]) { var _wOpen = _ccOpeningsFlat(msg.openingRecs[eid]); if (_wOpen) props.openings = _wOpen; }
               if (pk.hasAxis[i]) {
                 var ax = pk.axisX[i], ay = pk.axisY[i], az = pk.axisZ[i];
                 props.axis = (ax === 0 && ay === 0 && az === 0) ? null : [ax, ay, az];
@@ -5699,16 +5773,85 @@ function startApp() {
 
   // ── Clash Detection ──────────────────────────────────────────── docs/INTERNALS.md §9
 
-  var _prevElementHashes = {};
+  // Smart re-run memo — see _detectClashesCore ("Smart re-run"). Holds the LAST
+  // COMPLETED browser run: its signature (rules/tolerances/engine/model set),
+  // a per-element content hash, and an immutable snapshot of every raw hit per
+  // pair. null = the next run is a full run.
+  var _ccRunMemo = null;
+  var _CC_RUNMEMO_MAX = 100000; // raw-hit snapshots; beyond this we DROP the memo (never evict: a silently missing hit would break exactness)
   var _underlayImgCache = {};
   var _underlayImgDataCache = {};
   var _cc2DOutlines = null;
   var _cc2DContentCenter = null; // {x, z} in canvas world space (x = -worldX, z = worldZ)
 
+  // Content hash of everything about an element that can change a pair result
+  // or a clash's payload: identity, world box, every mesh's transform and
+  // vertex/index counts, the identity/classification props that end up on the
+  // clash (type, name, storey, material ...), the load-bearing flag (severity
+  // role) and the opening boxes (provision-for-void). Two independent 32-bit
+  // FNV/DJB2 hashes -> 64 bits; numbers quantised to 0.1 mm.
   function _hashElement(el) {
+    var h1 = 2166136261, h2 = 5381;
+    function num(v) {
+      v = Math.round(v * 10000) | 0;
+      h1 = Math.imul(h1 ^ v, 16777619);
+      h2 = (Math.imul(h2, 33) + v) | 0;
+    }
+    function str(t) {
+      t = String(t == null ? '' : t);
+      for (var i = 0; i < t.length; i++) {
+        var c = t.charCodeAt(i);
+        h1 = Math.imul(h1 ^ c, 16777619);
+        h2 = (Math.imul(h2, 33) + c) | 0;
+      }
+      h1 = Math.imul(h1 ^ 31, 16777619); h2 = (Math.imul(h2, 33) + 31) | 0; // field separator
+    }
     var b = el.box;
-    return [el.expressId, b.min.x.toFixed(3), b.min.y.toFixed(3), b.min.z.toFixed(3),
-            b.max.x.toFixed(3), b.max.y.toFixed(3), b.max.z.toFixed(3)].join('|');
+    str(el.expressId);
+    num(b.min.x); num(b.min.y); num(b.min.z); num(b.max.x); num(b.max.y); num(b.max.z);
+    var ms = el.meshes || [];
+    num(ms.length);
+    for (var mi = 0; mi < ms.length; mi++) {
+      var m = ms[mi], g = m.geometry;
+      var pos = g && g.attributes && g.attributes.position;
+      num(pos ? pos.count : 0);
+      num(g && g.index ? g.index.count : 0);
+      try { m.updateWorldMatrix(true, false); } catch (e) {}
+      var me = m.matrixWorld && m.matrixWorld.elements;
+      if (me) for (var k = 0; k < 16; k++) num(me[k]);
+    }
+    var p = el.props || {};
+    str(p.ifcType); str(p.name); str(p.globalId); str(p.storey); str(p.material); str(p.objectType);
+    var core = window._ccClashClassificationCore;
+    if (core && /Wall|Slab/.test(p.ifcType || '')) str(core.loadBearingOf(p));
+    var ops = p.openings;
+    if (ops) for (var oi = 0; oi < ops.length; oi++) num(ops[oi]);
+    return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36);
+  }
+  // Everything that must be identical for a previous run's per-pair results to
+  // still be valid: every rule (except the pure display / mode switches),
+  // the resolved engine, the model set (ids, names, disciplines, element
+  // counts, relationship data) and the detection-feedback protected pairs.
+  function _ccRunSignature(models, rules, protectedPairs) {
+    try {
+      var r = {};
+      Object.keys(rules || {}).sort().forEach(function(k) {
+        if (k === 'fullRerun' || k === 'changeAware' || k === 'hideProvidedOpenings') return;
+        r[k] = rules[k];
+      });
+      var ms = (models || []).map(function(m) {
+        return [m.id, m.name || '', m.discipline || '', (m.elements || []).length,
+          m.relatedPairs ? Object.keys(m.relatedPairs).length : 0].join(':');
+      }).sort();
+      var eng = [typeof window._ccWasmIntersect === 'function' ? 'wasm' : 'js',
+        typeof window._ccWasmMinDist === 'function' ? 'md' : '',
+        typeof window._ccWasmBatchIntersect === 'function' ? 'b' : ''].join('');
+      var sig = _ccStableJSON(r);
+      if (!sig) return '';
+      return sig + '#' + ms.join('|') + '#' + eng + '#' + Object.keys(protectedPairs || {}).sort().join(',');
+    } catch (e) {
+      return ''; // cannot be computed -> never matches -> always a full run
+    }
   }
 
   // ── Type-pair impossibility memo ──  See docs/INTERNALS.md § 21.16
@@ -5777,35 +5920,18 @@ function startApp() {
     try { localStorage.removeItem('cc_typePairMemo:' + key); } catch(e) {}
   };
 
-  // ── Pair-result cache (narrow-phase) ──  See docs/INTERNALS.md § 21.19
-  var _PAIR_CACHE_MAX = 50000;
-  var _pairResultCache = new Map();
+  // ── Pair key + memo invalidation (narrow-phase) ──  See docs/INTERNALS.md § 21.19
+  // The old LRU pair-result cache (raw clash objects by reference, evictable,
+  // mutated later by merge/classify) is replaced by the smart re-run memo
+  // (_ccRunMemo): immutable snapshots, complete (never evicted), validated by
+  // a run signature + per-element content hashes.
   function _pairKey(mA, eA, mB, eB) {
     return mA.id + ':' + eA.expressId + '|' + mB.id + ':' + eB.expressId;
   }
-  function _pairCacheGet(pk, rulesHash) {
-    var v = _pairResultCache.get(pk);
-    if (!v || v.rulesHash !== rulesHash) return undefined;
-    _pairResultCache.delete(pk); _pairResultCache.set(pk, v);
-    return v.clash;
-  }
-  function _pairCacheSet(pk, rulesHash, clash) {
-    if (!clash) return;
-    if (_pairResultCache.size >= _PAIR_CACHE_MAX) {
-      var oldest = _pairResultCache.keys().next().value;
-      if (oldest !== undefined) _pairResultCache.delete(oldest);
-    }
-    _pairResultCache.set(pk, { clash: clash, rulesHash: rulesHash });
-  }
   function _pairCacheClearForModel(modelId) {
-    if (!modelId) return;
-    var prefix1 = modelId + ':';
-    var midToken = '|' + modelId + ':';
-    var toDel = [];
-    _pairResultCache.forEach(function(_, k) {
-      if (k.indexOf(prefix1) === 0 || k.indexOf(midToken) !== -1) toDel.push(k);
-    });
-    for (var i = 0; i < toDel.length; i++) _pairResultCache.delete(toDel[i]);
+    // A model was removed/replaced: the previous run's per-pair results for it
+    // (and everything paired with it) are no longer a valid baseline.
+    if (modelId) _ccRunMemo = null;
   }
   window._ccPairCacheClearForModel = _pairCacheClearForModel;
 
@@ -5920,6 +6046,89 @@ function startApp() {
     el._triCache = new Float32Array(tris);
     _bvhLRU.set(el, true);
     return el._triCache;
+  }
+
+  // Element role for severity (structural / MEP run / terminal / finish ...):
+  // IFC type + LoadBearing pset + discipline — table in clash-classification-core.js.
+  function _ccRoleOfElement(el, m) {
+    var core = window._ccClashClassificationCore;
+    if (!core || typeof core.elementRole !== 'function') return undefined;
+    var p = el.props || {};
+    return core.elementRole(p.ifcType, { loadBearing: core.loadBearingOf(p), discipline: _ccElementDiscipline(el, m && m.discipline) });
+  }
+  // Results that did not come from the browser engine's clash-object builder
+  // (the local engine) get the same role + opening annotations after the fact.
+  function _ccAnnotateClashes(clashes, models) {
+    if (!clashes || !clashes.length) return;
+    var byModel = {};
+    (models || []).forEach(function(m) {
+      var map = {};
+      (m.elements || []).forEach(function(el) { map[el.expressId] = el; });
+      byModel[m.id] = { m: m, els: map };
+    });
+    clashes.forEach(function(c) {
+      var a = byModel[c.modelAId], b = byModel[c.modelBId];
+      var eA = a && a.els[c.elemA], eB = b && b.els[c.elemB];
+      if (!eA || !eB) return;
+      if (c.roleA === undefined) c.roleA = _ccRoleOfElement(eA, a.m);
+      if (c.roleB === undefined) c.roleB = _ccRoleOfElement(eB, b.m);
+      if ((c.type === 'hard' || c.type === 'soft') && c.opening === undefined) {
+        var st = null;
+        try { st = _ccOpeningStatusForPair(eA, eB, c.type); } catch (e) { st = null; }
+        if (st) c.opening = st;
+      }
+    });
+  }
+  // ── Provision for void: is a clash's passing element inside a host opening? ──
+  // Classification on top of a clash the engine already produced — never
+  // used to decide whether a clash exists. The host's openings are flat
+  // oriented boxes in element.props.openings (extracted at load from
+  // IfcRelVoidsElement + the IfcOpeningElement geometry). The "intersection
+  // region" is the other element's geometry clipped to the host's AABB
+  // (clash-classification-core.js clipTrianglesToBox): for a duct through a
+  // wall that is exactly the duct's cross-section at both wall faces.
+  //   'provided' — the whole region lies inside one opening (+ tolerance)
+  //   'partial'  — hard clash only: it overlaps an opening but pokes outside
+  //   null       — unrelated to any opening (or unknown)
+  // Both host directions are tried (wall vs slab: either can host).
+  var _OPENING_TOL_M = 0.02;        // containment tolerance: 20 mm
+  var _OPENING_MAX_TRIS = 300000;   // skip the (rare) enormous element rather than stall
+  function _ccOpeningStatusForPair(eA, eB, type) {
+    var core = window._ccClashClassificationCore;
+    if (!core || typeof core.classifyOpening !== 'function') return null;
+    var oA = eA.props && eA.props.openings, oB = eB.props && eB.props.openings;
+    if (!(oA && oA.length) && !(oB && oB.length)) return null;
+    function tryHost(host, other) {
+      var ops = host.props && host.props.openings;
+      if (!ops || !ops.length || !host.box) return null;
+      // Cheap reject before touching triangles: some opening must lie near the
+      // two elements' overlap box, otherwise the region can neither be inside
+      // an opening ('provided') nor overlap one ('partial').
+      var ob = other.box, hbx = host.box;
+      if (ob) {
+        var loX = Math.max(hbx.min.x, ob.min.x), hiX = Math.min(hbx.max.x, ob.max.x);
+        var loY = Math.max(hbx.min.y, ob.min.y), hiY = Math.min(hbx.max.y, ob.max.y);
+        var loZ = Math.max(hbx.min.z, ob.min.z), hiZ = Math.min(hbx.max.z, ob.max.z);
+        var near = false;
+        for (var oi = 0; oi + 15 <= ops.length; oi += 15) {
+          var rr = Math.sqrt(ops[oi+12]*ops[oi+12] + ops[oi+13]*ops[oi+13] + ops[oi+14]*ops[oi+14]) + _OPENING_TOL_M;
+          if (ops[oi] >= loX - rr && ops[oi] <= hiX + rr && ops[oi+1] >= loY - rr && ops[oi+1] <= hiY + rr &&
+              ops[oi+2] >= loZ - rr && ops[oi+2] <= hiZ + rr) { near = true; break; }
+        }
+        if (!near) return null;
+      }
+      var tris = _getWorldTris(other);
+      if (!tris || !tris.length) return null;
+      var hb = host.box, pad = 0.001;
+      var pts = core.clipTrianglesToBox(tris, [hb.min.x - pad, hb.min.y - pad, hb.min.z - pad],
+        [hb.max.x + pad, hb.max.y + pad, hb.max.z + pad], _OPENING_MAX_TRIS);
+      if (!pts || !pts.length) return null;
+      return core.classifyOpening(ops, pts, _OPENING_TOL_M, type);
+    }
+    var a = tryHost(eA, eB), b = tryHost(eB, eA);
+    if (a === 'provided' || b === 'provided') return 'provided';
+    if (a === 'partial' || b === 'partial') return 'partial';
+    return null;
   }
 
   // ── Möller triangle-triangle intersection test ──────────────────
@@ -7375,8 +7584,14 @@ function startApp() {
     }
     var work;
     if (useLocal) {
+      // A local-engine run doesn't feed the smart re-run memo, so the browser
+      // baseline can no longer be trusted to describe the current models.
+      _ccRunMemo = null;
       work = window._detectOnLocalEngine(models, rules, onProgress).then(function(result) {
-        if (result !== null && gen === _ccDetectGeneration) return result;
+        if (result !== null && gen === _ccDetectGeneration) {
+          try { _ccAnnotateClashes(result, models); } catch (e) { console.warn('[Detect] clash annotation failed:', e); }
+          return result;
+        }
         // Fallback to browser engine
         return _browserDetect(models, rules, onProgress, gen);
       });
@@ -7439,6 +7654,9 @@ function startApp() {
       var msg = p.candidates + ' pair' + (p.candidates===1?'':'s') + ' checked';
       if (p.matrix_skipped > 0) msg += ' → ' + p.matrix_skipped + ' filtered by discipline matrix';
       msg += ' → ' + p.clashes_found + ' clash' + (p.clashes_found===1?'':'es') + ' found';
+      // Smart re-run: say what was actually recomputed (result equals a full run).
+      if (p.smart_rerun) msg += ' (smart re-run: ' + (p.changed_elements||0) + ' changed element' + (p.changed_elements===1?'':'s') + ' recomputed)';
+      if (p.provided_openings > 0) msg += ' · ' + p.provided_openings + ' pass through provided openings';
       window._ccToast(msg);
     } catch(e) {}
   }
@@ -7629,6 +7847,7 @@ function startApp() {
           elemAStorey:pA.storey||'', elemBStorey:pB.storey||'',
           elemAMaterial:pA.material||'', elemBMaterial:pB.material||'',
           objectTypeA:pA.objectType||'', objectTypeB:pB.objectType||'',
+          roleA:_ccRoleOfElement(eA, mA), roleB:_ccRoleOfElement(eB, mB),
           bboxA:bbA, bboxB:bbB
         },
         pA:pA, pB:pB, tA:tA, tB:tB, nA:nA, nB:nB
@@ -7651,18 +7870,6 @@ function startApp() {
       if (p.uniqueId) a.push(p.uniqueId);
       if (p.revitId != null) a.push(p.revitId);
       return a;
-    }
-
-    var newHashes = {}, changedElements = {};
-    if (rules.changeAware) {
-      models.forEach(function(m) {
-        (m.elements||[]).forEach(function(el) {
-          var h = _hashElement(el);
-          var key = m.id+':'+el.expressId;
-          newHashes[key] = h;
-          if (_prevElementHashes[key] !== h) changedElements[key] = true;
-        });
-      });
     }
 
     // ── Phase 2.4 / 2.5 caches: type-pair memo + pair-result cache ──
@@ -7704,6 +7911,38 @@ function startApp() {
         return Object.keys(set).length ? set : null;
       } catch(e) { return null; }
     })();
+
+    // ── Smart re-run (default) ──────────────────────────────────────────
+    // First run on a model set = full. A later run with the SAME signature
+    // (rules, tolerances, engine, model set, protected pairs) only recomputes
+    // pairs that involve a changed element; every other pair carries over its
+    // previous result — a hit re-emitted from an immutable snapshot, a miss
+    // stays a miss — so the result set equals a full run's exactly.
+    // rules.fullRerun forces a full recompute. The memo is committed only by a
+    // COMPLETED run (see _finalize); cancelled/failed runs leave it untouched.
+    var _sigNow = _ccRunSignature(models, rules, _protectedPairs);
+    var _memo = (!rules.fullRerun && _sigNow && _ccRunMemo && _ccRunMemo.sig === _sigNow) ? _ccRunMemo : null;
+    var newHashes = {}, changedElements = {};
+    var _nChangedEls = 0, _nTotalEls = 0;
+    models.forEach(function(m) {
+      (m.elements||[]).forEach(function(el) {
+        var h = _hashElement(el);
+        var key = m.id+':'+el.expressId;
+        newHashes[key] = h;
+        _nTotalEls++;
+        if (_memo && _memo.hashes[key] !== h) { changedElements[key] = true; _nChangedEls++; }
+      });
+    });
+    var _nextSnaps = new Map(), _memoOverflow = false, _runOK = true;
+    var _lastCarried = false;
+    function _pairUnchanged(mA, eA, mB, eB) {
+      return !!_memo && !changedElements[mA.id+':'+eA.expressId] && !changedElements[mB.id+':'+eB.expressId];
+    }
+    function _recordSnap(pair, clash) {
+      if (_nextSnaps.size >= _CC_RUNMEMO_MAX) { _memoOverflow = true; return; }
+      _nextSnaps.set(_pairKey(pair.mA, pair.eA, pair.mB, pair.eB), Object.assign({}, clash));
+    }
+    var _clsCore = window._ccClashClassificationCore;
 
     var _exPairSet = {};
     if (rules.excludeTypePairs && rules.excludeTypePairs.length) {
@@ -7758,9 +7997,7 @@ function startApp() {
       var groups = new Map();
       for (var i = startIdx; i < endIdx; i++) {
         var c = _candidateAt(candidates, i);
-        if (rules.changeAware &&
-            !changedElements[c.mA.id+':'+c.eA.expressId] &&
-            !changedElements[c.mB.id+':'+c.eB.expressId]) continue;
+        if (_pairUnchanged(c.mA, c.eA, c.mB, c.eB)) continue;
         if (_exPairSet && c.eA.props && c.eB.props && c.eA.props.ifcType && c.eB.props.ifcType) {
           var _ek = c.eA.props.ifcType < c.eB.props.ifcType ? c.eA.props.ifcType+':'+c.eB.props.ifcType : c.eB.props.ifcType+':'+c.eA.props.ifcType;
           if (_exPairSet[_ek]) continue;
@@ -7845,17 +8082,19 @@ function startApp() {
     function _processCandidate(pair) {
       var eA=pair.eA, mA=pair.mA, eB=pair.eB, mB=pair.mB, sameModel=pair.sameModel;
 
-      // ── Pair-result cache (Phase 2.5) ────────────────────────────
-      // When changeAware is on and neither element has changed since the
-      // last run, re-emit the cached clash (if any) instead of dropping
-      // the pair silently. The legacy changeAware skip is preserved when
-      // the pair was a miss (cache returns undefined → no re-emit).
-      if (rules.changeAware &&
-          !changedElements[mA.id+':'+eA.expressId] &&
-          !changedElements[mB.id+':'+eB.expressId]) {
-        var _cachedClash = _pairCacheGet(_pairKey(mA, eA, mB, eB), _curRulesHash);
-        if (_cachedClash) {
-          clashes.push(_cachedClash);
+      // ── Smart re-run carry-over ──────────────────────────────────
+      // Neither element changed since the last completed run (same
+      // signature): the pair's result cannot have changed. A previous hit is
+      // re-emitted from its pristine snapshot (fresh object + id, so merge /
+      // classify / reconcile can mutate it freely); a previous miss is a miss.
+      _lastCarried = false;
+      if (_pairUnchanged(mA, eA, mB, eB)) {
+        var _pk = _pairKey(mA, eA, mB, eB);
+        var _snap = _memo.snaps.get(_pk);
+        if (_snap) {
+          clashes.push(Object.assign({}, _snap, { id:uid(), createdAt:new Date().toISOString() }));
+          if (_nextSnaps.size < _CC_RUNMEMO_MAX) _nextSnaps.set(_pk, _snap); else _memoOverflow = true;
+          _lastCarried = true;
           _nPairCacheReemit++;
         }
         return;
@@ -8033,6 +8272,13 @@ function startApp() {
         var b=_buildClashBase(eA, eB, mA, mB, [cpx,cpy,cpz], sameModel);
         var ov=_aabbOverlap(bA, bB);
         var clrMm=isSoft?Math.round(geoDist*1000):null;
+        // Provision for void: does the passing element sit inside an IFC
+        // opening of the other one? 'provided' | 'partial' | (absent).
+        // Classification only — hard/soft detection above is untouched.
+        var _openStatus = null;
+        try { _openStatus = _ccOpeningStatusForPair(eA, eB, hardPt ? 'hard' : 'soft'); } catch (_opErr) { _openStatus = null; }
+        if (_openStatus) b.obj.opening = _openStatus;
+        if (isSoft) b.obj.requiredClearanceMm = Math.round(pairGapM*1000);
         clashes.push(Object.assign(b.obj, {
           type:hardPt?'hard':'soft', distance:dist,
           title:_niceClashTitle(b.tA, b.tB, sameModel),
@@ -8074,7 +8320,11 @@ function startApp() {
 
     // ── Finalize results after all candidates processed ───────────
     function _finalize() {
-    if (rules.changeAware) _prevElementHashes = newHashes;
+    // Commit the smart re-run baseline — only for a run that genuinely
+    // completed (a chunk-loop failure calls _finalize best-effort with
+    // _runOK=false) and whose snapshot set fit under the cap.
+    _ccRunMemo = (_runOK && !_memoOverflow && _sigNow)
+      ? { sig:_sigNow, hashes:newHashes, snaps:_nextSnaps } : null;
 
     // ── Update type-pair memo (Phase 2.4) ──────────────────────────
     // Increment empty-run counter for type-pairs that produced zero
@@ -8151,6 +8401,10 @@ function startApp() {
           if (exist._groupedElems.indexOf(c.elemA) === -1) exist._groupedElems.push(c.elemA);
         }
         exist.mergedCount = (exist.mergedCount||1) + 1;
+        // A merged row is only "provided" when EVERY member is (most visible wins).
+        if (_clsCore && _clsCore.openingVisibility(c.opening) > _clsCore.openingVisibility(exist.opening)) {
+          if (c.opening) exist.opening = c.opening; else delete exist.opening;
+        }
         if (c.distance < exist.distance) {
           exist.distance = c.distance;
           exist.point = c.point;
@@ -8253,7 +8507,10 @@ function startApp() {
       memo_active_pairs: _activeMemoSet ? _activeMemoSet.size : 0,
       matrix_skipped: _nMatrixSkipped,
       pair_cache_reemits: _nPairCacheReemit,
-      pair_cache_size: _pairResultCache.size,
+      pair_cache_size: _nextSnaps.size,
+      smart_rerun: !!_memo,
+      provided_openings: merged.filter(function(c){ return c.opening === 'provided'; }).length,
+      changed_elements: _memo ? _nChangedEls : _nTotalEls,
       bvh_cache_max: _BVH_CACHE_MAX_FN(),
       clashes_found: merged.length
     };
@@ -8299,9 +8556,7 @@ function startApp() {
         _getBVH(_sc.eA); _getBVH(_sc.eB);
         var _cBefore = clashes.length;
         _processCandidate(_sc);
-        if (clashes.length > _cBefore) {
-          _pairCacheSet(_pairKey(_sc.mA, _sc.eA, _sc.mB, _sc.eB), _curRulesHash, clashes[clashes.length - 1]);
-        }
+        if (clashes.length > _cBefore && !_lastCarried) _recordSnap(_sc, clashes[clashes.length - 1]);
       }
       _chunkBatchCache = null;
       return _finalize();
@@ -8328,10 +8583,8 @@ function startApp() {
           var _cp2 = _candidateAt(candidates, i);
           var _cBef = clashes.length;
           _processCandidate(_cp2);
-          if (clashes.length > _cBef) {
-            _pairCacheSet(_pairKey(_cp2.mA, _cp2.eA, _cp2.mB, _cp2.eB), _curRulesHash, clashes[clashes.length - 1]);
-          }
-        } catch(e) { /* skip bad candidate */ }
+          if (clashes.length > _cBef && !_lastCarried) _recordSnap(_cp2, clashes[clashes.length - 1]);
+        } catch(e) { _runOK = false; /* skip bad candidate — but a run that dropped a pair must not become the smart re-run baseline */ }
       }
       _chunkBatchCache = null;
       chunkIdx = end;
@@ -8358,6 +8611,7 @@ function startApp() {
         // aren't skipped, but the returned array is tagged 'failed'
         // regardless so the commit guard blocks it.
         var _partial;
+        _runOK = false; // a partial run must never become the smart re-run baseline
         try { _partial = _finalize(); } catch(e2) { _partial = clashes; }
         _ccSurfaceDetectionFailure(e);
         resolveAsync(_ccTagDetectionResult(Array.isArray(_partial) ? _partial : [], _myGen, 'failed'));
@@ -18812,7 +19066,7 @@ function startApp() {
     if(_clearClashMarkers) _clearClashMarkers();
     if(_clearIssueMarkers) _clearIssueMarkers();
     if(_resetView) _resetView();
-    _prevElementHashes = {};
+    _ccRunMemo = null;
     _underlayImgCache = {};
     _underlayImgDataCache = {};
     _cc2DOutlines = null;
@@ -22947,10 +23201,17 @@ function startApp() {
               </div>
               <div style=${TOGROW}>
                 <div>
-                  <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>${_cc_t('run.onlyChanged','Only changed elements')}</div>
-                  <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('run.onlyChangedDesc','Skip elements unchanged since last run')}</div>
+                  <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>${_cc_t('run.fullRerun','Full re-run')}</div>
+                  <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('run.fullRerunDesc','Off: re-runs only recompute changed elements (same result, faster). On: recompute every pair')}</div>
                 </div>
-                <${MiniToggle} on=${rules.changeAware} onToggle=${function(){d({t:A.UPD_RULES,u:{changeAware:!rules.changeAware}})}} />
+                <${MiniToggle} on=${!!rules.fullRerun} onToggle=${function(){d({t:A.UPD_RULES,u:{fullRerun:!rules.fullRerun}})}} />
+              </div>
+              <div style=${TOGROW}>
+                <div>
+                  <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>${_cc_t('run.hideProvided','Hide clashes through provided openings')}</div>
+                  <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('run.hideProvidedDesc','Elements passing through an IFC opening made for them stay out of the list (still counted, one click to show)')}</div>
+                </div>
+                <${MiniToggle} on=${rules.hideProvidedOpenings!==false} onToggle=${function(){d({t:A.UPD_RULES,u:{hideProvidedOpenings:rules.hideProvidedOpenings===false}})}} />
               </div>
             </div>
           </div>
@@ -23197,6 +23458,9 @@ function startApp() {
       // existing declutter default (hidden under every other filter
       // value) but let them through when the Denied filter is active.
       var base = isClashTab ? s.clashes.filter(function(c){return f.status==='denied' || f.showHandled || c.status!=='denied';}) : s.issues;
+      // Clashes passing through an IFC opening made for them are hidden by
+      // default (rules.hideProvidedOpenings) — counted + one click to show.
+      if (isClashTab && s.rules.hideProvidedOpenings !== false && !f.showProvided) base = base.filter(function(c){ return c.opening !== 'provided'; });
       if (!isClashTab || !s.idsValidation || !s.idsValidation.results || !s.idsValidation.results.length) return base;
       var idsItems = s.idsValidation.results.map(function(r, i) {
         return {
@@ -23218,7 +23482,7 @@ function startApp() {
         };
       });
       return base.concat(idsItems);
-    }, [isClashTab, s.clashes, s.issues, s.idsValidation, f.status, f.showHandled]);
+    }, [isClashTab, s.clashes, s.issues, s.idsValidation, f.status, f.showHandled, f.showProvided, s.rules.hideProvidedOpenings]);
 
 
     var visibleModelIds = useMemo(function(){
@@ -23312,6 +23576,22 @@ function startApp() {
       return n;
     }, [s.clashes, isClashTab, visibleModelIds]);
 
+    // Clashes that pass through an IFC opening made for them ("provision for
+    // void"): hidden from the list by default, never dropped — this count and
+    // the toggle below make sure nothing is silently lost.
+    var providedCount = useMemo(function(){
+      if (!isClashTab || s.rules.hideProvidedOpenings === false) return 0;
+      var n = 0;
+      for (var i=0;i<s.clashes.length;i++) {
+        var c = s.clashes[i];
+        if (c.opening !== 'provided') continue;
+        if (c.modelAId && !visibleModelIds[c.modelAId]) continue;
+        if (c.modelBId && !visibleModelIds[c.modelBId]) continue;
+        n++;
+      }
+      return n;
+    }, [s.clashes, isClashTab, visibleModelIds, s.rules.hideProvidedOpenings]);
+
     var items = useMemo(function(){
       return rawItems.filter(function(it){
         if(isClashTab && (it.modelAId || it.modelBId)) {
@@ -23366,10 +23646,10 @@ function startApp() {
 
     var counts = useMemo(function(){
       return {
-        oC: s.clashes.filter(function(c){return c.status==='open'}).length,
+        oC: s.clashes.filter(function(c){return c.status==='open' && !(c.opening==='provided' && s.rules.hideProvidedOpenings!==false)}).length,
         oI: s.issues.filter(function(i){return i.status!=='resolved'&&i.status!=='closed';}).length
       };
-    }, [s.clashes, s.issues]);
+    }, [s.clashes, s.issues, s.rules.hideProvidedOpenings]);
     var oC=counts.oC, oI=counts.oI;
     var FL={fontSize:'0.69rem',color:'var(--text-muted)',marginBottom:'.15rem',display:'block'};
     var PILL=function(active){return Object.assign({},S_BTN,{fontSize:'0.69rem',padding:'.15rem .35rem',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'var(--accent-contrast)':'var(--text-faint)'});};
@@ -23389,6 +23669,11 @@ function startApp() {
           </button>`})}
       </div>`}
 
+      ${isClashTab && providedCount > 0 && html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-tertiary)',fontSize:'0.68rem',color:'var(--text-muted)'}}>
+        <span style=${{flex:1}}>${providedCount} ${_cc_t('opening.passThrough','pass through provided openings')} —</span>
+        <button onClick=${function(){d({t:A.UPD_FILTERS,u:{showProvided:!f.showProvided}})}}
+          style=${{...S_BTN,padding:'.1rem .4rem',fontSize:'0.68rem',color:'var(--accent)',background:'none',border:'none',textDecoration:'underline',cursor:'pointer'}}>${f.showProvided ? _cc_t('opening.hide','hide') : _cc_t('opening.show','show')}</button>
+      </div>`}
       ${isClashTab && rawItems.length > 0 && rawItems.some(function(c){return c.aiSeverity;}) && html`<${ClashAISummary} items=${rawItems} />`}
       ${!isExplorerTab && !isStandardsTab && rawItems.length > 0 && html`<${ClashStatsBar} items=${rawItems} isClash=${isClashTab} delta=${isClashTab ? s.lastDeltaSummary : null} history=${isClashTab ? (s.runHistory||null) : null}
         handledHiddenCount=${isClashTab ? handledHiddenCount : 0} showHandled=${!!f.showHandled} d=${d} />`}
@@ -27754,6 +28039,8 @@ function startApp() {
               ${storeyLabel && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-muted)',padding:'.1rem var(--space-2)',borderLeft:'1px solid var(--hairline-strong)'}}>${storeyLabel}</span>`}
               ${it.selfClash && html`<span class="cc-status-pill" style=${{color:'var(--accent)',background:'var(--accent-bg)'}}>${_cc_t('issueRow.self','self')}</span>`}
               ${it.expectedClash && html`<span class="cc-status-pill" style=${{color:'var(--color-warning-fg)',background:'var(--color-warning-bg)'}}>${_cc_t('issueRow.expected','expected')}</span>`}
+              ${it.opening==='partial' && html`<span class="cc-status-pill" title=${_cc_t('opening.tooSmallTitle','The element overlaps an IFC opening in the host but is larger than it')} style=${{color:'var(--color-warning-fg)',background:'var(--color-warning-bg)'}}>${_cc_t('opening.tooSmall','Opening too small')}</span>`}
+              ${it.opening==='provided' && html`<span class="cc-status-pill" title=${_cc_t('opening.providedTitle','The element passes through an IFC opening made for it')} style=${{color:'var(--color-info-fg)',background:'var(--color-info-bg)'}}>${_cc_t('opening.provided','provided opening')}</span>`}
               ${it.status==='accepted_needs_check' && html`<span class="cc-status-pill" style=${{color:'var(--color-info-fg)',background:'var(--color-info-bg)'}}>${_cc_t('issueRow.needsCheck','needs check')}</span>`}
             </div>
           </div>`}
@@ -33886,7 +34173,7 @@ function startApp() {
         data.titles.forEach(function(t) {
           if (!t || !t.id) return;
           var u = { aiTitle: t.title, title: t.title, aiProvenance: prov };
-          if (t.severity) u.aiSeverity = t.severity;
+          if (t.severity) { u.aiSeverity = t.severity; u._sevSource = 'ai'; } // AI verdict overrides the rule model and survives re-runs
           if (t.resolution) u.aiResolutionHint = t.resolution;
           d({ t: A.UPD_CLASH, id: t.id, u: u });
         });
@@ -35521,7 +35808,7 @@ function startApp() {
       hard:true, maxGap:s.rules.maxGap||0, minGap:s.rules.minGap||0,
       duplicates:false, excludeSelf:false, excludeTypes:[],
       useSemanticFilter:s.rules.useSemanticFilter!==false,
-      changeAware:s.rules.changeAware||false,
+      fullRerun:!!s.rules.fullRerun,
       minOverlapVolM3:s.rules.minOverlapVolM3||1e-5
     }, init));
     var rules = st[0], setRules = st[1];
@@ -35710,8 +35997,8 @@ function startApp() {
           <${Tog} on=${rules.duplicates} onToggle=${function(){upd('duplicates',!rules.duplicates);}} />
         </div>
         <div style=${togRow}>
-          <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)'}}>${_cc_t('run.onlyChanged','Only changed elements')}</div>
-          <${Tog} on=${rules.changeAware} onToggle=${function(){upd('changeAware',!rules.changeAware);}} />
+          <div style=${{fontSize:'0.72rem',color:'var(--text-secondary)'}}>${_cc_t('run.fullRerun','Full re-run')}</div>
+          <${Tog} on=${!!rules.fullRerun} onToggle=${function(){upd('fullRerun',!rules.fullRerun);}} />
         </div>
       </div>
 
@@ -36140,7 +36427,7 @@ function startApp() {
       clashCtxRef.current = ctx;
       var typeStr = !r.hard ? _cc_t('nl.converse.softOnlyRange','Soft only ({n}mm range)',{n:r.maxGap||100}) : r.maxGap > 0 ? _cc_t('nl.converse.hardPlusNearMisses','Hard + near misses (max {n}mm)',{n:r.maxGap}) : _cc_t('nl.converse.hardClashesOnly','Hard clashes only');
       var selfStr = r.excludeSelf ? _cc_t('nl.converse.crossModelOnly','cross-model only') : r.selfClashGroup === 'a' ? _cc_t('nl.converse.withinAOnly','within A only') : r.selfClashGroup === 'b' ? _cc_t('nl.converse.withinBOnly','within B only') : _cc_t('nl.converse.includingSameModel','including same-model');
-      var extra = (r.duplicates ? ', ' + _cc_t('nl.converse.duplicatesOn','duplicates on') : '') + (r.changeAware ? ', ' + _cc_t('nl.converse.changedOnly','changed only') : '') + (r.useSemanticFilter === false ? ', ' + _cc_t('nl.converse.allIntersections','all intersections') : '');
+      var extra = (r.duplicates ? ', ' + _cc_t('nl.converse.duplicatesOn','duplicates on') : '') + (r.fullRerun ? ', ' + _cc_t('nl.converse.fullRerun','full re-run') : '') + (r.useSemanticFilter === false ? ', ' + _cc_t('nl.converse.allIntersections','all intersections') : '');
       return _cc_t('nl.converse.readyPrefix','Ready:') + ' **' + ctx.nameA + '** vs **' + ctx.nameB + '**, ' + typeStr + ', ' + selfStr + extra + '.\n\n' + _cc_t('nl.converse.runOrTellMe','Run? *(yes)* Or tell me what to change.');
     }
 
@@ -41014,7 +41301,7 @@ function startApp() {
     useEffect(function(){
       function onSwitch() {
         var newProjId = window._ccProjectSwitch||'default';
-        _prevElementHashes = {};
+        _ccRunMemo = null;
         _underlayImgCache = {};
         _underlayImgDataCache = {};
         _restoreProjectFilesGlobal(newProjId, d);
