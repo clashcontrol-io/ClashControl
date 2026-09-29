@@ -70,9 +70,13 @@ jobs:
           echo "Version: $VERSION  |  Release: $SHOULD_RELEASE  |  AutoBumped: $AUTO_BUMPED"
 
       # ── Node setup ───────────────────────────────────────────────────────────
+      # Node 22 like every other workflow. Node 18 (EOL 2025-04) can't import
+      # the ESM wasm-pack output addons/wasm-engine-pkg/, so `npm test` failed
+      # on every run since 2026-07-08 (tests/wasm-*.test.js: "Unexpected
+      # token 'export'") and no bridge release could ship.
       - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '22'
 
       # ── Install build deps ────────────────────────────────────────────────────
       # @yao-pkg/pkg is the maintained fork of the original 'pkg' bundler.
@@ -84,11 +88,13 @@ jobs:
         run: npm test
 
       # ── Build binaries ────────────────────────────────────────────────────────
+      # node22 targets: @yao-pkg/pkg 6.x has no prebuilt node18 base binary
+      # any more and falls back to compiling Node from source.
       - name: Build standalone binaries
         run: |
           mkdir -p dist
           npx pkg smart-bridge-server.js \
-            --targets node18-win-x64,node18-macos-x64,node18-linux-x64 \
+            --targets node22-win-x64,node22-macos-x64,node22-linux-x64 \
             --output dist/clashcontrol-smart-bridge
 
       # ── Package archives ──────────────────────────────────────────────────────
