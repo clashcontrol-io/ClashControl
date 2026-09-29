@@ -37,3 +37,9 @@ test('global shortcut effect re-subscribes on selection and walk-placing changes
 test('VirtualList does not mint a fresh models array every render', () => {
   assert.match(html, /models=props\.models\|\|_VL_NO_MODELS;/);
 });
+
+test('NL panel setOpen resolves updater functions before reporting open state', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'index.html'), 'utf8');
+  assert.match(src, /var nv = !!\(typeof v === 'function' \? v\(openRef\.current\) : v\);/);
+  assert.match(src, /_setOpenRaw\(nv\); window\._ccNLOpenState = nv; if\(d\) d\(\{t:'CHAT_OPEN',v:nv\}\);/);
+});

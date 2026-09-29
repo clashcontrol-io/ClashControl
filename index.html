@@ -36837,7 +36837,15 @@ function startApp() {
   function NLCommandPanel(props) {
     var s = props.s, d = props.d;
     var stOpen = useState(false), open = stOpen[0], _setOpenRaw = stOpen[1];
-    function setOpen(v) { _setOpenRaw(v); window._ccNLOpenState = !!v; if(d) d({t:'CHAT_OPEN',v:!!v}); }
+    var openRef = useRef(false); openRef.current = open;
+    // Accepts a value or an updater fn (Ctrl+/ toggles with setOpen(o => !o));
+    // resolve it first so _ccNLOpenState / CHAT_OPEN get the real new value
+    // (`!!fn` was always true, so toggling closed still reported "open").
+    function setOpen(v) {
+      var nv = !!(typeof v === 'function' ? v(openRef.current) : v);
+      openRef.current = nv;
+      _setOpenRaw(nv); window._ccNLOpenState = nv; if(d) d({t:'CHAT_OPEN',v:nv});
+    }
     window._ccNLOpen = function(){ setOpen(true); if(inputRef.current) setTimeout(function(){inputRef.current&&inputRef.current.focus();},50); };
     window._ccNLClose = function(){ setOpen(false); };
     window._ccNLIsOpen = function(){ return open; };
