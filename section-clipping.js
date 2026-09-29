@@ -122,7 +122,79 @@
     }
   }
 
+  // ── Building plan orientation ──────────────────────────────────────
+  // Dominant horizontal grid direction of a model, so axis section planes
+  // (and the whole-model section box) cut parallel to the walls instead of
+  // diagonally through a building that is rotated in plan (e.g. placed at
+  // its real-world / true-north orientation).
+  //
+  // segs: flat [dx, dz, weight, dx, dz, weight, ...] — horizontal edge
+  // vectors in scene X/Z (weight = edge length).
+  // Returns {angle, confidence}: `angle` (radians, in (-PI/4, PI/4]) is the
+  // rotation about +Y — Three.js convention, +X -> (cos a, 0, -sin a) — that
+  // maps world X/Z onto the building grid; 0 means "world axes" (no
+  // dominant direction, too little evidence, or already within 0.25 deg).
+  // Directions are folded mod 90 deg (walls run along both grid axes).
+  function dominantPlanAngle(segs, opts) {
+    opts = opts || {};
+    var BINS = 180, BIN = (Math.PI / 2) / BINS; // 0.5 deg bins over [0, 90 deg)
+    var minConfidence = opts.minConfidence != null ? opts.minConfidence : 0.2;
+    var hist = new Float64Array(BINS);
+    var total = 0, i, n = segs ? segs.length : 0;
+    function fold(phi) { // -> [0, PI/2)
+      var q = Math.PI / 2;
+      phi = phi % q; if (phi < 0) phi += q;
+      return phi >= q ? 0 : phi;
+    }
+    for (i = 0; i + 2 < n; i += 3) {
+      var w = segs[i + 2];
+      if (!(w > 0)) continue;
+      var phi = fold(Math.atan2(-segs[i + 1], segs[i]));
+      hist[Math.min(BINS - 1, Math.floor(phi / BIN))] += w;
+      total += w;
+    }
+    if (!(total > 0)) return { angle: 0, confidence: 0 };
+    // Circular smoothing (+-2 bins) so a peak split across a bin edge wins.
+    var best = -1, bestW = -1;
+    for (i = 0; i < BINS; i++) {
+      var sum = 0;
+      for (var k = -2; k <= 2; k++) sum += hist[(i + k + BINS) % BINS];
+      if (sum > bestW) { bestW = sum; best = i; }
+    }
+    var peak = (best + 0.5) * BIN, win = 2 * Math.PI / 180;
+    // Refine: weighted circular mean of 4*phi over edges within +-2 deg of
+    // the peak (4*phi makes the mean invariant to the 90 deg fold).
+    var sx = 0, sy = 0, near = 0;
+    for (i = 0; i + 2 < n; i += 3) {
+      var w2 = segs[i + 2];
+      if (!(w2 > 0)) continue;
+      var p2 = fold(Math.atan2(-segs[i + 1], segs[i]));
+      var dd = Math.abs(p2 - peak); dd = Math.min(dd, Math.PI / 2 - dd);
+      if (dd > win) continue;
+      sx += w2 * Math.cos(4 * p2); sy += w2 * Math.sin(4 * p2);
+      near += w2;
+    }
+    var confidence = near / total;
+    if (confidence < minConfidence) return { angle: 0, confidence: confidence };
+    var angle = Math.atan2(sy, sx) / 4; // (-PI/4, PI/4]
+    // Second, tighter pass (+-0.5 deg around the first estimate) so nearly-
+    // parallel triangulation edges inside the +-2 deg window don't bias it.
+    var est = fold(angle), tight = 0.5 * Math.PI / 180, tx = 0, ty = 0;
+    for (i = 0; i + 2 < n; i += 3) {
+      var w3 = segs[i + 2];
+      if (!(w3 > 0)) continue;
+      var p3 = fold(Math.atan2(-segs[i + 1], segs[i]));
+      var d3 = Math.abs(p3 - est); d3 = Math.min(d3, Math.PI / 2 - d3);
+      if (d3 > tight) continue;
+      tx += w3 * Math.cos(4 * p3); ty += w3 * Math.sin(4 * p3);
+    }
+    if (tx !== 0 || ty !== 0) angle = Math.atan2(ty, tx) / 4;
+    if (Math.abs(angle) < 0.25 * Math.PI / 180) angle = 0;
+    return { angle: angle, confidence: confidence };
+  }
+
   return Object.freeze({
+    dominantPlanAngle: dominantPlanAngle,
     eligible: eligible,
     materials: materials,
     applyLegacy: applyLegacy,

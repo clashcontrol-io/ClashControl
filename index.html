@@ -11866,6 +11866,132 @@ function startApp() {
       return box;
     }
     window._ccElemsBBox = _elemsBBox;
+    // ── Building-aligned section frame ──────────────────────────────
+    // Axis section planes (X/Y/Z) and the whole-model section box follow the
+    // building's own plan grid (dominant wall direction, see
+    // _ccSectionClipping.dominantPlanAngle) instead of world X/Z, so a
+    // building rotated in plan is cut parallel to its walls and the plane's
+    // outline hugs the footprint. angle 0 (world-aligned models, or no clear
+    // grid) reproduces the old world-axis behaviour exactly: the frame is
+    // then just _elemsBBox. Cached per model set + visibility.
+    // frame.axes.{x,y,z}: unit Vector3s (y is always world up);
+    // frame.min/max.{x,y,z}: extents along those axes; frame.center: world
+    // centre; frame.cut(axis,pos) -> {normal, d, point}.
+    var _planFrameCache = { key: null, frame: null };
+    function _planFrameKey() {
+      return modelsRef.current.map(function(m){ return m.id + ':' + (m.visible === false ? 0 : 1) + ':' + ((m.elements || []).length); }).join('|');
+    }
+    function _computePlanAngle() {
+      var api = window._ccSectionClipping;
+      if (!api || typeof api.dominantPlanAngle !== 'function') return 0;
+      var WALLISH = /Wall|CurtainWall|Column|Slab|Beam|Plate|Member|Footing/i;
+      function collect(filter) {
+        var meshes = [], tris = 0;
+        modelsRef.current.forEach(function(m){
+          if (m.visible === false) return;
+          (m.elements || []).forEach(function(el){
+            if (filter && !WALLISH.test((el.props && el.props.ifcType) || '')) return;
+            (el.meshes || []).forEach(function(mesh){
+              var g = mesh.geometry, p = g && g.attributes && g.attributes.position;
+              if (!p) return;
+              meshes.push(mesh);
+              tris += (g.index ? g.index.count : p.count) / 3;
+            });
+          });
+        });
+        return { meshes: meshes, tris: tris };
+      }
+      var set = collect(true);
+      if (!set.meshes.length) set = collect(false);
+      if (!set.meshes.length) return 0;
+      var BUDGET = 300000, stride = Math.max(1, Math.ceil(set.tris / BUDGET));
+      var segs = [], va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3(), triN = 0;
+      function edge(a, b) {
+        var dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+        var h = Math.sqrt(dx * dx + dz * dz);
+        if (h < 1e-3 || Math.abs(dy) > 0.02 * h) return; // horizontal edges only
+        segs.push(dx, dz, h);
+      }
+      set.meshes.forEach(function(mesh){
+        var g = mesh.geometry, p = g.attributes.position, ix = g.index;
+        var n = ix ? ix.count : p.count;
+        mesh.updateWorldMatrix(true, false);
+        var mw = mesh.matrixWorld;
+        for (var i = 0; i + 2 < n; i += 3) {
+          if ((triN++ % stride) !== 0) continue;
+          va.fromBufferAttribute(p, ix ? ix.getX(i) : i).applyMatrix4(mw);
+          vb.fromBufferAttribute(p, ix ? ix.getX(i + 1) : i + 1).applyMatrix4(mw);
+          vc.fromBufferAttribute(p, ix ? ix.getX(i + 2) : i + 2).applyMatrix4(mw);
+          edge(va, vb); edge(vb, vc); edge(vc, va);
+        }
+      });
+      return api.dominantPlanAngle(segs).angle;
+    }
+    function _ccPlanFrame() {
+      var key = _planFrameKey();
+      if (_planFrameCache.key === key && _planFrameCache.frame) return _planFrameCache.frame;
+      var box = _elemsBBox();
+      var angle = box.isEmpty() ? 0 : _computePlanAngle();
+      var q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+      var ax = { x: new THREE.Vector3(1, 0, 0).applyQuaternion(q), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1).applyQuaternion(q) };
+      var min = { x: box.min.x, y: box.min.y, z: box.min.z }, max = { x: box.max.x, y: box.max.y, z: box.max.z };
+      if (angle !== 0) {
+        // Extents along the rotated horizontal axes from the actual vertices
+        // (element AABBs would overstate a rotated footprint).
+        min.x = min.z = Infinity; max.x = max.z = -Infinity;
+        var v = new THREE.Vector3();
+        function take(px, pz) {
+          var u = px * ax.x.x + pz * ax.x.z, w = px * ax.z.x + pz * ax.z.z;
+          if (u < min.x) min.x = u; if (u > max.x) max.x = u;
+          if (w < min.z) min.z = w; if (w > max.z) max.z = w;
+        }
+        modelsRef.current.forEach(function(m){
+          if (m.visible === false) return;
+          (m.elements || []).forEach(function(el){
+            (el.meshes || []).forEach(function(mesh){
+              var p = mesh.geometry && mesh.geometry.attributes && mesh.geometry.attributes.position;
+              if (!p) return;
+              mesh.updateWorldMatrix(true, false);
+              for (var i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i).applyMatrix4(mesh.matrixWorld); take(v.x, v.z); }
+            });
+          });
+        });
+        if (typeof window._ccGetReferenceLayerBBox === 'function') {
+          var rb = window._ccGetReferenceLayerBBox();
+          if (rb && !rb.isEmpty()) { take(rb.min.x, rb.min.z); take(rb.min.x, rb.max.z); take(rb.max.x, rb.min.z); take(rb.max.x, rb.max.z); }
+        }
+        if (!isFinite(min.x) || !isFinite(min.z)) { // no vertices: fall back to world axes
+          angle = 0; q.identity(); ax.x.set(1, 0, 0); ax.z.set(0, 0, 1);
+          min = { x: box.min.x, y: box.min.y, z: box.min.z }; max = { x: box.max.x, y: box.max.y, z: box.max.z };
+        }
+      }
+      var mid = { x: (min.x + max.x) / 2, y: (min.y + max.y) / 2, z: (min.z + max.z) / 2 };
+      var center = new THREE.Vector3().addScaledVector(ax.x, mid.x).addScaledVector(ax.y, mid.y).addScaledVector(ax.z, mid.z);
+      var frame = {
+        angle: angle, quaternion: q, axes: ax, min: min, max: max, center: center, box: box,
+        cut: function(axis, pos) {
+          var n = ax[axis], d = min[axis] + (max[axis] - min[axis]) * pos;
+          return { normal: n, d: d, point: center.clone().addScaledVector(n, d - mid[axis]) };
+        },
+        posOf: function(axis, worldPoint) {
+          var span = max[axis] - min[axis];
+          return span > 1e-9 ? (worldPoint.dot(ax[axis]) - min[axis]) / span : 0.5;
+        }
+      };
+      _planFrameCache = { key: key, frame: frame };
+      return frame;
+    }
+    window._ccPlanFrame = _ccPlanFrame;
+    // Section-box spec for the whole model, aligned to the building grid
+    // (rotation + min/max whose midpoint is the frame centre — the shape the
+    // section-box effect expects). Padding in metres.
+    window._ccAlignedModelSectionBox = function(pad) {
+      var fr = _ccPlanFrame(); if (fr.box.isEmpty()) return null;
+      pad = pad != null ? pad : 0.5;
+      var hx = (fr.max.x - fr.min.x) / 2 + pad, hy = (fr.max.y - fr.min.y) / 2 + pad, hz = (fr.max.z - fr.min.z) / 2 + pad;
+      var c = fr.center;
+      return { enabled: true, rotation: fr.angle || 0, min: [c.x - hx, c.y - hy, c.z - hz], max: [c.x + hx, c.y + hy, c.z + hz] };
+    };
     var prefsRef = useRef(s.prefs);
     prefsRef.current = s.prefs;
     window._ccZoomSens = s.prefs.zoomSens != null ? s.prefs.zoomSens : 1;
@@ -13884,6 +14010,18 @@ function startApp() {
         box.expandByScalar(0.5);
         return box;
       };
+      // Whole-model section box spec: aligned to the building grid when the
+      // model is rotated in plan (_ccPlanFrame), else exactly the old
+      // world-axis box from _getSectionBoxFromScene.
+      window._ccModelSectionBoxSpec = function(){
+        var fr = _ccPlanFrame();
+        if (fr.angle && typeof window._ccAlignedModelSectionBox === 'function') {
+          var al = window._ccAlignedModelSectionBox(0.5);
+          if (al) return al;
+        }
+        var b = _getSectionBoxFromScene(); if (!b) return null;
+        return {enabled:true, min:[b.min.x,b.min.y,b.min.z], max:[b.max.x,b.max.y,b.max.z]};
+      };
 
       // ── Activate Section Box — Revit-style: around selected element if one is active,
       //    otherwise around the full model (useful for global orientation/cropping). ──
@@ -13912,14 +14050,10 @@ function startApp() {
         }
         // Priority 2: highlighted clash/issue targets (if _sboxAroundElements is wired)
         // Priority 3: full model bounding box
-        var box = _getSectionBoxFromScene();
-        if (!box) return false;
+        var _mSpec = window._ccModelSectionBoxSpec();
+        if (!_mSpec) return false;
         if (window._ccDispatch) {
-          window._ccDispatch({t:A.SECTION_BOX, v:{
-            enabled:true,
-            min:[box.min.x, box.min.y, box.min.z],
-            max:[box.max.x, box.max.y, box.max.z]
-          }});
+          window._ccDispatch({t:A.SECTION_BOX, v:_mSpec});
         }
         return true;
       };
@@ -15945,13 +16079,10 @@ function startApp() {
         var S2 = state3d.current;
         if (cs.custom) return {normal:cs.custom.normal.slice(), point:cs.custom.point.slice()};
         if (cs.axis && S2.mg) {
-          var nm = {x:[1,0,0], y:[0,1,0], z:[0,0,1]};
-          var box = _elemsBBox();
-          var cut = box.min[cs.axis]+(box.max[cs.axis]-box.min[cs.axis])*cs.pos;
-          var ctr = box.getCenter(new THREE.Vector3());
-          var pt = [ctr.x, ctr.y, ctr.z];
-          pt[{x:0,y:1,z:2}[cs.axis]] = cut;
-          return {normal:nm[cs.axis], point:pt};
+          // Building-grid aligned (see _ccPlanFrame) — rotating an axis plane
+          // starts from the plane the user actually sees.
+          var fc = _ccPlanFrame().cut(cs.axis, cs.pos);
+          return {normal:[fc.normal.x, fc.normal.y, fc.normal.z], point:[fc.point.x, fc.point.y, fc.point.z]};
         }
         return null;
       }
@@ -15963,14 +16094,13 @@ function startApp() {
         var gizmo = S2._sectionPlaneVis;
         var box = (_secDrag && _secDrag.box) ? _secDrag.box : _elemsBBox();
         if (cs.axis) {
-          var cut = box.min[cs.axis] + (box.max[cs.axis] - box.min[cs.axis]) * newPos;
-          if (plane) {
-            // Keep the existing normal (preserves flip orientation); only slide the offset.
-            var cp = gizmo ? gizmo.position.clone() : box.getCenter(new THREE.Vector3());
-            cp[cs.axis] = cut;
-            plane.setFromNormalAndCoplanarPoint(plane.normal.clone(), cp);
-          }
-          if (gizmo) gizmo.position[cs.axis] = cut;
+          var _frL = _ccPlanFrame(), _fcL = _frL.cut(cs.axis, newPos), _nL = _fcL.normal;
+          // Slide along the (building-grid) normal, keeping the gizmo's
+          // in-plane position and the plane's normal (preserves flip).
+          var cp = gizmo ? gizmo.position.clone() : _frL.center.clone();
+          cp.addScaledVector(_nL, _fcL.d - cp.dot(_nL));
+          if (plane) plane.setFromNormalAndCoplanarPoint(plane.normal.clone(), cp);
+          if (gizmo) gizmo.position.copy(cp);
         } else if (cs.custom) {
           var sc = cs.custom;
           var nrm = new THREE.Vector3(sc.normal[0], sc.normal[1], sc.normal[2]);
@@ -16146,7 +16276,7 @@ function startApp() {
           // axis-only version inverted the dot (cut ran against the mouse)
           // and custom planes used raw screen-Y regardless of orientation.
           var _sdDir = null;
-          if (cs && cs.axis) _sdDir = ({x:[1,0,0], y:[0,1,0], z:[0,0,1]})[cs.axis];
+          if (cs && cs.axis) { var _sdN = _ccPlanFrame().axes[cs.axis]; _sdDir = [_sdN.x, _sdN.y, _sdN.z]; }
           else if (cs && cs.custom && cs.custom.normal) _sdDir = cs.custom.normal;
           if (_sdDir && S2 && S2.camera) {
             // Cache the screen-space travel direction ONCE at the first move. The
@@ -17057,23 +17187,28 @@ function startApp() {
         return grp;
       }
       if(s.sectionAxis && S.mg.children.length>0){
-        var box=_elemsBBox();
-        var cut=box.min[s.sectionAxis]+(box.max[s.sectionAxis]-box.min[s.sectionAxis])*s.sectionPos;
-        var nm={x:new THREE.Vector3(1,0,0),y:new THREE.Vector3(0,1,0),z:new THREE.Vector3(0,0,1)};
-        var axPlane = new THREE.Plane(nm[s.sectionAxis].clone().negate(),cut);
+        // Axis planes follow the building's plan grid (_ccPlanFrame) — world
+        // axes when the model isn't rotated in plan.
+        var fr=_ccPlanFrame(), box=fr.box;
+        var fc=fr.cut(s.sectionAxis, s.sectionPos);
+        var axPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(fc.normal.clone().negate(), fc.point);
         if(s.sectionFlip) axPlane.negate();
         planes.push(axPlane);
-        var size = box.getSize(new THREE.Vector3());
-        var center = box.getCenter(new THREE.Vector3());
-        var hw, hh, pos = new THREE.Vector3(), q = new THREE.Quaternion();
+        var size = new THREE.Vector3(fr.max.x-fr.min.x, fr.max.y-fr.min.y, fr.max.z-fr.min.z);
+        var hw, hh, pos = fc.point.clone(), q = new THREE.Quaternion(), qa = new THREE.Quaternion();
         // Estimate above-grade height: from grade (Y=0 or model min) to model top.
         // Avoids deep piles inflating the vertical plane size to absurd heights.
         var _aboveH = (box.max.y > 0) ? Math.max(2, box.max.y - Math.max(box.min.y, 0)) : size.y;
-        var _visHalfH = _aboveH * 1.15;
         var _visCtrY = (box.max.y > 0 ? Math.max(box.min.y, 0) : box.min.y) + _aboveH * 0.5;
-        if(s.sectionAxis==='x'){ hw=size.z*1.0; hh=_visHalfH; pos.set(cut,_visCtrY,center.z); q.setFromAxisAngle(new THREE.Vector3(0,1,0),Math.PI/2); }
-        else if(s.sectionAxis==='y'){ hw=size.x*0.9; hh=size.z*0.9; pos.set(center.x,cut,center.z); q.setFromAxisAngle(new THREE.Vector3(1,0,0),-Math.PI/2); }
-        else { hw=size.x*1.0; hh=_visHalfH; pos.set(center.x,_visCtrY,cut); }
+        // The outline hugs the building (half-extent + 4% + 0.5 m) — it used
+        // to be ~2x the model on every side, so it never read as "the cut
+        // through this building".
+        function _hug(extent){ return extent / 2 * 1.04 + 0.5; }
+        var _visHalfH = _hug(_aboveH);
+        if(s.sectionAxis==='x'){ hw=_hug(size.z); hh=_visHalfH; pos.y=_visCtrY; qa.setFromAxisAngle(new THREE.Vector3(0,1,0),Math.PI/2); }
+        else if(s.sectionAxis==='y'){ hw=_hug(size.x); hh=_hug(size.z); qa.setFromAxisAngle(new THREE.Vector3(1,0,0),-Math.PI/2); }
+        else { hw=_hug(size.x); hh=_visHalfH; pos.y=_visCtrY; }
+        q.copy(fr.quaternion).multiply(qa); // building-grid rotation, then the per-axis plane orientation
         var vis = _makeSectionVis(hw, hh, pos, q);
         // Fixed world-proportional handle size: ~3.5 % of model diagonal,
         // independent of camera distance so the gizmo never grows on zoom-out.
@@ -17113,12 +17248,8 @@ function startApp() {
           if(window._ccSectionDragging) return;
           var _S=state3d.current; if(!_S||!_S.mg) return;
           var _st=window._ccLatestState||{};
-          var _box=_elemsBBox();
-          var _axIdx={x:0,y:1,z:2}[s.sectionAxis];
-          var _min=_axIdx===0?_box.min.x:_axIdx===1?_box.min.y:_box.min.z;
-          var _max=_axIdx===0?_box.max.x:_axIdx===1?_box.max.y:_box.max.z;
-          var _cut=_min+s.sectionPos*(_max-_min);
-          _buildSectionCutLines(_S, _st.models||[], _axIdx, _cut);
+          var _fc=_ccPlanFrame().cut(s.sectionAxis, s.sectionPos);
+          _buildSectionCutLines(_S, _st.models||[], [_fc.normal.x,_fc.normal.y,_fc.normal.z], _fc.d);
           invalidate();
         },300);
       } else {
@@ -17212,10 +17343,9 @@ function startApp() {
             var box = _elemsBBox(); if (box.isEmpty()) return;
             var ax = st.sectionAxis;
             if (ax) {
-              var minV = box.min[ax], maxV = box.max[ax];
-              if (Math.abs(maxV - minV) < 1e-6) return;
-              var posVal = anchor.position[ax];
-              var t = (posVal - minV) / (maxV - minV);
+              var _frO = _ccPlanFrame();
+              if (Math.abs(_frO.max[ax] - _frO.min[ax]) < 1e-6) return;
+              var t = _frO.posOf(ax, anchor.position); // along the building-grid axis
               t = Math.max(0.005, Math.min(0.995, t));
               _disp({t:A.SECTION, axis:ax, pos:t});
             } else if (st.sectionCustom) {
@@ -17245,11 +17375,12 @@ function startApp() {
         var center = box.getCenter(new THREE.Vector3());
         if (s.sectionAxis) {
           var ax = s.sectionAxis;
-          var minV = box.min[ax], maxV = box.max[ax];
-          var cut = minV + (maxV - minV) * s.sectionPos;
-          S._sectionAnchor.position.copy(center);
-          S._sectionAnchor.position[ax] = cut;
-          S._sectionAnchor.rotation.set(0,0,0);
+          var _frG = _ccPlanFrame();
+          S._sectionAnchor.position.copy(_frG.cut(ax, s.sectionPos).point);
+          // Local frame = building grid, so the single visible arrow runs
+          // along the plane normal even when the model is rotated in plan.
+          S._sectionAnchor.quaternion.copy(_frG.quaternion);
+          S._sectionTC.space = 'local';
           S._sectionTC.showX = (ax==='x');
           S._sectionTC.showY = (ax==='y');
           S._sectionTC.showZ = (ax==='z');
@@ -17276,7 +17407,8 @@ function startApp() {
       });
 
       return function(){};
-    }, [s.sectionAxis, s.sectionCustom, s.sectionPos, s.walkMode, s.presenting]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- _ccPlanFrame is a render-scoped helper that reads modelsRef and caches by model set; s.models re-anchors the gizmo when the loaded models change
+    }, [s.sectionAxis, s.sectionCustom, s.sectionPos, s.walkMode, s.presenting, s.models]);
 
     var sboxDragRef = useRef(null); // {handle, axis, side, startMouse, startVal, plane}
     useEffect(function(){
@@ -19341,8 +19473,8 @@ function startApp() {
         return;
       }
       if(_getSectionBoxFromScene){
-        var box=_getSectionBoxFromScene();
-        if(box) d({t:A.SECTION_BOX,v:{enabled:true,min:[box.min.x,box.min.y,box.min.z],max:[box.max.x,box.max.y,box.max.z]}});
+        var _spec=window._ccModelSectionBoxSpec ? window._ccModelSectionBoxSpec() : null;
+        if(_spec) d({t:A.SECTION_BOX,v:_spec});
       }
     }
     function resetRotation(){
@@ -33547,8 +33679,8 @@ function startApp() {
     if (_sectionCutWorker) return _sectionCutWorker;
     var code = [
       'self.onmessage=function(e){',
-      '  var d=e.data,ai=d.ai,cp=d.cp,eps=1e-6,out=[];',
-      '  function axV(x,y,z){return ai===0?x:ai===1?y:z;}',
+      '  var d=e.data,nr=d.n,cp=d.cp,eps=1e-6,out=[];',
+      '  function axV(x,y,z){return x*nr[0]+y*nr[1]+z*nr[2];}',
       '  d.meshes.forEach(function(m){',
       '    var p=m.pos,ix=m.idx,mt=m.mat;',
       '    function ap(i){',
@@ -33578,7 +33710,9 @@ function startApp() {
     return _sectionCutWorker;
   }
 
-  function _buildSectionCutLines(S, models, axisIdx, cutPos) {
+  // normal: unit [x,y,z] of the cut plane (building-grid aligned axis, see
+  // _ccPlanFrame); cutPos: signed distance of the plane along it.
+  function _buildSectionCutLines(S, models, normal, cutPos) {
     _ccDisposeSectionCutLines(S);
     if(!models||!models.length) return;
 
@@ -33595,9 +33729,10 @@ function startApp() {
           // AABB pre-filter: skip meshes entirely on one side of the cut plane
           if(!geo.boundingBox) geo.computeBoundingBox();
           _tmpBox.copy(geo.boundingBox).applyMatrix4(mesh.matrixWorld);
-          var bbMin=axisIdx===0?_tmpBox.min.x:axisIdx===1?_tmpBox.min.y:_tmpBox.min.z;
-          var bbMax=axisIdx===0?_tmpBox.max.x:axisIdx===1?_tmpBox.max.y:_tmpBox.max.z;
-          if(bbMax<cutPos||bbMin>cutPos) return;
+          // Extent of the box along the normal (support of a box = centre ± |n|·half).
+          var _bc=(_tmpBox.min.x+_tmpBox.max.x)/2*normal[0]+(_tmpBox.min.y+_tmpBox.max.y)/2*normal[1]+(_tmpBox.min.z+_tmpBox.max.z)/2*normal[2];
+          var _br=Math.abs(normal[0])*(_tmpBox.max.x-_tmpBox.min.x)/2+Math.abs(normal[1])*(_tmpBox.max.y-_tmpBox.min.y)/2+Math.abs(normal[2])*(_tmpBox.max.z-_tmpBox.min.z)/2;
+          if(_bc+_br<cutPos||_bc-_br>cutPos) return;
           var srcPos=geo.attributes.position.array;
           var posCopy=new Float32Array(srcPos.length); posCopy.set(srcPos);
           var idxCopy=null;
@@ -33632,7 +33767,7 @@ function startApp() {
       S._sectionCutLines=lines;
       invalidate();
     };
-    worker.postMessage({id:jobId, meshes:meshData, ai:axisIdx, cp:cutPos}, transferList);
+    worker.postMessage({id:jobId, meshes:meshData, n:normal, cp:cutPos}, transferList);
   }
 
   function _getSectionHatchWorker() {
@@ -42456,7 +42591,7 @@ function startApp() {
             var bxRefs=getActiveRefs();
             if(bxRefs&&_sboxAroundElements){ _sboxAroundElements(bxRefs); return; }
             if(window._ccActivateSectionBox && window._ccActivateSectionBox()) return;
-            if(_getSectionBoxFromScene){var box=_getSectionBoxFromScene();if(box&&window._ccDispatch)window._ccDispatch({t:A.SECTION_BOX,v:{enabled:true,min:[box.min.x,box.min.y,box.min.z],max:[box.max.x,box.max.y,box.max.z]}});}
+            if(window._ccModelSectionBoxSpec){var _bxSpec=window._ccModelSectionBoxSpec();if(_bxSpec&&window._ccDispatch)window._ccDispatch({t:A.SECTION_BOX,v:_bxSpec});}
             return;
           }
           if(chord==='sc'){
@@ -42512,7 +42647,7 @@ function startApp() {
             if(sk==='v'){ if(_captureViewpoint){var vp2=_captureViewpoint('Viewpoint '+(s.viewpoints.length+1));d({t:A.ADD_VIEWPOINT,v:vp2});} }
             if(sk==='b'){
               if(window._ccActivateSectionBox) window._ccActivateSectionBox();
-              else if(_getSectionBoxFromScene){var bx=_getSectionBoxFromScene();if(bx&&window._ccDispatch)window._ccDispatch({t:A.SECTION_BOX,v:{enabled:true,min:[bx.min.x,bx.min.y,bx.min.z],max:[bx.max.x,bx.max.y,bx.max.z]}});}
+              else if(window._ccModelSectionBoxSpec){var _bSpec=window._ccModelSectionBoxSpec();if(_bSpec&&window._ccDispatch)window._ccDispatch({t:A.SECTION_BOX,v:_bSpec});}
             }
             if(sk==='w'){ if(s.walkMode){ d({t:A.WALK_MODE,v:false}); } else { d({t:A.WALK_PLACING,v:!s.walkPlacing}); } }
             // Z held without a follow-up key → toggle vertical floor cut

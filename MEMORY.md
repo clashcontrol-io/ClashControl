@@ -91,6 +91,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
   - BatchedMesh: `setVisibleAt`
 
   `_ccTempHide` has no InstancedMesh branch. Never call `ghostOthers`/`unghostAll` from occluder code.
+- **Section planes follow the building grid.** Axis sections (X/Y/Z), their outline, cut lines, drag gizmo and the whole-model section box use `_ccPlanFrame()` (dominant wall direction via `_ccSectionClipping.dominantPlanAngle`, cached per model set). Angle 0 (world-aligned or no clear grid) is exactly the old world-axis behaviour. Don't reintroduce `box.min[axis]`-style world-axis math for sections — go through `frame.cut(axis,pos)` / `frame.posOf` (`tests/browser/section-plane-alignment.mjs`).
 - **Clipping:** the core turns `renderer.localClippingEnabled` off when no section is active. `tiles.js` site-clearing re-asserts it each frame.
 - **North/georef sign:** the applied rotation was negated after a live test. If a model rotates the wrong way, suspect a per-authoring-tool sign difference and add a flip toggle. Georef is context/QA only; the clash engine uses local coordinates.
 - **3D Tiles ENU→Y-up sign** is unverified with Google tiles. If the city is mirrored or under the model, flip the rotX sign.
