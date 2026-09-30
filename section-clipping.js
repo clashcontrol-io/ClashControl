@@ -193,8 +193,26 @@
     return { angle: angle, confidence: confidence };
   }
 
+  // ── Section-plane outline size ─────────────────────────────────────
+  // Half-extents of the drawn outline along the plane's two in-plane axes.
+  // ext: the model's extents along those axes; gap: the largest distance
+  // from the cut to model geometry along the plane normal.
+  // One margin fraction f for both axes, so the outline keeps the model's
+  // exact proportions (a long building gets a long outline, not a square).
+  // f is what gives the SHORT side a margin of 2 x gap — geometry above/
+  // below the cut then still reads as inside the outline in perspective (up
+  // to ~63 deg off the normal) — clamped to 4%..25%: never a huge sheet
+  // under one chair, never a stamp on a big building.
+  function outlineHalfExtents(ext, gap) {
+    var big = Math.max(ext[0] || 0, ext[1] || 0, 1e-6);
+    var e = [Math.max(ext[0] || 0, 0.01 * big), Math.max(ext[1] || 0, 0.01 * big)]; // zero-depth model: still a visible band
+    var f = Math.min(0.25, Math.max(0.04, 2 * Math.max(0, gap || 0) / Math.min(e[0], e[1])));
+    return [e[0] * (0.5 + f), e[1] * (0.5 + f)];
+  }
+
   return Object.freeze({
     dominantPlanAngle: dominantPlanAngle,
+    outlineHalfExtents: outlineHalfExtents,
     eligible: eligible,
     materials: materials,
     applyLegacy: applyLegacy,

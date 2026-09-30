@@ -148,10 +148,51 @@ async function measure(page) {
   });
 }
 
+// Horizontal cut high in the model. The outline must keep the model's plan
+// proportions, and geometry above/below the cut must read as INSIDE the
+// outline in perspective for every view up to the angle its margin covers
+// (atan(short-side margin / gap)): exact ray test — each vertex's
+// camera->vertex ray must cross the cut plane inside the outline rectangle.
+// (Furniture far below a high cut used to drift outside it.)
+async function outlineCoversInPerspective(page) {
+  return page.evaluate(async () => {
+    window._ccDispatch({ t: 'SECTION', axis: 'y', pos: 0.9 });
+    await new Promise((r) => setTimeout(r, 400));
+    const S = window._ccState3d, V = S.camera.position.constructor, fr = window._ccPlanFrame();
+    const vis = S._sectionPlaneVis, prm = vis.children[0].geometry.parameters;
+    const hw = prm.width / 2, hh = prm.height / 2, P0 = vis.position.clone();
+    const ext = [fr.max.x - fr.min.x, fr.max.z - fr.min.z], cutY = P0.y;
+    const gap = Math.max(cutY - fr.min.y, fr.max.y - cutY);
+    const marginShort = Math.min(hw - ext[0] / 2, hh - ext[1] / 2);
+    const ang = 0.95 * Math.atan(marginShort / gap);
+    const b = window._ccElemsBBox(), c = b.getCenter(new V()), out = { hw, hh, ext, gap, angleDeg: ang * 180 / Math.PI, views: [] };
+    for (const th of [0.4, 2.0, 3.6, 5.2]) {
+      S.orbit.target.copy(c); S.orbit.sph.theta = th; S.orbit.sph.phi = ang;
+      S.orbit.sph.r = b.getSize(new V()).length() * 1.5; S.orbit.apply();
+      const C = S.camera.position.clone(), v = new V();
+      let tot = 0, outside = 0;
+      window._ccLatestState.models.forEach((m) => m.elements.forEach((el) => el.meshes.forEach((me) => {
+        const p = me.geometry.attributes.position; me.updateWorldMatrix(true, false);
+        for (let i = 0; i < p.count; i++) {
+          v.fromBufferAttribute(p, i).applyMatrix4(me.matrixWorld);
+          const dy = v.y - C.y; if (Math.abs(dy) < 1e-9) continue;
+          const t = (cutY - C.y) / dy; if (t <= 0) continue; // ray never meets the plane in front of the camera
+          const ix = C.x + t * (v.x - C.x) - P0.x, iz = C.z + t * (v.z - C.z) - P0.z;
+          const u = ix * fr.axes.x.x + iz * fr.axes.x.z, w = ix * fr.axes.z.x + iz * fr.axes.z.z;
+          tot++; if (Math.abs(u) > hw + 1e-6 || Math.abs(w) > hh + 1e-6) outside++;
+        }
+      })));
+      out.views.push({ theta: th, tot, outside });
+    }
+    window._ccDispatch({ t: 'SECTION', axis: null });
+    return out;
+  });
+}
+
 const near = (a, b, tol) => Math.abs(a - b) <= tol;
 try {
   const p0 = await newPage(); await loadOffice(p0, 0); const r0 = await measure(p0); await p0.close();
-  const p23 = await newPage(); await loadOffice(p23, 23); const r23 = await measure(p23); await p23.close();
+  const p23 = await newPage(); await loadOffice(p23, 23); const r23 = await measure(p23); const persp = await outlineCoversInPerspective(p23); await p23.close();
 
   // Unrotated model: exactly the old world-axis behaviour.
   for (const ax of ['x', 'z', 'y']) {
@@ -171,6 +212,14 @@ try {
   if (!r23.x.ext.every((e, i) => near(e, r0.x.ext[i], 0.01))) fail(`23 deg: frame extents ${r23.x.ext} vs unrotated ${r0.x.ext} (outline must hug the footprint)`);
   if (!r23.box || !near(r23.box.rotation * 180 / Math.PI, 23, 0.05)) fail(`23 deg: whole-model section box rotation ${r23.box && r23.box.rotation}`);
   console.log(`ALIGN OK — rotated model: angle ${r23.x.angle.toFixed(3)} deg, walls aligned ${r23.x.wallAligned.toFixed(4)} (= unrotated ${r0.x.wallAligned.toFixed(4)}), extents ${r23.x.ext.map((e) => e.toFixed(2)).join('x')}, section box rotated`);
+
+  const bad = persp.views.filter((r) => r.outside > 0 || !r.tot);
+  if (bad.length) fail('horizontal cut outline does not cover the model in perspective: ' + JSON.stringify(persp));
+  const aspectOut = persp.hw / persp.hh, aspectModel = persp.ext[0] / persp.ext[1];
+  if (!near(aspectOut, aspectModel, 1e-9 * aspectModel)) fail(`outline aspect ${aspectOut} != model plan aspect ${aspectModel}`);
+  const scale = 2 * persp.hw / persp.ext[0];
+  if (!(scale >= 1.08 - 1e-9 && scale <= 1.5 + 1e-9)) fail(`outline is ${scale}x the model (expected 1.08..1.5)`);
+  if (!bad.length) console.log(`ALIGN OK — horizontal cut at 90%: outline ${(2 * persp.hw).toFixed(2)} x ${(2 * persp.hh).toFixed(2)} m (${scale.toFixed(2)}x the model, same aspect); every vertex reads inside it from 4 sides up to ${persp.angleDeg.toFixed(1)} deg off vertical`);
 
   if (errors.length) fail('page errors: ' + JSON.stringify(errors.slice(0, 5)));
 } catch (e) { fail(String(e && e.stack || e)); }

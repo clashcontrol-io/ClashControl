@@ -11304,7 +11304,6 @@ function startApp() {
     var sph = { r:60, phi:Math.PI/4, theta:Math.PI/4 };
     var dragging=false, panning=false, rightPanning=false, lx=0, ly=0;
     var _tmpVec = new THREE.Vector3();
-    var _tmpVec2 = new THREE.Vector3();
     var _tmpDir = new THREE.Vector3();
     var _tmpRight = new THREE.Vector3();
     var _tmpUp = new THREE.Vector3();
@@ -11385,40 +11384,6 @@ function startApp() {
     }
     sync();
 
-    // ── Small pivot indicator, shown while rotate-dragging ──
-    var _pivotEl = null;
-    function _ensurePivotEl(){
-      if (_pivotEl) return _pivotEl;
-      var d = document.createElement('div');
-      d.style.cssText = 'position:fixed;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;'
-        + 'background:rgba(255,255,255,0.95);border:1.5px solid rgba(0,0,0,0.6);'
-        + 'box-shadow:0 0 0 1px rgba(255,255,255,0.5),0 1px 3px rgba(0,0,0,0.4);'
-        + 'pointer-events:none;z-index:2147483000;display:none;';
-      document.body.appendChild(d);
-      _pivotEl = d;
-      return d;
-    }
-    function _showPivotIndicator(){
-      try {
-        var d = _ensurePivotEl();
-        d.style.display = 'block';
-        _updatePivotIndicator();
-      } catch(_e){}
-    }
-    function _updatePivotIndicator(){
-      if (!_pivotEl || _pivotEl.style.display==='none') return;
-      try {
-        var p = _tmpVec2.copy(_dragPivot).project(camera);
-        if (p.z > 1 || p.z < -1) { _pivotEl.style.display='none'; return; }
-        var rect = el.getBoundingClientRect();
-        _pivotEl.style.left = (rect.left + (p.x+1)/2*rect.width) + 'px';
-        _pivotEl.style.top = (rect.top + (1-p.y)/2*rect.height) + 'px';
-      } catch(_e){}
-    }
-    function _hidePivotIndicator(){
-      if (_pivotEl) _pivotEl.style.display='none';
-    }
-
     // World-space depth of the point under the cursor along the camera's
     // forward axis (falls back to the distance to the current target when
     // nothing is hit) — used to scale a pan drag so the grabbed point stays
@@ -11437,7 +11402,6 @@ function startApp() {
       dragging = true; _orbitDragging = true; _dragMoved = false;
       var hit = _pickSurfacePoint(e);
       _dragPivot.copy(hit || target);
-      _showPivotIndicator();
     }
     function _beginPanDrag(e){
       panning = true; _orbitDragging = true; _dragMoved = false;
@@ -11466,10 +11430,10 @@ function startApp() {
     _wlAdd('mousemove', function(e) {
       if(!dragging&&!panning&&!rightPanning) return;
       // If walk mode activated while orbit drag was held, clear the drag state
-      if(_walkActive){ dragging=false; panning=false; rightPanning=false; el.style.cursor=''; _orbitDragging=false; _hidePivotIndicator(); return; }
+      if(_walkActive){ dragging=false; panning=false; rightPanning=false; el.style.cursor=''; _orbitDragging=false; return; }
       // A section-plane / section-box / floor-plan handle drag owns the gesture —
       // never orbit at the same time (was: camera rotated while dragging a handle).
-      if(window._ccSectionDragging || _sboxDragging){ dragging=false; panning=false; rightPanning=false; el.style.cursor=''; _orbitDragging=false; _hidePivotIndicator(); return; }
+      if(window._ccSectionDragging || _sboxDragging){ dragging=false; panning=false; rightPanning=false; el.style.cursor=''; _orbitDragging=false; return; }
       var dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
       if (dx===0 && dy===0) return;
       _dragMoved = true;
@@ -11491,7 +11455,6 @@ function startApp() {
         target.set(camera.position.x + stepped.forward.x*_targetDist, camera.position.y + stepped.forward.y*_targetDist, camera.position.z + stepped.forward.z*_targetDist);
         camera.lookAt(target);
         sync();
-        _updatePivotIndicator();
         invalidate();
       }
       if(panning||rightPanning){
@@ -11518,7 +11481,6 @@ function startApp() {
       orbit._lastRightDragMoved = rightPanning && _dragMoved;
       dragging=false; panning=false; rightPanning=false; el.style.cursor='';
       _orbitDragging=false;
-      _hidePivotIndicator();
       invalidate(3);
     });
     el.addEventListener('wheel', function(e){
@@ -17200,14 +17162,20 @@ function startApp() {
         // Avoids deep piles inflating the vertical plane size to absurd heights.
         var _aboveH = (box.max.y > 0) ? Math.max(2, box.max.y - Math.max(box.min.y, 0)) : size.y;
         var _visCtrY = (box.max.y > 0 ? Math.max(box.min.y, 0) : box.min.y) + _aboveH * 0.5;
-        // The outline hugs the building (half-extent + 4% + 0.5 m) — it used
-        // to be ~2x the model on every side, so it never read as "the cut
-        // through this building".
-        function _hug(extent){ return extent / 2 * 1.04 + 0.5; }
-        var _visHalfH = _hug(_aboveH);
-        if(s.sectionAxis==='x'){ hw=_hug(size.z); hh=_visHalfH; pos.y=_visCtrY; qa.setFromAxisAngle(new THREE.Vector3(0,1,0),Math.PI/2); }
-        else if(s.sectionAxis==='y'){ hw=_hug(size.x); hh=_hug(size.z); qa.setFromAxisAngle(new THREE.Vector3(1,0,0),-Math.PI/2); }
-        else { hw=_hug(size.x); hh=_visHalfH; pos.y=_visCtrY; }
+        // Outline size follows the model (_ccSectionClipping.outlineHalfExtents):
+        // per axis, the model's extent + a margin of 2x the distance from the
+        // cut to the furthest geometry (so geometry above/below stays inside
+        // in perspective), clamped to 4%..25% of that axis — proportional to
+        // the model, rectangular for a long building.
+        var _gapN = Math.max(0, fc.d - fr.min[s.sectionAxis], fr.max[s.sectionAxis] - fc.d);
+        function _outline(a, b){
+          var api = window._ccSectionClipping;
+          return api && typeof api.outlineHalfExtents === 'function' ? api.outlineHalfExtents([a, b], _gapN) : [a / 2 * 1.04, b / 2 * 1.04];
+        }
+        var _oh;
+        if(s.sectionAxis==='x'){ _oh=_outline(size.z, _aboveH); hw=_oh[0]; hh=_oh[1]; pos.y=_visCtrY; qa.setFromAxisAngle(new THREE.Vector3(0,1,0),Math.PI/2); }
+        else if(s.sectionAxis==='y'){ _oh=_outline(size.x, size.z); hw=_oh[0]; hh=_oh[1]; qa.setFromAxisAngle(new THREE.Vector3(1,0,0),-Math.PI/2); }
+        else { _oh=_outline(size.x, _aboveH); hw=_oh[0]; hh=_oh[1]; pos.y=_visCtrY; }
         q.copy(fr.quaternion).multiply(qa); // building-grid rotation, then the per-axis plane orientation
         var vis = _makeSectionVis(hw, hh, pos, q);
         // Fixed world-proportional handle size: ~3.5 % of model diagonal,
@@ -19174,30 +19142,6 @@ function startApp() {
       step();
     }
 
-    // Discoverable 90°-step rotate arrows around the cube — the raycasting
-    // edge/corner hit zones in getHitZone() below already let a click near
-    // the cube's boundary reach an adjacent face, but that's not obvious
-    // when (e.g. in a straight-down TOP view) every other face is edge-on
-    // and effectively invisible. These four buttons are a guaranteed,
-    // always-visible way to reach any face without relying on a precise
-    // click near a tiny/foreshortened edge.
-    function stepRotate(dTheta, dPhi) {
-      var S=state3d.current; if(!S||!S.orbit) return;
-      var startTheta=S.orbit.sph.theta, startPhi=S.orbit.sph.phi;
-      var targetTheta=startTheta+dTheta;
-      var targetPhi=Math.max(_ORBIT_POLE_EPS,Math.min(Math.PI-_ORBIT_POLE_EPS,startPhi+dPhi));
-      var t0=performance.now(), dur=400;
-      function step(){
-        var t=Math.min((performance.now()-t0)/dur,1);
-        var e=t<0.5?2*t*t:-1+(4-2*t)*t;
-        S.orbit.sph.theta=startTheta+(targetTheta-startTheta)*e;
-        S.orbit.sph.phi=startPhi+(targetPhi-startPhi)*e;
-        S.orbit.apply(); invalidate();
-        if(t<1) requestAnimationFrame(step);
-      }
-      step();
-    }
-
     function makeFaceTexture(label, isHovered) {
       var c = document.createElement('canvas');
       c.width=128; c.height=128;
@@ -19307,10 +19251,13 @@ function startApp() {
       }
       animate();
 
-      // ── Hit-zone detection (face / edge / corner) ─────────────
-      // Edge threshold: hits within this distance of a cube edge
-      // trigger a 2-face (edge) or 3-face (corner) navigation.
-      var EDGE_T = 0.15;
+      // ── Hit detection: one click on a side = square view of that side ──
+      // The clicked face decides the view (never a 45° edge/corner view).
+      // Looking straight at a face, its four neighbours are edge-on and
+      // can't be hit, so the border band of the face you're looking at
+      // reaches the neighbour behind that border instead.
+      var EDGE_T = 0.18;
+      var _vcN = new THREE.Vector3();
       function getHitZone(cx, cy) {
         var vc = vcState.current; if(!vc) return null;
         var rect = canvas.getBoundingClientRect();
@@ -19321,33 +19268,35 @@ function startApp() {
         if(hits.length===0) return null;
         var hit = hits[0];
         var faceIdx = BOX_FACE_MAP[hit.face.materialIndex];
-        var lp = cubeMesh.worldToLocal(hit.point.clone());
-        var comps = [lp.x, lp.y, lp.z];
         var fn = FACES[faceIdx].normal;
-        var dir = [fn[0], fn[1], fn[2]];
-        var faces = [faceIdx];
-        // For axes perpendicular to the face normal, check if near an edge
-        for(var i=0;i<3;i++){
-          if(fn[i]!==0) continue;
-          if(Math.abs(comps[i]) > 0.5 - EDGE_T){
-            var sign = comps[i]>0?1:-1;
-            dir[i] = sign;
+        // Facing the camera head-on? (cube camera looks down -Z)
+        _vcN.set(fn[0], fn[1], fn[2]).applyQuaternion(cubeGroup.quaternion);
+        if(_vcN.z > 0.995){
+          var lp = cubeMesh.worldToLocal(hit.point.clone());
+          var comps = [lp.x, lp.y, lp.z], best = -1, bestV = 0.5 - EDGE_T;
+          for(var i=0;i<3;i++){
+            if(fn[i]!==0) continue;
+            if(Math.abs(comps[i]) > bestV){ bestV = Math.abs(comps[i]); best = i; }
+          }
+          if(best >= 0){
+            var sign = comps[best]>0?1:-1;
             for(var j=0;j<FACES.length;j++){
-              if(FACES[j].normal[i]===sign){ faces.push(j); break; }
+              if(FACES[j].normal[best]===sign){ faceIdx = j; break; }
             }
           }
         }
-        var len = Math.sqrt(dir[0]*dir[0]+dir[1]*dir[1]+dir[2]*dir[2]);
-        if(len>0){ dir[0]/=len; dir[1]/=len; dir[2]/=len; }
-        return {dir:dir, faces:faces};
+        var n = FACES[faceIdx].normal;
+        return {dir:[n[0], n[1], n[2]], faces:[faceIdx]};
       }
 
-      // ── Hover highlight (supports multi-face for edges/corners) ─
+      // ── Hover highlight: the face a click would go to ─
       function updateHover(zone) {
         var vc = vcState.current; if(!vc) return;
         var newKey = zone ? zone.faces.slice().sort().join(',') : null;
         if(newKey === vc.hoveredKey) return;
         vc.hoveredKey = newKey;
+        // Names the target — needed when it's an edge-on side behind the border.
+        canvas.title = zone ? _cc_t('viewcube.goTo', 'View {face}', {face: FACES[zone.faces[0]].label}) : '';
         var hovSet = {};
         if(zone) zone.faces.forEach(function(f){ hovSet[f]=true; });
         vc.materials.forEach(function(mat, boxIdx) {
@@ -19429,33 +19378,9 @@ function startApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- theme-keyed recolour; BOX_FACE_MAP/FACES are constants and makeFaceTexture reads themeRef.current
     }, [theme]);
 
-    var _arrowBtn = {position:'absolute',display:'flex',alignItems:'center',justifyContent:'center',
-      width:20,height:20,padding:0,border:'1px solid var(--vc-border)',borderRadius:'50%',
-      background:'var(--vc-bg)',color:'var(--vc-text)',cursor:'pointer',boxShadow:'var(--shadow-sm)',
-      zIndex:1};
     return html`<div class="cc-viewcube-wrap" style=${{position:'absolute',top:'1rem',
       right:'calc(1rem + '+panelOff+'px)',pointerEvents:'auto',width:CUBE_SIZE,height:CUBE_SIZE,overflow:'visible'}}>
       <canvas ref=${canvasRef} style=${{cursor:'pointer',display:'block',width:CUBE_SIZE,height:CUBE_SIZE,overflow:'hidden',borderRadius:6}} />
-      <button type="button" title=${_cc_t('viewcube.rotateUp','Tilt up 90°')} aria-label=${_cc_t('viewcube.rotateUp','Tilt up 90°')}
-        onClick=${function(){stepRotate(0,-Math.PI/2);}}
-        style=${{..._arrowBtn,left:'50%',top:-10,transform:'translateX(-50%)'}}>
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
-      </button>
-      <button type="button" title=${_cc_t('viewcube.rotateDown','Tilt down 90°')} aria-label=${_cc_t('viewcube.rotateDown','Tilt down 90°')}
-        onClick=${function(){stepRotate(0,Math.PI/2);}}
-        style=${{..._arrowBtn,left:'50%',bottom:-10,transform:'translateX(-50%)'}}>
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
-      </button>
-      <button type="button" title=${_cc_t('viewcube.rotateLeft','Rotate left 90°')} aria-label=${_cc_t('viewcube.rotateLeft','Rotate left 90°')}
-        onClick=${function(){stepRotate(-Math.PI/2,0);}}
-        style=${{..._arrowBtn,top:'50%',left:-10,transform:'translateY(-50%)'}}>
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
-      </button>
-      <button type="button" title=${_cc_t('viewcube.rotateRight','Rotate right 90°')} aria-label=${_cc_t('viewcube.rotateRight','Rotate right 90°')}
-        onClick=${function(){stepRotate(Math.PI/2,0);}}
-        style=${{..._arrowBtn,top:'50%',right:-10,transform:'translateY(-50%)'}}>
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
-      </button>
     </div>`;
   }
 
