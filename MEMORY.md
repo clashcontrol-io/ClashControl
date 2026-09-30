@@ -238,5 +238,5 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 Update at the start and end of every session; strike (~~…~~ + date) when done and delete struck items after ~30 days.
 
-- 2026-09-30: pivot dot removed; view cube arrows replaced by one-click square side views (`tests/browser/viewcube-click.mjs`). Section plane "not over all elements" reported on a furniture model — NOT reproduced (instanced/batched/rotated/far-offset/reload-restored furniture all fit exactly, `.lint-tmp` probe); waiting on the user's model.
+- 2026-09-30: pivot dot removed; view cube arrows replaced by one-click square side views (`tests/browser/viewcube-click.mjs`). Section plane "not over all elements" (user's SFW furniture IFC): the outline covered every element in plan; furniture 2.6–4.7 m below the cut drifted outside it in perspective. Outline size is now `_ccSectionClipping.outlineHalfExtents` (one margin fraction for both axes = 2x cut-to-geometry gap over the short side, clamped 4–25%): proportional, keeps the model's aspect ratio, covers in perspective up to ~63°.
 - ~~2026-09-29: modernisation plan items 2–4 + memory cleanup on `claude/pensive-faraday-v6t6wh` (engine/worker/native perf, smarter clashes, UI/a11y/lint leftovers); PR + merge; ClashControlEngine PR #28.~~ (2026-09-29)

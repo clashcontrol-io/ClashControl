@@ -17162,14 +17162,20 @@ function startApp() {
         // Avoids deep piles inflating the vertical plane size to absurd heights.
         var _aboveH = (box.max.y > 0) ? Math.max(2, box.max.y - Math.max(box.min.y, 0)) : size.y;
         var _visCtrY = (box.max.y > 0 ? Math.max(box.min.y, 0) : box.min.y) + _aboveH * 0.5;
-        // The outline hugs the building (half-extent + 4% + 0.5 m) — it used
-        // to be ~2x the model on every side, so it never read as "the cut
-        // through this building".
-        function _hug(extent){ return extent / 2 * 1.04 + 0.5; }
-        var _visHalfH = _hug(_aboveH);
-        if(s.sectionAxis==='x'){ hw=_hug(size.z); hh=_visHalfH; pos.y=_visCtrY; qa.setFromAxisAngle(new THREE.Vector3(0,1,0),Math.PI/2); }
-        else if(s.sectionAxis==='y'){ hw=_hug(size.x); hh=_hug(size.z); qa.setFromAxisAngle(new THREE.Vector3(1,0,0),-Math.PI/2); }
-        else { hw=_hug(size.x); hh=_visHalfH; pos.y=_visCtrY; }
+        // Outline size follows the model (_ccSectionClipping.outlineHalfExtents):
+        // per axis, the model's extent + a margin of 2x the distance from the
+        // cut to the furthest geometry (so geometry above/below stays inside
+        // in perspective), clamped to 4%..25% of that axis — proportional to
+        // the model, rectangular for a long building.
+        var _gapN = Math.max(0, fc.d - fr.min[s.sectionAxis], fr.max[s.sectionAxis] - fc.d);
+        function _outline(a, b){
+          var api = window._ccSectionClipping;
+          return api && typeof api.outlineHalfExtents === 'function' ? api.outlineHalfExtents([a, b], _gapN) : [a / 2 * 1.04, b / 2 * 1.04];
+        }
+        var _oh;
+        if(s.sectionAxis==='x'){ _oh=_outline(size.z, _aboveH); hw=_oh[0]; hh=_oh[1]; pos.y=_visCtrY; qa.setFromAxisAngle(new THREE.Vector3(0,1,0),Math.PI/2); }
+        else if(s.sectionAxis==='y'){ _oh=_outline(size.x, size.z); hw=_oh[0]; hh=_oh[1]; qa.setFromAxisAngle(new THREE.Vector3(1,0,0),-Math.PI/2); }
+        else { _oh=_outline(size.x, _aboveH); hw=_oh[0]; hh=_oh[1]; pos.y=_visCtrY; }
         q.copy(fr.quaternion).multiply(qa); // building-grid rotation, then the per-axis plane orientation
         var vis = _makeSectionVis(hw, hh, pos, q);
         // Fixed world-proportional handle size: ~3.5 % of model diagonal,
