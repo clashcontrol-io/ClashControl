@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.6.3 (2026-09-30)
+- Section plane outline: sized to the model, covers it in perspective
+
 ## v7.6.2 (2026-09-29)
 - Section planes follow the building's plan grid (not world axes)
 
