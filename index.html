@@ -35295,6 +35295,15 @@ function startApp() {
   // command (and its side effects — dispatches, downloads, fetches) again.
   var _nlDispatchGuard = null; // {key, ts, promise}
   var NL_DISPATCH_GUARD_MS = 700;
+  // POST to the local Smart Bridge /chat. The bridge only serves this origin and
+  // requires a pairing token, which the smart-bridge addon (loaded whenever the
+  // bridge is connected) owns; fall back to a plain request for old bridges.
+  function _ccSbChat(init) {
+    return typeof window._ccSmartBridgeFetch === 'function'
+      ? window._ccSmartBridgeFetch('/chat', init)
+      : fetch('http://127.0.0.1:19803/chat', init);
+  }
+
   function processNLCommandWithLLM(raw, s, d, replyContext) {
     var _dgKey = String(raw) + '\u0000' + (replyContext ? String(replyContext) : '');
     var _dgNow = Date.now();
@@ -35376,7 +35385,7 @@ function startApp() {
         'Requires the Smart Bridge addon to be connected with Ollama or OpenAI configured.'
       );
       var _sbHistory = (window._ccLatestState && window._ccLatestState.smartBridge && window._ccLatestState.smartBridge.chatMessages) || [];
-      return fetch('http://127.0.0.1:19803/chat', {
+      return _ccSbChat({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -35455,7 +35464,7 @@ function startApp() {
         var _sbSolve = (window._ccLatestState && window._ccLatestState.smartBridge) || {};
         if (_sbSolve.connected && _sbSolve.llmConnected) {
           var _shSolve = _sbSolve.chatMessages || [];
-          return fetch('http://127.0.0.1:19803/chat', {
+          return _ccSbChat({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message: raw, history: _shSolve.map(function(m){ return { role: m.role, content: m.content }; }) })
@@ -35526,7 +35535,7 @@ function startApp() {
         var _sbState = (window._ccLatestState && window._ccLatestState.smartBridge) || {};
         if (!replyContext && _sbState.connected && _sbState.llmConnected) {
           var _sbHist = _sbState.chatMessages || [];
-          return fetch('http://127.0.0.1:19803/chat', {
+          return _ccSbChat({
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message: raw, history: _sbHist.map(function(m){ return { role: m.role, content: m.content }; }) })

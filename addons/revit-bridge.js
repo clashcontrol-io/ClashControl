@@ -21,6 +21,13 @@
   var CONNECT_TIMEOUT_MS = 5000;   // how long to wait for the WS handshake before giving up
   var _revitReconnectDelay = 0; // exponential backoff: 0 = no reconnect scheduled
   var _revitLastPort = 19780;
+  // The Connector only serves the ClashControl origin and requires a short-lived
+  // pairing token (POST /pair) before it streams geometry; the token rides in the
+  // WebSocket URL. cc-runtime.js owns the handshake and falls back to a plain
+  // connect for a Connector that predates pairing.
+  var _revitPairing = (window._ccRuntime && window._ccRuntime.createBridgePairing)
+    ? window._ccRuntime.createBridgePairing() : null;
+  var _revitConnectAttempt = 0; // bumped per connect; a stale pairing callback must not open a second socket
   var _revitLastDispatch = null;
   // Address candidates tried in order. 127.0.0.1 (IPv4) is direct loopback;
   // [::1] (IPv6) is the fallback for Connectors that bind to the IPv6 loopback
@@ -166,8 +173,16 @@
     // reconnecting:true while the WS handshake is in flight so the UI shows
     // "Connecting…" rather than "Couldn't reach Revit" before the first result.
     d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false, progress:0, reconnecting:true}});
+    // Pair first. If pairing itself fails (Connector not running) fall through to
+    // a plain attempt so the existing onerror/onclose/host-fallback/backoff
+    // handling is exactly what it was.
+    var _attempt = ++_revitConnectAttempt;
+    (_revitPairing ? _revitPairing.wsUrl(url) : Promise.resolve(url))
+      .catch(function() { return url; })
+      .then(function(wsUrl) {
+    if (_attempt !== _revitConnectAttempt || _revitUserDisconnected) return; // superseded or user disconnected meanwhile
     var ws;
-    try { ws = new WebSocket(url); _revitWs = ws; } catch(e) {
+    try { ws = new WebSocket(wsUrl); _revitWs = ws; } catch(e) {
       d({t:'BRIDGE_LOG', logType:'error', text:'WebSocket error: ' + e.message});
       _scheduleReconnect();
       return;
@@ -288,6 +303,7 @@
       }
       _handleRevitMessage(msg, d);
     };
+      }); // pairing
   }
 
   function _revitDirectDisconnect(d) {
