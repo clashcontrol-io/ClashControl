@@ -401,11 +401,19 @@ function loadDetectOnLocalEngine() {
   assert.notEqual(start, -1, '_applyClientSideRuleFilters not found');
   assert.notEqual(end, -1, '_detectOnLocalEngine end not found');
   const block = source.slice(start, end);
-  return new Function('window', 'fetch', 'WebSocket', 'Event', 'CustomEvent', 'console',
-    '_serializeForLocalEngine', '_localEngineUrl', '_localEngineWsUrl', `
+  const factory = new Function('window', 'fetch', 'WebSocket', 'Event', 'CustomEvent', 'console',
+    '_serializeForLocalEngine', '_localEngineUrl', '_localEngineWsUrl', '_engineFetch', '_pairing', `
     ${block}
     return _detectOnLocalEngine;
   `);
+  // The addon routes requests through `_engineFetch` (pairing-token aware) and
+  // `_pairing`. Here pairing is absent -- the "engine predates pairing" path --
+  // so `_engineFetch` is just the test's fake fetch, keeping every assertion
+  // below about the clash logic, not the transport.
+  return function(win, fetchFake, WS, Ev, CEv, cons, ser, url, wsUrl) {
+    return factory(win, fetchFake, WS, Ev, CEv, cons, ser, url, wsUrl,
+      function(path, init) { return fetchFake(url + path, init); }, null);
+  };
 }
 
 function fakeFetch(jsonBody) {
