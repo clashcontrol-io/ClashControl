@@ -23,3 +23,34 @@ translate the `strings` values, add yourself to `manifest.json`, open a PR.
 4. Open a PR. If you'd rather not use git directly, see the repo's
    "Contribute a translation" issue template instead — attach your file and
    a maintainer will open the PR for you.
+
+## Discipline name hints (optional `disciplineHints` section)
+
+A pack can also teach ClashControl to recognise disciplines, MEP trades and
+element roles from names written in your language — file names
+("Bouwkundig.ifc"), system names ("Zuluft 1.OG"), type and element names
+("Sparing 300x300"). It is data only; the engine (`clash-discipline-core.js`)
+reads stated IFC data first (systems, classification codes, PredefinedType,
+type objects) and uses names only when the file itself says nothing.
+
+```json
+"disciplineHints": {
+  "disciplines":    { "architectural": [], "structural": [], "mep": [], "civil": [] },
+  "subDisciplines": { "ventilation": [], "heating": [], "plumbing": [], "fire": [], "electrical": [] },
+  "roles":          { "provision": [], "zone": [] }
+}
+```
+
+- Every key is optional; each list holds up to 200 lower- or mixed-case tokens
+  of at most 40 characters.
+- A token matches the **start of a word** ("lüftung" matches "Lüftungskanal",
+  "ark" does not match "mark"). A token containing a space, hyphen, dot or
+  underscore — or written in a script without word spacing (Japanese,
+  Chinese, Korean) — matches anywhere in the name.
+- `roles.provision`: reservations / sleeves / provision-for-void volumes;
+  `roles.zone`: fire compartments and other zone volumes. Role names only
+  apply to generic elements (proxies, spatial zones), never to walls or slabs.
+- The hints of **every** installed pack apply, whatever language the UI is in
+  (a German model reviewed on a Dutch UI still matches the German tokens).
+  Flag the pack with `"disciplineHints": true` in `manifest.json` so the app
+  fetches it for its hints (the issue-upload flow does this for you).

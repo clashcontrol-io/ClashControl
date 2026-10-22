@@ -7,6 +7,12 @@
 
 const MAX_BYTES = 200 * 1024;
 const REQUIRED_TOP_KEYS = ['lang', 'name', 'contributor', 'strings'];
+// Optional sections. `disciplineHints`: name-hint tokens (file / system /
+// type / element names) that teach the discipline engine this language —
+// same shape as DEFAULT_HINTS in clash-discipline-core.js, which also owns
+// the structural check, so the app and CI can never disagree on the format.
+const OPTIONAL_TOP_KEYS = ['disciplineHints'];
+const { validateHints } = require('../clash-discipline-core.js');
 const LANG_TAG_RE = /^[a-zA-Z]{2,3}(-[A-Za-z0-9]+)*$/;
 const UNSAFE_PATTERN = /<script|javascript:|on\w+\s*=/i;
 const HTML_TAG_PATTERN = /<[a-zA-Z][\s\S]*>/;
@@ -35,7 +41,7 @@ function validateLocalePack(raw) {
     if (!(k in pack)) errors.push(`Missing required key: ${k}`);
   });
   Object.keys(pack).forEach((k) => {
-    if (!REQUIRED_TOP_KEYS.includes(k)) errors.push(`Unknown top-level key: ${k}`);
+    if (!REQUIRED_TOP_KEYS.includes(k) && !OPTIONAL_TOP_KEYS.includes(k)) errors.push(`Unknown top-level key: ${k}`);
   });
 
   if ('lang' in pack && (typeof pack.lang !== 'string' || !LANG_TAG_RE.test(pack.lang))) {
@@ -61,6 +67,10 @@ function validateLocalePack(raw) {
         if (HTML_TAG_PATTERN.test(v)) errors.push(`strings.${k} contains raw HTML — translations must be plain text`);
       });
     }
+  }
+
+  if ('disciplineHints' in pack) {
+    validateHints(pack.disciplineHints).forEach((e) => errors.push(e));
   }
 
   return { ok: errors.length === 0, errors };

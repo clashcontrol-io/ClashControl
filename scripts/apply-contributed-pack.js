@@ -53,6 +53,13 @@ function main() {
   const entry = isLocale
     ? { lang: pack.lang, file: targetFile, name: pack.name, contributor: pack.contributor }
     : { region: pack.region, file: targetFile, name: pack.name, contributor: pack.contributor, verified: pack.verified === true };
+  // Manifest flags the loaders read without fetching every pack: a locale
+  // pack carrying discipline name hints, a country pack carrying
+  // classification tables, and one with no building-code thresholds (kept
+  // out of the Settings region picker).
+  if (isLocale && pack.disciplineHints) entry.disciplineHints = true;
+  if (!isLocale && !Object.keys(pack.engines || {}).length) entry.thresholds = false;
+  if (!isLocale && Array.isArray(pack.classifications) && pack.classifications.length) entry.classifications = pack.classifications.map((t) => t.name);
   manifest.push(entry);
   manifest.sort((a, b) => (a[idKey] > b[idKey] ? 1 : -1));
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');

@@ -690,6 +690,9 @@ clashcontrol-engine --install</pre>
         // "exact" engine is never less filtered than the browser one while the
         // Python side doesn't yet honor rules.includeSpaces itself.
         if (!rules.includeSpaces && el.props && el.props.ifcType === 'IfcSpace') return;
+        // Suggestion groups left out by rules.roleChoices (zones, provisions,
+        // duplicates …) — the same core rule the browser sweeps apply.
+        if (typeof window !== 'undefined' && typeof window._ccRoleExcluded === 'function' && window._ccRoleExcluded(el, rules)) return;
         var verts = [], indices = [];
         el.meshes.forEach(function(mesh) {
           if (!mesh.geometry) return;
@@ -891,6 +894,12 @@ clashcontrol-engine --install</pre>
     // change-aware detection needs the browser engine's per-run element-hash
     // baseline (`_prevElementHashes`), which only updates on browser runs — the
     // engine can't honor it, and it isn't recoverable from returned clashes.
+    // Suggestion groups set to 'exclude' are filtered from the payload by the
+    // core's rule; without that rule available the engine can't honour them.
+    var _rc = rules.roleChoices || {};
+    if (Object.keys(_rc).some(function(k){ return _rc[k] === 'exclude' && k !== 'space'; }) && !(typeof window !== 'undefined' && typeof window._ccRoleExcluded === 'function')) {
+      return {ok:false, reason:'Left-out suggestion groups need the core role filter, which is not available.'};
+    }
     if (rules.changeAware) {
       return {ok:false, reason:'Change-aware detection tracks per-run element hashes the local engine can’t see.'};
     }

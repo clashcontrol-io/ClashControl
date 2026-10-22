@@ -10,6 +10,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const core = require('../clash-discipline-core');
+// The Dutch file-name tokens (bouwkundig, installatie, constructie, …) are
+// no longer hard-coded in the module: they ship as DATA in the Dutch locale
+// pack's `disciplineHints` (every installed pack's hints apply, whatever the
+// UI language). Register it the way locales/loader.js does in the app.
+core.registerHints('locale:nl', require('../locales/nl.json').disciplineHints);
 
 const _ccElementDiscipline = core.elementDiscipline;
 const _ccMatrixSkipsSameDiscipline = core.matrixSkipsSameDiscipline;

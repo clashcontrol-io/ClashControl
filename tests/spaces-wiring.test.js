@@ -56,7 +56,7 @@ test('picking: building elements first, rooms only on a second space-layer pass 
 
 test('showSpaces is a persisted pref, hidden by default', () => {
   assert.match(src, /showSpaces:_ccLoadPref\('showSpaces',false\)/);
-  assert.match(src, /'navInputMode','showSpaces'\];/);
+  assert.match(src, /'navInputMode','showSpaces'[,\]]/);
 });
 
 test('fixture generator: withSpaces is opt-in and the default output is unchanged', () => {

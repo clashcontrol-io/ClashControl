@@ -11,6 +11,12 @@
 const MAX_BYTES = 200 * 1024;
 const REQUIRED_TOP_KEYS = ['region', 'name', 'contributor', 'verified', 'source', 'engines'];
 const REGION_CODE_RE = /^[a-zA-Z]{2}(-[a-zA-Z0-9]+)*$/;
+// Optional country section: classification-code tables (NL-SfB, Uniclass,
+// OmniClass …) that map element/system codes to disciplines, MEP
+// sub-disciplines or roles. Structure is owned by clash-discipline-core.js
+// (validateClassificationTable), shared with the app's registry.
+const OPTIONAL_TOP_KEYS = ['classifications'];
+const { validateClassificationTable } = require('../clash-discipline-core.js');
 
 // Known threshold keys per engine — see addons/accessibility.js DEFAULTS.
 // An engine not listed here is still accepted (numbers-only check applies);
@@ -43,7 +49,7 @@ function validateRegulationPack(raw) {
     if (!(k in pack)) errors.push(`Missing required key: ${k}`);
   });
   Object.keys(pack).forEach((k) => {
-    if (!REQUIRED_TOP_KEYS.includes(k)) errors.push(`Unknown top-level key: ${k}`);
+    if (!REQUIRED_TOP_KEYS.includes(k) && !OPTIONAL_TOP_KEYS.includes(k)) errors.push(`Unknown top-level key: ${k}`);
   });
 
   if ('region' in pack && (typeof pack.region !== 'string' || !REGION_CODE_RE.test(pack.region))) {
@@ -65,8 +71,8 @@ function validateRegulationPack(raw) {
   if ('engines' in pack) {
     if (pack.engines == null || typeof pack.engines !== 'object' || Array.isArray(pack.engines)) {
       errors.push('engines must be an object keyed by check-engine id');
-    } else if (!Object.keys(pack.engines).length) {
-      errors.push('engines must declare at least one check engine');
+    } else if (!Object.keys(pack.engines).length && !(Array.isArray(pack.classifications) && pack.classifications.length)) {
+      errors.push('engines must declare at least one check engine (or the pack must carry at least one classification table)');
     } else {
       Object.entries(pack.engines).forEach(([engine, thresholds]) => {
         if (thresholds == null || typeof thresholds !== 'object' || Array.isArray(thresholds)) {
@@ -82,6 +88,19 @@ function validateRegulationPack(raw) {
             errors.push(`engines.${engine}.${k} is not a recognized threshold key for '${engine}' (expected one of: ${known.join(', ')})`);
           }
         });
+      });
+    }
+  }
+
+  if ('classifications' in pack) {
+    if (!Array.isArray(pack.classifications) || !pack.classifications.length) {
+      errors.push('classifications must be a non-empty array of classification tables');
+    } else {
+      const ids = new Set();
+      pack.classifications.forEach((t, i) => {
+        validateClassificationTable(t).forEach((e) => errors.push(`classifications[${i}]: ${e}`));
+        if (t && ids.has(t.id)) errors.push(`classifications[${i}]: duplicate id ${t.id}`);
+        if (t) ids.add(t.id);
       });
     }
   }
