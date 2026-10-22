@@ -8292,7 +8292,16 @@ function startApp() {
   }
 
   // ── Async clash detection with chunked processing ─────────────── docs/INTERNALS.md §9
-  var _DETECT_CHUNK_SIZE = 80; // candidates per chunk before yielding
+  var _DETECT_CHUNK_SIZE = 80; // candidates per chunk (progress / cancel / pressure-relief granularity)
+  var _DETECT_SLICE_MS = 16;   // main-thread time slice before the chunk loop yields to the UI
+  // Yield one macrotask without setTimeout's >= 4 ms nesting clamp (or its
+  // 1 s background-tab throttling): FIFO over a MessageChannel.
+  var _ccYieldTask = (function() {
+    if (typeof MessageChannel !== 'function') return function(fn) { setTimeout(fn, 0); };
+    var ch = new MessageChannel(), q = [];
+    ch.port1.onmessage = function() { var f = q.shift(); if (f) f(); };
+    return function(fn) { q.push(fn); ch.port2.postMessage(0); };
+  })();
   // Rough per-candidate heap-size estimate (bytes) for the fully-materialized
   // `candidates` array (_sweepAndPrune builds and returns the complete array
   // before narrow phase starts — see the "browser-first large-model plan"
@@ -9783,7 +9792,15 @@ function startApp() {
       _npWin = [];
     }
     function _runChunk() {
-      if (_myGen !== _ccDetectGeneration) { _npStop('cancelled'); resolveAsync(_ccTagDetectionResult([], _myGen, _detectCancelled ? 'cancelled' : 'stale-generation')); return; } // no longer the live generation — either cancelled or superseded by a newer run
+      var t0 = performance.now();
+      while (_runChunkOnce()) {
+        if (performance.now() - t0 >= _DETECT_SLICE_MS) { _ccYieldTask(_runChunk); return; }
+      }
+    }
+    // One chunk. Returns true when the next chunk should run now; otherwise a
+    // continuation was scheduled (pool window wait) or the run ended.
+    function _runChunkOnce() {
+      if (_myGen !== _ccDetectGeneration) { _npStop('cancelled'); resolveAsync(_ccTagDetectionResult([], _myGen, _detectCancelled ? 'cancelled' : 'stale-generation')); return false; } // no longer the live generation — either cancelled or superseded by a newer run
       try {
       var end = Math.min(chunkIdx + _DETECT_CHUNK_SIZE, totalCandidates);
       if (_np && !_np.dead) {
@@ -9822,7 +9839,7 @@ function startApp() {
       _ccDetectPressureRelief(chunkIdx);
       if (onProgress) onProgress(chunkIdx, totalCandidates);
       if (chunkIdx < totalCandidates) {
-        setTimeout(_runChunk, 0); // yield to UI
+        return true; // next chunk (_runChunk yields to the UI between slices)
       } else {
         _npStop('finished');
         _phase('Classifying results');
@@ -9832,7 +9849,7 @@ function startApp() {
         _npStop('error');
         // CLAUDE.md Item 1 (R2 follow-up): _browserDetect's own try/catch
         // only wraps the SYNCHRONOUS first call into this core — once
-        // setTimeout(_runChunk, 0) above yields, a throw in a later chunk
+        // _runChunk above yields, a throw in a later chunk
         // lands here instead, in a completely separate microtask/macrotask
         // from that outer try. This is the likelier crash site (detection
         // spends nearly all its time inside this chunk loop), and it used
@@ -9849,6 +9866,7 @@ function startApp() {
         _ccSurfaceDetectionFailure(e);
         resolveAsync(_ccTagDetectionResult(Array.isArray(_partial) ? _partial : [], _myGen, 'failed'));
       }
+      return false;
     }
     _runChunk();
     return undefined; // signal async path taken
@@ -9907,6 +9925,11 @@ function startApp() {
   }
 
   // ── Clash Identity & Delta Merge ────────────────────────────── docs/INTERNALS.md §9
+    // Time-sliced: chunks run back to back until _DETECT_SLICE_MS has passed,
+    // then yield one macrotask (_ccYieldTask — a MessageChannel post, which,
+    // unlike nested setTimeout(0), is not clamped to >= 4 ms; that clamp alone
+    // was ~0.5 s of idle per 10k candidates). Cancellation and progress are
+    // still checked/reported per chunk.
   // computeClashPair/computeClashIdentityKey — clash-identity-core.js (plain
   // same-origin <script defer>, not an addon). Was identityCoreV2, a
   // flagged migration with a boot-time equivalence check against an inline
@@ -19503,8 +19526,14 @@ function startApp() {
           ${s.prefs.showMarkers?'Markers On':'Markers Off'}
         </button>
       </div>`}
-      ${html`<${ViewCube} state3d=${state3d} theme=${s.prefs.theme||'light'} />`}
-      ${html`<${ColorLegend} s=${s} />`}
+      ${/* Keyed: htm drops false/null children, so every conditional overlay
+           above that appears or disappears (detection progress, "Fit All
+           Clashes", diagnostics) shifts these siblings' positions — unkeyed,
+           React remounted the view cube each time, i.e. a brand-new WebGL
+           context + shader compile on the main thread right as detection
+           started (seconds on software GL). */ ''}
+      ${html`<${ViewCube} key="cc-viewcube" state3d=${state3d} theme=${s.prefs.theme||'light'} />`}
+      ${html`<${ColorLegend} key="cc-color-legend" s=${s} />`}
       ${s.floorPlan && html`<div style=${{...P,top:'9.75rem',right:'var(--space-2)',background:'var(--accent)',color:'var(--accent-contrast)',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'var(--space-2)'}}
         onClick=${function(){d({t:A.FLOOR_PLAN,v:null})}}>
         <span>3D Section: ${s.floorPlan.storeyName} · ${_ccFormatElev(s.floorPlan.elevation+(s.floorPlan.cutHeight||1.2)/(window._ccPlanGeoFactor||1))}</span>
