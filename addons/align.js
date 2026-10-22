@@ -1043,7 +1043,7 @@
 
       var pagesHtml = issues.map(function(it, i){
         var vp = vpByLinkedId[it.id];
-        var img = vp && vp.snapshot ? ('<img src="' + vp.snapshot + '" alt="hotspot snapshot" />') : '<div class="no-snap">No snapshot captured</div>';
+        var img = vp && vp.snapshot ? ('<img src="' + _escapeHtml(vp.snapshot) + '" alt="hotspot snapshot" />') : '<div class="no-snap">No snapshot captured</div>';
         return '<section class="hotspot-page">'
           + '<h2>Hotspot ' + (i+1) + ' · ' + _escapeHtml(it.title) + '</h2>'
           + '<div class="hotspot-grid">'
