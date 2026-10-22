@@ -88,3 +88,28 @@ test('generateKey: falls back to CC prefix for an empty/missing name', () => {
   assert.match(handler.generateKey(''), /^CC-[a-z0-9]{6}$/);
   assert.match(handler.generateKey(undefined), /^CC-[a-z0-9]{6}$/);
 });
+
+// --- field validation: point / type / category / source caps ---
+const okIssue = (extra) => Object.assign({ id: 'a', status: 'open', title: 't' }, extra);
+
+test('validateIssue accepts a 3-number point and a short type tag', () => {
+  assert.equal(handler.validateIssue(okIssue({ point: [1, 2.5, -3], type: 'hard' })), true);
+  assert.equal(handler.validateIssue(okIssue({ point: null, type: null })), true);
+});
+
+test('validateIssue rejects malformed point values', () => {
+  for (const point of [[1, 2], [1, 2, 3, 4], ['1', 2, 3], [1, 2, NaN], [1, 2, Infinity], 'x', {}, new Array(100000).fill(1)]) {
+    assert.equal(handler.validateIssue(okIssue({ point })), false);
+  }
+});
+
+test('validateIssue rejects oversized / non-string / weird type, category, source', () => {
+  assert.equal(handler.validateIssue(okIssue({ type: 'x'.repeat(41) })), false);
+  assert.equal(handler.validateIssue(okIssue({ type: { a: 1 } })), false);
+  assert.equal(handler.validateIssue(okIssue({ type: '<script>' })), false);
+  assert.equal(handler.validateIssue(okIssue({ category: 'c'.repeat(101) })), false);
+  assert.equal(handler.validateIssue(okIssue({ source: 's'.repeat(101) })), false);
+  assert.equal(handler.validateIssue(okIssue({ priority: 'p'.repeat(41) })), false);
+  assert.equal(handler.validateIssue(okIssue({ dueDate: 'd'.repeat(65) })), false);
+  assert.equal(handler.validateIssue({ id: 'a', status: 's'.repeat(41), title: 't' }), false);
+});

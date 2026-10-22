@@ -55,8 +55,19 @@ function rateLimit(ip, limit) {
   return bucket.count > limit;
 }
 
+// On Vercel the platform sets x-forwarded-for itself and the FIRST entry is
+// the real client address. Keying on the whole header string let a caller
+// rotate the value (append junk entries) to get a fresh rate-limit bucket
+// per request, so only the first, trimmed entry is used.
 function clientIp(req) {
-  return req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+  var h = req.headers || {};
+  var xff = h['x-forwarded-for'];
+  if (Array.isArray(xff)) xff = xff[0];
+  var first = typeof xff === 'string' ? xff.split(',')[0].trim() : '';
+  if (first) return first;
+  var real = h['x-real-ip'];
+  if (typeof real === 'string' && real.trim()) return real.trim();
+  return (req.socket && req.socket.remoteAddress) || 'unknown';
 }
 
 // Resolve a Postgres connection string from any of the env var names that

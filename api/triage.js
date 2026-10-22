@@ -124,8 +124,9 @@ module.exports = async function handler(req, res) {
     });
 
     if (!resp.ok) {
+      // Upstream status stays server-side only; the client gets a generic error.
       console.error('Gemma triage API error:', resp.status);
-      return res.status(502).json({ error: 'AI request failed', status: resp.status });
+      return res.status(502).json({ error: 'AI request failed' });
     }
 
     var data = await resp.json();
