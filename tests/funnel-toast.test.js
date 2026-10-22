@@ -17,10 +17,11 @@ assert.ok(start !== -1, '_showFunnelToast not found');
 const end = src.indexOf('\n  }', start) + '\n  }'.length;
 const fnSrc = src.slice(start, end);
 
+const _ccT = (k, en, v) => en.replace(/\{(\w+)\}/g, (m, n) => (v && n in v ? v[n] : m));
 function run(profile) {
   const toasts = [];
   const _window = { _ccDetectProfile: profile, _ccToast: (msg) => toasts.push(msg) };
-  new Function('window', fnSrc + '; window._ccT_run = _showFunnelToast;')(_window);
+  new Function('window', '_cc_t', fnSrc + '; window._ccT_run = _showFunnelToast;')(_window, _ccT);
   _window._ccT_run();
   return toasts;
 }
@@ -54,7 +55,7 @@ test('does nothing when the profile is missing the candidates field (defensive, 
 test('never throws even if window._ccToast is missing', () => {
   const _window = { _ccDetectProfile: { candidates: 10, matrix_skipped: 0, clashes_found: 1 } };
   assert.doesNotThrow(() => {
-    new Function('window', fnSrc + '; window._ccT_run = _showFunnelToast;')(_window);
+    new Function('window', '_cc_t', fnSrc + '; window._ccT_run = _showFunnelToast;')(_window, _ccT);
     _window._ccT_run();
   });
 });

@@ -46,6 +46,7 @@ function run(s, windowOverrides) {
     _gcEvent: () => {},
     _ccChangelogUser: 'Tester',
     window: fakeWindow,
+    _cc_t: _ccT,
     runDataQualityChecks: () => ({ noMaterial: { label: 'No material assigned', sev: 'warn', count: 2 }, _total: 5 }),
     runBIMModelChecks: () => ({ noFireRating: { label: 'Missing FireRating', sev: 'warn', count: 1 }, _total: 5, _dist: {} }),
     runILSChecks: () => ({ noNLSfB: { label: 'Geen NL/SfB classificatie', sev: 'error', count: 0 }, _total: 5 }),
@@ -57,6 +58,7 @@ function run(s, windowOverrides) {
   return written.html;
 }
 
+const _ccT = (k, en, v) => en.replace(/\{(\w+)\}/g, (m, n) => (v && n in v ? v[n] : m));
 function model(id, elCount) {
   return { id, name: 'Model ' + id, discipline: 'STR', elements: Array.from({ length: elCount }, (_, i) => ({ expressId: i, props: {} })) };
 }

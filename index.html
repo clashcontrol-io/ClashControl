@@ -955,7 +955,7 @@ function startApp() {
   // index to key visual feedback off, so a toast carries it instead.
   function _ccCopyToClipboard(text, label) {
     var value = String(text == null ? '' : text);
-    function done() { if (window._ccToast) window._ccToast((label ? label + ' copied' : 'Copied') + ' to clipboard'); }
+    function done() { if (window._ccToast) window._ccToast(label ? _cc_t('toast.labelCopiedToClipboard','{label} copied to clipboard',{label:label}) : _cc_t('toast.copiedToClipboard','Copied to clipboard')); }
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(value).then(done); return; }
     } catch(e) {}
@@ -1282,7 +1282,7 @@ function startApp() {
         console.error('[Detection] stalled — no progress for 90s; aborting.');
         try { window._ccLastDetectError = { message: 'Detection stalled (no progress for 90s) — aborted. Try a smaller scope, fewer/lighter models, or reload.', ts: Date.now(), stack: null }; } catch(e) {}
         if (window._ccCancelDetection) window._ccCancelDetection(); else d({t:'STOP_DETECT'});
-        if (window._ccToast) window._ccToast('Detection stalled — aborted. Try a smaller scope.');
+        if (window._ccToast) window._ccToast(_cc_t('toast.detectionStalledAbortedTryA','Detection stalled — aborted. Try a smaller scope.'));
       }
     }, 5000);
     detectClashesAsync(s.models, runRules).then(function(result) {
@@ -1298,7 +1298,7 @@ function startApp() {
           s.models.forEach(function(m){ if(m && m.visible!==false){ var k=m.discipline||'?'; _dc[k]=(_dc[k]||0)+1; } });
           var _shared = Object.keys(_dc).filter(function(k){ return _dc[k]>=2; });
           if (_shared.length && window._ccToast) {
-            window._ccToast('0 clashes — same-discipline pairs are skipped by default (' + _shared.map(function(k){return _dc[k]+'× '+k;}).join(', ') + '). Turn off "Exclude same discipline" in Detection rules to check these models against each other.', 'info');
+            window._ccToast(_cc_t('toast.0ClashesSameDisciplinePairs','0 clashes — same-discipline pairs are skipped by default ({v1}). Turn off "Exclude same discipline" in Detection rules to check these models against each other.',{v1:_shared.map(function(k){return _dc[k]+'× '+k;}).join(', ')}), 'info');
           }
         }
       } catch(e){}
@@ -1331,8 +1331,7 @@ function startApp() {
           ok: false, error: msg, ts: Date.now()
         }}));
       } catch(e) {}
-      if (window._ccToast) window._ccToast('Detection failed: ' + msg +
-        (msg.indexOf('string length') >= 0 ? ' — a very large model overflowed serialization; exclude it from sync and retry.' : ''));
+      if (window._ccToast) window._ccToast(_cc_t('toast.detectionFailed','Detection failed: {msg}{v1}',{msg:msg,v1:(msg.indexOf('string length') >= 0 ? ' — a very large model overflowed serialization; exclude it from sync and retry.' : '')}));
     });
     return true;
   };
@@ -1362,7 +1361,7 @@ function startApp() {
         clearInterval(_wdTimer);
         try { window._ccLastDetectError = { message: 'Ruleset detection stalled (no progress 90s) — aborted.', ts: Date.now(), stack: null }; } catch(e) {}
         if (window._ccCancelDetection) window._ccCancelDetection(); else d({t:'STOP_DETECT'});
-        if (window._ccToast) window._ccToast('Detection stalled — aborted.');
+        if (window._ccToast) window._ccToast(_cc_t('toast.detectionStalledAborted','Detection stalled — aborted.'));
       }
     }, 5000);
     var byKey = {}; // identityKey → clash (first rule that finds a pair wins)
@@ -1431,7 +1430,7 @@ function startApp() {
         var msg = (err && err.message) || String(err);
         try { window._ccLastDetectError = { message: msg, ts: Date.now(), stack: (err && err.stack) ? String(err.stack).slice(0,4000) : null }; } catch(e) {}
         try { window.dispatchEvent(new CustomEvent('cc-detection-complete', { detail: { ok:false, error:msg, ts:Date.now() }})); } catch(e) {}
-        if (window._ccToast) window._ccToast('Detection failed: ' + msg);
+        if (window._ccToast) window._ccToast(_cc_t('toast.detectionFailed2','Detection failed: {msg}',{msg:msg}));
       });
     }
     runNext();
@@ -1610,7 +1609,7 @@ function startApp() {
       }
       if (!_ccLsToastShown && window._ccToast) {
         _ccLsToastShown = true;
-        window._ccToast('Browser storage is full — some local data could not be saved. Free up space in Settings → Privacy & Data.');
+        window._ccToast(_cc_t('toast.browserStorageIsFullSome','Browser storage is full — some local data could not be saved. Free up space in Settings → Privacy & Data.'));
       }
       console.warn('localStorage write failed for ' + key + ':', e);
       return false;
@@ -1778,7 +1777,7 @@ function startApp() {
         return _ccAddons[id] || realDef;
       }).catch(function(error) {
         console.warn('[Addon] lazy load failed:', id, error);
-        if (window._ccToast) window._ccToast('Could not load '+(def.name||id)+'. Check your connection and retry.');
+        if (window._ccToast) window._ccToast(_cc_t('toast.couldNotLoadCheckYour','Could not load {v1}. Check your connection and retry.',{v1:(def.name||id)}));
         window.dispatchEvent(new Event('cc-addons-changed'));
         return null;
       });
@@ -1876,11 +1875,56 @@ function startApp() {
     var pack = _ccActiveLocale && _ccLocalePacks[_ccActiveLocale];
     var str = (pack && pack.strings && pack.strings[key] != null) ? pack.strings[key] : englishFallback;
     if (vars) {
-      Object.keys(vars).forEach(function(k) {
-        str = str.replace(new RegExp('\\{' + k + '\\}', 'g'), vars[k]);
+      // Single pass: a substituted value that itself contains "{x}" is never re-expanded,
+      // and "$&"-style sequences in a value are inserted literally.
+      str = str.replace(/\{(\w+)\}/g, function(m, k) {
+        return Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : m;
       });
     }
     return str;
+  };
+
+  // ── Locale-aware display formatting ───────────────────────────── i18n plumbing
+  // Display-only: never use for exports/BCF/IDS/CSV/JSON/clipboard or anything parsed back.
+  // Uses the active UI locale (else the browser's); cached per locale; falls back to
+  // en-GB-style toFixed/toLocale* output if Intl rejects the tag.
+  var _ccFmtCache = { nf: {}, df: {} };
+  function _ccFmtLocaleTag() {
+    var l = null;
+    try { l = window._ccGetLocale && window._ccGetLocale(); } catch(e) {}
+    if (!l) {
+      // A saved '' means the user explicitly picked English: don't override it with the browser language.
+      try { if (localStorage.getItem('cc_locale') === '') return 'en'; } catch(e) {}
+      try { l = navigator.language; } catch(e) {}
+    }
+    return l || undefined;
+  }
+  window._ccNumFmt = function(n, digits) {
+    if (typeof n !== 'number' || !isFinite(n)) return String(n);
+    var tag = _ccFmtLocaleTag(), d = (digits == null) ? null : digits;
+    var key = (tag || '') + '|' + d;
+    try {
+      var f = _ccFmtCache.nf[key];
+      if (!f) f = _ccFmtCache.nf[key] = new Intl.NumberFormat(tag, d == null ? {} : { minimumFractionDigits: d, maximumFractionDigits: d });
+      return f.format(n);
+    } catch(e) { return d == null ? n.toLocaleString() : n.toFixed(d); }
+  };
+  var _ccDatePresets = {
+    date: { year: 'numeric', month: 'numeric', day: 'numeric' },
+    time: { hour: 'numeric', minute: 'numeric', second: 'numeric' },
+    timeShort: { hour: '2-digit', minute: '2-digit' },
+    datetime: { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }
+  };
+  window._ccDateFmt = function(date, opts) {
+    var dt = (date instanceof Date) ? date : new Date(date);
+    if (typeof opts === 'string') opts = _ccDatePresets[opts];
+    if (isNaN(dt.getTime())) return '';
+    var tag = _ccFmtLocaleTag(), key = (tag || '') + '|' + JSON.stringify(opts || {});
+    try {
+      var f = _ccFmtCache.df[key];
+      if (!f) f = _ccFmtCache.df[key] = new Intl.DateTimeFormat(tag, opts || {});
+      return f.format(dt);
+    } catch(e) { try { return dt.toLocaleDateString('en-GB', opts || {}); } catch(e2) { return dt.toISOString().slice(0, 10); } }
   };
 
   // Restore the user's chosen language; the pack itself may not be registered
@@ -2641,7 +2685,7 @@ function startApp() {
       });
     }).then(function() { _ccScheduleBudgetCheck(); }).catch(function(e) {
       if (_ccIsQuotaError(e) && window._ccToast) {
-        window._ccToast('Browser storage is full — "' + name + '" is loaded but not saved for offline use. Free up space in Settings → Privacy & Data.');
+        window._ccToast(_cc_t('toast.browserStorageIsFullIs','Browser storage is full — "{name}" is loaded but not saved for offline use. Free up space in Settings → Privacy & Data.',{name:name}));
       }
       console.warn('Failed to save IFC to IndexedDB:', e);
     });
@@ -2679,7 +2723,7 @@ function startApp() {
     var s = window._ccLatestState || {};
     idbGetProjectFiles(s.activeProject || 'default').then(function(files) {
       var f = files.find(function(x) { return x.id === modelId; });
-      if (!f || !f.buffer) { if (window._ccToast) window._ccToast('Original file not found in browser storage — re-add it via + Add.'); return; }
+      if (!f || !f.buffer) { if (window._ccToast) window._ccToast(_cc_t('toast.originalFileNotFoundIn','Original file not found in browser storage — re-add it via + Add.')); return; }
       window._ccNextLoadScope = null;
       // _ccLoadFiles routes through maybeScopeThenProcess like any other
       // load trigger — without this, a multi-storey file with the storey
@@ -2754,14 +2798,13 @@ function startApp() {
       if (!ok) {
         // Auto-park stays silent on non-restorable models (it just skips them);
         // a manual click deserves an explanation.
-        if (!auto && window._ccToast) window._ccToast('“' + model.name + '” can’t be parked — no cached geometry to restore it from (live or uncached model).', 'warn');
+        if (!auto && window._ccToast) window._ccToast(_cc_t('toast.canTBeParkedNo','“{name}” can’t be parked — no cached geometry to restore it from (live or uncached model).',{name:model.name}), 'warn');
         return false;
       }
       var els = (model.elements || []).length;
       if (window._ccDispatch) window._ccDispatch({ t: A.PARK_MODEL, id: id, at: Date.now() });
       if (window._ccToast) window._ccToast(
-        (auto ? 'Auto-parked hidden model “' + model.name + '” to free memory' : 'Parked “' + model.name + '” (' + els.toLocaleString() + ' elements)') +
-        ' — restore it anytime from the sidebar.', auto ? 'info' : 'success');
+        (auto ? _cc_t('toast.autoParkedModel','Auto-parked hidden model “{name}” to free memory — restore it anytime from the sidebar.',{name:model.name}) : _cc_t('toast.parkedModel','Parked “{name}” ({count} elements) — restore it anytime from the sidebar.',{name:model.name,count:window._ccNumFmt(els)})), auto ? 'info' : 'success');
       return true;
     });
   };
@@ -2973,12 +3016,12 @@ function startApp() {
         // clears the parked stub; UNPARK_MODEL is a belt-and-suspenders cleanup.
         if (window._ccDispatch) { window._ccDispatch({ t: A.ADD_MODEL, v: restoredModel }); window._ccDispatch({ t: A.UNPARK_MODEL, id: id }); }
         if (typeof invalidate === 'function') invalidate(3);
-        if (window._ccToast) window._ccToast('Restored “' + stub.name + '”.', 'success');
+        if (window._ccToast) window._ccToast(_cc_t('toast.restored','Restored “{name}”.',{name:stub.name}), 'success');
         return true;
       });
     }).catch(function(err) {
       console.warn('[park] restore failed for ' + id + ':', err);
-      if (window._ccToast) window._ccToast('Couldn’t restore “' + (stub.name || id) + '” — ' + (err && err.message || 'unknown error'), 'error');
+      if (window._ccToast) window._ccToast(_cc_t('toast.couldnTRestore','Couldn’t restore “{v1}” — {v2}',{v1:(stub.name || id),v2:(err && err.message || 'unknown error')}), 'error');
       return false;
     }).then(function(ok) {
       if (typeof _setGlobalLoading === 'function') _setGlobalLoading(false);
@@ -3295,8 +3338,7 @@ function startApp() {
         if (plan.proposals.length && !_ccBudgetToastShown && window._ccToast) {
           _ccBudgetToastShown = true;
           var proposed = plan.proposals.reduce(function(t, p) { return t + p.bytes; }, 0);
-          window._ccToast('Browser storage over budget — free up ' + fmt(proposed) +
-            ' from unused projects in Settings → Privacy & Data.');
+          window._ccToast(_cc_t('toast.browserStorageOverBudgetFree','Browser storage over budget — free up {v1} from unused projects in Settings → Privacy & Data.',{v1:fmt(proposed)}));
         }
         return plan;
       });
@@ -5674,7 +5716,7 @@ function startApp() {
     // Also stop a live Revit pull (its WS stream isn't an IFC worker).
     try { if (window._ccRevitCancelLoad) window._ccRevitCancelLoad(); } catch(_) {}
     try { window.dispatchEvent(new CustomEvent('cc-model-loading', { detail: { loading: false } })); } catch(_) {}
-    if (window._ccToast) window._ccToast('Loading cancelled.');
+    if (window._ccToast) window._ccToast(_cc_t('toast.loadingCancelled','Loading cancelled.'));
   };
 
   function loadIFCWorker(buffer, fallbackColor, onProgress, onProps, scope) {
@@ -6603,7 +6645,7 @@ function startApp() {
         _ccPressureRelieved = true;
         console.warn('[detect] heap at ' + Math.round(m.usedJSHeapSize / m.jsHeapSizeLimit * 100) +
           '% — dropped ' + dropped + ' cached element BVHs to relieve pressure');
-        if (window._ccToast) window._ccToast('Memory is tight — detection continues with reduced caching.');
+        if (window._ccToast) window._ccToast(_cc_t('toast.memoryIsTightDetectionContinues','Memory is tight — detection continues with reduced caching.'));
       }
     } catch (e) {}
   }
@@ -8890,7 +8932,7 @@ function startApp() {
       var _leCap = window._ccLocalEngineCanHandle(rules, models);
       if (!_leCap.ok) {
         useLocal = false;
-        if (window._ccToast) window._ccToast('Using browser engine — local engine can’t honor this ruleset (' + _leCap.reason + ')', 'info');
+        if (window._ccToast) window._ccToast(_cc_t('toast.usingBrowserEngineLocalEngine','Using browser engine — local engine can’t honor this ruleset ({reason})',{reason:_leCap.reason}), 'info');
         else console.log('[Detection] Local engine skipped: ' + _leCap.reason);
       }
     }
@@ -8964,12 +9006,12 @@ function startApp() {
     try {
       var p = window._ccDetectProfile;
       if (!p || !window._ccToast || typeof p.candidates !== 'number') return;
-      var msg = p.candidates + ' pair' + (p.candidates===1?'':'s') + ' checked';
-      if (p.matrix_skipped > 0) msg += ' → ' + p.matrix_skipped + ' filtered by discipline matrix';
-      msg += ' → ' + p.clashes_found + ' clash' + (p.clashes_found===1?'':'es') + ' found';
+      var msg = p.candidates===1 ? _cc_t('toast.funnelPairOne','{n} pair checked',{n:p.candidates}) : _cc_t('toast.funnelPairMany','{n} pairs checked',{n:p.candidates});
+      if (p.matrix_skipped > 0) msg += ' → ' + _cc_t('toast.funnelMatrix','{n} filtered by discipline matrix',{n:p.matrix_skipped});
+      msg += ' → ' + (p.clashes_found===1 ? _cc_t('toast.funnelClashOne','{n} clash found',{n:p.clashes_found}) : _cc_t('toast.funnelClashMany','{n} clashes found',{n:p.clashes_found}));
       // Smart re-run: say what was actually recomputed (result equals a full run).
-      if (p.smart_rerun) msg += ' (smart re-run: ' + (p.changed_elements||0) + ' changed element' + (p.changed_elements===1?'':'s') + ' recomputed)';
-      if (p.provided_openings > 0) msg += ' · ' + p.provided_openings + ' pass through provided openings';
+      if (p.smart_rerun) msg += ' (' + ((p.changed_elements||0)===1 ? _cc_t('toast.funnelSmartOne','smart re-run: {n} changed element recomputed',{n:(p.changed_elements||0)}) : _cc_t('toast.funnelSmartMany','smart re-run: {n} changed elements recomputed',{n:(p.changed_elements||0)})) + ')';
+      if (p.provided_openings > 0) msg += ' · ' + _cc_t('toast.funnelOpenings','{n} pass through provided openings',{n:p.provided_openings});
       window._ccToast(msg);
     } catch(e) {}
   }
@@ -9040,7 +9082,7 @@ function startApp() {
       window.dispatchEvent(new CustomEvent('cc-detection-complete', { detail: {
         ok:false, error:(window._ccLastDetectError && window._ccLastDetectError.message) || 'Detection failed', ts: Date.now()
       }}));
-      if (window._ccToast) window._ccToast('Detection failed: ' + ((window._ccLastDetectError && window._ccLastDetectError.message) || 'unknown error'));
+      if (window._ccToast) window._ccToast(_cc_t('toast.detectionFailed3','Detection failed: {v1}',{v1:((window._ccLastDetectError && window._ccLastDetectError.message) || 'unknown error')}));
     } catch(e3) {}
   }
 
@@ -9342,7 +9384,7 @@ function startApp() {
     // direct user file pick).
     if (candidates.length > 1000000 && window._ccToast) {
       var _candMB = Math.round(_candidateSetBytes(candidates) / (1024*1024));
-      window._ccToast(candidates.length.toLocaleString() + ' candidate pairs to test (~' + _candMB + ' MB) — this may take a while and use significant memory. Consider narrowing rules (discipline matrix, type filters) or scope.', 'info');
+      window._ccToast(_cc_t('toast.candidatePairsLarge','{count} candidate pairs to test (~{mb} MB) — this may take a while and use significant memory. Consider narrowing rules (discipline matrix, type filters) or scope.',{count:window._ccNumFmt(candidates.length),mb:_candMB}), 'info');
     }
     _phase(candidates.length.toLocaleString() + ' pairs to test');
 
@@ -15168,7 +15210,7 @@ function startApp() {
         }
         var area = nrm.length()/2;
         var id = uid();
-        d({t:A.ADD_MEASUREMENT, v:{id:id, type:'area', value:area, label:_ccFmtArea(area, window._ccLatestState), points:_fcSorted.map(function(p){return [p.x,p.y,p.z]})}});
+        d({t:A.ADD_MEASUREMENT, v:{id:id, type:'area', value:area, label:_ccFmtArea(area, window._ccLatestState, true), points:_fcSorted.map(function(p){return [p.x,p.y,p.z]})}});
         if (window._ccCaptureMeasurementSnapshot) window._ccCaptureMeasurementSnapshot(id);
         if (window._ccRegisterMeasurementGeo && !window._ccChainedArea) {
           window._ccRegisterMeasurementGeo(id, 'area', pts.length, 1);
@@ -15303,7 +15345,7 @@ function startApp() {
           opts.push({key:'BBoxVolume', label:'Volume (bbox)', value:sz.x*sz.y*sz.z, formatted:_ccFmtVolume(sz.x*sz.y*sz.z, st)});
         }
         if (!opts.length) {
-          if (window._ccToast) window._ccToast('No quantity data on this element.');
+          if (window._ccToast) window._ccToast(_cc_t('toast.noQuantityDataOnThis','No quantity data on this element.'));
           return;
         }
         window._ccElementMeasureMenu = {
@@ -15318,7 +15360,7 @@ function startApp() {
           var c = elInfo.box ? elInfo.box.getCenter(new THREE.Vector3()) : new THREE.Vector3();
           var id = uid();
           d({t:A.ADD_MEASUREMENT, v:{
-            id:id, type:'element', value:opt.value, label:opt.formatted,
+            id:id, type:'element', value:opt.value, label:window._ccRelabelMeasurement({type:'element',value:opt.value,qtoKey:opt.key}, window._ccLatestState, true),
             qtoKey:opt.key, elementId:elInfo.expressId, modelId:elInfo.modelId,
             globalId:elInfo.globalId, ifcType:elInfo.ifcType,
             name:(elInfo.ifcType||'Element')+' · '+opt.label,
@@ -15437,7 +15479,7 @@ function startApp() {
         var st = window._ccLatestState;
         d({t:A.ADD_MEASUREMENT, v:{
           id:id, type:'clearance', subtype:'min', value:bestDist,
-          label:'min ' + _ccFmtLength(bestDist, st),
+          label:'min ' + _ccFmtLength(bestDist, st, true),
           name:'clearance · '+(aInfo.ifcType||'A')+' ↔ '+(bInfo.ifcType||'B'),
           points:bestPair.map(function(p){return [p.x,p.y,p.z];}),
           refA:{modelId:aInfo.modelId, expressId:aInfo.expressId, globalId:aInfo.globalId, ifcType:aInfo.ifcType},
@@ -15580,13 +15622,13 @@ function startApp() {
         if (m.type === 'length' || m.type === 'clearance') {
           if (pts.length < 2) return null;
           var d2 = pts[0].distanceTo(pts[1]);
-          return {value:d2, label:_ccFmtLength(d2, window._ccLatestState)};
+          return {value:d2, label:_ccFmtLength(d2, window._ccLatestState, true)};
         }
         if (m.type === 'angle' && pts.length >= 3) {
           var v1 = pts[0].clone().sub(pts[1]).normalize();
           var v2 = pts[2].clone().sub(pts[1]).normalize();
           var ang = Math.acos(Math.max(-1, Math.min(1, v1.dot(v2))));
-          return {value:ang, label:_ccFmtAngle(ang, window._ccLatestState)};
+          return {value:ang, label:_ccFmtAngle(ang, window._ccLatestState, true)};
         }
         if (m.type === 'area' && pts.length >= 3) {
           var nrm = new THREE.Vector3();
@@ -15597,7 +15639,7 @@ function startApp() {
             nrm.z += (a.x-b.x)*(a.y+b.y);
           }
           var area = nrm.length()/2;
-          return {value:area, label:_ccFmtArea(area, window._ccLatestState)};
+          return {value:area, label:_ccFmtArea(area, window._ccLatestState, true)};
         }
         return null;
       }
@@ -15681,7 +15723,7 @@ function startApp() {
           nrm.x+=(a.y-b.y)*(a.z+b.z); nrm.y+=(a.z-b.z)*(a.x+b.x); nrm.z+=(a.x-b.x)*(a.y+b.y);
         }
         var area = nrm.length()/2;
-        d({t:A.UPD_MEASUREMENT, id:id, u:{points:newPts, value:area, label:_ccFmtArea(area, st)}});
+        d({t:A.UPD_MEASUREMENT, id:id, u:{points:newPts, value:area, label:_ccFmtArea(area, st, true)}});
         var entry = _measureGeoMap[id]; if (!entry) return null;
         var refDot = entry.dots[0];
         var dotColor = (refDot && refDot.material) ? refDot.material.color.getHex() : 0xb8533a;
@@ -16379,7 +16421,7 @@ function startApp() {
               measureModeRef.current = 'area';
               window._ccAltEndpointHit = null;
               d({t:A.MEASURE_MODE, v:'area'});
-              if (window._ccToast) window._ccToast('Existing edge locked · click 2 more corners to close · Enter or click near start');
+              if (window._ccToast) window._ccToast(_cc_t('toast.existingEdgeLockedClick2','Existing edge locked · click 2 more corners to close · Enter or click near start'));
               invalidate();
               return;
             }
@@ -16476,7 +16518,7 @@ function startApp() {
             if (!_eInfo) return;
             if (!window._ccClearancePickA) {
               window._ccClearancePickA = _eInfo;
-              if (window._ccToast) window._ccToast('First element picked. Click the second element to measure clearance.');
+              if (window._ccToast) window._ccToast(_cc_t('toast.firstElementPickedClickThe','First element picked. Click the second element to measure clearance.'));
             } else {
               var aInfo = window._ccClearancePickA;
               window._ccClearancePickA = null;
@@ -16525,7 +16567,7 @@ function startApp() {
             scene.add(line);
             measureObjsRef.current.push(line);
             var dist = pts[0].distanceTo(pts[1]);
-            var label = _ccFmtLength(dist, _state);
+            var label = _ccFmtLength(dist, _state, true);
             // ── Throwaway path: visible but not saved, cleared on next click/Esc/exit ──
             if (_isTransient) {
               // Move the just-rendered geo (last 3 entries: pt1_dot, pt2_dot, line) out of
@@ -16537,7 +16579,7 @@ function startApp() {
               // Render a transient label DOM node anchored at the segment midpoint —
               // re-uses the existing label tick by stashing the metadata on a free-form
               // global so the projection block picks it up. Keep simple: just toast.
-              if (window._ccToast) window._ccToast('Quick: ' + label + ' (not saved)');
+              if (window._ccToast) window._ccToast(_cc_t('toast.quickNotSaved','Quick: {label} (not saved)',{label:label}));
               measurePtsRef.current = [];
               _clearPreview();
               window._ccPendingTransient = false;
@@ -16564,7 +16606,7 @@ function startApp() {
                 if (!isFinite(real) || real <= 0) return;
                 var factor = real / dist;
                 d({t:A.UPD_PREFS, u:{measureCalibration:factor}});
-                if (window._ccToast) window._ccToast('Calibration factor: ×' + factor.toFixed(4));
+                if (window._ccToast) window._ccToast(_cc_t('toast.calibrationFactor','Calibration factor: ×{v1}',{v1:factor.toFixed(4)}));
               }, 0);
             }
           }
@@ -16579,7 +16621,7 @@ function startApp() {
             var v2 = pts[2].clone().sub(pts[1]).normalize();
             var angle = Math.acos(Math.max(-1,Math.min(1,v1.dot(v2))));
             var _idA = uid();
-            d({t:A.ADD_MEASUREMENT, v:{id:_idA, type:'angle', value:angle, label:_ccFmtAngle(angle,_state), points:pts.map(function(p){return [p.x,p.y,p.z]})}});
+            d({t:A.ADD_MEASUREMENT, v:{id:_idA, type:'angle', value:angle, label:_ccFmtAngle(angle,_state,true), points:pts.map(function(p){return [p.x,p.y,p.z]})}});
             if (window._ccCaptureMeasurementSnapshot) window._ccCaptureMeasurementSnapshot(_idA);
             if (window._ccRegisterMeasurementGeo) window._ccRegisterMeasurementGeo(_idA, 'angle', 3, 2);
             measurePtsRef.current = [];
@@ -16610,7 +16652,7 @@ function startApp() {
               }
               var area2 = normal2.length()/2;
               var _idR = uid();
-              d({t:A.ADD_MEASUREMENT, v:{id:_idR, type:'area', value:area2, label:_ccFmtArea(area2,_state), points:_sortedPts.map(function(p){return [p.x,p.y,p.z]})}});
+              d({t:A.ADD_MEASUREMENT, v:{id:_idR, type:'area', value:area2, label:_ccFmtArea(area2,_state,true), points:_sortedPts.map(function(p){return [p.x,p.y,p.z]})}});
               if (window._ccCaptureMeasurementSnapshot) window._ccCaptureMeasurementSnapshot(_idR);
               // Skip registration when chained from a length: the committed length Line
               // sits inside measureObjsRef between the old dots and new ones, so the
@@ -20538,7 +20580,7 @@ function startApp() {
             ${vp.snapshot && html`\x3Cimg src=${vp.snapshot} style=${{width:40,height:25,borderRadius:'var(--radius-xs)',objectFit:'cover',border:'1px solid var(--border)'}} />`}
             <div style=${{flex:1,minWidth:0}}>
               <div style=${{fontSize:'var(--text-xs)',color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${vp.name}</div>
-              <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${new Date(vp.createdAt).toLocaleTimeString()}</div>
+              <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${window._ccDateFmt(vp.createdAt,'time')}</div>
             </div>
             <button onClick=${function(e){e.stopPropagation();d({t:A.DEL_VIEWPOINT,id:vp.id});}}
               style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}} aria-label=${_cc_t('viewport.deleteViewpointAria','Delete viewpoint')}>✕</button>
@@ -21524,13 +21566,13 @@ function startApp() {
     return html`<header class="cc-header" style=${{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'var(--space-2) var(--space-4)',background:'var(--bg-primary)',flexShrink:0,gap:'var(--space-3)'}}>
       <div style=${{display:'flex',alignItems:'center',gap:'var(--space-3)'}}>
         <div style=${{position:'relative'}}>
-          <div style=${{width:32,height:32,background:'var(--text-primary)',borderRadius:'var(--radius-md)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}} title="ClashControl — tap for version info" onClick=${function(){setShowVer(!showVer);}}><span style=${{display:'inline-flex',alignItems:'center',color:'var(--bg-primary)',fontWeight:800,fontSize:10,fontFamily:'var(--font-display)',lineHeight:1}}><span>C</span><span style=${{display:'inline-block',transform:'scaleX(-1)',marginLeft:'-1px'}}>C</span></span></div>
+          <div style=${{width:32,height:32,background:'var(--text-primary)',borderRadius:'var(--radius-md)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer'}} title=${_cc_t('tip.clashcontrolTapForVersionInfo','ClashControl — tap for version info')} onClick=${function(){setShowVer(!showVer);}}><span style=${{display:'inline-flex',alignItems:'center',color:'var(--bg-primary)',fontWeight:800,fontSize:10,fontFamily:'var(--font-display)',lineHeight:1}}><span>C</span><span style=${{display:'inline-block',transform:'scaleX(-1)',marginLeft:'-1px'}}>C</span></span></div>
           ${showVer && html`<div onClick=${function(){setShowVer(false);}} style=${{position:'fixed',inset:0,zIndex:'var(--z-dropdown)',background:'transparent'}}></div>
           <div style=${{position:'fixed',top:50,left:12,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:'.6rem .8rem',zIndex:'calc(var(--z-dropdown) + 1)',minWidth:220,boxShadow:'0 8px 24px rgba(0,0,0,.4)',fontSize:'0.83rem',color:'var(--text-primary)',whiteSpace:'nowrap'}} onClick=${function(e){e.stopPropagation();}}>
             <div style=${{fontWeight:700,marginBottom:'.3rem'}}>ClashControl</div>
             <div style=${{color:'var(--text-muted)'}}>Version <strong>v${CC_VERSION.v}</strong></div>
             <div style=${{color:'var(--text-faint)',marginTop:'.2rem'}}>Build: ${CC_VERSION.hash}</div>
-            <div style=${{color:'var(--text-faint)'}}>${new Date(CC_VERSION.date).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})}</div>
+            <div style=${{color:'var(--text-faint)'}}>${window._ccDateFmt(CC_VERSION.date,{day:'numeric',month:'long',year:'numeric'})}</div>
             <div style=${{marginTop:'.5rem',borderTop:'1px solid var(--border-subtle)',paddingTop:'.4rem',display:'flex',flexDirection:'column',gap:'.3rem'}}>
               <button onClick=${function(){setShowVer(false);if(window._ccToggleTutorial)window._ccToggleTutorial();}}
                 style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',background:'var(--accent)',color:'var(--accent-contrast)',fontSize:'0.8rem',fontWeight:600,borderRadius:6,textAlign:'center',justifyContent:'center'}}}>Quick Start Guide</button>
@@ -21541,8 +21583,8 @@ function startApp() {
           </div>`}
         </div>
         <div>
-          <span class="cc-header-brand-text cc-display" style=${{fontWeight:'var(--weight-bold)',cursor:'default',fontSize:'var(--text-md)'}} title="ClashControl — Free, source-available IFC clash detection for the browser. Load BIM models, detect geometric clashes, manage issues, and export to BCF.">ClashControl</span>
-          <span class="cc-header-version" style=${{color:'var(--text-muted)',fontSize:'0.8rem',marginLeft:'.4rem',cursor:'default'}} title=${'v'+CC_VERSION.v+' — Latest features:\n• Natural language app control (theme, files, viewer, tools)\n• Revit Bridge: AI-powered sync with Autodesk Revit\n• Soft clash / proximity detection\n• Light & dark theme with full UI polish\n• BCF 2.1 & 3.0 import/export\n• Floor plans, section planes & measurements\n\nBuild: '+CC_VERSION.hash+' ('+new Date(CC_VERSION.date).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})+')'}>v${CC_VERSION.v}</span>
+          <span class="cc-header-brand-text cc-display" style=${{fontWeight:'var(--weight-bold)',cursor:'default',fontSize:'var(--text-md)'}} title=${_cc_t('tip.clashcontrolFreeSourceAvailableIfc','ClashControl — Free, source-available IFC clash detection for the browser. Load BIM models, detect geometric clashes, manage issues, and export to BCF.')}>ClashControl</span>
+          <span class="cc-header-version" style=${{color:'var(--text-muted)',fontSize:'0.8rem',marginLeft:'.4rem',cursor:'default'}} title=${'v'+CC_VERSION.v+' — Latest features:\n• Natural language app control (theme, files, viewer, tools)\n• Revit Bridge: AI-powered sync with Autodesk Revit\n• Soft clash / proximity detection\n• Light & dark theme with full UI polish\n• BCF 2.1 & 3.0 import/export\n• Floor plans, section planes & measurements\n\nBuild: '+CC_VERSION.hash+' ('+window._ccDateFmt(CC_VERSION.date,{day:'numeric',month:'long',year:'numeric'})+')'}>v${CC_VERSION.v}</span>
         </div>
         <div class="cc-header-project" style=${{position:'relative'}}>
           <button onClick=${function(){setProjOpen(!projOpen)}}
@@ -21580,7 +21622,7 @@ function startApp() {
             })}
             ${creating ? html`<div style=${{padding:'.35rem .5rem',display:'flex',flexDirection:'column',gap:'.3rem'}}>
               <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
-                <input type="text" value=${createName} autofocus placeholder="Project name…"
+                <input type="text" value=${createName} autofocus placeholder=${_cc_t('ph.projectName','Project name…')}
                   onInput=${function(e){setCreateName(e.target.value)}}
                   onKeyDown=${function(e){if(e.key==='Enter')finishCreate();if(e.key==='Escape')setCreating(false);}}
                   style=${{...S_INPUT,fontSize:'0.78rem',padding:'.25rem .4rem',flex:1}} />
@@ -21614,13 +21656,13 @@ function startApp() {
           </button>`;
         })()}
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){d({t:A.SMART_VIEWS,v:!s.showSmartViews});}}
-          title="Smart Views — one-click presets, saved views, shareable link"
+          title=${_cc_t('tip.smartViewsOneClickPresets','Smart Views — one-click presets, saved views, shareable link')}
           style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m10 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"/></svg>
           ${_cc_t('toolbar.views','Views')}
         </button>
         <button class="cc-hide-mobile cc-btn-press" onClick=${function(){d({t:A.PRESENT,v:!s.presenting});}}
-          title="Presentation mode (P) — fullscreen, hide chrome, auto-rotate when idle"
+          title=${_cc_t('tip.presentationModePFullscreenHide','Presentation mode (P) — fullscreen, hide chrome, auto-rotate when idle')}
           style=${{...S_BTN,background:s.presenting?'var(--accent)':'var(--bg-secondary)',color:s.presenting?'var(--accent-contrast)':'var(--text-secondary)',border:'1px solid '+(s.presenting?'var(--accent-hover)':'var(--border)'),fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.35rem'}}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
           ${_cc_t('toolbar.present','Present')}
@@ -22873,7 +22915,7 @@ function startApp() {
           var _pm = performance.memory;
           if (_pm && _pm.jsHeapSizeLimit && _pm.usedJSHeapSize > _pm.jsHeapSizeLimit * 0.75) {
             var _usedGb = (_pm.usedJSHeapSize/1073741824).toFixed(1), _limGb = (_pm.jsHeapSizeLimit/1073741824).toFixed(1);
-            if (window._ccToast) window._ccToast('Memory high: '+_usedGb+' GB of the ~'+_limGb+' GB browser limit. Unload unused models before loading more.');
+            if (window._ccToast) window._ccToast(_cc_t('toast.memoryHighGbOfThe','Memory high: {_usedGb} GB of the ~{_limGb} GB browser limit. Unload unused models before loading more.',{_usedGb:_usedGb,_limGb:_limGb}));
             console.warn('[memory] '+_usedGb+'/'+_limGb+' GB after load — tab heap limit approaching; see _ccMemReport()');
             _gcEvent('memory-guardrail');
           }
@@ -23049,7 +23091,7 @@ function startApp() {
           ${(s.parkedModels||[]).map(function(pm){return html`<div key=${pm.id} style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',border:'1px dashed var(--border)',borderRadius:8,marginBottom:'.18rem',opacity:.85}}>
             <span style=${{width:10,height:10,borderRadius:'50%',background:pm.color,flexShrink:0,opacity:.6}}></span>
             <span style=${{color:'var(--text-secondary)',fontSize:'0.82rem',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${pm.name}>${pm.name}</span>
-            <span style=${{fontSize:'0.62rem',color:'var(--text-faint)',flexShrink:0}}>${_cc_t('sidebar.elCount','{n} el',{n:(pm.elementCount||0).toLocaleString()})}</span>
+            <span style=${{fontSize:'0.62rem',color:'var(--text-faint)',flexShrink:0}}>${_cc_t('sidebar.elCount','{n} el',{n:window._ccNumFmt(pm.elementCount||0)})}</span>
             <button onClick=${function(){if(window._ccRestoreParkedModel)window._ccRestoreParkedModel(pm.id);}}
               title=${_cc_t('sidebar.reloadModel','Reload this model')} style=${{...S_BTN,padding:'.1rem .45rem',fontSize:'0.68rem',background:'var(--accent-bg)',color:'var(--accent)',border:'none',borderRadius:6,cursor:'pointer',flexShrink:0}}>${_cc_t('sidebar.restore','Restore')}</button>
             <button onClick=${function(){if(!confirm(_cc_t('sidebar.confirmRemoveParked','Remove parked model "{name}" and delete its cached geometry?',{name:pm.name})))return;d({t:A.UNPARK_MODEL,id:pm.id});idbDeleteFile(pm.id);idbDeleteGeoCache(pm.id);}}
@@ -23108,7 +23150,7 @@ function startApp() {
               </div>
               ${hasEN && !s.modelGeo && window._ccGeoplaceFromCRS && html`<div style=${{display:'flex',gap:'.2rem',marginTop:'.2rem',alignItems:'stretch'}}>
                 <select ref=${function(el){ crsRef.current=el; }} defaultValue=${detectedKey||'28992'}
-                  title="Coordinate reference system of the projected Eastings/Northings. Auto-detected from the IFC when recognised; pick it here otherwise."
+                  title=${_cc_t('tip.coordinateReferenceSystemOfThe','Coordinate reference system of the projected Eastings/Northings. Auto-detected from the IFC when recognised; pick it here otherwise.')}
                   style=${{flex:1,minWidth:0,fontSize:'.6rem',padding:'.1rem .15rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-body)'}}>
                   ${crsList.map(function(c){ return html`<option key=${c.epsg} value=${c.epsg}>EPSG:${c.epsg} · ${c.label}</option>`; })}
                 </select>
@@ -23117,7 +23159,7 @@ function startApp() {
                     window._ccGeoplaceFromCRS(mcModelId, mcModel, key)
                       .catch(function(err){ alert('CRS placement failed: ' + (err && err.message || err)); });
                   }}
-                  title="Reproject the projected E/N to lat/lon (placement-grade, ~1 m — not RDNAPTRANS survey-grade) and drop the basemap there. The model never moves."
+                  title=${_cc_t('tip.reprojectTheProjectedEN','Reproject the projected E/N to lat/lon (placement-grade, ~1 m — not RDNAPTRANS survey-grade) and drop the basemap there. The model never moves.')}
                   style=${{fontSize:'.62rem',padding:'.1rem .4rem',background:'var(--accent)',color:'var(--accent-contrast)',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer',whiteSpace:'nowrap'}}>${_cc_t('sidebar.placeFromCRS','Place from CRS')}</button>
               </div>`}
             </div>`;
@@ -23127,7 +23169,7 @@ function startApp() {
                 ${(+s.modelGeo.refLat).toFixed(6)}, ${(+s.modelGeo.refLon).toFixed(6)}<br/>
                 <span style=${{color:'var(--text-faint)'}}>${s.modelGeo.source||'manual'} · ${(s.modelGeo.radiusM||0).toFixed(0)}m radius</span>
                 <span style=${{display:'flex',alignItems:'center',gap:'.3rem',marginTop:'.2rem'}}>
-                  <span title="Rotate the map and 3D context around the anchor — for project-north exports the IFC carries no north, so dial it in here" style=${{color:'var(--text-faint)'}}>north</span>
+                  <span title=${_cc_t('tip.rotateTheMapAnd3d','Rotate the map and 3D context around the anchor — for project-north exports the IFC carries no north, so dial it in here')} style=${{color:'var(--text-faint)'}}>north</span>
                   <input type="number" step="1" value=${Math.round(((+s.modelGeo.trueNorthDeg)||0)*10)/10}
                     onChange=${function(e){
                       var v = parseFloat(e.target.value); if (!isFinite(v)) v = 0;
@@ -23139,7 +23181,7 @@ function startApp() {
                   <span style=${{color:'var(--text-faint)'}}>°${s.modelGeo.northManual ? ' manual' : (s.modelGeo.trueNorthDeg ? ' from IFC' : '')}</span>
                 </span>
                 <span style=${{display:'flex',alignItems:'center',gap:'.2rem',marginTop:'.2rem'}}>
-                  <span title="Slide the basemap + 3D context under the model to fine-align it — arrows follow the camera, the model never moves" style=${{color:'var(--text-faint)'}}>align</span>
+                  <span title=${_cc_t('tip.slideTheBasemap3dContext','Slide the basemap + 3D context under the model to fine-align it — arrows follow the camera, the model never moves')} style=${{color:'var(--text-faint)'}}>align</span>
                   ${(function(){
                     var offX = (+s.modelGeo.offsetX)||0, offZ = (+s.modelGeo.offsetZ)||0;
                     function _step(){ var v = 1; try { v = parseFloat(localStorage.getItem('cc_geo_nudge_step')) || 1; } catch(_){} return v; }
@@ -23280,7 +23322,7 @@ function startApp() {
                   window._ccLoadTiles3D({ preset:'nl', lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north, offset: ll.offset })
                     .catch(function(err){ alert('PDOK 3D tiles failed: ' + (err && err.message || err)); });
                 }}
-                title="Free Dutch national 3D buildings (Kadaster 3D Basisvoorziening via PDOK, LoD 2.2 from BAG + AHN) around your georeferenced model — no key needed"
+                title=${_cc_t('tip.freeDutchNational3dBuildings','Free Dutch national 3D buildings (Kadaster 3D Basisvoorziening via PDOK, LoD 2.2 from BAG + AHN) around your georeferenced model — no key needed')}
                 style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'var(--accent)',color:'var(--accent-contrast)',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
                 3D omgeving \u2014 NL (PDOK)</button>
               <button onClick=${function(){
@@ -23310,14 +23352,14 @@ function startApp() {
                   window._ccLoadTiles3D({ key: tkey, lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north, offset: ll.offset })
                     .catch(function(err){ alert('3D tiles failed: ' + (err && err.message || err)); });
                 }}
-                title="Photorealistic Google 3D Tiles (worldwide; bring your own Map Tiles API key)"
+                title=${_cc_t('tip.photorealisticGoogle3dTilesWorldwide','Photorealistic Google 3D Tiles (worldwide; bring your own Map Tiles API key)')}
                 style=${{fontSize:'.66rem',padding:'.22rem .4rem',background:'none',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
                 Google\u2026</button>`;
             })()}
             ${(window._ccTiles3DActive && window._ccTiles3DActive()) && html`<select
               value=${String(window._ccTiles3DRange ? window._ccTiles3DRange() : 3000)}
               onChange=${function(e){ if (window._ccSetTiles3DRange) window._ccSetTiles3DRange(Number(e.target.value) || 0); }}
-              title="Context range — tiles beyond this distance are never downloaded (saves Google tile quota and memory)"
+              title=${_cc_t('tip.contextRangeTilesBeyondThis','Context range — tiles beyond this distance are never downloaded (saves Google tile quota and memory)')}
               style=${{fontSize:'.62rem',padding:'.18rem .2rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-body)'}}>
               <option value="1000">1 km</option>
               <option value="3000">3 km</option>
@@ -23327,7 +23369,7 @@ function startApp() {
             ${(window._ccTiles3DActive && window._ccTiles3DActive()) && html`<select
               value=${window._ccTiles3DDetail ? window._ccTiles3DDetail() : 'standard'}
               onChange=${function(e){ if (window._ccSetTiles3DDetail) window._ccSetTiles3DDetail(e.target.value); }}
-              title="Tile detail — adjusts live; lower detail = fewer tiles, lighter on GPU and memory"
+              title=${_cc_t('tip.tileDetailAdjustsLiveLower','Tile detail — adjusts live; lower detail = fewer tiles, lighter on GPU and memory')}
               style=${{fontSize:'.62rem',padding:'.18rem .2rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-body)'}}>
               <option value="low">Low</option>
               <option value="standard">Std</option>
@@ -23336,7 +23378,7 @@ function startApp() {
             ${(window._ccTiles3DActive && window._ccTiles3DActive() && window._ccSetTiles3DClearing) && html`<select
               value=${String(window._ccTiles3DClearing ? window._ccTiles3DClearing() : -1)}
               onChange=${function(e){ window._ccSetTiles3DClearing(Number(e.target.value)); }}
-              title="Clear site — hides context buildings inside the model footprint (+ margin), e.g. the old existing building your new design replaces"
+              title=${_cc_t('tip.clearSiteHidesContextBuildings','Clear site — hides context buildings inside the model footprint (+ margin), e.g. the old existing building your new design replaces')}
               style=${{fontSize:'.62rem',padding:'.18rem .2rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-body)'}}>
               <option value="-1">Site: keep</option>
               <option value="0">Clear 0 m</option>
@@ -23356,7 +23398,7 @@ function startApp() {
                 return html`<button onClick=${function(){ set(h + dh*step()); }} title=${tip}
                   style=${{width:18,height:18,padding:0,fontSize:'.62rem',lineHeight:1,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>${label}</button>`;
               }
-              return html`<span title="Vertical placement of the 3D world context. Auto-aligns to the model floor from the streamed geometry; ▼/▲ override manually." style=${{display:'flex',alignItems:'center',gap:'.15rem'}}>
+              return html`<span title=${_cc_t('tip.verticalPlacementOfThe3d','Vertical placement of the 3D world context. Auto-aligns to the model floor from the streamed geometry; ▼/▲ override manually.')} style=${{display:'flex',alignItems:'center',gap:'.15rem'}}>
                 <span style=${{fontSize:'.6rem',color:'var(--text-faint)'}}>height</span>
                 ${hbtn('▼',-1,'Lower context (manual)')}${hbtn('▲',1,'Raise context (manual)')}
                 <span title=${auto?_cc_t('geoplace.autoAligned','Auto-aligned to model floor'):_cc_t('geoplace.manualHeight','Manual height')} style=${{fontSize:'.6rem',color:auto?'var(--color-success, #22c55e)':'var(--text-muted)',fontFamily:'var(--font-mono)',minWidth:'2.6rem',textAlign:'right'}}>${auto ? 'auto' : (h>0?'+':'')+h.toFixed(1)+'m'}</span>
@@ -23402,7 +23444,7 @@ function startApp() {
               </div>
               ${window._ccAlignStart && html`<div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginTop:'.2rem',paddingLeft:'1.1rem',flexWrap:'wrap'}}>
                 <button onClick=${function(){ if(window._ccAlignStart) window._ccAlignStart(rl.id); }}
-                  title="Align this scan to the IFC by picking three matching reference points"
+                  title=${_cc_t('tip.alignThisScanToThe','Align this scan to the IFC by picking three matching reference points')}
                   style=${{fontSize:'.6rem',padding:'.12rem .4rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600}}>
                   ◇ Align to IFC
                 </button>
@@ -23413,9 +23455,9 @@ function startApp() {
                 </button>`}
                 ${window._ccDeviationCompute && html`<button onClick=${function(){
                     if(!window._ccDeviationCompute) return;
-                    window._ccDeviationCompute(rl.id).catch(function(e){ if(window._ccToast) window._ccToast('Proximity: '+(e.message||e)); });
+                    window._ccDeviationCompute(rl.id).catch(function(e){ if(window._ccToast) window._ccToast(_cc_t('toast.proximity','Proximity: {v1}',{v1:(e.message||e)})); });
                   }}
-                  title="First-pass proximity view: colours each scan point by distance to the nearest IFC element's BOUNDING BOX (green ≤ 2 cm, red ≥ 10 cm). This is not surface-accurate measured deviation — it's a coarse 'is this region near any design geometry' pass."
+                  title=${_cc_t('tip.firstPassProximityViewColours','First-pass proximity view: colours each scan point by distance to the nearest IFC element\'s BOUNDING BOX (green ≤ 2 cm, red ≥ 10 cm). This is not surface-accurate measured deviation — it\'s a coarse \'is this region near any design geometry\' pass.')}
                   style=${{fontSize:'.6rem',padding:'.12rem .4rem',background:'rgba(34,197,94,.12)',color:'#22c55e',border:'1px solid rgba(34,197,94,.4)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600}}>
                   ▦ Proximity (1st-pass)
                 </button>`}
@@ -23426,24 +23468,24 @@ function startApp() {
                 </button>`}
                 ${window._ccAlignRefineICP && html`<button onClick=${function(){
                     if(!window._ccAlignRefineICP) return;
-                    window._ccAlignRefineICP(rl.id).catch(function(e){ if(window._ccToast) window._ccToast('ICP: '+(e.message||e)); });
+                    window._ccAlignRefineICP(rl.id).catch(function(e){ if(window._ccToast) window._ccToast(_cc_t('toast.icp','ICP: {v1}',{v1:(e.message||e)})); });
                   }}
-                  title="Refine the alignment iteratively (point-to-IFC nearest-element ICP, ~20 iterations)"
+                  title=${_cc_t('tip.refineTheAlignmentIterativelyPoint','Refine the alignment iteratively (point-to-IFC nearest-element ICP, ~20 iterations)')}
                   style=${{fontSize:'.6rem',padding:'.12rem .4rem',background:'rgba(99,102,241,.12)',color:'#6366f1',border:'1px solid rgba(99,102,241,.4)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600}}>
                   ↻ Refine (ICP)
                 </button>`}
                 ${window._ccDeviationCreateIssues && html`<button onClick=${function(){
                     if(!window._ccDeviationCreateIssues) return;
-                    window._ccDeviationCreateIssues(rl.id).catch(function(e){ if(window._ccToast) window._ccToast('Auto-issue: '+(e.message||e)); });
+                    window._ccDeviationCreateIssues(rl.id).catch(function(e){ if(window._ccToast) window._ccToast(_cc_t('toast.autoIssue','Auto-issue: {v1}',{v1:(e.message||e)})); });
                   }}
-                  title="Cluster the red (closest-proximity) points and create one issue per hotspot. Distances are first-pass proximity to element bounding boxes, not measured surface deviation."
+                  title=${_cc_t('tip.clusterTheRedClosestProximity','Cluster the red (closest-proximity) points and create one issue per hotspot. Distances are first-pass proximity to element bounding boxes, not measured surface deviation.')}
                   style=${{fontSize:'.6rem',padding:'.12rem .4rem',background:'rgba(239,68,68,.12)',color:'#ef4444',border:'1px solid rgba(239,68,68,.4)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600}}>
                   ⚑ Issues at hotspots
                 </button>`}
                 ${window._ccDeviationExportReport && html`<button onClick=${function(){
                     if(window._ccDeviationExportReport) window._ccDeviationExportReport(rl.id);
                   }}
-                  title="Open a print-ready proximity report (cover summary + one page per hotspot with snapshot, location, statistics). Labelled first-pass proximity, not measured surface deviation."
+                  title=${_cc_t('tip.openAPrintReadyProximity','Open a print-ready proximity report (cover summary + one page per hotspot with snapshot, location, statistics). Labelled first-pass proximity, not measured surface deviation.')}
                   style=${{fontSize:'.6rem',padding:'.12rem .4rem',background:'rgba(31,41,55,.06)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600}}>
                   ⎙ Report PDF
                 </button>`}
@@ -26696,7 +26738,7 @@ function startApp() {
   // BIM execution plans, so this is branded and self-contained.
   function _ccClashReport(s) {
     var clashes = s.clashes || [];
-    if (!clashes.length) { if (window._ccToast) window._ccToast('No clashes to report'); return; }
+    if (!clashes.length) { if (window._ccToast) window._ccToast(_cc_t('toast.noClashesToReport','No clashes to report')); return; }
     _gcEvent('clash-report');
     var now = new Date();
     var author = (typeof _ccChangelogUser === 'string' && _ccChangelogUser.trim()) ? _ccChangelogUser.trim() : '';
@@ -26853,7 +26895,7 @@ function startApp() {
       + '</body></html>';
 
     var w = window.open('', '_blank');
-    if (!w) { if (window._ccToast) window._ccToast('Popup blocked — allow popups to open the report'); return; }
+    if (!w) { if (window._ccToast) window._ccToast(_cc_t('toast.popupBlockedAllowPopupsTo','Popup blocked — allow popups to open the report')); return; }
     w.document.write(h);
     w.document.close();
   }
@@ -26870,7 +26912,7 @@ function startApp() {
   function _ccDataQualityReport(s) {
     var elements = [];
     (s.models||[]).forEach(function(m){ (m.elements||[]).forEach(function(el){ el._modelId = m.id; elements.push(el); }); });
-    if (!elements.length) { if (window._ccToast) window._ccToast('No elements to report — load a model first'); return; }
+    if (!elements.length) { if (window._ccToast) window._ccToast(_cc_t('toast.noElementsToReportLoad','No elements to report — load a model first')); return; }
     _gcEvent('data-quality-report');
     var now = new Date();
     var author = (typeof _ccChangelogUser === 'string' && _ccChangelogUser.trim()) ? _ccChangelogUser.trim() : '';
@@ -26944,7 +26986,7 @@ function startApp() {
       + '</body></html>';
 
     var w = window.open('', '_blank');
-    if (!w) { if (window._ccToast) window._ccToast('Popup blocked — allow popups to open the report'); return; }
+    if (!w) { if (window._ccToast) window._ccToast(_cc_t('toast.popupBlockedAllowPopupsTo','Popup blocked — allow popups to open the report')); return; }
     w.document.write(h);
     w.document.close();
   }
@@ -27267,7 +27309,7 @@ function startApp() {
         <div style=${{display:'flex',gap:'var(--space-3)',alignItems:'center',fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>
           <span><span style=${{display:'inline-block',width:7,height:7,borderRadius:'50%',background:'var(--color-danger)',marginRight:4}}></span>${_cc_t('a11y.fail','Fail')}</span>
           <span><span style=${{display:'inline-block',width:7,height:7,borderRadius:'50%',background:'var(--color-success)',marginRight:4}}></span>${_cc_t('a11y.pass','Pass')}</span>
-          ${lastChecked && html`<span style=${{marginLeft:'auto'}}>${new Date(lastChecked).toLocaleTimeString()}</span>`}
+          ${lastChecked && html`<span style=${{marginLeft:'auto'}}>${window._ccDateFmt(lastChecked,'time')}</span>`}
         </div>
       </div>
 
@@ -28439,7 +28481,7 @@ function startApp() {
               </div>
             </div>
             <button onClick=${function(){
-                if (window._ccToast) window._ccToast('Running ' + (isCov?'coverage':'visibility') + ' check: ' + (preset.sampleId||preset.key) + '…');
+                if (window._ccToast) window._ccToast((isCov ? _cc_t('toast.runningCoverageCheck','Running coverage check: {id}…',{id:(preset.sampleId||preset.key)}) : _cc_t('toast.runningVisibilityCheck','Running visibility check: {id}…',{id:(preset.sampleId||preset.key)})));
                 var runner = isCov
                   ? (window._ccDetectCoverageAndMerge || function(p){ return window._ccDetectCoverage(p); })
                   : (window._ccDetectVisibilityAndMerge || function(p){ return window._ccDetectVisibility(p); });
@@ -28454,13 +28496,13 @@ function startApp() {
                     var resultTxt = sampleCount === 0
                       ? _cc_t('rules.notApplicable','not applicable — no matching elements to check')
                       : (isCov
-                        ? ((sum && sum.uncovered || 0) + ' gaps of ' + sampleCount + ' points')
-                        : (res.clashes.length + ' blocked of ' + sampleCount + ' rays')
+                        ? _cc_t('toast.gapsOfPoints','{n} gaps of {total} points',{n:(sum && sum.uncovered || 0),total:sampleCount})
+                        : _cc_t('toast.blockedOfRays','{n} blocked of {total} rays',{n:res.clashes.length,total:sampleCount})
                       );
-                    window._ccToast((isCov ? 'Coverage ' : 'Visibility ') + (preset.sampleId||preset.key) + ' — ' + resultTxt);
+                    window._ccToast((isCov ? _cc_t('toast.coverageIdResult','Coverage {id} — {result}',{id:(preset.sampleId||preset.key),result:resultTxt}) : _cc_t('toast.visibilityIdResult','Visibility {id} — {result}',{id:(preset.sampleId||preset.key),result:resultTxt})));
                   }
                   if (res.clashes.length) d({t:A.TAB, v:'clashes'});
-                }).catch(function(e){ if (window._ccToast) window._ccToast('Check failed: ' + (e.message||e)); });
+                }).catch(function(e){ if (window._ccToast) window._ccToast(_cc_t('toast.checkFailed','Check failed: {msg}',{msg:(e.message||e)})); });
               }}
               style=${{fontSize:'0.65rem',padding:'.22rem .55rem',background:col,color:'#fff',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600,whiteSpace:'nowrap',flexShrink:0}}>
               Run
@@ -28877,7 +28919,7 @@ function startApp() {
     }).catch(function(err){
       console.warn('[triage] api failed', err);
       dispatch({t:A.TRIAGE_RESULT, clusterKey:clusterKey, entry:{loading:false, error:String(err.message||err)}});
-      if (window._ccToast) window._ccToast('Triage failed: ' + (err.message||err) + ' — prompt copied to clipboard instead');
+      if (window._ccToast) window._ccToast(_cc_t('toast.triageFailedPromptCopiedTo','Triage failed: {v1} — prompt copied to clipboard instead',{v1:(err.message||err)}));
       window._ccTriageClusterCopy(clashes);
     });
     return true;
@@ -28889,14 +28931,14 @@ function startApp() {
       var prompt = window._ccBuildTriagePrompt(ctx);
       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(prompt);
       else { var ta=document.createElement('textarea'); ta.value=prompt; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }
-      if (window._ccToast) window._ccToast('AI triage prompt copied — paste into Claude/Gemma');
+      if (window._ccToast) window._ccToast(_cc_t('toast.aiTriagePromptCopiedPaste','AI triage prompt copied — paste into Claude/Gemma'));
       return true;
     } catch(err){ console.warn('[triage] copy failed', err); return false; }
   };
   window._ccResolveCluster = function(clashes, dispatch) {
     if (!clashes || !clashes.length || !dispatch) return;
     clashes.forEach(function(it){ dispatch({t:A.UPD_CLASH, id:it.id, u:{status:'resolved'}}); });
-    if (window._ccToast) window._ccToast('Resolved ' + clashes.length + ' clash' + (clashes.length===1?'':'es'));
+    if (window._ccToast) window._ccToast((clashes.length===1 ? _cc_t('toast.resolvedOneClash','Resolved {n} clash',{n:clashes.length}) : _cc_t('toast.resolvedClashes','Resolved {n} clashes',{n:clashes.length})));
   };
   // Severity rank used to colour the cluster card left-edge dot.
   // Reads aiSeverity first; falls back to the deterministic severity (Wave 1.6).
@@ -29937,7 +29979,7 @@ function startApp() {
                     var btn = function(label, val, on){return html`<button onClick=${function(e){
                         e.stopPropagation();
                         g.items.forEach(function(it){ d({t:A.AI_FEEDBACK, id:it.id, v:val}); });
-                        if (window._ccToast) window._ccToast('Thanks — feedback recorded');
+                        if (window._ccToast) window._ccToast(_cc_t('toast.thanksFeedbackRecorded','Thanks — feedback recorded'));
                       }}
                       title=${val==='real_clash'?_cc_t('vlist.markRealClash','Mark cluster as a real clash'):val==='false_positive'?_cc_t('vlist.markFalsePositive','Mark cluster as a false positive'):_cc_t('vlist.clearFeedback','Clear feedback')}
                       style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid '+(on?'var(--accent-subtle)':'var(--border)'),background:on?'var(--accent-bg)':'var(--bg-secondary)',color:on?'var(--accent-subtle)':'var(--text-secondary)',fontWeight:on?'var(--weight-semibold)':'var(--weight-regular)'}}>${label}</button>`;};
@@ -30046,7 +30088,7 @@ function startApp() {
       if (diff < 60000) return _cc_t('history.justNow','just now');
       if (diff < 3600000) return _cc_t('history.minAgo','{n}m ago',{n:Math.floor(diff/60000)});
       if (diff < 86400000) return _cc_t('history.hourAgo','{n}h ago',{n:Math.floor(diff/3600000)});
-      return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+      return window._ccDateFmt(d,'date') + ' ' + window._ccDateFmt(d,'timeShort');
     }
     return html`<div style=${{marginTop:'.4rem',borderTop:'1px solid var(--border-subtle)',paddingTop:'.3rem'}}>
       <button onClick=${function(e){e.stopPropagation();setOpen(!isOpen);}}
@@ -30216,7 +30258,7 @@ function startApp() {
         <span style=${{...LBL,fontWeight:600,textTransform:'uppercase',letterSpacing:'.04em',fontSize:'0.6rem'}}>${_cc_t('issueRow.comments','Comments')}${comments.length?' ('+comments.length+')':''}</span>
         ${comments.map(function(c){
           var mine = c.author === userName;
-          var ts = c.ts ? new Date(c.ts).toLocaleString() : '';
+          var ts = c.ts ? window._ccDateFmt(c.ts,'datetime') : '';
           return html`<div key=${c.id} style=${{fontSize:'0.68rem',background:'var(--bg-secondary)',borderRadius:'var(--radius-xs)',padding:'.3rem .4rem'}}>
             <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'.1rem'}}>
               <span style=${{fontWeight:600,color:'var(--text-primary)'}}>${c.author||'Anonymous'}</span>
@@ -32037,7 +32079,7 @@ function startApp() {
               ${saved.map(function(sv){
                 return Card({
                   id:sv.id, name:sv.name, snapshot:sv.snapshot,
-                  sub:sv.createdAt?new Date(sv.createdAt).toLocaleDateString():'',
+                  sub:sv.createdAt?window._ccDateFmt(sv.createdAt,'date'):'',
                   onClick:function(){ _ccApplySmartView(sv); d({t:A.SMART_VIEWS,v:false}); },
                   onDelete:function(){ d({t:A.DEL_SMART_VIEW, id:sv.id}); }
                 });
@@ -32283,7 +32325,7 @@ function startApp() {
                 <span style=${{fontSize:'0.8rem',fontWeight:600,color:'var(--text-primary)'}}>${sp.syncing?_cc_t('share.syncing','Syncing…'):_cc_t('share.connected','Connected')}</span>
               </div>
               <div style=${{fontSize:'0.78rem',color:'var(--text-secondary)',marginBottom:'.2rem',wordBreak:'break-all'}}>${sp.folderName}/${sp.fileName||'project.ccproject'}</div>
-              ${sp.lastSync && html`<div style=${{fontSize:'0.72rem',color:'var(--text-faint)'}}>${_cc_t('share.lastSync','Last sync: {time}',{time:new Date(sp.lastSync).toLocaleTimeString()})}</div>`}
+              ${sp.lastSync && html`<div style=${{fontSize:'0.72rem',color:'var(--text-faint)'}}>${_cc_t('share.lastSync','Last sync: {time}',{time:window._ccDateFmt(sp.lastSync,'time')})}</div>`}
             </div>`}
 
             <div style=${{display:'flex',gap:'.5rem',flexWrap:'wrap'}}>
@@ -32386,7 +32428,7 @@ function startApp() {
         return html`<div key=${c.id} style=${{padding:'.7rem .8rem',background:isActive?'var(--accent-bg)':'var(--bg-tertiary)',border:'1px solid '+(isActive?'var(--accent-subtle)':'var(--border)'),borderRadius:'var(--radius-md)'}}>
           <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.3rem'}}>
             <span style=${{fontSize:'0.78rem',fontWeight:600,color:'var(--text-primary)'}}>${c.author||_cc_t('share.anonymous','Anonymous')}</span>
-            <span style=${{fontSize:'0.68rem',color:'var(--text-faint)'}}>${c.ts?new Date(c.ts).toLocaleString():''}</span>
+            <span style=${{fontSize:'0.68rem',color:'var(--text-faint)'}}>${c.ts?window._ccDateFmt(c.ts,'datetime'):''}</span>
             ${c.resolved && html`<span style=${{fontSize:'0.66rem',color:'var(--color-success-fg)',padding:'1px 6px',borderRadius:99,background:'rgba(34,197,94,.1)',border:'1px solid rgba(34,197,94,.3)'}}>${_cc_t('share.filterResolved','Resolved')}</span>`}
             <div style=${{flex:1}}></div>
             ${c.anchor && c.anchor.point && html`<button onClick=${function(){flyToComment(c);}} style=${btnGhost} title=${_cc_t('share.flyToPin','Fly to pin')}>📍</button>`}
@@ -32402,7 +32444,7 @@ function startApp() {
           ${(c.replies||[]).length>0 && html`<div style=${{marginTop:'.5rem',paddingLeft:'.6rem',borderLeft:'2px solid var(--border)',display:'flex',flexDirection:'column',gap:'.4rem'}}>
             ${c.replies.map(function(r){return html`<div key=${r.id} style=${{fontSize:'0.78rem'}}>
               <span style=${{fontWeight:600,color:'var(--text-primary)'}}>${r.author||_cc_t('share.anonymous','Anonymous')}</span>
-              <span style=${{color:'var(--text-faint)',marginLeft:'.4rem',fontSize:'0.68rem'}}>${r.ts?new Date(r.ts).toLocaleString():''}</span>
+              <span style=${{color:'var(--text-faint)',marginLeft:'.4rem',fontSize:'0.68rem'}}>${r.ts?window._ccDateFmt(r.ts,'datetime'):''}</span>
               <div style=${{color:'var(--text-secondary)',whiteSpace:'pre-wrap',lineHeight:1.5}}>${(r.text||'').split(/(@[A-Za-z0-9_-]+)/).map(function(part,i){
                 if(part.charAt(0)==='@') return html`<span key=${i} style=${{color:'var(--accent)',fontWeight:600,background:'var(--accent-bg)',padding:'0 .15rem',borderRadius:3}}>${part}</span>`;
                 return part;
@@ -32898,7 +32940,7 @@ function startApp() {
         push({group:_cc_t('cmdk.group.visibility','Visibility'), label: label,
           keywords:(isCoverage?'coverage gap surveillance ':'visibility sight line obstruction ') + (preset.sampleId||''),
           onSelect:function(){
-            if (window._ccToast) window._ccToast('Running ' + (isCoverage?'coverage':'visibility') + ' check: ' + (preset.sampleId||preset.key) + '…');
+            if (window._ccToast) window._ccToast((isCoverage ? _cc_t('toast.runningCoverageCheck','Running coverage check: {id}…',{id:(preset.sampleId||preset.key)}) : _cc_t('toast.runningVisibilityCheck','Running visibility check: {id}…',{id:(preset.sampleId||preset.key)})));
             var runner = isCoverage
               ? (window._ccDetectCoverageAndMerge || function(p){ return window._ccDetectCoverage(p); })
               : window._ccDetectVisibilityAndMerge;
@@ -32911,15 +32953,13 @@ function startApp() {
                   // Run button: 0-of-0 is "nothing to check", not "all clear".
                   window._ccToast((isCoverage?'Coverage ':'Visibility ') + (preset.sampleId||preset.key) + ' — ' + _cc_t('rules.notApplicable','not applicable — no matching elements to check'));
                 } else if (isCoverage) {
-                  window._ccToast('Coverage ' + (preset.sampleId||preset.key) + ' done — ' +
-                    (sum && sum.uncovered || 0) + ' gaps of ' + sampleN + ' sampled points');
+                  window._ccToast(_cc_t('toast.coverageDoneGapsOfSampled','Coverage {v1} done — {v2} gaps of {sampleN} sampled points',{v1:(preset.sampleId||preset.key),v2:(sum && sum.uncovered || 0),sampleN:sampleN}));
                 } else {
-                  window._ccToast('Visibility ' + (preset.sampleId||preset.key) + ' done — ' +
-                    (res.clashes.length) + ' blocked of ' + sampleN + ' rays');
+                  window._ccToast(_cc_t('toast.visibilityDoneBlockedOfRays','Visibility {v1} done — {v2} blocked of {sampleN} rays',{v1:(preset.sampleId||preset.key),v2:(res.clashes.length),sampleN:sampleN}));
                 }
               }
               if (res.clashes.length) d({t:A.TAB, v:'clashes'});
-            }).catch(function(e){ if (window._ccToast) window._ccToast('Check failed: ' + (e.message||e)); });
+            }).catch(function(e){ if (window._ccToast) window._ccToast(_cc_t('toast.checkFailed','Check failed: {msg}',{msg:(e.message||e)})); });
           }});
       });
     }
@@ -33347,7 +33387,7 @@ function startApp() {
               if (!lang) { if (window._ccSetLocale) window._ccSetLocale(null); return; }
               if (window._ccLoadLocalePack) {
                 window._ccLoadLocalePack(lang).then(function(){ if (window._ccSetLocale) window._ccSetLocale(lang); })
-                  .catch(function(){ setLocaleSel(''); if (window._ccToast) window._ccToast('Could not load that language pack.'); });
+                  .catch(function(){ setLocaleSel(''); if (window._ccToast) window._ccToast(_cc_t('toast.couldNotLoadThatLanguage','Could not load that language pack.')); });
               }
             }}
             style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,padding:'.25rem .5rem',fontSize:'0.8rem'}}>
@@ -33367,7 +33407,7 @@ function startApp() {
               if (!region) { if (window._ccSetRegulationRegion) window._ccSetRegulationRegion(null); return; }
               if (window._ccLoadRegulationPack) {
                 window._ccLoadRegulationPack(region).then(function(){ if (window._ccSetRegulationRegion) window._ccSetRegulationRegion(region); })
-                  .catch(function(){ setRegionSel(''); if (window._ccToast) window._ccToast('Could not load that regulation pack.'); });
+                  .catch(function(){ setRegionSel(''); if (window._ccToast) window._ccToast(_cc_t('toast.couldNotLoadThatRegulation','Could not load that regulation pack.')); });
               }
             }}
             style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,padding:'.25rem .5rem',fontSize:'0.8rem'}}>
@@ -33625,7 +33665,7 @@ function startApp() {
                 <div style=${TSUB}>${_cc_t('settings.shared.sharedProjectSub','Sync clash decisions with your team. No account needed — just share the project key.')}</div>
               </div>
               <div style=${{display:'flex',gap:'.3rem',flexShrink:0}}>
-                <input type="text" placeholder="e.g. MEP-abc123" id="cc-join-key"
+                <input type="text" placeholder=${_cc_t('ph.eGMepAbc123','e.g. MEP-abc123')} id="cc-join-key"
                   style=${{...S_INPUT,width:120,fontSize:'0.78rem',fontFamily:'var(--font-mono)'}} />
                 <button onClick=${function(){
                   var key = document.getElementById('cc-join-key').value.trim();
@@ -34220,7 +34260,13 @@ function startApp() {
     var f = state && state.prefs && state.prefs.measureCalibration;
     return (f && isFinite(f) && f > 0) ? Number(f) : 1;
   }
-  function _ccFmtLength(meters, state) {
+  // Display number formatting by the active locale; `machine` (true) keeps the legacy "."-decimal
+  // toFixed text — pass it wherever the result is STORED (measurement labels persist in projects
+  // and feed the CSV export) or parsed back.
+  function _ccFmtN(n, digits, machine) {
+    return (machine || typeof window._ccNumFmt !== 'function') ? n.toFixed(digits) : window._ccNumFmt(n, digits);
+  }
+  function _ccFmtLength(meters, state, machine) {
     if (meters == null || !isFinite(meters)) return '—';
     var c = _ccCalibration(state);
     meters = meters * c;
@@ -34228,16 +34274,16 @@ function startApp() {
     var p = _ccMeasurePrecision(state);
     if (mode === 'imperial-decimal') {
       var ft = meters * 3.28084;
-      return ft.toFixed(p) + ' ft';
+      return _ccFmtN(ft, p, machine) + ' ft';
     }
     if (mode === 'imperial-fractional') {
       return _ccFmtFractionalInches(meters * 39.3701);
     }
     // metric: prefer mm under 1m, else m
-    if (Math.abs(meters) < 1) return Math.round(meters * 1000) + ' mm';
-    return meters.toFixed(p) + ' m';
+    if (Math.abs(meters) < 1) return _ccFmtN(Math.round(meters * 1000), 0, machine) + ' mm';
+    return _ccFmtN(meters, p, machine) + ' m';
   }
-  function _ccFmtArea(m2, state) {
+  function _ccFmtArea(m2, state, machine) {
     if (m2 == null || !isFinite(m2)) return '—';
     var c = _ccCalibration(state);
     m2 = m2 * c * c;
@@ -34245,12 +34291,12 @@ function startApp() {
     var p = _ccMeasurePrecision(state);
     if (mode.indexOf('imperial') === 0) {
       var ft2 = m2 * 10.7639;
-      return ft2.toFixed(p) + ' ft²';
+      return _ccFmtN(ft2, p, machine) + ' ft²';
     }
-    if (Math.abs(m2) < 1) return Math.round(m2 * 10000) + ' cm²';
-    return m2.toFixed(p) + ' m²';
+    if (Math.abs(m2) < 1) return _ccFmtN(Math.round(m2 * 10000), 0, machine) + ' cm²';
+    return _ccFmtN(m2, p, machine) + ' m²';
   }
-  function _ccFmtVolume(m3, state) {
+  function _ccFmtVolume(m3, state, machine) {
     if (m3 == null || !isFinite(m3)) return '—';
     var c = _ccCalibration(state);
     m3 = m3 * c * c * c;
@@ -34258,31 +34304,31 @@ function startApp() {
     var p = _ccMeasurePrecision(state);
     if (mode.indexOf('imperial') === 0) {
       var ft3 = m3 * 35.3147;
-      return ft3.toFixed(p) + ' ft³';
+      return _ccFmtN(ft3, p, machine) + ' ft³';
     }
-    if (Math.abs(m3) < 1) return Math.round(m3 * 1000) + ' L';
-    return m3.toFixed(p) + ' m³';
+    if (Math.abs(m3) < 1) return _ccFmtN(Math.round(m3 * 1000), 0, machine) + ' L';
+    return _ccFmtN(m3, p, machine) + ' m³';
   }
-  function _ccFmtAngle(rad, state) {
+  function _ccFmtAngle(rad, state, machine) {
     if (rad == null || !isFinite(rad)) return '—';
     var p = _ccMeasurePrecision(state);
-    return (rad * 180 / Math.PI).toFixed(Math.min(p, 1)) + '°';
+    return _ccFmtN(rad * 180 / Math.PI, Math.min(p, 1), machine) + '°';
   }
-  function _ccFmtDeltas(p0, p1, state) {
-    return [_ccFmtLength(Math.abs(p1.x-p0.x), state),
-            _ccFmtLength(Math.abs(p1.y-p0.y), state),
-            _ccFmtLength(Math.abs(p1.z-p0.z), state)];
+  function _ccFmtDeltas(p0, p1, state, machine) {
+    return [_ccFmtLength(Math.abs(p1.x-p0.x), state, machine),
+            _ccFmtLength(Math.abs(p1.y-p0.y), state, machine),
+            _ccFmtLength(Math.abs(p1.z-p0.z), state, machine)];
   }
   // Recompute label for a stored measurement (used after unit change or edit)
-  function _ccRelabelMeasurement(m, state) {
+  function _ccRelabelMeasurement(m, state, machine) {
     if (!m) return m;
-    if (m.type === 'length' || m.type === 'clearance') return _ccFmtLength(m.value, state);
-    if (m.type === 'angle')  return _ccFmtAngle(m.value, state);
-    if (m.type === 'area')   return _ccFmtArea(m.value, state);
+    if (m.type === 'length' || m.type === 'clearance') return _ccFmtLength(m.value, state, machine);
+    if (m.type === 'angle')  return _ccFmtAngle(m.value, state, machine);
+    if (m.type === 'area')   return _ccFmtArea(m.value, state, machine);
     if (m.type === 'element'){
-      if (m.qtoKey === 'NetVolume' || m.qtoKey === 'GrossVolume') return _ccFmtVolume(m.value, state);
-      if (m.qtoKey && m.qtoKey.indexOf('Area') >= 0) return _ccFmtArea(m.value, state);
-      return _ccFmtLength(m.value, state);
+      if (m.qtoKey === 'NetVolume' || m.qtoKey === 'GrossVolume') return _ccFmtVolume(m.value, state, machine);
+      if (m.qtoKey && m.qtoKey.indexOf('Area') >= 0) return _ccFmtArea(m.value, state, machine);
+      return _ccFmtLength(m.value, state, machine);
     }
     return m.label || '—';
   }
@@ -36352,7 +36398,9 @@ function startApp() {
             var it = (window._ccLatestState && ((window._ccLatestState.clashes||[]).concat(window._ccLatestState.issues||[])).find(function(x){return x.id===id;}));
             return (it && it.title) || id;
           });
-          _sharedToast('Sync conflict on ' + data.conflicts.length + ' item' + (data.conflicts.length===1?'':'s') + ' (' + names.slice(0,3).join(', ') + (names.length>3?'…':'') + ') — a teammate changed it first. Your edit was not applied; re-check and re-apply if needed.');
+          _sharedToast(data.conflicts.length===1
+            ? _cc_t('toast.syncConflictOne','Sync conflict on {n} item ({names}) — a teammate changed it first. Your edit was not applied; re-check and re-apply if needed.',{n:data.conflicts.length,names:names.slice(0,3).join(', ') + (names.length>3?'…':'')})
+            : _cc_t('toast.syncConflictMany','Sync conflict on {n} items ({names}) — a teammate changed it first. Your edit was not applied; re-check and re-apply if needed.',{n:data.conflicts.length,names:names.slice(0,3).join(', ') + (names.length>3?'…':'')}));
         }
       })
       .catch(function(){ /* offline — silent, next push will retry these if re-edited */ });
@@ -36661,12 +36709,12 @@ function startApp() {
         return {_clashSetup:true, rules:upd, nameA:mA?mA.name:'All models', nameB:mB?mB.name:'All models',
           _typeExplicit:typeExplicit, _gapExplicit:gapExplicit, _selfExplicit:typeof action.excludeSelf==='boolean'};
       }
-      case 'set_max_gap': if (typeof action.value !== 'number') return null; d({t:A.UPD_RULES, u:{maxGap:action.value}}); return 'Gap set to '+action.value+'mm.';
-      case 'set_duplicates': d({t:A.UPD_RULES, u:{duplicates:!!action.enabled}}); return action.enabled ? 'Got it — duplicates included.' : 'Got it — duplicates excluded.';
-      case 'filter_status': var sv = {open:'open',resolved:'resolved',all:'all'}[action.status]||'all'; d({t:A.UPD_FILTERS, u:{status:sv}}); d({t:A.TAB,v:'clashes'}); return sv==='all'?'Showing everything.':'Showing '+sv+' only.';
-      case 'reset_filters': d({t:A.RESET_FILTERS}); return 'Filters cleared — showing everything.';
-      case 'group_by': var gv = {storey:'storey',floor:'storey',level:'storey',discipline:'discipline',status:'status',type:'type',none:'none'}[action.groupBy]||'none'; d({t:A.CLASH_GROUP_BY,v:gv==='none'?[]:[gv]}); d({t:A.TAB,v:'clashes'}); return 'Grouped by '+gv+'.';
-      case 'export_bcf': if (!s.issues.length&&!s.clashes.length) return _offerExport(s); var items=s.issues.length?s.issues:s.clashes; exportBCF(items,'2.1',s.viewpoints,s); return 'Done — '+items.length+' items exported as BCF.';
+      case 'set_max_gap': if (typeof action.value !== 'number') return null; d({t:A.UPD_RULES, u:{maxGap:action.value}}); return _cc_t('nl.reply.gapSetToMm','Gap set to {value}mm.',{value:action.value});
+      case 'set_duplicates': d({t:A.UPD_RULES, u:{duplicates:!!action.enabled}}); return action.enabled ? _cc_t('nl.reply.gotItDuplicatesIncluded','Got it — duplicates included.') : _cc_t('nl.reply.gotItDuplicatesExcluded','Got it — duplicates excluded.');
+      case 'filter_status': var sv = {open:'open',resolved:'resolved',all:'all'}[action.status]||'all'; d({t:A.UPD_FILTERS, u:{status:sv}}); d({t:A.TAB,v:'clashes'}); return sv==='all'?_cc_t('nl.reply.showingEverything','Showing everything.'):_cc_t('nl.reply.showingOnly','Showing {status} only.',{status:sv});
+      case 'reset_filters': d({t:A.RESET_FILTERS}); return _cc_t('nl.reply.filtersClearedShowingEverything','Filters cleared — showing everything.');
+      case 'group_by': var gv = {storey:'storey',floor:'storey',level:'storey',discipline:'discipline',status:'status',type:'type',none:'none'}[action.groupBy]||'none'; d({t:A.CLASH_GROUP_BY,v:gv==='none'?[]:[gv]}); d({t:A.TAB,v:'clashes'}); return _cc_t('nl.reply.groupedBy','Grouped by {gv}.',{gv:gv});
+      case 'export_bcf': if (!s.issues.length&&!s.clashes.length) return _offerExport(s); var items=s.issues.length?s.issues:s.clashes; exportBCF(items,'2.1',s.viewpoints,s); return _cc_t('nl.reply.doneItemsExportedAsBcf','Done — {v1} items exported as BCF.',{v1:items.length});
       case 'count_elements': {
         if (!s.models.length) return _offerLoadIFC();
         var ctRaw = String(action.ifcType||'').trim();
@@ -36695,55 +36743,55 @@ function startApp() {
         var ctWhere = ctStorey ? ' on "' + action.storey + '"' : '';
         if (ctTotal === 0 && ctStorey && !Object.keys(ctStoreysSeen).some(function(k){return k.toLowerCase().indexOf(ctStorey)!==-1;})) {
           var ctNames = Object.keys(ctStoreysSeen).slice(0,8).join(', ');
-          return 'No storey matches "' + action.storey + '". Storeys here: ' + (ctNames||'(none)') + '.';
+          return _cc_t('nl.reply.noStoreyMatchesStoreysHere','No storey matches "{storey}". Storeys here: {v1}.',{storey:action.storey,v1:(ctNames||'(none)')});
         }
         return ctTotal + ' ' + ctWhat + ctWhere +
           (ctPerModel.length > 1 ? ' — ' + ctPerModel.join(', ') : (ctModel ? ' in ' + ctModel.name : '')) + '.';
       }
       case 'query': return processNLCommand(action.metric||action.query||'', s, d);
       case 'help': return processNLCommand('help', s, d);
-      case 'load_model': if (window._ccOpenIFC) { window._ccOpenIFC(); return 'Opening file picker — pick one or more .ifc files.'; } return 'File picker unavailable. Drag an .ifc file onto the window instead.';
+      case 'load_model': if (window._ccOpenIFC) { window._ccOpenIFC(); return _cc_t('nl.reply.openingFilePickerPickOne','Opening file picker — pick one or more .ifc files.'); } return _cc_t('nl.reply.filePickerUnavailableDragAn','File picker unavailable. Drag an .ifc file onto the window instead.');
       case 'analyze_clashes': case 'analyze': case 'analyse': case 'summary': case 'summarize': case 'summarise': case 'report':
-        return processNLCommand('analyze clashes', s, d) || 'No data yet. Load models and run detection first.';
-      case 'generate_report': return 'Report: ' + (action.text || 'Generating report...');
-      case 'batch_update': return 'Batch update: ' + (action.action || 'updating') + ' ' + (action.filter || 'selected') + ' clashes.';
+        return processNLCommand('analyze clashes', s, d) || _cc_t('nl.reply.noDataYetLoadModels','No data yet. Load models and run detection first.');
+      case 'generate_report': return _cc_t('nl.reply.report','Report: {v1}',{v1:(action.text || 'Generating report...')});
+      case 'batch_update': return _cc_t('nl.reply.batchUpdateClashes','Batch update: {v1} {v2} clashes.',{v1:(action.action || 'updating'),v2:(action.filter || 'selected')});
       case 'create_project': {
         var cpName = (action.name||'').trim();
-        if (!cpName) return 'What should the project be called? Try "new project My Tower".';
+        if (!cpName) return _cc_t('nl.reply.whatShouldTheProjectBe','What should the project be called? Try "new project My Tower".');
         try {
           var cpId = uid();
           var cpList = getProjects().concat([{id:cpId, name:cpName, createdAt:Date.now()}]);
           saveProjects(cpList);
           d({t:A.SET_PROJECT_LIST, v:cpList});
           _switchProject(cpId, s, d);
-          return 'Created project **' + cpName + '** and switched to it.';
-        } catch(e) { return 'Couldn\'t create project: '+(e.message||e); }
+          return _cc_t('nl.reply.createdProjectAndSwitchedTo','Created project **{cpName}** and switched to it.',{cpName:cpName});
+        } catch(e) { return _cc_t('nl.reply.couldnTCreateProject','Couldn\'t create project: {v1}',{v1:(e.message||e)}); }
       }
       case 'rename_project': {
         var rpName = (action.name||'').trim();
-        if (!rpName) return 'What should I rename it to? Try "rename project to My Tower".';
+        if (!rpName) return _cc_t('nl.reply.whatShouldIRenameIt','What should I rename it to? Try "rename project to My Tower".');
         try {
           var rpId = s.activeProject || 'default';
           var rpList = getProjects().map(function(p){return p.id===rpId?Object.assign({},p,{name:rpName}):p;});
           saveProjects(rpList);
           d({t:A.SET_PROJECT_LIST, v:rpList});
-          return 'Renamed to **' + rpName + '**.';
-        } catch(e) { return 'Couldn\'t rename: '+(e.message||e); }
+          return _cc_t('nl.reply.renamedTo','Renamed to **{rpName}**.',{rpName:rpName});
+        } catch(e) { return _cc_t('nl.reply.couldnTRename','Couldn\'t rename: {v1}',{v1:(e.message||e)}); }
       }
       case 'switch_project': {
         var spHint = (action.name||'').toLowerCase().trim();
-        if (!spHint) return 'Which project? Try "switch to project Foo".';
+        if (!spHint) return _cc_t('nl.reply.whichProjectTrySwitchTo','Which project? Try "switch to project Foo".');
         var spList = getProjects();
         var spMatch = spList.find(function(p){return p.name.toLowerCase()===spHint;}) ||
                       spList.find(function(p){return p.name.toLowerCase().indexOf(spHint)!==-1;});
-        if (spMatch) { _switchProject(spMatch.id, s, d); return 'Switched to **'+spMatch.name+'**.'; }
-        return 'No project named "'+(action.name||'')+'".';
+        if (spMatch) { _switchProject(spMatch.id, s, d); return _cc_t('nl.reply.switchedTo','Switched to **{name}**.',{name:spMatch.name}); }
+        return _cc_t('nl.reply.noProjectNamed','No project named "{v1}".',{v1:(action.name||'')});
       }
       case 'set_view': {
         var viewMap = {top:'top view',front:'front view',back:'back view',left:'left view',right:'right view',isometric:'isometric view',reset:'reset view'};
         var vcmd = viewMap[action.view] || action.view;
         processNLCommand(vcmd, s, d);
-        return (action.view==='reset'?'View reset.':action.view.charAt(0).toUpperCase()+action.view.slice(1)+' view.');
+        return (action.view==='reset'?_cc_t('nl.reply.viewReset','View reset.'):_cc_t('nl.reply.viewNamed','{view} view.',{view:_cc_t('nl.reply.viewName.'+action.view,action.view.charAt(0).toUpperCase()+action.view.slice(1))}));
       }
       case 'set_render_style': {
         var rsMap = {wireframe:'wireframe',shaded:'shaded',rendered:'rendered',standard:'standard',xray:'xray','x-ray':'xray'};
@@ -36752,14 +36800,14 @@ function startApp() {
         return rs.charAt(0).toUpperCase()+rs.slice(1)+' mode.';
       }
       case 'set_section': {
-        if (action.axis === 'none') { d({t:A.SECTION,axis:null}); d({t:A.SECTION_BOX,v:null}); return 'Sections cleared.'; }
+        if (action.axis === 'none') { d({t:A.SECTION,axis:null}); d({t:A.SECTION_BOX,v:null}); return _cc_t('nl.reply.sectionsCleared','Sections cleared.'); }
         d({t:A.SECTION,axis:action.axis});
-        return 'Section '+action.axis.toUpperCase()+'.';
+        return _cc_t('nl.reply.section','Section {v1}.',{v1:action.axis.toUpperCase()});
       }
       case 'color_by': {
         var cbMap = {type:'byType',storey:'byStorey',discipline:'byDiscipline',material:'byMaterial',none:null};
         d({t:A.COLOR_BY_CLASS,v:cbMap[action.by]||null});
-        return action.by==='none'?'Colors reset.':'Colored by '+action.by+'.';
+        return action.by==='none'?_cc_t('nl.reply.colorsReset','Colors reset.'):_cc_t('nl.reply.coloredBy','Colored by {by}.',{by:action.by});
       }
       case 'set_theme': {
         d({t:A.UPD_PREFS,u:{theme:action.theme}});
@@ -36777,7 +36825,7 @@ function startApp() {
         if (window._ccTempUnhide) window._ccTempUnhide();
         if (window._ccUnisolate) window._ccUnisolate();
         if (_unghostAll) _unghostAll();
-        return 'All elements restored.';
+        return _cc_t('nl.reply.allElementsRestored','All elements restored.');
       }
       case 'navigate_tab': {
         var tabMap = {models:'models',clashes:'clashes',issues:'issues',navigator:'navigator',ai:'ai'};
@@ -36786,33 +36834,33 @@ function startApp() {
         return tv.charAt(0).toUpperCase()+tv.slice(1)+' tab.';
       }
       case 'filter_priority': {
-        if (action.priority==='all') { d({t:A.UPD_FILTERS,u:{priority:null}}); return 'Showing all priorities.'; }
+        if (action.priority==='all') { d({t:A.UPD_FILTERS,u:{priority:null}}); return _cc_t('nl.reply.showingAllPriorities','Showing all priorities.'); }
         d({t:A.UPD_FILTERS,u:{priority:action.priority}}); d({t:A.TAB,v:'clashes'});
-        return 'Showing '+action.priority+' priority only.';
+        return _cc_t('nl.reply.showingPriorityOnly','Showing {priority} priority only.',{priority:action.priority});
       }
       case 'sort_by': {
         var sortMap = {priority:'priority',status:'status',type:'type',storey:'storey',date:'date',distance:'distance'};
         var sv2 = sortMap[action.sortBy]||'priority';
         d({t:A.CLASH_SORT_BY,v:sv2});
-        return 'Sorted by '+sv2+'.';
+        return _cc_t('nl.reply.sortedBy','Sorted by {sv2}.',{sv2:sv2});
       }
       case 'import_bcf': {
         importBCF(d);
-        return 'BCF file picker opened.';
+        return _cc_t('nl.reply.bcfFilePickerOpened','BCF file picker opened.');
       }
       case 'save_viewpoint': {
         if (_captureViewpoint) {
           var vpName = action.name || ('Viewpoint ' + (s.viewpoints ? s.viewpoints.length + 1 : 1));
           _captureViewpoint(vpName);
-          return 'Viewpoint saved: ' + vpName + '.';
+          return _cc_t('nl.reply.viewpointSaved','Viewpoint saved: {vpName}.',{vpName:vpName});
         }
-        return 'No active 3D view to capture.';
+        return _cc_t('nl.reply.noActive3dViewTo','No active 3D view to capture.');
       }
       case 'measure': {
-        if (action.mode==='stop') { d({t:A.MEASURE_MODE,v:null}); return 'Measurement off.'; }
-        if (action.mode==='clear') { if(window._ccClearAllMeasurementGeo)window._ccClearAllMeasurementGeo(); d({t:A.CLEAR_MEASUREMENTS}); return 'Measurements cleared.'; }
+        if (action.mode==='stop') { d({t:A.MEASURE_MODE,v:null}); return _cc_t('nl.reply.measurementOff','Measurement off.'); }
+        if (action.mode==='clear') { if(window._ccClearAllMeasurementGeo)window._ccClearAllMeasurementGeo(); d({t:A.CLEAR_MEASUREMENTS}); return _cc_t('nl.reply.measurementsCleared','Measurements cleared.'); }
         d({t:A.MEASURE_MODE,v:action.mode});
-        return 'Measuring '+action.mode+'. Click points in the 3D view.';
+        return _cc_t('nl.reply.measuringClickPointsInThe','Measuring {mode}. Click points in the 3D view.',{mode:action.mode});
       }
       case 'unknown': {
         var uText = action.text || '';
@@ -36949,7 +36997,7 @@ function startApp() {
       }
       if (/^(?:no|nah|nope|n|not now|later|cancel|never\s*mind)\b/.test(offerTxt)) {
         window._ccPendingOffer = null;
-        return Promise.resolve(_captureNL('Okay — just let me know when you need it.', 'offer-decline'));
+        return Promise.resolve(_captureNL(_cc_t('nl.reply.okayJustLetMeKnow','Okay — just let me know when you need it.'), 'offer-decline'));
       }
       window._ccPendingOffer = null;
     }
@@ -36961,7 +37009,7 @@ function startApp() {
         if (expResult) return Promise.resolve(_captureNL(expResult, 'followup'));
       }
       if (/how\s+many|count/i.test(raw)) {
-        var countMsg = _nlLastContext.clashCount + ' clashes. (Last: ' + (_nlLastContext.input || '?') + ')';
+        var countMsg = _cc_t('nl.reply.clashCountLast','{count} clashes. (Last: {last})',{count:_nlLastContext.clashCount,last:(_nlLastContext.input || '?')});
         return Promise.resolve(_captureNL(countMsg, 'followup'));
       }
     }
@@ -36970,9 +37018,7 @@ function startApp() {
     if (/^\/smart\b/i.test(raw.trim())) {
       var _sbMsg = raw.trim().slice(6).trim();
       if (!_sbMsg) return Promise.resolve(
-        '/smart <message> — sends your message to the Smart Bridge LLM agent (Ollama / OpenAI).\n' +
-        'Example: /smart show me all structural clashes\n\n' +
-        'Requires the Smart Bridge addon to be connected with Ollama or OpenAI configured.'
+        _cc_t('nl.reply.smartUsage','/smart <message> — sends your message to the Smart Bridge LLM agent (Ollama / OpenAI).\nExample: /smart show me all structural clashes\n\nRequires the Smart Bridge addon to be connected with Ollama or OpenAI configured.')
       );
       var _sbHistory = (window._ccLatestState && window._ccLatestState.smartBridge && window._ccLatestState.smartBridge.chatMessages) || [];
       return _ccSbChat({
@@ -37001,9 +37047,9 @@ function startApp() {
       .catch(function(e) {
         var msg = e.message || String(e);
         if (/fetch|Failed to fetch|ECONNREFUSED|refused|network/i.test(msg)) {
-          return 'Smart Bridge is not running. Enable the Smart Bridge addon and wait for it to connect.';
+          return _cc_t('nl.reply.smartBridgeIsNotRunning','Smart Bridge is not running. Enable the Smart Bridge addon and wait for it to connect.');
         }
-        return 'Smart Bridge: ' + msg;
+        return _cc_t('nl.reply.smartBridge','Smart Bridge: {msg}',{msg:msg});
       });
     }
 
@@ -37068,10 +37114,10 @@ function startApp() {
             return _captureNL(j.response || '', 'smart-bridge-solve');
           })
           .catch(function() {
-            return _captureNL("Couldn't reach your connected LLM — check Smart Bridge ▸ Connector, then try again.", 'nudge-connect');
+            return _captureNL(_cc_t('nl.reply.couldntReachLlm',"Couldn't reach your connected LLM — check Smart Bridge ▸ Connector, then try again."), 'nudge-connect');
           });
         }
-        return Promise.resolve(_captureNL("Resolving clashes is beyond the basic built-in assistant — it needs a stronger model. Connect your own AI in one click via Smart Bridge ▸ Connector (Ollama, LM Studio, or your Claude Desktop app), and it'll reason over the actual geometry to suggest fixes. I'll keep handling the basics here.", 'nudge-connect'));
+        return Promise.resolve(_captureNL(_cc_t('nl.reply.resolvingNeedsStrongerModel',"Resolving clashes is beyond the basic built-in assistant — it needs a stronger model. Connect your own AI in one click via Smart Bridge ▸ Connector (Ollama, LM Studio, or your Claude Desktop app), and it'll reason over the actual geometry to suggest fixes. I'll keep handling the basics here."), 'nudge-connect'));
       }
     }
 
@@ -37118,7 +37164,7 @@ function startApp() {
       .catch(function(err) {
         var regexResult = processNLCommand(raw, s, d);
         if (regexResult !== null) return _captureNL(regexResult, 'regex-fallback');
-        var _quotaMsg = "AI is over quota right now. Connect your own AI in one click via the Smart Bridge (open the AI panel ▸ Connector) to skip server limits — or I can still handle simple commands like 'help', 'run detection', 'show open clashes', or 'export bcf'.";
+        var _quotaMsg = _cc_t('nl.reply.aiOverQuota',"AI is over quota right now. Connect your own AI in one click via the Smart Bridge (open the AI panel ▸ Connector) to skip server limits — or I can still handle simple commands like 'help', 'run detection', 'show open clashes', or 'export bcf'.");
         // Server AI failed (usually quota). If the user has connected their
         // own LLM through the Connector (Smart Bridge), use it instead of
         // giving up — this is the "Gemma over limit -> your own AI" path.
@@ -37149,6 +37195,16 @@ function startApp() {
       });
   }
 
+  // Localised " | hard | max gap 50mm ..." suffix for the assistant's "Running: A vs B" lines.
+  // o: {dup, self, excl, bare} selects which flags this call site shows (English output unchanged).
+  function _nlRunFlags(r, o) {
+    o = o || {};
+    return (r.hard ? ' | ' + _cc_t('nl.flag.hard', 'hard') : '')
+      + (r.maxGap ? (o.bare ? ' | ' + r.maxGap + 'mm' : ' | ' + _cc_t('nl.flag.maxGap', 'max gap {gap}mm', {gap: r.maxGap})) : '')
+      + (o.dup && r.duplicates ? ' | ' + _cc_t('nl.flag.duplicates', 'duplicates') : '')
+      + (o.self && r.excludeSelf ? ' | ' + _cc_t('nl.flag.crossModelOnly', 'cross-model only') : '')
+      + (o.excl && r.excludeTypes && r.excludeTypes.length ? ' | ' + _cc_t('nl.flag.excl', 'excl: {types}', {types: r.excludeTypes.join(', ')}) : '');
+  }
   function processNLCommand(raw, s, d) {
     _gcEvent('nl-command');
     var text = raw.trim().toLowerCase();
@@ -37160,7 +37216,7 @@ function startApp() {
       if (/^(?:yes|yeah|yep|sure|ok|y|correct|right|do it)\b/i.test(text)) return pending.action();
       if (/^(?:no|nah|nope|n|wrong|cancel)\b/i.test(text)) {
         window._ccFuzzyFeedbackInput = pending.input;
-        return 'Didn\'t catch that. Try something like "check walls vs pipes" or type "help" for examples.';
+        return _cc_t('nl.reply.didnTCatchThatTry','Didn\'t catch that. Try something like "check walls vs pipes" or type "help" for examples.');
       }
     }
     if (window._ccFuzzyFeedbackInput) {
@@ -37179,7 +37235,7 @@ function startApp() {
         localStorage.setItem('cc_nl_training_data', JSON.stringify(store));
         window.dispatchEvent(new Event('cc-training-data-change'));
       } catch(e) {}
-      return 'Thanks! I\'ll learn from this. Your feedback has been saved.';
+      return _cc_t('nl.reply.thanksILlLearnFrom2','Thanks! I\'ll learn from this. Your feedback has been saved.');
     }
 
     // ── "What is this?" — answered entirely offline from the current
@@ -37221,7 +37277,7 @@ function startApp() {
     var newProjMatch = raw.match(/^\s*(?:new|create|add|start|make)\s+(?:a\s+)?(?:new\s+)?project(?:\s+(?:called|named|name))?\s+["']?(.+?)["']?\s*$/i);
     if (newProjMatch) {
       var newName = newProjMatch[1].trim();
-      if (!newName) return 'Give the project a name — try "new project My Tower".';
+      if (!newName) return _cc_t('nl.reply.giveTheProjectAName','Give the project a name — try "new project My Tower".');
       try {
         var newId = uid();
         var pList = getProjects().concat([{id:newId, name:newName, createdAt:Date.now()}]);
@@ -37229,21 +37285,21 @@ function startApp() {
         d({t:A.SET_PROJECT_LIST, v:pList});
         _switchProject(newId, s, d);
         _setOfferLoadIFC();
-        return 'Created project **' + newName + '** and switched to it. Want me to open the file picker so you can load a model?';
-      } catch(e) { return 'Couldn\'t create the project: ' + (e.message||e); }
+        return _cc_t('nl.reply.createdProjectAndSwitchedTo2','Created project **{newName}** and switched to it. Want me to open the file picker so you can load a model?',{newName:newName});
+      } catch(e) { return _cc_t('nl.reply.couldnTCreateTheProject','Couldn\'t create the project: {v1}',{v1:(e.message||e)}); }
     }
     if (/project/i.test(raw)) {
       var renProjMatch = raw.match(/^\s*rename\s+(?:(?:the\s+)?(?:current\s+)?project\s+)?(?:to\s+)?["']?(.+?)["']?\s*$/i);
       if (renProjMatch) {
         var rnName = renProjMatch[1].replace(/^project\s+/i,'').trim();
-        if (!rnName) return 'What should I rename it to?';
+        if (!rnName) return _cc_t('nl.reply.whatShouldIRenameIt2','What should I rename it to?');
         try {
           var pid = s.activeProject || 'default';
           var rList = getProjects().map(function(p){return p.id===pid?Object.assign({},p,{name:rnName}):p;});
           saveProjects(rList);
           d({t:A.SET_PROJECT_LIST, v:rList});
-          return 'Renamed to **' + rnName + '**.';
-        } catch(e) { return 'Couldn\'t rename: ' + (e.message||e); }
+          return _cc_t('nl.reply.renamedTo2','Renamed to **{rnName}**.',{rnName:rnName});
+        } catch(e) { return _cc_t('nl.reply.couldnTRename','Couldn\'t rename: {v1}',{v1:(e.message||e)}); }
       }
     }
     // "open/load project [file]" (no project NAME given) means open the
@@ -37252,7 +37308,7 @@ function startApp() {
     // "file" as the project name and report "No project named \"file\"."
     if (/^\s*(?:open|load)\s+(?:the\s+)?project(?:\s+file)?\s*$/i.test(raw)) {
       if (typeof loadProject === 'function') loadProject(d);
-      return 'Project picker opened.';
+      return _cc_t('nl.reply.projectPickerOpened','Project picker opened.');
     }
     var swProjMatch = raw.match(/^\s*(?:switch|change|go|open|load)\s+(?:to\s+)?(?:the\s+)?project\s+["']?(.+?)["']?\s*$/i);
     if (swProjMatch) {
@@ -37260,38 +37316,31 @@ function startApp() {
       var swList = getProjects();
       var swMatch = swList.find(function(p){return p.name.toLowerCase()===swName;}) ||
                     swList.find(function(p){return p.name.toLowerCase().indexOf(swName)!==-1;});
-      if (swMatch) { _switchProject(swMatch.id, s, d); return 'Switched to **' + swMatch.name + '**.'; }
-      return 'No project named "' + swProjMatch[1] + '". Try "new project ' + swProjMatch[1] + '" to create it.';
+      if (swMatch) { _switchProject(swMatch.id, s, d); return _cc_t('nl.reply.switchedTo','Switched to **{name}**.',{name:swMatch.name}); }
+      return _cc_t('nl.reply.noProjectNamedTryNew','No project named "{v1}". Try "new project {v2}" to create it.',{v1:swProjMatch[1],v2:swProjMatch[1]});
     }
     if (/^(?:list|show|what)\s+(?:the\s+)?projects?\s*\??$/i.test(text)) {
       var lpList = getProjects();
-      if (!lpList.length) return 'No projects yet. Try "new project My Tower".';
-      return 'Projects:\n' + lpList.map(function(p){return (p.id===s.activeProject?'• ':'  ')+p.name;}).join('\n');
+      if (!lpList.length) return _cc_t('nl.reply.noProjectsYetTryNew','No projects yet. Try "new project My Tower".');
+      return _cc_t('nl.reply.projects','Projects:\n{v1}',{v1:lpList.map(function(p){return (p.id===s.activeProject?'• ':'  ')+p.name;}).join('\n')});
     }
 
     // ── Help ───────────────────────────────────────────────────────
     if (/^help$|what can you do|how (?:do i|to) use|what.*commands?/.test(text)) {
-      return 'Just type what you need. Some examples:\n\n' +
-        'Clash detection — "check structural vs MEP", "near misses 75mm"\n' +
-        'Filter — "show open", "group by storey", "only critical"\n' +
-        'Batch — "resolve all", "assign to John"\n' +
-        'View — "top view", "wireframe", "section x"\n' +
-        'Visibility — "hide walls", "isolate pipes"\n' +
-        'Files — "load ifc", "export bcf"\n\n' +
-        'Short commands work too — try "summary" or "clashes".';
+      return _cc_t('nl.reply.justTypeWhatYouNeed','Just type what you need. Some examples:\n\nClash detection — "check structural vs MEP", "near misses 75mm"\nFilter — "show open", "group by storey", "only critical"\nBatch — "resolve all", "assign to John"\nView — "top view", "wireframe", "section x"\nVisibility — "hide walls", "isolate pipes"\nFiles — "load ifc", "export bcf"\n\nShort commands work too — try "summary" or "clashes".');
     }
 
     // ── Short-form / single-word commands ──────────────────────────
-    if (/^summary$|^stats$|^report$/i.test(text)) return processNLCommand('analyze clashes', s, d) || 'No data yet. Load models and run detection first.';
-    if (/^clashes?\s*\??$|^results?\s*\??$/i.test(text)) { d({t:A.TAB,v:'clashes'}); return s.clashes.length ? s.clashes.length + ' clashes — here\'s the list.' : _offerRunDetection(s); }
-    if (/^issues?\s*\??$/i.test(text)) { d({t:A.TAB,v:'issues'}); return s.issues.length ? s.issues.length + ' issues — here\'s the list.' : _offerIssuesFromClashes(s); }
-    if (/^models?\s*\??$/i.test(text)) { d({t:A.TAB,v:'models'}); return s.models.length ? s.models.length + ' model'+(s.models.length>1?'s':'')+' loaded — here they are.' : _offerLoadIFC(); }
-    if (/^settings?$/i.test(text)) { d({t:A.SETTINGS,v:true}); return 'Here are your settings.'; }
-    if (/^bcf$/i.test(text)) { if(!s.issues.length&&!s.clashes.length)return _offerExport(s); exportBCF(s.issues.length?s.issues:s.clashes,'2.1',s.viewpoints,s); return 'Done — BCF exported.'; }
-    if (/^ifc$/i.test(text)) { if(window._ccOpenIFC) window._ccOpenIFC(); return 'Opening IFC file picker...'; }
-    if (/^(?:undo|cancel\s+that|never\s*mind|oops)$/i.test(text)) return 'Can\'t undo, but try "clear filters", "show all", or "reset view" to get back.';
-    if (/^(?:thanks?|thank\s+you|ty|thx|cheers)$/i.test(text)) return 'No problem!';
-    if (/^(?:hi|hello|hey|yo|sup)$/i.test(text)) return 'Hey! I\'m ready to help. Try "help" to see what I can do, or just describe what you need.';
+    if (/^summary$|^stats$|^report$/i.test(text)) return processNLCommand('analyze clashes', s, d) || _cc_t('nl.reply.noDataYetLoadModels','No data yet. Load models and run detection first.');
+    if (/^clashes?\s*\??$|^results?\s*\??$/i.test(text)) { d({t:A.TAB,v:'clashes'}); return s.clashes.length ? _cc_t('nl.reply.nClashesHereIsList','{n} clashes — here\'s the list.',{n:s.clashes.length}) : _offerRunDetection(s); }
+    if (/^issues?\s*\??$/i.test(text)) { d({t:A.TAB,v:'issues'}); return s.issues.length ? _cc_t('nl.reply.nIssuesHereIsList','{n} issues — here\'s the list.',{n:s.issues.length}) : _offerIssuesFromClashes(s); }
+    if (/^models?\s*\??$/i.test(text)) { d({t:A.TAB,v:'models'}); return s.models.length ? (s.models.length>1 ? _cc_t('nl.reply.nModelsLoadedMany','{n} models loaded — here they are.',{n:s.models.length}) : _cc_t('nl.reply.nModelsLoadedOne','{n} model loaded — here they are.',{n:s.models.length})) : _offerLoadIFC(); }
+    if (/^settings?$/i.test(text)) { d({t:A.SETTINGS,v:true}); return _cc_t('nl.reply.hereAreYourSettings','Here are your settings.'); }
+    if (/^bcf$/i.test(text)) { if(!s.issues.length&&!s.clashes.length)return _offerExport(s); exportBCF(s.issues.length?s.issues:s.clashes,'2.1',s.viewpoints,s); return _cc_t('nl.reply.doneBcfExported','Done — BCF exported.'); }
+    if (/^ifc$/i.test(text)) { if(window._ccOpenIFC) window._ccOpenIFC(); return _cc_t('nl.reply.openingIfcFilePicker','Opening IFC file picker...'); }
+    if (/^(?:undo|cancel\s+that|never\s*mind|oops)$/i.test(text)) return _cc_t('nl.reply.canTUndoButTry','Can\'t undo, but try "clear filters", "show all", or "reset view" to get back.');
+    if (/^(?:thanks?|thank\s+you|ty|thx|cheers)$/i.test(text)) return _cc_t('nl.reply.noProblem','No problem!');
+    if (/^(?:hi|hello|hey|yo|sup)$/i.test(text)) return _cc_t('nl.reply.heyIMReadyTo','Hey! I\'m ready to help. Try "help" to see what I can do, or just describe what you need.');
 
     // ── Q&A ────────────────────────────────────────────────────────
     if (/how many clashes?|clash count|number of clashes?|clashes? (?:found|detected|total|do we have)/.test(text)) {
@@ -37310,7 +37359,7 @@ function startApp() {
     }
     if (/what models?|models? loaded|which models?|list models?|what.*(?:files?|ifc).*loaded|what.*loaded/.test(text)) {
       if (!s.models.length) return _offerLoadIFC();
-      return 'Loaded: ' + s.models.map(function(m){ return m.name + (m.hidden?' (hidden)':''); }).join(', ') + '.';
+      return _cc_t('nl.reply.loaded','Loaded: {v1}.',{v1:s.models.map(function(m){ return m.name + (m.hidden?_cc_t('nl.reply.hiddenSuffix',' (hidden)'):''); }).join(', ')});
     }
     if (/what.*rules?|current.*(?:settings?|setup|config)|clash.*settings?|what(?:'s| is) set up/.test(text)) {
       var r = s.rules;
@@ -37324,18 +37373,18 @@ function startApp() {
       }
       var bothAll = (r.modelA==='all'||r.modelA==null) && (r.modelB==='all'||r.modelB==null);
       var against = bothAll ? 'all models against all' : _ruleLabel(r.modelA) + ' vs ' + _ruleLabel(r.modelB);
-      return 'Current setup: ' + types + ' clashes, ' + against + ', max gap ' + (r.maxGap||0) + 'mm' + (r.duplicates?', including duplicates':'') + (r.useSemanticFilter!==false?', semantic filter on':', semantic filter off') + '.';
+      return _cc_t('nl.reply.currentSetupClashesMaxGap','Current setup: {types} clashes, {against}, max gap {gap}mm{dups}{sem}.',{types:types,against:against,gap:(r.maxGap||0),dups:(r.duplicates?_cc_t('nl.reply.setupIncludingDuplicates',', including duplicates'):''),sem:(r.useSemanticFilter!==false?_cc_t('nl.reply.setupSemanticOn',', semantic filter on'):_cc_t('nl.reply.setupSemanticOff',', semantic filter off'))});
     }
     if (/(?:what|which).*storey|worst.*storey|most clashes.*storey|storey.*most/.test(text)) {
       if (!s.clashes.length) return _offerRunDetection(s);
       var storeyCounts = {};
       s.clashes.forEach(function(c){ var st = c.storey||'Unknown'; storeyCounts[st]=(storeyCounts[st]||0)+1; });
       var worst = Object.keys(storeyCounts).sort(function(a,b){return storeyCounts[b]-storeyCounts[a];})[0];
-      return 'Most clashes on ' + worst + ' — ' + storeyCounts[worst] + ' total.';
+      return _cc_t('nl.reply.mostClashesOnTotal','Most clashes on {worst} — {v1} total.',{worst:worst,v1:storeyCounts[worst]});
     }
     if (/what.*project|current project|active project/.test(text)) {
       var proj = (s.projectList||[]).find(function(p){return p.id===s.activeProject;});
-      return proj ? 'You\'re on: ' + proj.name + '.' : 'No active project. Say "new project <name>" to create one.';
+      return proj ? _cc_t('nl.reply.youreOn','You\'re on: {name}.',{name:proj.name}) : _cc_t('nl.reply.noActiveProject','No active project. Say "new project <name>" to create one.');
     }
     if (/how many (?:hard|soft|duplicate)|(?:hard|soft|duplicate)\s+clash(?:es)?\s*\??/.test(text)) {
       if (!s.clashes.length) return _offerRunDetection(s);
@@ -37354,9 +37403,9 @@ function startApp() {
       if (!s.clashes.length) return _offerRunDetection(s);
       var discCounts = {};
       s.clashes.forEach(function(c){ (c.disciplines||[]).forEach(function(dd){ discCounts[dd]=(discCounts[dd]||0)+1; }); });
-      if (!Object.keys(discCounts).length) return 'No discipline data on these clashes.';
+      if (!Object.keys(discCounts).length) return _cc_t('nl.reply.noDisciplineDataOnThese','No discipline data on these clashes.');
       var sorted = Object.keys(discCounts).sort(function(a,b){return discCounts[b]-discCounts[a];});
-      return 'Clashes by discipline: ' + sorted.map(function(k){return k+' ('+discCounts[k]+')';}).join(', ') + '.';
+      return _cc_t('nl.reply.clashesByDiscipline','Clashes by discipline: {v1}.',{v1:sorted.map(function(k){return k+' ('+discCounts[k]+')';}).join(', ')});
     }
     if (/(?:which|what)\s+types?\s+(?:are\s+)?clash|clash.*type\s+pair|type.*most\s+clash|most\s+common\s+clash/.test(text)) {
       if (!s.clashes.length) return _offerRunDetection(s);
@@ -37365,15 +37414,15 @@ function startApp() {
         var tA = (c.elemAType||'').replace(/^Ifc/,''), tB = (c.elemBType||'').replace(/^Ifc/,'');
         if (tA && tB) { var pair = tA < tB ? tA+' vs '+tB : tB+' vs '+tA; tpCounts[pair]=(tpCounts[pair]||0)+1; }
       });
-      if (!Object.keys(tpCounts).length) return 'No type data on these clashes.';
+      if (!Object.keys(tpCounts).length) return _cc_t('nl.reply.noTypeDataOnThese','No type data on these clashes.');
       var topPairs = Object.keys(tpCounts).sort(function(a,b){return tpCounts[b]-tpCounts[a];}).slice(0,5);
-      return 'Top clashing pairs:\n' + topPairs.map(function(p,i){return (i+1)+'. '+p+' ('+tpCounts[p]+')';}).join('\n');
+      return _cc_t('nl.reply.topClashingPairs','Top clashing pairs:\n{v1}',{v1:topPairs.map(function(p,i){return (i+1)+'. '+p+' ('+tpCounts[p]+')';}).join('\n')});
     }
     if (/(?:any|are\s+there)\s+(?:problems?|issues?|conflicts?|clashes?|collisions?)|what'?s\s+(?:wrong|happening|the\s+status|going\s+on)|status\s*\??$/.test(text)) {
       if (!s.models.length) return _offerLoadIFC();
-      if (!s.clashes.length) { _setOfferRunDetection(); return s.models.length + ' model' + (s.models.length>1?'s':'') + ' loaded, no clashes yet — want me to run a detection?'; }
+      if (!s.clashes.length) { _setOfferRunDetection(); return (s.models.length>1 ? _cc_t('nl.reply.nModelsNoClashesMany','{n} models loaded, no clashes yet — want me to run a detection?',{n:s.models.length}) : _cc_t('nl.reply.nModelsNoClashesOne','{n} model loaded, no clashes yet — want me to run a detection?',{n:s.models.length})); }
       var op2 = s.clashes.filter(function(c){return c.status==='open';}).length;
-      return s.clashes.length + ' clashes found (' + op2 + ' open). Say "summary" for a full breakdown.';
+      return _cc_t('nl.reply.nClashesFoundOpen','{n} clashes found ({open} open). Say "summary" for a full breakdown.',{n:s.clashes.length,open:op2});
     }
 
     // ── Clash setup ────────────────────────────────────────────────
@@ -37638,14 +37687,14 @@ function startApp() {
       var gv2 = gapSet[1]||gapSet[3], gu = gapSet[2]||gapSet[4];
       var gmm = gu==='cm' ? Math.round(parseFloat(gv2)*10) : Math.round(parseFloat(gv2));
       d({t:A.UPD_RULES, u:{maxGap:gmm}});
-      return 'Gap set to ' + gmm + 'mm. Run detection again to apply.';
+      return _cc_t('nl.reply.gapSetToMmRun','Gap set to {gmm}mm. Run detection again to apply.',{gmm:gmm});
     }
-    if (/(?:include|enable)\s+duplicates?/.test(text)) { d({t:A.UPD_RULES,u:{duplicates:true}}); return 'Got it — duplicates will be included.'; }
-    if (/(?:exclude|ignore|no)\s+duplicates?/.test(text)) { d({t:A.UPD_RULES,u:{duplicates:false}}); return 'Got it — duplicates excluded.'; }
-    if (/cross[\s-]*(?:model\s+)?only|no\s+self[\s-]*clash|exclude\s+self|not?\s+with\s+itself/.test(text)) { d({t:A.UPD_RULES,u:{excludeSelf:true}}); return 'Cross-model only — no self-clashes.'; }
-    if (/(?:include|enable|allow)\s+self[\s-]*clash|self[\s-]*clash.*on/.test(text)) { d({t:A.UPD_RULES,u:{excludeSelf:false}}); return 'Self-clashes turned on.'; }
-    if (/(?:enable|turn\s+on|activate)\s+semantic[\s-]*filter/.test(text)) { d({t:A.UPD_RULES,u:{useSemanticFilter:true}}); return 'Semantic filter on — intentional fits (doors in walls, assembly parts) won\'t flag as hard clashes.'; }
-    if (/(?:disable|turn\s+off|deactivate)\s+semantic[\s-]*filter/.test(text)) { d({t:A.UPD_RULES,u:{useSemanticFilter:false}}); return 'Semantic filter off — all intersections will be reported.'; }
+    if (/(?:include|enable)\s+duplicates?/.test(text)) { d({t:A.UPD_RULES,u:{duplicates:true}}); return _cc_t('nl.reply.gotItDuplicatesWillBe','Got it — duplicates will be included.'); }
+    if (/(?:exclude|ignore|no)\s+duplicates?/.test(text)) { d({t:A.UPD_RULES,u:{duplicates:false}}); return _cc_t('nl.reply.gotItDuplicatesExcluded','Got it — duplicates excluded.'); }
+    if (/cross[\s-]*(?:model\s+)?only|no\s+self[\s-]*clash|exclude\s+self|not?\s+with\s+itself/.test(text)) { d({t:A.UPD_RULES,u:{excludeSelf:true}}); return _cc_t('nl.reply.crossModelOnlyNoSelf','Cross-model only — no self-clashes.'); }
+    if (/(?:include|enable|allow)\s+self[\s-]*clash|self[\s-]*clash.*on/.test(text)) { d({t:A.UPD_RULES,u:{excludeSelf:false}}); return _cc_t('nl.reply.selfClashesTurnedOn','Self-clashes turned on.'); }
+    if (/(?:enable|turn\s+on|activate)\s+semantic[\s-]*filter/.test(text)) { d({t:A.UPD_RULES,u:{useSemanticFilter:true}}); return _cc_t('nl.reply.semanticFilterOnIntentionalFits','Semantic filter on — intentional fits (doors in walls, assembly parts) won\'t flag as hard clashes.'); }
+    if (/(?:disable|turn\s+off|deactivate)\s+semantic[\s-]*filter/.test(text)) { d({t:A.UPD_RULES,u:{useSemanticFilter:false}}); return _cc_t('nl.reply.semanticFilterOffAllIntersections','Semantic filter off — all intersections will be reported.'); }
 
     // ── Overlap volume threshold ──────────────────────────────────
     var ovMatch = text.match(/(?:min(?:imum)?\s+)?overlap\s+(?:volume?\s+)?(\d+(?:\.\d+)?)\s*(?:cm3|cm³)?/i);
@@ -37653,7 +37702,7 @@ function startApp() {
     if (ovMatch) {
       var cm3 = parseFloat(ovMatch[1]);
       d({t:A.UPD_RULES, u:{minOverlapVolM3:cm3/1e6}});
-      return 'Overlap threshold set to ' + cm3 + ' cm³. Run detection again to apply.';
+      return _cc_t('nl.reply.overlapThresholdSetToCm','Overlap threshold set to {cm3} cm³. Run detection again to apply.',{cm3:cm3});
     }
 
     // ── Per-type-pair tolerance ───────────────────────────────────
@@ -37671,7 +37720,7 @@ function startApp() {
         var tpObj = Object.assign({}, s.rules.toleranceByTypePair||{});
         tpObj[key] = +tpMatch[3];
         d({t:A.UPD_RULES, u:{toleranceByTypePair:tpObj}});
-        return 'Set ' + ta.replace('Ifc','') + ' ↔ ' + tb.replace('Ifc','') + ' clearance to ' + tpMatch[3] + 'mm.';
+        return _cc_t('nl.reply.setClearanceToMm','Set {v1} ↔ {v2} clearance to {v3}mm.',{v1:ta.replace('Ifc',''),v2:tb.replace('Ifc',''),v3:tpMatch[3]});
       }
     }
 
@@ -37682,7 +37731,7 @@ function startApp() {
       var presets = _getClashPresets();
       presets.push({id:Date.now().toString(36), name:pName, rules:Object.assign({},s.rules)});
       _saveClashPresets(presets);
-      return 'Saved as "' + pName + '".';
+      return _cc_t('nl.reply.savedAs','Saved as "{pName}".',{pName:pName});
     }
     var runPresetMatch = text.match(/(?:run|load|use|apply)\s+(?:preset\s+)?["""]?(.+?)["""]?\s*$/i);
     if (runPresetMatch && !/(?:run|start|do)\s+(?:it|the|detection|clash)/i.test(text)) {
@@ -37696,16 +37745,16 @@ function startApp() {
           var nlPresetDs = {coverageModelIds: _ccCoverageModelIds(merged, s.models)};
           d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
           detectClashesAsync(s.models, merged).then(function(result){ _ccCommitDetectionResult(result, d, nlPresetDs); });
-          return 'Running "' + found.name + '"…';
+          return _cc_t('nl.reply.running','Running "{name}"…',{name:found.name});
         }
-        return 'Loaded "' + found.name + '". Say "run" to start.';
+        return _cc_t('nl.reply.loadedSayRunToStart','Loaded "{name}". Say "run" to start.',{name:found.name});
       }
     }
 
     // ── Plain run ──────────────────────────────────────────────────
     if (/^(?:stop|cancel|abort|halt)(?:\s+(?:detection|detecting|clash|scan))?$/i.test(text)) {
-      if (s.detecting) { cancelDetection(); return 'Stopped.'; }
-      return 'Nothing running right now.';
+      if (s.detecting) { cancelDetection(); return _cc_t('nl.reply.stopped','Stopped.'); }
+      return _cc_t('nl.reply.nothingRunningRightNow','Nothing running right now.');
     }
 
     if (/^(?:run|go|start|detect|execute|scan|proceed|re-?run|again)$/.test(text) ||
@@ -37713,12 +37762,12 @@ function startApp() {
         /^(?:find|detect|check\s+for|scan\s+for)\s+(?:all\s+)?(?:clashes?|conflicts?|collisions?)$/.test(text) ||
         /^(?:run|detect)\s+(?:it\s+)?again$/.test(text)) {
       if (!s.models.length) return _offerLoadIFC();
-      if (s.detecting) return 'Already on it…';
+      if (s.detecting) return _cc_t('nl.reply.alreadyOnIt','Already on it…');
       d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
       var nlRunDs = {coverageModelIds: _ccCoverageModelIds(s.rules, s.models)};
       detectClashesAsync(s.models,s.rules).then(function(result){ _ccCommitDetectionResult(result, d, nlRunDs); });
       var r2 = s.rules;
-      return 'Running detection' + (r2.maxGap ? ' (max gap ' + r2.maxGap + 'mm)' : '') + '…';
+      return (r2.maxGap ? _cc_t('nl.reply.runningDetectionGap','Running detection (max gap {gap}mm)…',{gap:r2.maxGap}) : _cc_t('nl.reply.runningDetection','Running detection…'));
     }
 
     // ── Result filtering & grouping ────────────────────────────────
@@ -37727,18 +37776,18 @@ function startApp() {
     if (swMatch && /show|display|filter|view|see|only|just|list|give|get|want|need|find|clashes?|issues?/.test(text)) {
       var sw = swMatch[1];
       d({t:A.UPD_FILTERS, u:{status:statusMap[sw]||'all'}}); d({t:A.TAB,v:'clashes'});
-      return sw==='all' ? 'Showing everything.' : 'Showing ' + sw + ' clashes only.';
+      return sw==='all' ? _cc_t('nl.reply.showingEverything','Showing everything.') : _cc_t('nl.reply.showingClashesOnly','Showing {status} clashes only.',{status:sw});
     }
     if (/reset\s+filters?|clear\s+filters?|show\s+all|remove\s+filters?|no\s+filter/.test(text)) {
       d({t:A.RESET_FILTERS});
-      return 'Filters cleared — showing everything.';
+      return _cc_t('nl.reply.filtersClearedShowingEverything','Filters cleared — showing everything.');
     }
     var groupMatch = text.match(/(?:group|grouped|organize|organise|sort|arrange|categorize|categorise)\s+(?:\w+\s+)?by\s+(storey|floor|level|discipline|status|type|none)/);
     if (!groupMatch) groupMatch = text.match(/by\s+(storey|floor|level|discipline|status|type)\b/);
     if (groupMatch) {
       var gv = {storey:'storey',floor:'storey',level:'storey',discipline:'discipline',status:'status',type:'type',none:'none'}[groupMatch[1]];
       d({t:A.CLASH_GROUP_BY,v:gv==='none'?[]:[gv]}); d({t:A.TAB,v:'clashes'});
-      return 'Grouped by ' + groupMatch[1] + ' — check the clashes tab.';
+      return _cc_t('nl.reply.groupedByCheckTheClashes','Grouped by {v1} — check the clashes tab.',{v1:groupMatch[1]});
     }
 
     // ── Batch Operations ───────────────────────────────────────────
@@ -37755,7 +37804,7 @@ function startApp() {
       else if (filterKey === 'soft') targets = pool.filter(function(x){return x.type==='soft';});
       var actionT = isIssue ? 'UPD_ISSUE' : 'UPD_CLASH';
       targets.forEach(function(x){ d({t:actionT, id:x.id, u:{status:newStatus}}); });
-      return 'Done — ' + targets.length + (isIssue?' issues':' clashes') + ' set to ' + newStatus + '.';
+      return (isIssue ? _cc_t('nl.reply.doneIssuesSetTo','Done — {n} issues set to {newStatus}.',{n:targets.length,newStatus:newStatus}) : _cc_t('nl.reply.doneSetTo','Done — {n} clashes set to {newStatus}.',{n:targets.length,newStatus:newStatus}));
     }
 
     var batchAssignMatch = text.match(/(?:assign|give|set)\s+all\s+(?:(open|unassigned)\s+)?issues?\s+to\s+(.+)/i);
@@ -37766,7 +37815,7 @@ function startApp() {
       if (assignFilter === 'open') issueTargets = issueTargets.filter(function(i){return i.status==='open';});
       else if (assignFilter === 'unassigned') issueTargets = issueTargets.filter(function(i){return !i.assignee;});
       issueTargets.forEach(function(i){ d({t:A.UPD_ISSUE, id:i.id, u:{assignee:assignee}}); });
-      return 'Done — ' + issueTargets.length + ' issues assigned to ' + assignee + '.';
+      return _cc_t('nl.reply.doneIssuesAssignedTo','Done — {v1} issues assigned to {assignee}.',{v1:issueTargets.length,assignee:assignee});
     }
 
     // Batch by severity: "resolve all info clashes", "mark all critical clashes as in_progress"
@@ -37776,7 +37825,7 @@ function startApp() {
       var sevStatus = batchSevMatch[2] ? batchSevMatch[2].replace(/\s+/g,'_') : 'resolved';
       var sevTargets = s.clashes.filter(function(c){return (c.aiSeverity||_ccDeterministicSeverity(c))===sevKey;});
       sevTargets.forEach(function(c){ d({t:A.UPD_CLASH, id:c.id, u:{status:sevStatus}}); });
-      return 'Done — ' + sevTargets.length + ' ' + sevKey + ' clashes set to ' + sevStatus + '.';
+      return _cc_t('nl.reply.doneClashesSetTo','Done — {v1} {sevKey} clashes set to {sevStatus}.',{v1:sevTargets.length,sevKey:sevKey,sevStatus:sevStatus});
     }
 
     var batchDiscMatch = text.match(/(?:mark|set|change|update|resolve)\s+all\s+(mep|structural|architectural|electrical|plumbing|hvac|mechanical)\s+(?:clashes?)\s*(?:(?:as\s+|to\s+)(open|in.?progress|resolved|closed|confirmed))?/i);
@@ -37788,7 +37837,7 @@ function startApp() {
         return discs.indexOf(discKey) >= 0;
       });
       discTargets.forEach(function(c){ d({t:A.UPD_CLASH, id:c.id, u:{status:discStatus}}); });
-      return 'Done — ' + discTargets.length + ' ' + discKey + ' clashes set to ' + discStatus + '.';
+      return _cc_t('nl.reply.doneClashesSetTo2','Done — {v1} {discKey} clashes set to {discStatus}.',{v1:discTargets.length,discKey:discKey,discStatus:discStatus});
     }
 
     var batchStoreyMatch = text.match(/(?:mark|set|change|update|resolve)\s+all\s+(.+?)\s+clashes?\s*(?:(?:as\s+|to\s+)(open|in.?progress|resolved|closed|confirmed))?$/i);
@@ -37802,7 +37851,7 @@ function startApp() {
       });
       if (storeyTargets.length > 0) {
         storeyTargets.forEach(function(c){ d({t:A.UPD_CLASH, id:c.id, u:{status:storeyStatus}}); });
-        return 'Done — ' + storeyTargets.length + ' clashes on ' + storeyKey + ' set to ' + storeyStatus + '.';
+        return _cc_t('nl.reply.doneClashesOnSetTo','Done — {v1} clashes on {storeyKey} set to {storeyStatus}.',{v1:storeyTargets.length,storeyKey:storeyKey,storeyStatus:storeyStatus});
       }
     }
 
@@ -37818,7 +37867,7 @@ function startApp() {
         return false;
       });
       prioTargets.forEach(function(c){ d({t:A.UPD_CLASH, id:c.id, u:{priority:newPrio}}); });
-      return 'Done — ' + prioTargets.length + ' ' + prioFilter + ' clashes set to ' + newPrio + ' priority.';
+      return _cc_t('nl.reply.doneClashesSetToPriority','Done — {v1} {prioFilter} clashes set to {newPrio} priority.',{v1:prioTargets.length,prioFilter:prioFilter,newPrio:newPrio});
     }
 
     if (/(?:analyze|analyse|analysis|summarize|summarise|summary|report|insights?|overview)\s*(?:clashes?|results?|detection)?/.test(text)) {
@@ -37826,10 +37875,10 @@ function startApp() {
       var storeys = {}; cl.forEach(function(c){ var st=c.elemAStorey||c.elemBStorey||'Unknown'; storeys[st]=(storeys[st]||0)+1; });
       var hotStorey = Object.keys(storeys).sort(function(a,b){return storeys[b]-storeys[a];})[0];
       var pct = cl.length>0 ? Math.round((cl.length - op.length) / cl.length * 100) : 0;
-      var lines = [cl.length + ' total clashes: ' + hd.length + ' hard, ' + sf.length + ' soft, ' + op.length + ' open.'];
-      lines.push(pct + '% resolved so far.');
-      if (hotStorey) lines.push('Hotspot: ' + hotStorey + ' (' + storeys[hotStorey] + ').');
-      if (s.revitBridge && s.revitBridge.provider && s.revitBridge.apiKey) lines.push('Try the Revit Bridge for deeper AI analysis.');
+      var lines = [_cc_t('nl.reply.totalClashesBreakdown','{total} total clashes: {hard} hard, {soft} soft, {open} open.',{total:cl.length,hard:hd.length,soft:sf.length,open:op.length})];
+      lines.push(_cc_t('nl.reply.pctResolvedSoFar','{pct}% resolved so far.',{pct:pct}));
+      if (hotStorey) lines.push(_cc_t('nl.reply.hotspot','Hotspot: {storey} ({n}).',{storey:hotStorey,n:storeys[hotStorey]}));
+      if (s.revitBridge && s.revitBridge.provider && s.revitBridge.apiKey) lines.push(_cc_t('nl.reply.tryRevitBridge','Try the Revit Bridge for deeper AI analysis.'));
       return lines.join('\n');
     }
 
@@ -37838,38 +37887,38 @@ function startApp() {
       if (!s.issues.length && !s.clashes.length) return _offerExport(s);
       var items = s.issues.length ? s.issues : s.clashes;
       exportBCF(items, '2.1', s.viewpoints, s);
-      return 'Done — ' + items.length + ' item' + (items.length===1?'':'s') + ' exported as BCF 2.1.';
+      return (items.length===1 ? _cc_t('nl.reply.doneOneItemExportedAsBcf','Done — {n} item exported as BCF 2.1.',{n:items.length}) : _cc_t('nl.reply.doneItemsExportedAsBcf21','Done — {n} items exported as BCF 2.1.',{n:items.length}));
     }
 
     // ── Theme ──────────────────────────────────────────────────────
     if (/(?:switch|change|toggle|set|go)\s+(?:to\s+)?(?:light|dark)\s*(?:mode|theme)?/.test(text) || /(?:light|dark)\s+(?:mode|theme)/.test(text)) {
       var wantLight = /light/.test(text);
       d({t:A.UPD_PREFS,u:{theme:wantLight?'light':'dark'}});
-      return (wantLight?'Light':'Dark') + ' mode — there you go.';
+      return wantLight ? _cc_t('nl.reply.lightModeThereYouGo','Light mode — there you go.') : _cc_t('nl.reply.darkModeThereYouGo','Dark mode — there you go.');
     }
 
     // ── Reload ─────────────────────────────────────────────────
     if (/^\/reload|^reload\s*page|^refresh\s*page|^reload$/.test(text)) {
       setTimeout(function(){window.location.reload();},300);
-      return 'Reloading page\u2026';
+      return _cc_t('nl.reply.reloadingPage','Reloading page…');
     }
 
     // ── File Loading ─────────────────────────────────────────────
     if (/(?:load|open|import|add)\s+(?:an?\s+)?ifc|ifc\s+(?:file|model)/.test(text)) {
       if(window._ccOpenIFC) window._ccOpenIFC();
-      return 'Opening IFC file picker...';
+      return _cc_t('nl.reply.openingIfcFilePicker','Opening IFC file picker...');
     }
     if (/(?:load|open|import|add)\s+(?:an?\s+)?(?:2d|dxf|pdf|dwg|underlay|drawing)/.test(text)) {
       if(window._ccOpen2D) window._ccOpen2D();
-      return 'Opening 2D file picker...';
+      return _cc_t('nl.reply.opening2dFilePicker','Opening 2D file picker...');
     }
     if (/(?:import|load|open)\s+(?:a\s+)?bcf/.test(text)) {
       importBCF(d);
-      return 'Opening BCF file picker...';
+      return _cc_t('nl.reply.openingBcfFilePicker','Opening BCF file picker...');
     }
 
     // ── Tab Navigation ───────────────────────────────────────────
-    if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?models?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:A.TAB,v:'models'}); return 'Here\'s the Models tab.'; }
+    if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?models?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:A.TAB,v:'models'}); return _cc_t('nl.reply.hereSTheModelsTab','Here\'s the Models tab.'); }
     // "show clashes on level 1" / "show clashes on storey 2" / "clashes on
     // floor ground" — previously the generic clashes-tab regex below matched
     // this too (its "tab/panel/sidebar" suffix is optional, and it isn't
@@ -37896,35 +37945,35 @@ function startApp() {
       }
       return _cc_t('nl.storeyNotFound','I couldn\'t find a storey named "{q}" in the loaded model — the storeys I do have are: {list}.',{q:clashStoreyM[1].trim(),list:storeyNames.length?storeyNames.join(', '):'none loaded yet'});
     }
-    if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?clashes?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:A.TAB,v:'clashes'}); return 'Here\'s the Clashes tab.'; }
-    if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?issues?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:A.TAB,v:'issues'}); return 'Here\'s the Issues tab.'; }
-    if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?(?:explorer?|navigator)\s*(?:tab|panel)?/.test(text)) { d({t:A.TAB,v:'navigator'}); return 'Here\'s the Navigator.'; }
+    if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?clashes?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:A.TAB,v:'clashes'}); return _cc_t('nl.reply.hereSTheClashesTab','Here\'s the Clashes tab.'); }
+    if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?issues?\s*(?:tab|panel|sidebar)?/.test(text)) { d({t:A.TAB,v:'issues'}); return _cc_t('nl.reply.hereSTheIssuesTab','Here\'s the Issues tab.'); }
+    if (/(?:show|open|go\s+to|switch\s+to)\s+(?:the\s+)?(?:explorer?|navigator)\s*(?:tab|panel)?/.test(text)) { d({t:A.TAB,v:'navigator'}); return _cc_t('nl.reply.hereSTheNavigator','Here\'s the Navigator.'); }
 
     // ── Training Mode ─────────────────────────────────────────────
     if (/training\s*mode|(?:enable|start|activate|turn\s+on)\s+training|(?:open|show)\s+(?:the\s+)?training/.test(text)) {
       if(!s.trainingMode) d({t:A.TRAINING_MODE});
-      return s.trainingMode ? 'Training mode\'s already on — use the thumbs on each clash to label.' : 'Training mode on. Use thumbs up/down on each clash to label true vs false positives.';
+      return s.trainingMode ? _cc_t('nl.reply.trainingAlreadyOn','Training mode\'s already on — use the thumbs on each clash to label.') : _cc_t('nl.reply.trainingModeOnThumbs','Training mode on. Use thumbs up/down on each clash to label true vs false positives.');
     }
     if (/(?:disable|stop|deactivate|turn\s+off|exit)\s+training/.test(text)) {
       if(s.trainingMode) d({t:A.TRAINING_MODE});
-      return s.trainingMode ? 'Annotation buttons hidden.' : 'Training mode\'s already off.';
+      return s.trainingMode ? _cc_t('nl.reply.annotationButtonsHidden','Annotation buttons hidden.') : _cc_t('nl.reply.trainingAlreadyOff','Training mode\'s already off.');
     }
 
     // ── Settings & Modals ────────────────────────────────────────
-    if (/(?:open|show)\s+(?:the\s+)?settings?/.test(text)) { d({t:A.SETTINGS,v:true}); return 'Here are your settings.'; }
-    if (/(?:open|show)\s+(?:the\s+)?(?:revit\s+)?bridge/.test(text)) { d({t:A.REVIT_BRIDGE,v:true}); return 'Revit Bridge is open.'; }
-    if (/(?:new|create|add)\s+(?:an?\s+)?issue/.test(text)) { d({t:A.MODAL,v:true}); return 'Here\'s the issue form.'; }
+    if (/(?:open|show)\s+(?:the\s+)?settings?/.test(text)) { d({t:A.SETTINGS,v:true}); return _cc_t('nl.reply.hereAreYourSettings','Here are your settings.'); }
+    if (/(?:open|show)\s+(?:the\s+)?(?:revit\s+)?bridge/.test(text)) { d({t:A.REVIT_BRIDGE,v:true}); return _cc_t('nl.reply.revitBridgeIsOpen','Revit Bridge is open.'); }
+    if (/(?:new|create|add)\s+(?:an?\s+)?issue/.test(text)) { d({t:A.MODAL,v:true}); return _cc_t('nl.reply.hereSTheIssueForm','Here\'s the issue form.'); }
 
     // ── Viewer Controls ──────────────────────────────────────────
     if (/(?:reset|home|default)\s+(?:the\s+)?(?:view|camera)|(?:fit|zoom)\s+(?:to\s+)?all/.test(text)) {
       if(_resetView) _resetView();
-      return 'View reset.';
+      return _cc_t('nl.reply.viewReset','View reset.');
     }
 
-    if (/(?:section|cut|slice)\s+(?:plane\s+)?(?:on\s+)?x|x\s+(?:section|cut)/.test(text)) { d({t:A.SECTION,axis:'x'}); return 'Section on X.'; }
-    if (/(?:section|cut|slice)\s+(?:plane\s+)?(?:on\s+)?y|y\s+(?:section|cut)/.test(text)) { d({t:A.SECTION,axis:'y'}); return 'Section on Y.'; }
-    if (/(?:section|cut|slice)\s+(?:plane\s+)?(?:on\s+)?z|z\s+(?:section|cut)/.test(text)) { d({t:A.SECTION,axis:'z'}); return 'Section on Z.'; }
-    if (/(?:remove|clear|off|disable|hide)\s+(?:the\s+)?(?:section|cut|slice|clipping)/.test(text)) { d({t:A.SECTION,axis:null}); d({t:A.SECTION_BOX,v:null}); return 'Sections cleared.'; }
+    if (/(?:section|cut|slice)\s+(?:plane\s+)?(?:on\s+)?x|x\s+(?:section|cut)/.test(text)) { d({t:A.SECTION,axis:'x'}); return _cc_t('nl.reply.sectionOnX','Section on X.'); }
+    if (/(?:section|cut|slice)\s+(?:plane\s+)?(?:on\s+)?y|y\s+(?:section|cut)/.test(text)) { d({t:A.SECTION,axis:'y'}); return _cc_t('nl.reply.sectionOnY','Section on Y.'); }
+    if (/(?:section|cut|slice)\s+(?:plane\s+)?(?:on\s+)?z|z\s+(?:section|cut)/.test(text)) { d({t:A.SECTION,axis:'z'}); return _cc_t('nl.reply.sectionOnZ','Section on Z.'); }
+    if (/(?:remove|clear|off|disable|hide)\s+(?:the\s+)?(?:section|cut|slice|clipping)/.test(text)) { d({t:A.SECTION,axis:null}); d({t:A.SECTION_BOX,v:null}); return _cc_t('nl.reply.sectionsCleared','Sections cleared.'); }
 
     var viewDirs = {top:[0,1,0],bottom:[0,-1,0],front:[0,0,1],back:[0,0,-1],left:[-1,0,0],right:[1,0,0]};
     var viewMatch = text.match(/(?:show\s+|go\s+to\s+|switch\s+to\s+)?(top|bottom|front|back|left|right|iso(?:metric)?)\s*(?:view)?$|^(top|bottom|front|back|left|right|iso(?:metric)?)$/);
@@ -37942,7 +37991,7 @@ function startApp() {
         }
         return vName.charAt(0).toUpperCase()+vName.slice(1)+' view.';
       }
-      return 'No 3D view loaded yet.';
+      return _cc_t('nl.reply.no3dViewLoadedYet','No 3D view loaded yet.');
     }
 
     var hideTypeMatch = text.match(/(?:hide|remove)\s+(?:all\s+)?(\w+?)s?\s*$/);
@@ -37956,7 +38005,7 @@ function startApp() {
         // entirely (both consumers below immediately fold the array into a
         // set, so this was always redundant work, never a correctness need).
         s.models.forEach(function(m){(m.elements||[]).forEach(function(el){if(el.props&&el.props.ifcType===resolved)ids.push(el.expressId);});});
-        if (ids.length && window._ccTempHide) { window._ccTempHide(ids); return 'Hidden ' + ids.length + ' ' + resolved.replace('Ifc','') + ' elements. "Show all" to bring them back.'; }
+        if (ids.length && window._ccTempHide) { window._ccTempHide(ids); return _cc_t('nl.reply.hiddenElementsShowAllTo','Hidden {v1} {v2} elements. "Show all" to bring them back.',{v1:ids.length,v2:resolved.replace('Ifc','')}); }
       }
     }
     var isolateMatch = text.match(/(?:isolate|show\s+only|only\s+show)\s+(?:all\s+)?(\w+?)s?\s*$/);
@@ -37966,14 +38015,14 @@ function startApp() {
         var isoIds = [];
         // P6.2: same simplification as the hide handler above.
         s.models.forEach(function(m){(m.elements||[]).forEach(function(el){if(el.props&&el.props.ifcType===isoType)isoIds.push(el.expressId);});});
-        if (isoIds.length && window._ccIsolate) { window._ccIsolate(isoIds); return 'Isolated ' + isoIds.length + ' ' + isoType.replace('Ifc','') + ' elements. "Show all" to bring them back.'; }
+        if (isoIds.length && window._ccIsolate) { window._ccIsolate(isoIds); return _cc_t('nl.reply.isolatedElementsShowAllTo','Isolated {v1} {v2} elements. "Show all" to bring them back.',{v1:isoIds.length,v2:isoType.replace('Ifc','')}); }
       }
     }
     if (/(?:show|restore|unhide)\s+all\s*(?:elements?)?$|^show\s+all$/.test(text)) {
       if (window._ccTempUnhide) window._ccTempUnhide();
       if (window._ccUnisolate) window._ccUnisolate();
       if (_unghostAll) _unghostAll();
-      return 'All elements restored.';
+      return _cc_t('nl.reply.allElementsRestored','All elements restored.');
     }
 
     var findMatch = text.match(/(?:find|search\s+(?:for)?|select|highlight)\s+(?:all\s+)?(\w+?)s?\s*$/);
@@ -37983,37 +38032,37 @@ function startApp() {
         var count = 0;
         s.models.forEach(function(m){(m.elements||[]).forEach(function(el){if(el.props&&el.props.ifcType===findType)count++;});});
         if (count && window._ccToggleFinder) { window._ccToggleFinder(); }
-        return 'Found ' + count + ' ' + findType.replace('Ifc','') + ' element'+(count===1?'':'s')+'. Use Ctrl+F to browse them.';
+        return (count===1 ? _cc_t('nl.reply.foundOneElementUseCtrlF','Found {count} {type} element. Use Ctrl+F to browse them.',{count:count,type:findType.replace('Ifc','')}) : _cc_t('nl.reply.foundElementsUseCtrlF','Found {count} {type} elements. Use Ctrl+F to browse them.',{count:count,type:findType.replace('Ifc','')}));
       }
     }
 
     var renderMatch = text.match(/(?:switch|change|set)\s+(?:to\s+)?(?:render\s+)?(?:style\s+)?(?:to\s+)?(standard|shaded|rendered|wireframe)/);
     if (!renderMatch) renderMatch = text.match(/(standard|shaded|rendered|wireframe)\s+(?:mode|style|view|render)/);
-    if (renderMatch) { d({t:A.UPD_PREFS,u:{renderStyle:renderMatch[1]}}); return 'Switched to ' + renderMatch[1] + '.'; }
+    if (renderMatch) { d({t:A.UPD_PREFS,u:{renderStyle:renderMatch[1]}}); return _cc_t('nl.reply.switchedTo2','Switched to {v1}.',{v1:renderMatch[1]}); }
 
-    if (/(?:show|enable|turn\s+on|display)\s+markers?/.test(text)) { d({t:A.UPD_PREFS,u:{showMarkers:true}}); return 'Markers on.'; }
-    if (/(?:hide|disable|turn\s+off|remove)\s+markers?/.test(text)) { d({t:A.UPD_PREFS,u:{showMarkers:false}}); return 'Markers off.'; }
+    if (/(?:show|enable|turn\s+on|display)\s+markers?/.test(text)) { d({t:A.UPD_PREFS,u:{showMarkers:true}}); return _cc_t('nl.reply.markersOn','Markers on.'); }
+    if (/(?:hide|disable|turn\s+off|remove)\s+markers?/.test(text)) { d({t:A.UPD_PREFS,u:{showMarkers:false}}); return _cc_t('nl.reply.markersOff','Markers off.'); }
 
     // Trailing "<noun> on/off" phrasing (e.g. "grid off", "axes on") is at
     // least as common as the leading "turn on/off <noun>" form above, but
     // previously only matched through the low-confidence fuzzy fallback,
     // which asked "Did you mean…?" instead of just doing it.
-    if (/(?:show|enable|turn\s+on)\s+(?:the\s+)?grid|^\s*grid\s+on\s*$/.test(text)) { d({t:A.UPD_PREFS,u:{showGrid:true}}); return 'Grid on.'; }
-    if (/(?:hide|disable|turn\s+off|remove)\s+(?:the\s+)?grid|^\s*grid\s+off\s*$/.test(text)) { d({t:A.UPD_PREFS,u:{showGrid:false}}); return 'Grid off.'; }
-    if (/(?:show|enable|turn\s+on)\s+(?:the\s+)?axes?|^\s*axes?\s+on\s*$/.test(text)) { d({t:A.UPD_PREFS,u:{showAxes:true}}); return 'Axes on.'; }
-    if (/(?:hide|disable|turn\s+off|remove)\s+(?:the\s+)?axes?|^\s*axes?\s+off\s*$/.test(text)) { d({t:A.UPD_PREFS,u:{showAxes:false}}); return 'Axes off.'; }
+    if (/(?:show|enable|turn\s+on)\s+(?:the\s+)?grid|^\s*grid\s+on\s*$/.test(text)) { d({t:A.UPD_PREFS,u:{showGrid:true}}); return _cc_t('nl.reply.gridOn','Grid on.'); }
+    if (/(?:hide|disable|turn\s+off|remove)\s+(?:the\s+)?grid|^\s*grid\s+off\s*$/.test(text)) { d({t:A.UPD_PREFS,u:{showGrid:false}}); return _cc_t('nl.reply.gridOff','Grid off.'); }
+    if (/(?:show|enable|turn\s+on)\s+(?:the\s+)?axes?|^\s*axes?\s+on\s*$/.test(text)) { d({t:A.UPD_PREFS,u:{showAxes:true}}); return _cc_t('nl.reply.axesOn','Axes on.'); }
+    if (/(?:hide|disable|turn\s+off|remove)\s+(?:the\s+)?axes?|^\s*axes?\s+off\s*$/.test(text)) { d({t:A.UPD_PREFS,u:{showAxes:false}}); return _cc_t('nl.reply.axesOff','Axes off.'); }
 
-    if (/(?:unghost|unghostall|clear\s+ghost|show\s+all\s+elements?|restore\s+all)/.test(text)) { if(_unghostAll)_unghostAll(); return 'All elements restored.'; }
+    if (/(?:unghost|unghostall|clear\s+ghost|show\s+all\s+elements?|restore\s+all)/.test(text)) { if(_unghostAll)_unghostAll(); return _cc_t('nl.reply.allElementsRestored','All elements restored.'); }
 
-    if (/(?:measure|measurement)\s+(?:length|distance)/.test(text)) { d({t:A.MEASURE_MODE,v:'length'}); return 'Measure mode on — click two points.'; }
-    if (/(?:measure|measurement)\s+angle/.test(text)) { d({t:A.MEASURE_MODE,v:'angle'}); return 'Measuring angles — click three points.'; }
-    if (/(?:measure|measurement)\s+area/.test(text)) { d({t:A.MEASURE_MODE,v:'area'}); return 'Measuring area — click to define.'; }
-    if (/(?:measure|read)\s+(?:element|quantity|quantities|qto)/.test(text)) { d({t:A.MEASURE_MODE,v:'element'}); return 'Click an element to read Qto_* quantities.'; }
-    if (/(?:clearance|min(?:imum)?\s+distance|gap)\s+(?:between|of)/.test(text)) { d({t:A.MEASURE_MODE,v:'clearance'}); window._ccClearancePickA=null; return 'Pick element A then element B for clearance.'; }
+    if (/(?:measure|measurement)\s+(?:length|distance)/.test(text)) { d({t:A.MEASURE_MODE,v:'length'}); return _cc_t('nl.reply.measureModeOnClickTwo','Measure mode on — click two points.'); }
+    if (/(?:measure|measurement)\s+angle/.test(text)) { d({t:A.MEASURE_MODE,v:'angle'}); return _cc_t('nl.reply.measuringAnglesClickThreePoints','Measuring angles — click three points.'); }
+    if (/(?:measure|measurement)\s+area/.test(text)) { d({t:A.MEASURE_MODE,v:'area'}); return _cc_t('nl.reply.measuringAreaClickToDefine','Measuring area — click to define.'); }
+    if (/(?:measure|read)\s+(?:element|quantity|quantities|qto)/.test(text)) { d({t:A.MEASURE_MODE,v:'element'}); return _cc_t('nl.reply.clickAnElementToRead','Click an element to read Qto_* quantities.'); }
+    if (/(?:clearance|min(?:imum)?\s+distance|gap)\s+(?:between|of)/.test(text)) { d({t:A.MEASURE_MODE,v:'clearance'}); window._ccClearancePickA=null; return _cc_t('nl.reply.pickElementAThenElement','Pick element A then element B for clearance.'); }
     var _toM = text.match(/^takeoff\s+(.+)$/) || text.match(/^count\s+(?:all\s+)?(.+?)$/);
-    if (_toM && window._ccComputeTakeoff) { window._ccComputeTakeoff(_toM[1].trim()); var rr = window._ccLastTakeoff; if (rr) return 'Takeoff '+rr.filter+': '+rr.count+' element'+(rr.count===1?'':'s')+'.'; }
-    if (/(?:stop|exit|cancel|end)\s+measur/.test(text)) { d({t:A.MEASURE_MODE,v:null}); return 'Measurement off.'; }
-    if (/(?:clear|delete|remove)\s+(?:all\s+)?measurements?/.test(text)) { d({t:A.CLEAR_MEASUREMENTS}); return 'Measurements cleared.'; }
+    if (_toM && window._ccComputeTakeoff) { window._ccComputeTakeoff(_toM[1].trim()); var rr = window._ccLastTakeoff; if (rr) return (rr.count===1 ? _cc_t('nl.reply.takeoffOneElement','Takeoff {filter}: {count} element.',{filter:rr.filter,count:rr.count}) : _cc_t('nl.reply.takeoffElements','Takeoff {filter}: {count} elements.',{filter:rr.filter,count:rr.count})); }
+    if (/(?:stop|exit|cancel|end)\s+measur/.test(text)) { d({t:A.MEASURE_MODE,v:null}); return _cc_t('nl.reply.measurementOff','Measurement off.'); }
+    if (/(?:clear|delete|remove)\s+(?:all\s+)?measurements?/.test(text)) { d({t:A.CLEAR_MEASUREMENTS}); return _cc_t('nl.reply.measurementsCleared','Measurements cleared.'); }
 
     // Visibility / coverage NL commands — dispatch to the preset
     // library when the user types "check visibility exit signs",
@@ -38040,119 +38089,117 @@ function startApp() {
             ? (window._ccDetectCoverageAndMerge || function(p){ return window._ccDetectCoverage(p); })
             : (window._ccDetectVisibilityAndMerge || function(p){ return window._ccDetectVisibility(p); });
           runner(bestPreset).then(function(res){
-            var msg = (isCov ? 'Coverage ' : 'Visibility ') + bestPreset.sampleId + ' done — ' +
-              (isCov
-                ? ((res.summary && res.summary.uncovered || 0) + ' gaps')
-                : (res.clashes.length + ' blocked')
-              );
+            var msg = isCov
+              ? _cc_t('toast.coverageDoneGaps','Coverage {id} done — {n} gaps',{id:bestPreset.sampleId,n:(res.summary && res.summary.uncovered || 0)})
+              : _cc_t('toast.visibilityDoneBlocked','Visibility {id} done — {n} blocked',{id:bestPreset.sampleId,n:res.clashes.length});
             if (window._ccToast) window._ccToast(msg);
             if (res.clashes.length) d({t:A.TAB, v:'clashes'});
-          }).catch(function(e){ if (window._ccToast) window._ccToast('Check failed: ' + (e.message||e)); });
-          return 'Running ' + (isCov ? 'coverage' : 'visibility') + ' check: ' + bestPreset.sampleId + '…';
+          }).catch(function(e){ if (window._ccToast) window._ccToast(_cc_t('toast.checkFailed','Check failed: {msg}',{msg:(e.message||e)})); });
+          return (isCov ? _cc_t('nl.reply.runningCoverageCheck','Running coverage check: {sampleId}…',{sampleId:bestPreset.sampleId}) : _cc_t('nl.reply.runningVisibilityCheck','Running visibility check: {sampleId}…',{sampleId:bestPreset.sampleId}));
         }
-        return 'No matching preset. Try: visibility exit signs · visibility window view · coverage cameras · coverage smoke';
+        return _cc_t('nl.reply.noMatchingPresetTryVisibility','No matching preset. Try: visibility exit signs · visibility window view · coverage cameras · coverage smoke');
       }
     }
 
     if (/(?:save|capture|store)\s+(?:this\s+)?(?:view|viewpoint|camera)/.test(text)) {
-      if(_captureViewpoint) { _captureViewpoint('Viewpoint ' + (s.viewpoints.length+1)); return 'Viewpoint saved.'; }
-      return 'No 3D view to capture yet.';
+      if(_captureViewpoint) { _captureViewpoint('Viewpoint ' + (s.viewpoints.length+1)); return _cc_t('nl.reply.viewpointSaved2','Viewpoint saved.'); }
+      return _cc_t('nl.reply.no3dViewToCapture','No 3D view to capture yet.');
     }
 
-    if (/(?:save|store)\s+(?:the\s+)?project/.test(text)) { if(typeof saveProject==='function') saveProject(s); return 'Project saved.'; }
+    if (/(?:save|store)\s+(?:the\s+)?project/.test(text)) { if(typeof saveProject==='function') saveProject(s); return _cc_t('nl.reply.projectSaved','Project saved.'); }
 
-    if (/(?:exit|close|leave|cancel)\s+(?:the\s+)?(?:floor\s*plan|plan\s+view|2d\s+view)/.test(text)) { d({t:A.FLOOR_PLAN,v:null}); return 'Back to 3D.'; }
+    if (/(?:exit|close|leave|cancel)\s+(?:the\s+)?(?:floor\s*plan|plan\s+view|2d\s+view)/.test(text)) { d({t:A.FLOOR_PLAN,v:null}); return _cc_t('nl.reply.backTo3d','Back to 3D.'); }
 
     if (/color\s+by\s+(type|storey|discipline|material)/.test(text)) {
       var cbMatch = text.match(/color\s+by\s+(type|storey|discipline|material)/);
       var cbView = 'by'+cbMatch[1].charAt(0).toUpperCase()+cbMatch[1].slice(1);
       d({t:A.COLOR_BY_CLASS,v:cbView});
-      return 'Colored by ' + cbMatch[1] + '.';
+      return _cc_t('nl.reply.coloredBy','Colored by {v1}.',{v1:cbMatch[1]});
     }
-    if (/(?:remove|clear|reset)\s+color/.test(text)) { d({t:A.COLOR_BY_CLASS,v:null}); return 'Colors reset.'; }
+    if (/(?:remove|clear|reset)\s+color/.test(text)) { d({t:A.COLOR_BY_CLASS,v:null}); return _cc_t('nl.reply.colorsReset','Colors reset.'); }
 
-    if (/(?:show|open)\s+(?:the\s+)?(?:model\s+)?tree/.test(text)) { d({t:A.TREE,v:true}); return 'Tree opened.'; }
-    if (/(?:hide|close)\s+(?:the\s+)?(?:model\s+)?tree/.test(text)) { d({t:A.TREE,v:false}); return 'Tree closed.'; }
+    if (/(?:show|open)\s+(?:the\s+)?(?:model\s+)?tree/.test(text)) { d({t:A.TREE,v:true}); return _cc_t('nl.reply.treeOpened','Tree opened.'); }
+    if (/(?:hide|close)\s+(?:the\s+)?(?:model\s+)?tree/.test(text)) { d({t:A.TREE,v:false}); return _cc_t('nl.reply.treeClosed','Tree closed.'); }
 
     // ── Fuzzy intent fallback ─────────────────────────────────────
     var _intents = [
-      [['dark','night'],          function(){d({t:A.UPD_PREFS,u:{theme:'dark'}});return 'Dark mode.';}, 1],
-      [['light','bright'],        function(){d({t:A.UPD_PREFS,u:{theme:'light'}});return 'Light mode.';}, 1],
-      [['grid','show','enable'],  function(){d({t:A.UPD_PREFS,u:{showGrid:true}});return 'Grid on.';}, 2],
-      [['grid','hide','off'],     function(){d({t:A.UPD_PREFS,u:{showGrid:false}});return 'Grid off.';}, 2],
-      [['axes','axis','show'],    function(){d({t:A.UPD_PREFS,u:{showAxes:true}});return 'Axes on.';}, 2],
-      [['axes','axis','hide'],    function(){d({t:A.UPD_PREFS,u:{showAxes:false}});return 'Axes off.';}, 2],
-      [['markers','show','on'],   function(){d({t:A.UPD_PREFS,u:{showMarkers:true}});return 'Markers on.';}, 2],
-      [['markers','hide','off'],  function(){d({t:A.UPD_PREFS,u:{showMarkers:false}});return 'Markers off.';}, 2],
-      [['wireframe','wire'],      function(){d({t:A.UPD_PREFS,u:{renderStyle:'wireframe'}});return 'Wireframe.';}, 1],
-      [['shaded','shade'],        function(){d({t:A.UPD_PREFS,u:{renderStyle:'shaded'}});return 'Shaded.';}, 1],
-      [['rendered','realistic'],  function(){d({t:A.UPD_PREFS,u:{renderStyle:'rendered'}});return 'Rendered.';}, 1],
-      [['reset','view','home','fit'],function(){if(_resetView)_resetView();return 'View reset.';}, 2],
-      [['section','cut','clear','off','none'],function(){d({t:A.SECTION,axis:null});d({t:A.SECTION_BOX,v:null});return 'Sections cleared.';}, 2],
-      [['section','cut','x'],     function(){d({t:A.SECTION,axis:'x'});return 'Section X.';}, 2],
-      [['section','cut','y'],     function(){d({t:A.SECTION,axis:'y'});return 'Section Y.';}, 2],
-      [['section','cut','z'],     function(){d({t:A.SECTION,axis:'z'});return 'Section Z.';}, 2],
-      [['models','tab','open'],   function(){d({t:A.TAB,v:'models'});return 'Models tab.';}, 2],
-      [['clashes','tab','open'],  function(){d({t:A.TAB,v:'clashes'});return 'Clashes tab.';}, 2],
-      [['issues','tab','open'],   function(){d({t:A.TAB,v:'issues'});return 'Issues tab.';}, 2],
-      [['navigator','tab','open'], function(){d({t:A.TAB,v:'navigator'});return 'Navigator tab.';}, 2],
-      [['settings','preferences','config'],function(){d({t:A.SETTINGS,v:true});return 'Settings.';}, 1],
-      [['measure','length','distance'],function(){d({t:A.MEASURE_MODE,v:'length'});return 'Measure length.';}, 1],
-      [['measure','angle'],       function(){d({t:A.MEASURE_MODE,v:'angle'});return 'Measure angle.';}, 2],
-      [['measure','area'],        function(){d({t:A.MEASURE_MODE,v:'area'});return 'Measure area.';}, 2],
-      [['measure','element','quantity','quantities'],function(){d({t:A.MEASURE_MODE,v:'element'});return 'Pick an element to read its quantities.';}, 2],
-      [['measure','clearance','minimum','distance','between'],function(){d({t:A.MEASURE_MODE,v:'clearance'});window._ccClearancePickA=null;return 'Pick element A then element B for clearance.';}, 2],
+      [['dark','night'],          function(){d({t:A.UPD_PREFS,u:{theme:'dark'}});return _cc_t('nl.reply.darkMode','Dark mode.');}, 1],
+      [['light','bright'],        function(){d({t:A.UPD_PREFS,u:{theme:'light'}});return _cc_t('nl.reply.lightMode','Light mode.');}, 1],
+      [['grid','show','enable'],  function(){d({t:A.UPD_PREFS,u:{showGrid:true}});return _cc_t('nl.reply.gridOn','Grid on.');}, 2],
+      [['grid','hide','off'],     function(){d({t:A.UPD_PREFS,u:{showGrid:false}});return _cc_t('nl.reply.gridOff','Grid off.');}, 2],
+      [['axes','axis','show'],    function(){d({t:A.UPD_PREFS,u:{showAxes:true}});return _cc_t('nl.reply.axesOn','Axes on.');}, 2],
+      [['axes','axis','hide'],    function(){d({t:A.UPD_PREFS,u:{showAxes:false}});return _cc_t('nl.reply.axesOff','Axes off.');}, 2],
+      [['markers','show','on'],   function(){d({t:A.UPD_PREFS,u:{showMarkers:true}});return _cc_t('nl.reply.markersOn','Markers on.');}, 2],
+      [['markers','hide','off'],  function(){d({t:A.UPD_PREFS,u:{showMarkers:false}});return _cc_t('nl.reply.markersOff','Markers off.');}, 2],
+      [['wireframe','wire'],      function(){d({t:A.UPD_PREFS,u:{renderStyle:'wireframe'}});return _cc_t('nl.reply.wireframe','Wireframe.');}, 1],
+      [['shaded','shade'],        function(){d({t:A.UPD_PREFS,u:{renderStyle:'shaded'}});return _cc_t('nl.reply.shaded','Shaded.');}, 1],
+      [['rendered','realistic'],  function(){d({t:A.UPD_PREFS,u:{renderStyle:'rendered'}});return _cc_t('nl.reply.rendered','Rendered.');}, 1],
+      [['reset','view','home','fit'],function(){if(_resetView)_resetView();return _cc_t('nl.reply.viewReset','View reset.');}, 2],
+      [['section','cut','clear','off','none'],function(){d({t:A.SECTION,axis:null});d({t:A.SECTION_BOX,v:null});return _cc_t('nl.reply.sectionsCleared','Sections cleared.');}, 2],
+      [['section','cut','x'],     function(){d({t:A.SECTION,axis:'x'});return _cc_t('nl.reply.sectionX','Section X.');}, 2],
+      [['section','cut','y'],     function(){d({t:A.SECTION,axis:'y'});return _cc_t('nl.reply.sectionY','Section Y.');}, 2],
+      [['section','cut','z'],     function(){d({t:A.SECTION,axis:'z'});return _cc_t('nl.reply.sectionZ','Section Z.');}, 2],
+      [['models','tab','open'],   function(){d({t:A.TAB,v:'models'});return _cc_t('nl.reply.modelsTab','Models tab.');}, 2],
+      [['clashes','tab','open'],  function(){d({t:A.TAB,v:'clashes'});return _cc_t('nl.reply.clashesTab','Clashes tab.');}, 2],
+      [['issues','tab','open'],   function(){d({t:A.TAB,v:'issues'});return _cc_t('nl.reply.issuesTab','Issues tab.');}, 2],
+      [['navigator','tab','open'], function(){d({t:A.TAB,v:'navigator'});return _cc_t('nl.reply.navigatorTab','Navigator tab.');}, 2],
+      [['settings','preferences','config'],function(){d({t:A.SETTINGS,v:true});return _cc_t('nl.reply.settings','Settings.');}, 1],
+      [['measure','length','distance'],function(){d({t:A.MEASURE_MODE,v:'length'});return _cc_t('nl.reply.measureLength','Measure length.');}, 1],
+      [['measure','angle'],       function(){d({t:A.MEASURE_MODE,v:'angle'});return _cc_t('nl.reply.measureAngle','Measure angle.');}, 2],
+      [['measure','area'],        function(){d({t:A.MEASURE_MODE,v:'area'});return _cc_t('nl.reply.measureArea','Measure area.');}, 2],
+      [['measure','element','quantity','quantities'],function(){d({t:A.MEASURE_MODE,v:'element'});return _cc_t('nl.reply.pickAnElementToRead','Pick an element to read its quantities.');}, 2],
+      [['measure','clearance','minimum','distance','between'],function(){d({t:A.MEASURE_MODE,v:'clearance'});window._ccClearancePickA=null;return _cc_t('nl.reply.pickElementAThenElement','Pick element A then element B for clearance.');}, 2],
       [['takeoff','sum','total','count'],function(arg){
         var t = (arg||'').trim();
-        if (!t) return 'Tell me what to count, e.g. "takeoff IfcWall".';
-        if (window._ccComputeTakeoff) { window._ccComputeTakeoff(t); var r = window._ccLastTakeoff; if(r) return 'Takeoff '+t+': '+r.count+' element'+(r.count===1?'':'s')+'.'; }
-        return 'Takeoff started.';
+        if (!t) return _cc_t('nl.reply.tellMeWhatToCount','Tell me what to count, e.g. "takeoff IfcWall".');
+        if (window._ccComputeTakeoff) { window._ccComputeTakeoff(t); var r = window._ccLastTakeoff; if(r) return (r.count===1 ? _cc_t('nl.reply.takeoffOneElement','Takeoff {filter}: {count} element.',{filter:t,count:r.count}) : _cc_t('nl.reply.takeoffElements','Takeoff {filter}: {count} elements.',{filter:t,count:r.count})); }
+        return _cc_t('nl.reply.takeoffStarted','Takeoff started.');
       }, 2],
       [['units','imperial','metric','feet','meter','meters'],function(arg){
         var t = (arg||'').toLowerCase();
         var v = t.indexOf('imperial')>=0||t.indexOf('feet')>=0||t.indexOf('inch')>=0?'imperial-fractional':t.indexOf('decimal')>=0?'imperial-decimal':t.indexOf('metric')>=0||t.indexOf('mm')>=0||t.indexOf('meter')>=0?'metric':'auto';
         d({t:A.UPD_PREFS,u:{measureUnits:v}});
-        return 'Measurement units set to '+v+'.';
+        return _cc_t('nl.reply.measurementUnitsSetTo','Measurement units set to {v}.',{v:v});
       }, 2],
-      [['stop','cancel','measure'],function(){d({t:A.MEASURE_MODE,v:null});return 'Measurement off.';}, 2],
-      [['clear','measurement'],   function(){d({t:A.CLEAR_MEASUREMENTS});return 'Measurements cleared.';}, 2],
-      [['save','viewpoint','capture'],function(){if(_captureViewpoint){_captureViewpoint('Viewpoint '+(s.viewpoints.length+1));return 'Viewpoint saved.';}return 'No view.';}, 2],
-      [['save','project'],        function(){if(typeof saveProject==='function')saveProject(s);return 'Project saved.';}, 2],
-      [['unghost','restore','unhide'],function(){if(_unghostAll)_unghostAll();return 'All restored.';}, 1],
-      [['training','enable','on','start'],function(){if(!s.trainingMode)d({t:A.TRAINING_MODE,v:true});return 'Training on.';}, 2],
-      [['training','disable','off','stop'],function(){if(s.trainingMode)d({t:A.TRAINING_MODE});return 'Training off.';}, 2],
-      [['filter','reset','clear'],function(){d({t:A.RESET_FILTERS});return 'Filters cleared.';}, 2],
-      [['export','bcf','download'],function(){if(!s.issues.length&&!s.clashes.length)return 'Nothing to export.';exportBCF(s.issues.length?s.issues:s.clashes,'2.1',s.viewpoints,s);return 'BCF exported.';}, 2],
-      [['import','bcf'],          function(){importBCF(d);return 'BCF picker opened.';}, 2],
-      [['load','open','ifc'],     function(){if(window._ccOpenIFC)window._ccOpenIFC();return 'IFC picker opened.';}, 1],
-      [['bridge','revit'],        function(){d({t:A.REVIT_BRIDGE,v:true});return 'Bridge opened.';}, 1],
-      [['color','type'],          function(){d({t:A.COLOR_BY_CLASS,v:'byType'});return 'Colored by type.';}, 2],
-      [['color','storey','floor'],function(){d({t:A.COLOR_BY_CLASS,v:'byStorey'});return 'Colored by storey.';}, 2],
-      [['color','discipline'],    function(){d({t:A.COLOR_BY_CLASS,v:'byDiscipline'});return 'Colored by discipline.';}, 2],
-      [['color','material'],      function(){d({t:A.COLOR_BY_CLASS,v:'byMaterial'});return 'Colored by material.';}, 2],
-      [['color','reset','clear','off'],function(){d({t:A.COLOR_BY_CLASS,v:null});return 'Colors reset.';}, 2],
-      [['duplicates','enable','include','find'],function(){d({t:A.UPD_RULES,u:{duplicates:true}});return 'Duplicates on.';}, 1],
-      [['duplicates','disable','exclude','no'],function(){d({t:A.UPD_RULES,u:{duplicates:false}});return 'Duplicates off.';}, 2],
-      [['self','exclude','cross','only'],function(){d({t:A.UPD_RULES,u:{excludeSelf:true}});return 'Self-clashes excluded.';}, 2],
-      [['self','include','allow'],function(){d({t:A.UPD_RULES,u:{excludeSelf:false}});return 'Self-clashes included.';}, 2],
-      [['semantic','filter','on','enable'],function(){d({t:A.UPD_RULES,u:{useSemanticFilter:true}});return 'Semantic filter on.';}, 2],
-      [['semantic','filter','off','disable'],function(){d({t:A.UPD_RULES,u:{useSemanticFilter:false}});return 'Semantic filter off.';}, 2],
-      [['tree','open','show'],    function(){d({t:A.TREE,v:true});return 'Tree opened.';}, 2],
-      [['tree','close','hide'],   function(){d({t:A.TREE,v:false});return 'Tree closed.';}, 2],
-      [['floor','plan','exit','close'],function(){d({t:A.FLOOR_PLAN,v:null});return 'Floor plan closed.';}, 2],
-      [['new','create','issue'],  function(){d({t:A.MODAL,v:true});return 'New issue form.';}, 2],
-      [['reload','refresh'],      function(){setTimeout(function(){window.location.reload();},300);return 'Reloading\u2026';}, 1],
-      [['top','view'],            function(){processNLCommand('top view',s,d);return 'Top view.';}, 1],
-      [['front','view'],          function(){processNLCommand('front view',s,d);return 'Front view.';}, 1],
-      [['back','rear','view'],    function(){processNLCommand('back view',s,d);return 'Back view.';}, 1],
-      [['left','view'],           function(){processNLCommand('left view',s,d);return 'Left view.';}, 2],
-      [['right','view'],          function(){processNLCommand('right view',s,d);return 'Right view.';}, 2],
-      [['isometric','iso'],       function(){processNLCommand('isometric view',s,d);return 'Isometric view.';}, 1],
-      [['show','restore','unhide','all'],function(){if(window._ccTempUnhide)window._ccTempUnhide();if(window._ccUnisolate)window._ccUnisolate();if(_unghostAll)_unghostAll();return 'All restored.';}, 2],
-      [['summary','overview','report'],function(){return processNLCommand('analyze clashes',s,d)||'No data yet.';}, 1],
-      [['status','problems'],     function(){return processNLCommand('any problems',s,d)||'No data yet.';}, 1],
+      [['stop','cancel','measure'],function(){d({t:A.MEASURE_MODE,v:null});return _cc_t('nl.reply.measurementOff','Measurement off.');}, 2],
+      [['clear','measurement'],   function(){d({t:A.CLEAR_MEASUREMENTS});return _cc_t('nl.reply.measurementsCleared','Measurements cleared.');}, 2],
+      [['save','viewpoint','capture'],function(){if(_captureViewpoint){_captureViewpoint('Viewpoint '+(s.viewpoints.length+1));return _cc_t('nl.reply.viewpointSaved2','Viewpoint saved.');}return _cc_t('nl.reply.noView','No view.');}, 2],
+      [['save','project'],        function(){if(typeof saveProject==='function')saveProject(s);return _cc_t('nl.reply.projectSaved','Project saved.');}, 2],
+      [['unghost','restore','unhide'],function(){if(_unghostAll)_unghostAll();return _cc_t('nl.reply.allRestored','All restored.');}, 1],
+      [['training','enable','on','start'],function(){if(!s.trainingMode)d({t:A.TRAINING_MODE,v:true});return _cc_t('nl.reply.trainingOn','Training on.');}, 2],
+      [['training','disable','off','stop'],function(){if(s.trainingMode)d({t:A.TRAINING_MODE});return _cc_t('nl.reply.trainingOff','Training off.');}, 2],
+      [['filter','reset','clear'],function(){d({t:A.RESET_FILTERS});return _cc_t('nl.reply.filtersCleared','Filters cleared.');}, 2],
+      [['export','bcf','download'],function(){if(!s.issues.length&&!s.clashes.length)return _cc_t('nl.reply.nothingToExport','Nothing to export.');exportBCF(s.issues.length?s.issues:s.clashes,'2.1',s.viewpoints,s);return _cc_t('nl.reply.bcfExported','BCF exported.');}, 2],
+      [['import','bcf'],          function(){importBCF(d);return _cc_t('nl.reply.bcfPickerOpened','BCF picker opened.');}, 2],
+      [['load','open','ifc'],     function(){if(window._ccOpenIFC)window._ccOpenIFC();return _cc_t('nl.reply.ifcPickerOpened','IFC picker opened.');}, 1],
+      [['bridge','revit'],        function(){d({t:A.REVIT_BRIDGE,v:true});return _cc_t('nl.reply.bridgeOpened','Bridge opened.');}, 1],
+      [['color','type'],          function(){d({t:A.COLOR_BY_CLASS,v:'byType'});return _cc_t('nl.reply.coloredByType','Colored by type.');}, 2],
+      [['color','storey','floor'],function(){d({t:A.COLOR_BY_CLASS,v:'byStorey'});return _cc_t('nl.reply.coloredByStorey','Colored by storey.');}, 2],
+      [['color','discipline'],    function(){d({t:A.COLOR_BY_CLASS,v:'byDiscipline'});return _cc_t('nl.reply.coloredByDiscipline','Colored by discipline.');}, 2],
+      [['color','material'],      function(){d({t:A.COLOR_BY_CLASS,v:'byMaterial'});return _cc_t('nl.reply.coloredByMaterial','Colored by material.');}, 2],
+      [['color','reset','clear','off'],function(){d({t:A.COLOR_BY_CLASS,v:null});return _cc_t('nl.reply.colorsReset','Colors reset.');}, 2],
+      [['duplicates','enable','include','find'],function(){d({t:A.UPD_RULES,u:{duplicates:true}});return _cc_t('nl.reply.duplicatesOn','Duplicates on.');}, 1],
+      [['duplicates','disable','exclude','no'],function(){d({t:A.UPD_RULES,u:{duplicates:false}});return _cc_t('nl.reply.duplicatesOff','Duplicates off.');}, 2],
+      [['self','exclude','cross','only'],function(){d({t:A.UPD_RULES,u:{excludeSelf:true}});return _cc_t('nl.reply.selfClashesExcluded','Self-clashes excluded.');}, 2],
+      [['self','include','allow'],function(){d({t:A.UPD_RULES,u:{excludeSelf:false}});return _cc_t('nl.reply.selfClashesIncluded','Self-clashes included.');}, 2],
+      [['semantic','filter','on','enable'],function(){d({t:A.UPD_RULES,u:{useSemanticFilter:true}});return _cc_t('nl.reply.semanticFilterOn','Semantic filter on.');}, 2],
+      [['semantic','filter','off','disable'],function(){d({t:A.UPD_RULES,u:{useSemanticFilter:false}});return _cc_t('nl.reply.semanticFilterOff','Semantic filter off.');}, 2],
+      [['tree','open','show'],    function(){d({t:A.TREE,v:true});return _cc_t('nl.reply.treeOpened','Tree opened.');}, 2],
+      [['tree','close','hide'],   function(){d({t:A.TREE,v:false});return _cc_t('nl.reply.treeClosed','Tree closed.');}, 2],
+      [['floor','plan','exit','close'],function(){d({t:A.FLOOR_PLAN,v:null});return _cc_t('nl.reply.floorPlanClosed','Floor plan closed.');}, 2],
+      [['new','create','issue'],  function(){d({t:A.MODAL,v:true});return _cc_t('nl.reply.newIssueForm','New issue form.');}, 2],
+      [['reload','refresh'],      function(){setTimeout(function(){window.location.reload();},300);return _cc_t('nl.reply.reloading','Reloading…');}, 1],
+      [['top','view'],            function(){processNLCommand('top view',s,d);return _cc_t('nl.reply.topView','Top view.');}, 1],
+      [['front','view'],          function(){processNLCommand('front view',s,d);return _cc_t('nl.reply.frontView','Front view.');}, 1],
+      [['back','rear','view'],    function(){processNLCommand('back view',s,d);return _cc_t('nl.reply.backView','Back view.');}, 1],
+      [['left','view'],           function(){processNLCommand('left view',s,d);return _cc_t('nl.reply.leftView','Left view.');}, 2],
+      [['right','view'],          function(){processNLCommand('right view',s,d);return _cc_t('nl.reply.rightView','Right view.');}, 2],
+      [['isometric','iso'],       function(){processNLCommand('isometric view',s,d);return _cc_t('nl.reply.isometricView','Isometric view.');}, 1],
+      [['show','restore','unhide','all'],function(){if(window._ccTempUnhide)window._ccTempUnhide();if(window._ccUnisolate)window._ccUnisolate();if(_unghostAll)_unghostAll();return _cc_t('nl.reply.allRestored','All restored.');}, 2],
+      [['summary','overview','report'],function(){return processNLCommand('analyze clashes',s,d)||_cc_t('nl.reply.noDataYet','No data yet.');}, 1],
+      [['status','problems'],     function(){return processNLCommand('any problems',s,d)||_cc_t('nl.reply.noDataYet','No data yet.');}, 1],
       [['count','many','how'],    function(){return processNLCommand('how many clashes',s,d)||_offerRunDetection(s);}, 2],
-      [['addons','addon','plugins','integrations'],function(){d({t:A.TAB,v:'addons'});return 'Integrations panel.';}, 1]
+      [['addons','addon','plugins','integrations'],function(){d({t:A.TAB,v:'addons'});return _cc_t('nl.reply.integrationsPanel','Integrations panel.');}, 1]
     ];
     var inputWords = text.replace(/[,;:!?.]+/g,' ').split(/\s+/);
     var bestIntent = null, bestScore = 0, bestKwCount = 0;
@@ -38183,7 +38230,7 @@ function startApp() {
       var _pendingAction = bestIntent[1];
       window._ccFuzzyPending = {action:_pendingAction, input:text};
       var guess = bestIntent[0].slice(0, 3).join(' ');
-      return 'Did you mean **' + guess + '**? (yes/no)';
+      return _cc_t('nl.reply.didYouMeanYesNo','Did you mean **{guess}**? (yes/no)',{guess:guess});
     }
 
     return null;
@@ -38235,8 +38282,7 @@ function startApp() {
         var labels = multiSelf.map(function(p){return p.name;}).join(', ');
         setMsgs(function(prev){
           var next=prev.slice();
-          next[idx]={role:'assistant',text:'Running self-clash: '+labels
-            +(rules.hard?' | hard':'')+(rules.maxGap?' | max gap '+rules.maxGap+'mm':'')+'…',ran:true};
+          next[idx]={role:'assistant',text:_cc_t('nl.reply.runningSelfClash','Running self-clash: {labels}{flags}…',{labels:labels,flags:_nlRunFlags(rules)}),ran:true};
           return next;
         });
         d({t:A.UPD_RULES, u:rules});
@@ -38296,10 +38342,7 @@ function startApp() {
       var nameB = _labelFor(rules.modelB);
       setMsgs(function(prev){
         var next=prev.slice();
-        next[idx]={role:'assistant',text:'Running: '+nameA+' vs '+nameB
-          +(rules.hard?' | hard':'')+(rules.maxGap?' | max gap '+rules.maxGap+'mm':'')
-          +(rules.duplicates?' | duplicates':'')+(rules.excludeSelf?' | cross-model only':'')
-          +(rules.excludeTypes&&rules.excludeTypes.length?' | excl: '+rules.excludeTypes.join(', '):'')+'…',ran:true};
+        next[idx]={role:'assistant',text:_cc_t('nl.reply.runningAvsB','Running: {a} vs {b}{flags}…',{a:nameA,b:nameB,flags:_nlRunFlags(rules,{dup:1,self:1,excl:1})}),ran:true};
         return next;
       });
       onRun(rules);
@@ -38598,12 +38641,12 @@ function startApp() {
         var _pr = window._ccDetectProfile;
         if (_pr && _pr.total_ms) {
           var secs = (_pr.total_ms/1000).toFixed(1);
-          txt += '\n*'+secs+'s total — ';
+          txt += '\n*'+_cc_t('nl.reply.secsTotal','{secs}s total — ',{secs:secs});
           var phases = [['BVH build',_pr.bvh_build_ms],['hard tests',_pr.hard_clash_ms],['soft tests',_pr.soft_clash_ms],['sweep',_pr.sweep_and_prune_ms]];
           phases.sort(function(a,b){return b[1]-a[1];});
           var top2 = phases.slice(0,2).filter(function(p){return p[1]>50;});
           txt += top2.map(function(p){return p[0]+' '+Math.round(p[1]/10)*10+'ms';}).join(', ');
-          txt += ' — the two slowest steps*';
+          txt += _cc_t('nl.reply.twoSlowestSteps',' — the two slowest steps*');
         }
         setMsgs(function(prev) {
           var idx = detectMsgIdx.current;
@@ -38692,7 +38735,7 @@ function startApp() {
         }
         localStorage.setItem('cc_nl_training_data', JSON.stringify(store));
       } catch(e) {}
-      return 'Thanks! I\'ll learn from this. Your feedback has been saved.';
+      return _cc_t('nl.reply.thanksILlLearnFrom','Thanks! I\'ll learn from this. Your feedback has been saved.');
     }
 
     // ── Conversational clash setup context ──────────────────────
@@ -38864,7 +38907,7 @@ function startApp() {
           setLoading(true);
           processNLCommandWithLLM(step.trim(), s, d).then(function(result) {
             if (result !== null) {
-              setMsgs(function(m){ return m.concat([{role:'assistant', text: typeof result === 'string' ? result : 'Done.'}]); });
+              setMsgs(function(m){ return m.concat([{role:'assistant', text: typeof result === 'string' ? result : _cc_t('nl.reply.done','Done.')}]); });
             }
             setTimeout(runNext, 150);
           });
@@ -38890,9 +38933,7 @@ function startApp() {
         if (ctxResult && ctxResult._clashSetup) {
           if (ctxResult._runNow) {
             var rNameA = ctxResult.nameA, rNameB = ctxResult.nameB, rRules = ctxResult.rules;
-            setMsgs(function(m){ return m.concat([{role:'assistant', text:'Running: **' + rNameA + '** vs **' + rNameB + '**'
-              + (rRules.hard?' | hard':'') + (rRules.maxGap?' | max gap '+rRules.maxGap+'mm':'')
-              + (rRules.duplicates?' | duplicates':'') + (rRules.excludeSelf?' | cross-model only':'') + '…'}]); });
+            setMsgs(function(m){ return m.concat([{role:'assistant', text:_cc_t('nl.reply.runningAvsBBold','Running: **{a}** vs **{b}**{flags}…',{a:rNameA,b:rNameB,flags:_nlRunFlags(rRules,{dup:1,self:1})})}]); });
             setTimeout(function(){ executeDetection(rRules); }, 80);
           } else {
             setMsgs(function(m){ return m.concat([{role:'assistant', setup:ctxResult}]); });
@@ -38908,7 +38949,7 @@ function startApp() {
       processNLCommandWithLLM(text, s, d, replyCtx).then(function(rawResult) {
         if (rawResult && rawResult._clashSetup && rawResult._runNow) {
           var fnA = rawResult.nameA, fnB = rawResult.nameB, fnRules = rawResult.rules;
-          setMsgs(function(m){ return m.concat([{role:'assistant', text:'Running: ' + fnA + ' vs ' + fnB + (fnRules.hard?' | hard':'') + (fnRules.maxGap?' | max gap '+fnRules.maxGap+'mm':'') + (fnRules.excludeSelf?' | cross-model only':'') + '…'}]); });
+          setMsgs(function(m){ return m.concat([{role:'assistant', text:_cc_t('nl.reply.runningAvsB','Running: {a} vs {b}{flags}…',{a:fnA,b:fnB,flags:_nlRunFlags(fnRules,{self:1})})}]); });
           setTimeout(function(){ executeDetection(fnRules); }, 80);
           setLoading(false);
           return;
@@ -38917,7 +38958,7 @@ function startApp() {
           var convResult = _clashConverse(text, rawResult);
           if (convResult && convResult._clashSetup && convResult._runNow) {
             var cnA = convResult.nameA, cnB = convResult.nameB, cnRules = convResult.rules;
-            setMsgs(function(m){ return m.concat([{role:'assistant', text:'Running: **'+cnA+'** vs **'+cnB+'**'+(cnRules.hard?' | hard':'')+(cnRules.maxGap?' | '+cnRules.maxGap+'mm':'')+'…'}]); });
+            setMsgs(function(m){ return m.concat([{role:'assistant', text:_cc_t('nl.reply.runningAvsBBold','Running: **{a}** vs **{b}**{flags}…',{a:cnA,b:cnB,flags:_nlRunFlags(cnRules,{bare:1})})}]); });
             setTimeout(function(){ executeDetection(cnRules); }, 80);
           } else if (typeof convResult === 'string') {
             setMsgs(function(m){ return m.concat([{role:'assistant', text:convResult||''}]); });
@@ -38927,9 +38968,9 @@ function startApp() {
         } else {
           if (s.trainingMode) {
             nlFeedbackRef.current = {input: text};
-            setMsgs(function(m){ return m.concat([{role:'assistant', text:'I didn\'t understand that. Could you describe what you wanted to happen? This helps me learn and serve you better next time.\n\n*(Or try: "check structural vs MEP", "find near misses", "how many clashes?", or "help")*'}]); });
+            setMsgs(function(m){ return m.concat([{role:'assistant', text:_cc_t('nl.reply.didntUnderstandDescribe','I didn\'t understand that. Could you describe what you wanted to happen? This helps me learn and serve you better next time.\n\n*(Or try: "check structural vs MEP", "find near misses", "how many clashes?", or "help")*')}]); });
           } else {
-            setMsgs(function(m){ return m.concat([{role:'assistant', text:'Not sure what you mean. Try: "check structural vs MEP", "find near misses", "how many clashes?", or "help".'}]); });
+            setMsgs(function(m){ return m.concat([{role:'assistant', text:_cc_t('nl.reply.notSureWhatYouMean','Not sure what you mean. Try: "check structural vs MEP", "find near misses", "how many clashes?", or "help".')}]); });
           }
         }
         setLoading(false);
@@ -39448,13 +39489,13 @@ function startApp() {
        Coordinate = conflicts + issues + clash rules. */
     var tabs = w === 'review'
       ? [
-          {id:'dataquality', svg:SVG_DATAQUALITY, label:'Data Quality'},
-          {id:'navigator',   svg:SVG_EXPLORE,     label:'Navigator'}
+          {id:'dataquality', svg:SVG_DATAQUALITY, label:_cc_t('rail.dataQuality','Data Quality')},
+          {id:'navigator',   svg:SVG_EXPLORE,     label:_cc_t('rail.navigator','Navigator')}
         ]
       : [
-          {id:'clashes',  svg:SVG_CLASHES,   label:'Clashes', badge:clashN},
-          {id:'issues',   svg:SVG_ISSUES,    label:'Issues',    badge:issueN},
-          {id:'standards',svg:SVG_STANDARDS, label:'Clash Rules'}
+          {id:'clashes',  svg:SVG_CLASHES,   label:_cc_t('rail.clashes','Clashes'), badge:clashN},
+          {id:'issues',   svg:SVG_ISSUES,    label:_cc_t('rail.issues','Issues'),    badge:issueN},
+          {id:'standards',svg:SVG_STANDARDS, label:_cc_t('rail.clashRules','Clash Rules')}
         ];
 
     return html`<div class="cc-left-rail" style=${{
@@ -42457,9 +42498,9 @@ function startApp() {
       var S = window._ccState3d; if (!S || !S.camera || !S.orbit) return;
       var home = {pos:[S.camera.position.x,S.camera.position.y,S.camera.position.z], target:[S.orbit.target.x,S.orbit.target.y,S.orbit.target.z]};
       d({t:'UPD_PREFS', u:{homeView:home}});
-      if (window._ccToast) window._ccToast('Home view saved — press R to return here');
+      if (window._ccToast) window._ccToast(_cc_t('toast.homeViewSavedPressR','Home view saved — press R to return here'));
     }
-    function _clearHomeView() { d({t:'UPD_PREFS', u:{homeView:null}}); if (window._ccToast) window._ccToast('Home view cleared'); }
+    function _clearHomeView() { d({t:'UPD_PREFS', u:{homeView:null}}); if (window._ccToast) window._ccToast(_cc_t('toast.homeViewCleared','Home view cleared')); }
 
     useEffect(function(){
       function onEnd(){ setPickOn(false); }
@@ -43588,7 +43629,7 @@ function startApp() {
           ${br.log.slice().reverse().map(function(entry, i) {
             var col = entry.type==='error' ? '#f87171' : entry.type==='push' ? '#4ade80' : entry.type==='pull' ? 'var(--accent-subtle)' : 'var(--text-faint)';
             return html`<div key=${i} style=${{fontSize:'0.69rem',color:col,lineHeight:1.5,borderBottom:'1px solid var(--border-subtle)',padding:'.15rem 0'}}>
-              <span style=${{color:'var(--text-faint)',marginRight:'.3rem'}}>${new Date(entry.ts).toLocaleTimeString()}</span>
+              <span style=${{color:'var(--text-faint)',marginRight:'.3rem'}}>${window._ccDateFmt(entry.ts,'time')}</span>
               ${entry.text}
             </div>`;
           })}
@@ -44400,7 +44441,7 @@ function startApp() {
         });
         d({t:A.UPD_RULES, v:newRules});
         d({t:A.TAB, v:'rules'});
-        if (window._ccToast) window._ccToast('Clearance rule drafted from measurement.');
+        if (window._ccToast) window._ccToast(_cc_t('toast.clearanceRuleDraftedFromMeasurement','Clearance rule drafted from measurement.'));
       };
       // Takeoff aggregation by IFC type filter (T3.4). Walks all models and
       // sums Qto_*.NetVolume / NetArea / Length across matching elements.
@@ -44464,7 +44505,7 @@ function startApp() {
       // compute a multiplier and store it in prefs. Display formatters scale by it.
       window._ccStartCalibration = function(){
         d({t:A.MEASURE_MODE, v:'length'});
-        if (window._ccToast) window._ccToast('Pick two points whose real distance you know.');
+        if (window._ccToast) window._ccToast(_cc_t('toast.pickTwoPointsWhoseReal','Pick two points whose real distance you know.'));
         // Capture next length measurement and prompt for actual value
         window._ccCalibrationPending = true;
       };
@@ -44567,7 +44608,7 @@ function startApp() {
       }
       // The browser's File System Access prompt sounds alarming ("view and
       // copy files") — set expectations before it appears: read-only, local.
-      if (window._ccToast) window._ccToast('Your browser will ask permission for the folder — access is read-only and stays on your device.');
+      if (window._ccToast) window._ccToast(_cc_t('toast.yourBrowserWillAskPermission','Your browser will ask permission for the folder — access is read-only and stays on your device.'));
       var dirHandle;
       try { dirHandle = await window.showDirectoryPicker({ mode: 'read' }); }
       catch(e) { return; }
