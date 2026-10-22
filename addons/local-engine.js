@@ -17,6 +17,13 @@
 (function() {
   'use strict';
 
+  // i18n passthrough: translated through the core's locale registry (window._cc_t) when it is
+  // present, plain English otherwise, so this addon never depends on the core being newer.
+  function _i18n(key, en, vars) {
+    if (typeof window._cc_t === 'function') return window._cc_t(key, en, vars);
+    return vars ? String(en).replace(/\{(\w+)\}/g, function(m, k) { return Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : m; }) : en;
+  }
+
   var _localEngineUrl = 'http://localhost:19800';
   var _localEngineWsUrl = 'ws://localhost:19801';
 
@@ -409,7 +416,7 @@
         return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
           <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.3rem'}}>
             <div style=${{width:12,height:12,border:'2px solid #fbbf24',borderTopColor:'transparent',borderRadius:'50%',animation:'cc-spin .6s linear infinite'}}></div>
-            <span style=${{color:'#fbbf24',fontWeight:600}}>Updating engine\u2026</span>
+            <span style=${{color:'#fbbf24',fontWeight:600}}>${_i18n('localEngine.updatingEngine','Updating engine…')}</span>
           </div>
           <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',lineHeight:1.6}}>
             Downloading update and restarting. Reconnecting automatically\u2026
@@ -422,7 +429,7 @@
         return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
           <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.3rem',flexWrap:'wrap'}}>
             <span style=${{width:7,height:7,borderRadius:'50%',background:'#22c55e',display:'inline-block'}}></span>
-            <span style=${{fontWeight:600,color:'var(--text-primary)'}}>Connected</span>
+            <span style=${{fontWeight:600,color:'var(--text-primary)'}}>${_i18n('localEngine.connected','Connected')}</span>
             ${le.version && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>v${le.version}</span>`}
             ${le.cores && html`<span style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>\u00b7 ${le.cores} cores</span>`}
           </div>
@@ -432,7 +439,7 @@
               Update available${le.updateVersion ? ': v' + le.updateVersion : ''}
             </span>
             <button onClick=${function(){ _applyEngineUpdate(d); }}
-              style=${{fontSize:'0.63rem',fontWeight:600,color:'#fbbf24',background:'rgba(234,179,8,.2)',border:'1px solid rgba(234,179,8,.4)',padding:'2px 7px',borderRadius:4,cursor:'pointer',fontFamily:'inherit',flexShrink:0}}>Update now</button>
+              style=${{fontSize:'0.63rem',fontWeight:600,color:'#fbbf24',background:'rgba(234,179,8,.2)',border:'1px solid rgba(234,179,8,.4)',padding:'2px 7px',borderRadius:4,cursor:'pointer',fontFamily:'inherit',flexShrink:0}}>${_i18n('localEngine.updateNow','Update now')}</button>
           </div>`}
           ${le.backends && le.backends.length ? html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',marginBottom:'.4rem'}}>
             Backends: ${le.backends.join(', ')}
@@ -442,13 +449,13 @@
               style=${{padding:'.3rem .6rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',
                 border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit',
                 opacity:le.checking?0.5:1}}>
-              ${le.checking?'Checking\u2026':'Refresh'}</button>
+              ${le.checking?_i18n('localEngine.checking', 'Checking\u2026'):_i18n('localEngine.refresh', 'Refresh')}</button>
             <button onClick=${function(){
               var newActive=!le.active;try{localStorage.setItem('cc_local_engine',newActive?'1':'0');}catch(e){}
               d({t:'UPD_LOCAL_ENGINE',u:{active:newActive}});
             }} style=${{padding:'.3rem .6rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'none',fontFamily:'inherit',
               background:le.active?'var(--bg-secondary)':'#2563eb',color:le.active?'var(--text-secondary)':'#fff'}}>
-              ${le.active?'Disconnect':'Use for Detection'}</button>
+              ${le.active?_i18n('localEngine.disconnect', 'Disconnect'):_i18n('localEngine.useForDetection', 'Use for Detection')}</button>
           </div>
         </div>`;
       }
@@ -458,7 +465,7 @@
         return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
           <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.4rem'}}>
             <div style=${{width:12,height:12,border:'2px solid #eab308',borderTopColor:'transparent',borderRadius:'50%',animation:'cc-spin .6s linear infinite'}}></div>
-            <span style=${{color:'#eab308',fontWeight:600}}>Starting engine\u2026</span>
+            <span style=${{color:'#eab308',fontWeight:600}}>${_i18n('localEngine.startingEngine','Starting engine…')}</span>
           </div>
           <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',lineHeight:1.6}}>
             Waiting for the local engine to boot (up to 6 seconds). First launch can be slower while Python imports load.
@@ -474,7 +481,7 @@
         return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
           <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.4rem'}}>
             <div style=${{width:12,height:12,border:'2px solid #3b82f6',borderTopColor:'transparent',borderRadius:'50%',animation:'cc-spin .6s linear infinite'}}></div>
-            <span style=${{color:'#3b82f6',fontWeight:600}}>Waiting for installation\u2026</span>
+            <span style=${{color:'#3b82f6',fontWeight:600}}>${_i18n('localEngine.waitingForInstallation','Waiting for installation…')}</span>
           </div>
           <div style=${{fontSize:'0.66rem',color:'var(--text-secondary)',lineHeight:1.65,marginBottom:'.45rem'}}>
             The ${dl.label} installer is downloading. Open <code style=${{fontSize:'0.64rem'}}>${fileName}</code> from your downloads and run it — ClashControl will connect the moment the engine is online.
@@ -485,12 +492,12 @@
             <a href=${dl.url} download
               style=${{padding:'.3rem .55rem',borderRadius:5,fontSize:'0.7rem',fontWeight:600,
                 border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',
-                fontFamily:'inherit',textDecoration:'none'}}>Re-download</a>
+                fontFamily:'inherit',textDecoration:'none'}}>${_i18n('localEngine.reDownload','Re-download')}</a>
             <button onClick=${function(){
               _cancelPendingConnect();
               d({t:'UPD_LOCAL_ENGINE', u:{installing:false, connecting:false, failed:false}});
             }} style=${{padding:'.3rem .55rem',borderRadius:5,fontSize:'0.7rem',fontWeight:600,cursor:'pointer',border:'1px solid var(--border)',
-              background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit'}}>Cancel</button>
+              background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit'}}>${_i18n('localEngine.cancel','Cancel')}</button>
           </div>
         </div>`;
       }
@@ -500,15 +507,15 @@
         return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
           <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.45rem'}}>
             <span style=${{width:7,height:7,borderRadius:'50%',background:'#22c55e',display:'inline-block'}}></span>
-            <span>Native engine active \u2014 the Python engine isn\u2019t needed</span>
+            <span>${_i18n('localEngine.nativeEngineActiveThe','Native engine active — the Python engine isn’t needed')}</span>
           </div>
           <div style=${{fontSize:'0.66rem',color:'var(--text-faint)',lineHeight:1.6,marginBottom:'.45rem'}}>
-            The desktop app runs the clash narrow phase on all CPU cores natively. If you already run the Python engine on this machine you can still connect to it.${le.failed ? ' No engine was found on localhost.' : ''}
+            ${_i18n('localEngine.nativeBlurb', 'The desktop app runs the clash narrow phase on all CPU cores natively. If you already run the Python engine on this machine you can still connect to it.')}${le.failed ? ' ' + _i18n('localEngine.noEngineOnLocalhost', 'No engine was found on localhost.') : ''}
           </div>
           <button onClick=${function(){
             _connectLocalEngine(d).catch(function(err){ console.log('[LocalEngine] Connect failed:', err && err.message || err); });
           }} style=${{padding:'.3rem .55rem',borderRadius:5,fontSize:'0.7rem',fontWeight:600,cursor:'pointer',border:'1px solid var(--border)',
-            background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit'}}>Connect to a running engine</button>
+            background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit'}}>${_i18n('localEngine.connectToARunning','Connect to a running engine')}</button>
         </div>`;
       }
 
@@ -525,17 +532,17 @@
 
       var statusLabel, statusDot, statusBlurb;
       if (le.failed) {
-        statusLabel = 'Engine not installed';
+        statusLabel = _i18n('localEngine.statusNotInstalled', 'Engine not installed');
         statusDot = '#ef4444';
-        statusBlurb = 'Click Install & Connect to download the installer. ClashControl will connect automatically once it\u2019s running.';
+        statusBlurb = _i18n('localEngine.blurbNotInstalled', 'Click Install & Connect to download the installer. ClashControl will connect automatically once it\u2019s running.');
       } else if (le.wasInstalled) {
-        statusLabel = 'Engine not running';
+        statusLabel = _i18n('localEngine.statusNotRunning', 'Engine not running');
         statusDot = '#f97316';
-        statusBlurb = 'Click Connect to launch the installed engine.';
+        statusBlurb = _i18n('localEngine.blurbNotRunning', 'Click Connect to launch the installed engine.');
       } else {
-        statusLabel = 'Not connected';
+        statusLabel = _i18n('localEngine.statusNotConnected', 'Not connected');
         statusDot = '#64748b';
-        statusBlurb = 'Click Install & Connect to download, install, and start the engine in one step.';
+        statusBlurb = _i18n('localEngine.blurbNotConnected', 'Click Install & Connect to download, install, and start the engine in one step.');
       }
 
       return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
@@ -563,7 +570,7 @@
             background:'var(--accent)',color:'#fff',fontFamily:'inherit',marginBottom:'.5rem'}}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M5 12h14M13 6l6 6-6 6"/>
-          </svg> ${(!le.wasInstalled || le.failed) ? 'Install & Connect' : 'Connect to Engine'}
+          </svg> ${(!le.wasInstalled || le.failed) ? _i18n('localEngine.installConnect', 'Install & Connect') : _i18n('localEngine.connectToEngine', 'Connect to Engine')}
         </button>
         <div style=${{fontSize:'0.64rem',color:'var(--text-faint)',lineHeight:1.6,marginBottom:'.55rem'}}>
           ${statusBlurb}
@@ -571,7 +578,7 @@
 
         ${le.failed ? html`<div style=${{borderTop:'1px solid var(--border-subtle)',paddingTop:'.5rem'}}>
           <div style=${{display:'flex',alignItems:'center',gap:'.35rem',marginBottom:'.3rem'}}>
-            <div style=${{fontSize:'0.68rem',fontWeight:600,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'.04em'}}>Install</div>
+            <div style=${{fontSize:'0.68rem',fontWeight:600,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'.04em'}}>${_i18n('localEngine.install','Install')}</div>
             <span style=${{fontSize:'0.58rem',fontWeight:600,padding:'1px 5px',borderRadius:4,background:'var(--tag-bg)',color:'var(--text-faint)'}}>engine ${_engineReleaseTag}</span>
           </div>
           <div style=${{fontSize:'0.65rem',color:'var(--text-faint)',marginBottom:'.3rem',lineHeight:1.6}}>
@@ -610,7 +617,7 @@ clashcontrol-engine --install</pre>
               style=${{color:'var(--accent)',textDecoration:'none'}}>GitHub repo</a>
           </div>
         </div>` : html`<div style=${{fontSize:'0.62rem',color:'var(--text-faint)',lineHeight:1.6}}>
-          Not installed? <a href="https://github.com/clashcontrol-io/ClashControlEngine#install" target="_blank" rel="noopener" style=${{color:'var(--accent)'}}>Install instructions</a>
+          Not installed? <a href="https://github.com/clashcontrol-io/ClashControlEngine#install" target="_blank" rel="noopener" style=${{color:'var(--accent)'}}>${_i18n('localEngine.installInstructions','Install instructions')}</a>
         </div>`}
       </div>`;
     }

@@ -6,6 +6,13 @@
 (function() {
   'use strict';
 
+  // i18n passthrough: translated through the core's locale registry (window._cc_t) when it is
+  // present, plain English otherwise, so this addon never depends on the core being newer.
+  function _i18n(key, en, vars) {
+    if (typeof window._cc_t === 'function') return window._cc_t(key, en, vars);
+    return vars ? String(en).replace(/\{(\w+)\}/g, function(m, k) { return Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : m; }) : en;
+  }
+
   var _sharedDirHandle = null;
   var _sharedFileHandle = null;
   var _sharedSyncTimer = null;
@@ -69,35 +76,35 @@
       return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
         <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.5rem',padding:'.4rem .5rem',background:'rgba(37,99,235,.08)',borderRadius:6,border:'1px solid rgba(37,99,235,.15)'}}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          <span style=${{fontSize:'0.72rem',color:'var(--text-muted)',flexShrink:0}}>Your name:</span>
-          <input type="text" value=${sp.userName||''} placeholder="Enter your name"
+          <span style=${{fontSize:'0.72rem',color:'var(--text-muted)',flexShrink:0}}>${_i18n('sharedProject.yourName','Your name:')}</span>
+          <input type="text" value=${sp.userName||''} placeholder=${_i18n('sharedProject.enterYourName', 'Enter your name')}
             onInput=${function(e){ d({t:A_UPD, u:{userName:e.target.value}}); }}
             style=${{flex:1,padding:'.2rem .4rem',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:4,fontSize:'0.75rem',fontFamily:'inherit',outline:'none'}} />
         </div>
         ${!sp.userName && enabled && html`<div style=${{fontSize:'0.69rem',color:'#f59e0b',marginBottom:'.3rem',padding:'.2rem .4rem',background:'rgba(245,158,11,.08)',borderRadius:4}}>
-          Set your name above so collaborators can see who made changes.
+          ${_i18n('sharedProject.setYourName', 'Set your name above so collaborators can see who made changes.')}
         </div>`}
         <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.4rem'}}>
           <span style=${{width:7,height:7,borderRadius:'50%',background:statusColor,display:'inline-block'}}></span>
-          <span>${enabled ? 'Connected: ' + sp.folderName + '/' + sp.fileName : 'Not connected'}</span>
+          <span>${enabled ? _i18n('sharedProject.connectedTo', 'Connected: {path}', {path: sp.folderName + '/' + sp.fileName}) : _i18n('sharedProject.notConnected', 'Not connected')}</span>
         </div>
         ${enabled && sp.lastSync && html`<div style=${{fontSize:'0.69rem',color:'var(--text-faint)',marginBottom:'.3rem'}}>
-          Last sync: ${new Date(sp.lastSync).toLocaleTimeString()}${sp.syncing ? ' (syncing...)' : ''}
+          ${_i18n('sharedProject.lastSync', 'Last sync:')} ${(typeof window._ccDateFmt === 'function') ? window._ccDateFmt(sp.lastSync, 'time') : new Date(sp.lastSync).toLocaleTimeString()}${sp.syncing ? ' ' + _i18n('sharedProject.syncingParen', '(syncing...)') : ''}
         </div>`}
         <div style=${{display:'flex',gap:'.3rem',marginBottom:'.4rem'}}>
           ${!enabled && html`<button onClick=${function(){_pickSharedFolder(d);}}
             disabled=${!canUse}
             style=${{padding:'.3rem .6rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'none',fontFamily:'inherit',
               background:canUse?'var(--accent)':'var(--bg-tertiary)',color:canUse?'#fff':'var(--text-faint)',
-              opacity:canUse?1:0.5}}>Link Folder</button>`}
+              opacity:canUse?1:0.5}}>${_i18n('sharedProject.linkFolder','Link Folder')}</button>`}
           ${enabled && html`<button onClick=${function(){_syncSharedProject(d);}}
             disabled=${sp.syncing}
             style=${{padding:'.3rem .6rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',
               border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit',
-              opacity:sp.syncing?0.5:1}}>${sp.syncing?'Syncing...':'Sync Now'}</button>`}
+              opacity:sp.syncing?0.5:1}}>${sp.syncing?_i18n('sharedProject.syncing', 'Syncing...'):_i18n('sharedProject.syncNow', 'Sync Now')}</button>`}
           ${enabled && html`<button onClick=${function(){_disconnectShared(d);}}
             style=${{padding:'.3rem .6rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit',
-              border:'1px solid #ef444444',background:'var(--bg-secondary)',color:'#f87171'}}>Unlink</button>`}
+              border:'1px solid #ef444444',background:'var(--bg-secondary)',color:'#f87171'}}>${_i18n('sharedProject.unlink','Unlink')}</button>`}
         </div>
         ${!canUse && html`<div style=${{fontSize:'0.69rem',color:'#eab308',lineHeight:1.6}}>
           File System Access API not available. Use Chrome or Edge.
@@ -147,7 +154,7 @@
 
   function _pickSharedFolder(d) {
     if (!window.showDirectoryPicker) {
-      alert('File System Access API not supported in this browser. Use Chrome or Edge.');
+      alert(_i18n('sharedProject.fileSystemAccessApiNot','File System Access API not supported in this browser. Use Chrome or Edge.'));
       return;
     }
     window.showDirectoryPicker({mode:'readwrite'}).then(function(dirHandle) {
@@ -248,7 +255,7 @@
     }).catch(function(e) {
       console.warn('Shared project write failed:', e);
       if (window._ccToast && e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
-        window._ccToast('Shared folder access lost — open Integrations and re-link the folder.', 'error');
+        window._ccToast(_i18n('sharedProject.sharedFolderAccessLostOpen','Shared folder access lost — open Integrations and re-link the folder.'), 'error');
       }
       throw e; // let the sync loop record the failure instead of stamping lastSync
     });

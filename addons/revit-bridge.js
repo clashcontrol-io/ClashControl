@@ -7,6 +7,13 @@
 (function() {
   'use strict';
 
+  // i18n passthrough: translated through the core's locale registry (window._cc_t) when it is
+  // present, plain English otherwise, so this addon never depends on the core being newer.
+  function _i18n(key, en, vars) {
+    if (typeof window._cc_t === 'function') return window._cc_t(key, en, vars);
+    return vars ? String(en).replace(/\{(\w+)\}/g, function(m, k) { return Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : m; }) : en;
+  }
+
   var uid = window._ccUid || function() { return Math.random().toString(36).slice(2,10).toUpperCase(); };
 
   // ── Direct Connector state ─────────────────────────────────────
@@ -78,7 +85,7 @@
     _revitReconnectDelay = Math.min((_revitReconnectDelay || 1000) * 2, 30000);
     var delay = _revitReconnectDelay;
     _revitLastDispatch({t:'UPD_REVIT_DIRECT', u:{reconnecting:true, reconnectIn:delay}});
-    _revitLastDispatch({t:'BRIDGE_LOG', logType:'info', text:'Reconnecting in ' + (delay/1000) + 's...'});
+    _revitLastDispatch({t:'BRIDGE_LOG', logType:'info', text:_i18n('revitBridge.reconnectingInS','Reconnecting in {v1}s...',{v1:(delay/1000)})});
     _revitReconnect = setTimeout(function() {
       _revitDirectConnect(_revitLastPort, _revitLastDispatch);
     }, delay);
@@ -128,8 +135,8 @@
         var url = rel.html_url || null;
         (rel.assets || []).forEach(function(a){ if (/Installer.*\.exe$/i.test(a.name) && a.browser_download_url) url = a.browser_download_url; });
         d({t:'UPD_REVIT_DIRECT', u:{ connectorUpdate: { current: currentVersion, latest: latest, url: url } }});
-        d({t:'BRIDGE_LOG', logType:'info', text:'Connector update available: v' + currentVersion + ' → v' + latest + '. Download the latest installer.'});
-        if (window._ccToast) window._ccToast('Revit Connector update available (v' + latest + ') — download the latest installer.');
+        d({t:'BRIDGE_LOG', logType:'info', text:_i18n('revitBridge.connectorUpdateAvailableVV','Connector update available: v{currentVersion} → v{latest}. Download the latest installer.',{currentVersion:currentVersion,latest:latest})});
+        if (window._ccToast) window._ccToast(_i18n('revitBridge.revitConnectorUpdateAvailableV','Revit Connector update available (v{latest}) — download the latest installer.',{latest:latest}));
       })
       .catch(function(){ /* offline / rate-limited — skip silently */ });
   }
@@ -143,7 +150,7 @@
     // restarts the clock and spams "closed before the connection is
     // established" — let the existing attempt and its watchdog resolve first.
     if (_revitWs && _revitWs.readyState === 0 && _revitLastPort === (port || 19780)) {
-      if (d) d({t:'BRIDGE_LOG', logType:'info', text:'Already connecting to Revit — please wait…'});
+      if (d) d({t:'BRIDGE_LOG', logType:'info', text:_i18n('revitBridge.alreadyConnectingToRevitPlease','Already connecting to Revit — please wait…')});
       return;
     }
     // Tear down any prior socket AND detach its handlers before opening a new
@@ -169,7 +176,7 @@
     var host = _revitHosts[_revitHostIdx];
     var url = 'ws://' + host + ':' + _revitLastPort;
     var _wsOpened = false; // did THIS socket ever reach onopen?
-    d({t:'BRIDGE_LOG', logType:'info', text:'Connecting to Revit at ' + url + '...'});
+    d({t:'BRIDGE_LOG', logType:'info', text:_i18n('revitBridge.connectingToRevitAt','Connecting to Revit at {url}...',{url:url})});
     // reconnecting:true while the WS handshake is in flight so the UI shows
     // "Connecting…" rather than "Couldn't reach Revit" before the first result.
     d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false, progress:0, reconnecting:true}});
@@ -183,7 +190,7 @@
     if (_attempt !== _revitConnectAttempt || _revitUserDisconnected) return; // superseded or user disconnected meanwhile
     var ws;
     try { ws = new WebSocket(wsUrl); _revitWs = ws; } catch(e) {
-      d({t:'BRIDGE_LOG', logType:'error', text:'WebSocket error: ' + e.message});
+      d({t:'BRIDGE_LOG', logType:'error', text:_i18n('revitBridge.websocketError','WebSocket error: {message}',{message:e.message})});
       _scheduleReconnect();
       return;
     }
@@ -197,7 +204,7 @@
     clearTimeout(_revitConnectTimeout);
     _revitConnectTimeout = setTimeout(function() {
       if (_revitWs !== ws || ws.readyState !== 0) return; // already opened/closed
-      d({t:'BRIDGE_LOG', logType:'error', text:'Revit handshake timed out after ' + (CONNECT_TIMEOUT_MS/1000) + 's. The Connector may be wedged — toggle it off then on in Revit.'});
+      d({t:'BRIDGE_LOG', logType:'error', text:_i18n('revitBridge.revitHandshakeTimedOutAfter','Revit handshake timed out after {v1}s. The Connector may be wedged — toggle it off then on in Revit.',{v1:(CONNECT_TIMEOUT_MS/1000)})});
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
       _revitLoadingEvent(false); // dismiss the loading modal — onerror/onclose won't fire for a silently-hung socket
       try { ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null; } catch(_) {}
@@ -223,7 +230,7 @@
       if (_pullOnConnect || window._ccPullOnConnect) {
         _pullOnConnect = false;
         window._ccPullOnConnect = false;
-        d({t:'BRIDGE_LOG', logType:'pull', text:'Auto-pulling model...'});
+        d({t:'BRIDGE_LOG', logType:'pull', text:_i18n('revitBridge.autoPullingModel','Auto-pulling model...')});
         setTimeout(function(){ _revitDirectExport(['all']); }, 300);
       } else if (wasReconnect) {
         // On reconnect: try session resumption first if we have cached hashes and
@@ -236,7 +243,7 @@
         }));
         var hashes = Object.keys(_elementHashCache);
         if (hasRevitModel && hashes.length > 0) {
-          d({t:'BRIDGE_LOG', logType:'info', text:'Resuming session (' + hashes.length + ' known elements)...'});
+          d({t:'BRIDGE_LOG', logType:'info', text:_i18n('revitBridge.resumingSessionKnownElements','Resuming session ({v1} known elements)...',{v1:hashes.length})});
           var payload = hashes.length > 20000
             ? (function(){ var t={}; for(var i=0;i<20000;i++) t[hashes[i]]=_elementHashCache[hashes[i]]; return t; })()
             : _elementHashCache;
@@ -277,7 +284,7 @@
         _revitHostIdx = 0; // exhausted all candidates — reset before backoff
       }
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
-      d({t:'BRIDGE_LOG', logType:'info', text:'Revit connection closed.'});
+      d({t:'BRIDGE_LOG', logType:'info', text:_i18n('revitBridge.revitConnectionClosed','Revit connection closed.')});
       _scheduleReconnect();
     };
 
@@ -287,7 +294,7 @@
       d({t:'UPD_REVIT_DIRECT', u:{connected:false, loading:false}});
       _revitLoadingEvent(false);
       // Only log error if not already reconnecting (avoid spam)
-      if (!_revitReconnectDelay) d({t:'BRIDGE_LOG', logType:'error', text:'Could not connect to Revit. Is the plugin running?'});
+      if (!_revitReconnectDelay) d({t:'BRIDGE_LOG', logType:'error', text:_i18n('revitBridge.couldNotConnectToRevit','Could not connect to Revit. Is the plugin running?')});
       // Do NOT null _revitWs here — that would defeat onclose's "is this still
       // the current socket?" guard. onclose fires right after and owns teardown
       // (null + _scheduleReconnect).
@@ -611,10 +618,10 @@
         if (msg.version && msg.version !== EXPECTED_PROTOCOL_VERSION) {
           var major = msg.version.split('.')[0], expectedMajor = EXPECTED_PROTOCOL_VERSION.split('.')[0];
           if (major !== expectedMajor) {
-            d({t:'BRIDGE_LOG', logType:'error', text:'Protocol version mismatch: plugin v' + msg.version + ', expected v' + EXPECTED_PROTOCOL_VERSION + '. Some features may not work correctly.'});
+            d({t:'BRIDGE_LOG', logType:'error', text:_i18n('revitBridge.protocolVersionMismatchPluginV','Protocol version mismatch: plugin v{version}, expected v{EXPECTED_PROTOCOL_VERSION}. Some features may not work correctly.',{version:msg.version,EXPECTED_PROTOCOL_VERSION:EXPECTED_PROTOCOL_VERSION})});
             d({t:'UPD_REVIT_DIRECT', u:{versionWarning:'Plugin v' + msg.version + ' (expected v' + EXPECTED_PROTOCOL_VERSION + ')'}});
           } else {
-            d({t:'BRIDGE_LOG', logType:'info', text:'Plugin protocol v' + msg.version + ' (minor mismatch with v' + EXPECTED_PROTOCOL_VERSION + ', should be compatible).'});
+            d({t:'BRIDGE_LOG', logType:'info', text:_i18n('revitBridge.pluginProtocolVMinorMismatch','Plugin protocol v{version} (minor mismatch with v{EXPECTED_PROTOCOL_VERSION}, should be compatible).',{version:msg.version,EXPECTED_PROTOCOL_VERSION:EXPECTED_PROTOCOL_VERSION})});
           }
         }
         if (msg.version) d({t:'UPD_REVIT_DIRECT', u:{pluginVersion:msg.version}});
@@ -630,7 +637,7 @@
         if (_revitAborted) break; // user cancelled this export
         if (_isExcluded(msg.name)) { // scoped sync: drop this model — don't mesh it
           _revitBuf = null; // its element-batches/model-end will be skipped (guards check _revitBuf)
-          d({t:'BRIDGE_LOG', logType:'info', text:'Skipping excluded model "' + (msg.name||'?') + '" (' + (msg.elementCount||'?') + ' elements).'});
+          d({t:'BRIDGE_LOG', logType:'info', text:_i18n('revitBridge.skippingExcludedModelElements','Skipping excluded model "{v1}" ({v2} elements).',{v1:(msg.name||'?'),v2:(msg.elementCount||'?')})});
           break;
         }
         var isLink = !!(msg.isLink || msg.isLinked); // connector sends isLinked, bridge expects isLink
@@ -656,7 +663,7 @@
           numberOfSaves: msg.numberOfSaves || 0
         };
         d({t:'UPD_REVIT_DIRECT', u:{loading:true, progress:0, elementCount:msg.elementCount||0}});
-        d({t:'BRIDGE_LOG', logType:'pull', text:'Receiving ' + (isLink ? 'linked model' : 'model') + ' "' + msg.name + '" (' + (msg.elementCount||'?') + ' elements)...'});
+        d({t:'BRIDGE_LOG', logType:'pull', text:_i18n('revitBridge.receivingElements','Receiving {v1} "{name}" ({v2} elements)...',{v1:(isLink ? 'linked model' : 'model'),name:msg.name,v2:(msg.elementCount||'?')})});
         break;
 
       case 'element-batch':
@@ -739,14 +746,14 @@
           _finalizeModel(msg, d);
         } else {
           // No buffer — connector notified us of a sync. Request updated model.
-          d({t:'BRIDGE_LOG', logType:'pull', text:'Revit synced to central. Pulling updated model...'});
+          d({t:'BRIDGE_LOG', logType:'pull', text:_i18n('revitBridge.revitSyncedToCentralPulling','Revit synced to central. Pulling updated model...')});
           _revitDirectExport(['all']);
         }
         break;
 
       case 'model-error':
         d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:0, exportError:msg.message||'Unknown error', exportErrorElementsSent:msg.elementsSent||0}});
-        d({t:'BRIDGE_LOG', logType:'error', text:'Export error: ' + (msg.message || 'Unknown') + (msg.elementsSent ? ' (' + msg.elementsSent + ' elements sent)' : '')});
+        d({t:'BRIDGE_LOG', logType:'error', text:_i18n('revitBridge.exportError','Export error: {v1}{v2}',{v1:(msg.message || 'Unknown'),v2:(msg.elementsSent ? ' (' + msg.elementsSent + ' elements sent)' : '')})});
         // Keep partial buffer if elements were sent — user can decide to keep or discard
         if (!msg.elementsSent) _revitBuf = null;
         break;
@@ -769,7 +776,7 @@
       case 'selection-changed':
         // Revit → Browser selection sync
         if (!_selectionSyncEnabled) break;
-        d({t:'BRIDGE_LOG', logType:'info', text:'Selection from Revit: ' + JSON.stringify(msg.globalIds || msg.elementIds || msg.revitIds || []).slice(0,80)});
+        d({t:'BRIDGE_LOG', logType:'info', text:_i18n('revitBridge.selectionFromRevit','Selection from Revit: {v1}',{v1:JSON.stringify(msg.globalIds || msg.elementIds || msg.revitIds || []).slice(0,80)})});
         _handleSelectionChanged(msg, d);
         break;
 
@@ -781,14 +788,14 @@
 
       case 'session-expired':
         // Connector cache is empty (Revit restarted) — clear local hashes and do full export
-        d({t:'BRIDGE_LOG', logType:'info', text:'Session expired on Revit side — requesting full re-export...'});
+        d({t:'BRIDGE_LOG', logType:'info', text:_i18n('revitBridge.sessionExpiredOnRevitSide','Session expired on Revit side — requesting full re-export...')});
         _elementHashCache = {};
         try { localStorage.removeItem('cc_element_hashes'); } catch(e) {}
         setTimeout(function(){ _revitDirectExport(['all']); }, 300);
         break;
 
       case 'error':
-        d({t:'BRIDGE_LOG', logType:'error', text:'Revit: ' + (msg.message || 'Unknown error')});
+        d({t:'BRIDGE_LOG', logType:'error', text:_i18n('revitBridge.revit','Revit: {v1}',{v1:(msg.message || 'Unknown error')})});
         break;
 
       case 'export-start':
@@ -797,14 +804,14 @@
         // the Smart Bridge can emit a deterministic projectKey ("revit:<uid>")
         // that matches PDRA/Loam for the same open document.
         if (msg.projectUniqueId) { try { window._ccRevitProjectUniqueId = msg.projectUniqueId; } catch(_e) {} }
-        d({t:'BRIDGE_LOG', logType:'pull', text:'Export started — ' + (msg.totalModels||1) + ' model(s), ' + (msg.totalElements||'?') + ' elements total'});
+        d({t:'BRIDGE_LOG', logType:'pull', text:_i18n('revitBridge.exportStartedModelSElements','Export started — {v1} model(s), {v2} elements total',{v1:(msg.totalModels||1),v2:(msg.totalElements||'?')})});
         // Single loading-card event for the whole pull (cleared at export-end) —
         // no per-model/per-batch events (those caused the slow-pull regression).
         _revitLoadingEvent(true, 'Receiving model from Revit…');
         break;
 
       case 'export-end':
-        d({t:'BRIDGE_LOG', logType:'pull', text:'Export complete.'});
+        d({t:'BRIDGE_LOG', logType:'pull', text:_i18n('revitBridge.exportComplete','Export complete.')});
         _revitLoadingEvent(false);
         break;
     }
@@ -858,7 +865,7 @@
       // (if any) and each link group. Swap _revitBuf for each call so
       // the rest of the finalise logic works on the current group.
       var _origBuf = _revitBuf;
-      d({t:'BRIDGE_LOG', logType:'pull', text:'Splitting incoming buffer into ' + (_hostElements.length > 0 ? '1 host + ' : '') + _groupKeys.length + ' linked model(s)'});
+      d({t:'BRIDGE_LOG', logType:'pull', text:_i18n('revitBridge.splittingIncomingBufferIntoLinked','Splitting incoming buffer into {v1}{v2} linked model(s)',{v1:(_hostElements.length > 0 ? '1 host + ' : ''),v2:_groupKeys.length})});
       if (_hostElements.length > 0) {
         _revitBuf = {
           name: _origBuf.name,
@@ -1016,7 +1023,7 @@
       };
       window._ccDispatch({t:'REPLACE_MODEL', id:existingModel.id, v:modelData});
       _revitModelMap[mapKey] = existingModel.id;
-      d({t:'BRIDGE_LOG', logType:'pull', text:'Updated model "' + _revitBuf.rawName + '": ' + finalElements.length + ' elements (v' + modelData._version + ').'});
+      d({t:'BRIDGE_LOG', logType:'pull', text:_i18n('revitBridge.updatedModelElementsV','Updated model "{rawName}": {v1} elements (v{_version}).',{rawName:_revitBuf.rawName,v1:finalElements.length,_version:modelData._version})});
     } else {
       // ADD new model
       var modelId = uid();
@@ -1028,7 +1035,7 @@
       };
       window._ccDispatch({t:'ADD_MODEL', v:modelData2});
       _revitModelMap[mapKey] = modelId;
-      d({t:'BRIDGE_LOG', logType:'pull', text:'Model "' + _revitBuf.rawName + '" loaded: ' + _revitBuf.elements.length + ' elements.'});
+      d({t:'BRIDGE_LOG', logType:'pull', text:_i18n('revitBridge.modelLoadedElements','Model "{rawName}" loaded: {v1} elements.',{rawName:_revitBuf.rawName,v1:_revitBuf.elements.length})});
     }
 
     d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:1}});
@@ -1281,11 +1288,11 @@
 
   function _keepPartialModel(d) {
     if (!_revitBuf || _revitBuf.elements.length === 0) {
-      d({t:'BRIDGE_LOG', logType:'info', text:'No partial data to keep.'});
+      d({t:'BRIDGE_LOG', logType:'info', text:_i18n('revitBridge.noPartialDataToKeep','No partial data to keep.')});
       _revitBuf = null;
       return;
     }
-    d({t:'BRIDGE_LOG', logType:'info', text:'Keeping partial model (' + _revitBuf.elements.length + ' elements).'});
+    d({t:'BRIDGE_LOG', logType:'info', text:_i18n('revitBridge.keepingPartialModelElements','Keeping partial model ({v1} elements).',{v1:_revitBuf.elements.length})});
     _finalizeModel({}, d);
   }
 
@@ -1300,14 +1307,14 @@
     }
     _revitBuf = null;
     d({t:'UPD_REVIT_DIRECT', u:{exportError:null, exportErrorElementsSent:0}});
-    d({t:'BRIDGE_LOG', logType:'info', text:'Partial export data discarded.'});
+    d({t:'BRIDGE_LOG', logType:'info', text:_i18n('revitBridge.partialExportDataDiscarded','Partial export data discarded.')});
   }
 
   // ── Push clashes to Revit (manual only) ────────────────────────
 
   function _revitDirectPushClashes(s, d) {
     if (!_revitWs || _revitWs.readyState !== 1) {
-      d({t:'BRIDGE_LOG', logType:'error', text:'Not connected to Revit.'});
+      d({t:'BRIDGE_LOG', logType:'error', text:_i18n('revitBridge.notConnectedToRevit','Not connected to Revit.')});
       return;
     }
     var clashData = s.clashes.filter(function(c) {
@@ -1353,7 +1360,7 @@
       issues: issueData
     }));
     d({t:'UPD_REVIT_DIRECT', u:{lastPush:Date.now()}});
-    d({t:'BRIDGE_LOG', logType:'push', text:'Pushed ' + clashData.length + ' clashes + ' + issueData.length + ' issues to Revit.'});
+    d({t:'BRIDGE_LOG', logType:'push', text:_i18n('revitBridge.pushedClashesIssuesToRevit','Pushed {v1} clashes + {v2} issues to Revit.',{v1:clashData.length,v2:issueData.length})});
   }
 
   // ── Port persistence ───────────────────────────────────────────
@@ -1819,7 +1826,7 @@
     if (!bridge.provider || !bridge.apiKey) return Promise.reject(new Error('Configure AI provider and API key first'));
 
     d({t:'UPD_BRIDGE',u:{syncing:true}});
-    d({t:'BRIDGE_LOG',logType:'push',text:'Pushing ' + s.clashes.filter(function(c){return c.status==='open';}).length + ' open clashes + ' + s.issues.filter(function(i){return i.status==='open';}).length + ' open issues to Revit...'});
+    d({t:'BRIDGE_LOG',logType:'push',text:_i18n('revitBridge.pushingOpenClashesOpenIssues','Pushing {v1} open clashes + {v2} open issues to Revit...',{v1:s.clashes.filter(function(c){return c.status==='open';}).length,v2:s.issues.filter(function(i){return i.status==='open';}).length})});
 
     var tools = _buildCCTools();
     var userMsg = 'Push all open clashes and issues from ClashControl to Revit. First use get_clashes and get_issues to read the data, then describe the Revit MCP calls needed to create markers and tag elements. Finally summarize what would be pushed.';
@@ -1839,7 +1846,7 @@
         return summary;
       })
       .catch(function(err) {
-        d({t:'BRIDGE_LOG',logType:'error',text:'Push failed: '+err.message});
+        d({t:'BRIDGE_LOG',logType:'error',text:_i18n('revitBridge.pushFailed','Push failed: {message}',{message:err.message})});
         d({t:'UPD_BRIDGE',u:{syncing:false}});
         throw err;
       });
@@ -1850,7 +1857,7 @@
     if (!bridge.provider || !bridge.apiKey) return Promise.reject(new Error('Configure AI provider and API key first'));
 
     d({t:'UPD_BRIDGE',u:{syncing:true}});
-    d({t:'BRIDGE_LOG',logType:'pull',text:'Pulling status updates from Revit...'});
+    d({t:'BRIDGE_LOG',logType:'pull',text:_i18n('revitBridge.pullingStatusUpdatesFromRevit','Pulling status updates from Revit...')});
 
     var tools = _buildCCTools();
     var userMsg = 'Pull resolution status from Revit back to ClashControl. First check Revit MCP status, then check which clashes have been resolved in Revit, and update ClashControl accordingly using update_clash_status and update_issue_status tools.';
@@ -1867,25 +1874,25 @@
         return summary;
       })
       .catch(function(err) {
-        d({t:'BRIDGE_LOG',logType:'error',text:'Pull failed: '+err.message});
+        d({t:'BRIDGE_LOG',logType:'error',text:_i18n('revitBridge.pullFailed','Pull failed: {message}',{message:err.message})});
         d({t:'UPD_BRIDGE',u:{syncing:false}});
         throw err;
       });
   }
 
   function _testBridgeConnection(bridge, d) {
-    d({t:'BRIDGE_LOG',logType:'info',text:'Testing connection to '+bridge.provider+'...'});
+    d({t:'BRIDGE_LOG',logType:'info',text:_i18n('revitBridge.testingConnectionTo','Testing connection to {provider}...',{provider:bridge.provider})});
     var tools = _buildCCTools();
     return _callAIWithTools(bridge.provider, bridge.apiKey, BRIDGE_SYSTEM_PROMPT, 'Say "Connection successful" and nothing else.', tools.slice(0,1), bridge)
       .then(function(response) {
         var parsed = _parseAIToolCalls(bridge.provider, response);
         d({t:'UPD_BRIDGE',u:{connected:true}});
-        d({t:'BRIDGE_LOG',logType:'info',text:'Connected to '+bridge.provider+': '+(parsed.text||'OK')});
+        d({t:'BRIDGE_LOG',logType:'info',text:_i18n('revitBridge.connectedTo','Connected to {provider}: {v1}',{provider:bridge.provider,v1:(parsed.text||'OK')})});
         return true;
       })
       .catch(function(err) {
         d({t:'UPD_BRIDGE',u:{connected:false}});
-        d({t:'BRIDGE_LOG',logType:'error',text:'Connection failed: '+err.message});
+        d({t:'BRIDGE_LOG',logType:'error',text:_i18n('revitBridge.connectionFailed','Connection failed: {message}',{message:err.message})});
         return false;
       });
   }

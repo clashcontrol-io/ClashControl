@@ -14,6 +14,13 @@
 (function() {
   'use strict';
 
+  // i18n passthrough: translated through the core's locale registry (window._cc_t) when it is
+  // present, plain English otherwise, so this addon never depends on the core being newer.
+  function _i18n(key, en, vars) {
+    if (typeof window._cc_t === 'function') return window._cc_t(key, en, vars);
+    return vars ? String(en).replace(/\{(\w+)\}/g, function(m, k) { return Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : m; }) : en;
+  }
+
   // Address candidates tried in order. 127.0.0.1 (IPv4) is direct loopback;
   // Browsers can ONLY reach the bridge over IPv4 127.0.0.1: Chrome's CSP
   // engine rejects IPv6 literals like [::1] in connect-src as "invalid source"
@@ -2101,14 +2108,7 @@
           var ok = true;
           try {
             ok = window.confirm(
-              'Enable Smart Bridge?\n\n' +
-              'This will download an executable — ' + fileName + ' — from ' +
-              'GitHub Releases (github.com/clashcontrol-io/ClashControl), ' +
-              'a program that runs on your machine and lets AI assistants ' +
-              '(Claude, ChatGPT, etc.) drive ClashControl over a local ' +
-              'connection. Nothing is installed automatically; you run it ' +
-              'yourself after it downloads.\n\n' +
-              'Continue?'
+              _i18n('smartBridge.enableSmartBridgeThisWill','Enable Smart Bridge?\n\nThis will download an executable — {fileName} — from GitHub Releases (github.com/clashcontrol-io/ClashControl), a program that runs on your machine and lets AI assistants (Claude, ChatGPT, etc.) drive ClashControl over a local connection. Nothing is installed automatically; you run it yourself after it downloads.\n\nContinue?',{fileName:fileName})
             );
           } catch (e) { ok = true; } // no confirm() available — don't block headless/test contexts
           if (!ok) {
@@ -2157,7 +2157,7 @@
             Installer <code style=${{background:'var(--bg-tertiary)',padding:'1px 4px',borderRadius:2,fontSize:'0.57rem'}}>${_installerFile}</code>${' '}can be deleted from your Downloads folder
           </span>
           <button onClick=${_copyInstallerName}
-            style=${{padding:'2px 7px',borderRadius:4,fontSize:'0.57rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--bg-tertiary)',color:'var(--text-muted)',fontFamily:'inherit',flexShrink:0}}>Copy name</button>
+            style=${{padding:'2px 7px',borderRadius:4,fontSize:'0.57rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--bg-tertiary)',color:'var(--text-muted)',fontFamily:'inherit',flexShrink:0}}>${_i18n('smartBridge.copyName','Copy name')}</button>
         </div>`;
 
         // Claude Desktop MCP config snippet — just the block to merge in,
@@ -2213,7 +2213,7 @@
           return html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
             <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
               <div style=${{width:7,height:7,border:'1.5px solid #fbbf24',borderTopColor:'transparent',borderRadius:'50%',animation:'cc-spin .6s linear infinite',flexShrink:0}}></div>
-              <span style=${{fontSize:'0.75rem',color:'#fbbf24',flex:1}}>Updating bridge\u2026</span>
+              <span style=${{fontSize:'0.75rem',color:'#fbbf24',flex:1}}>${_i18n('smartBridge.updatingBridge','Updating bridge…')}</span>
             </div>
             <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.5}}>
               Downloading update and restarting. Reconnecting automatically\u2026
@@ -2226,7 +2226,7 @@
           return html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
             <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
               <div style=${{width:7,height:7,border:'1.5px solid #fbbf24',borderTopColor:'transparent',borderRadius:'50%',animation:'cc-spin .6s linear infinite',flexShrink:0}}></div>
-              <span style=${{fontSize:'0.75rem',color:'#fbbf24',flex:1}}>Reconnecting\u2026</span>
+              <span style=${{fontSize:'0.75rem',color:'#fbbf24',flex:1}}>${_i18n('smartBridge.reconnecting','Reconnecting…')}</span>
             </div>
             <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.5}}>
               Bridge updated and restarted. Reconnecting automatically\u2026
@@ -2253,7 +2253,7 @@
                 Update available${sb.updateVersion ? ': v' + sb.updateVersion : ''}
               </span>
               ${_updateHref && html`<a href=${_updateHref} target="_blank" rel="noopener"
-                style=${{fontSize:'0.63rem',fontWeight:600,color:'#fbbf24',textDecoration:'none',background:'rgba(234,179,8,.15)',padding:'2px 7px',borderRadius:4,flexShrink:0}}>Download</a>`}
+                style=${{fontSize:'0.63rem',fontWeight:600,color:'#fbbf24',textDecoration:'none',background:'rgba(234,179,8,.15)',padding:'2px 7px',borderRadius:4,flexShrink:0}}>${_i18n('smartBridge.download','Download')}</a>`}
             </div>`}
             ${!sb.llmConnected && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',lineHeight:1.6}}>
               Smart Bridge is running. Connect your AI — one click, no API key:
@@ -2268,7 +2268,7 @@
               <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
                 <span style=${{fontSize:'0.69rem',fontWeight:600,color:'#c084fc',flex:1}}>Claude Desktop / Claude Code</span>
                 <button id="cc-sb-claude-btn" onClick=${_autoConfigureClaude}
-                  style=${{..._btnSmall,background:'#7c3aed',color:'#fff',flexShrink:0}}>Configure Claude</button>
+                  style=${{..._btnSmall,background:'#7c3aed',color:'#fff',flexShrink:0}}>${_i18n('smartBridge.configureClaude','Configure Claude')}</button>
               </div>
               <div style=${{fontSize:'0.58rem',color:'var(--text-faint)',lineHeight:1.4}}>
                 ${os === 'win'
@@ -2281,7 +2281,7 @@
                 ${' in the ClashControl folder for all 66 tools.'}
               </div>
               <details>
-                <summary style=${{fontSize:'0.58rem',color:'var(--text-faint)',cursor:'pointer',userSelect:'none'}}>Show block to add</summary>
+                <summary style=${{fontSize:'0.58rem',color:'var(--text-faint)',cursor:'pointer',userSelect:'none'}}>${_i18n('smartBridge.showBlockToAdd','Show block to add')}</summary>
                 <pre style=${{..._codeStyle,margin:'.3rem 0 0',padding:'.35rem .4rem',whiteSpace:'pre-wrap',lineHeight:1.4,fontSize:'0.57rem'}}>${_claudeConfig}</pre>
               </details>
             </div>`}
@@ -2301,7 +2301,7 @@
               </div>
               <code style=${_codeStyle}>POST http://localhost:19803/call/{tool_name}</code>
               <div style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>
-                <a href="http://localhost:19803/tools" target="_blank" rel="noopener" style=${{color:'var(--accent)',textDecoration:'underline'}}>View all tools</a>
+                <a href="http://localhost:19803/tools" target="_blank" rel="noopener" style=${{color:'var(--accent)',textDecoration:'underline'}}>${_i18n('smartBridge.viewAllTools','View all tools')}</a>
                 ${' · '}
                 <a href="http://localhost:19803/openapi.json" target="_blank" rel="noopener" style=${{color:'var(--accent)',textDecoration:'underline'}}>OpenAPI spec</a>
               </div>
@@ -2384,14 +2384,14 @@
 
               return html`<div style=${{background:'var(--bg-secondary)',borderRadius:6,padding:'.5rem',display:'flex',flexDirection:'column',gap:'.4rem'}}>
                 <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
-                  <span style=${{fontSize:'0.69rem',fontWeight:600,color:'#fb923c',flex:1}}>Use your own AI</span>
+                  <span style=${{fontSize:'0.69rem',fontWeight:600,color:'#fb923c',flex:1}}>${_i18n('smartBridge.useYourOwnAi','Use your own AI')}</span>
                   <span style=${{fontSize:'0.57rem',color:'var(--text-faint)',background:'var(--bg-tertiary)',padding:'1px 5px',borderRadius:3}}>2.1</span>
                 </div>
                 <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.4}}>
                   One click connects the LLM running on your desktop (Ollama, LM Studio, llama.cpp, Jan) — no API key. The bridge runs the agent loop.
                 </div>
                 <button id="cc-sb-detect-btn" onClick=${_detectLocal}
-                  style=${{..._btnSmall,background:'var(--accent)',color:'#fff',alignSelf:'stretch',textAlign:'center',fontWeight:600}}>Connect my desktop LLM</button>
+                  style=${{..._btnSmall,background:'var(--accent)',color:'#fff',alignSelf:'stretch',textAlign:'center',fontWeight:600}}>${_i18n('smartBridge.connectMyDesktopLlm','Connect my desktop LLM')}</button>
 
                 <details style=${{borderRadius:4,overflow:'hidden'}}>
                   <summary style=${{fontSize:'0.6rem',color:'var(--text-faint)',cursor:'pointer',userSelect:'none',padding:'.15rem 0'}}>
@@ -2399,7 +2399,7 @@
                   </summary>
                   <div key=${cfg.provider + cfg.model + cfg.baseUrl} style=${{display:'flex',flexDirection:'column',gap:'.3rem',paddingTop:'.35rem'}}>
                     <div>
-                      <label style=${_labelStyle}>Provider</label>
+                      <label style=${_labelStyle}>${_i18n('smartBridge.provider','Provider')}</label>
                       <select id="cc-sb-llm-provider" onChange=${_onProviderChange}
                         style=${{..._inputStyle,padding:'.2rem .35rem'}}>
                         <option value="ollama" selected=${cfg.provider==='ollama'}>Ollama (local)</option>
@@ -2410,15 +2410,15 @@
                       </select>
                     </div>
                     <div>
-                      <label style=${_labelStyle}>Model</label>
+                      <label style=${_labelStyle}>${_i18n('smartBridge.model','Model')}</label>
                       <input id="cc-sb-llm-model" type="text" placeholder="llama3.2" defaultValue=${cfg.model} style=${_inputStyle} />
                     </div>
                     <div>
-                      <label style=${_labelStyle}>Base URL</label>
+                      <label style=${_labelStyle}>${_i18n('smartBridge.baseUrl','Base URL')}</label>
                       <input id="cc-sb-llm-url" type="text" placeholder="http://localhost:11434" defaultValue=${cfg.baseUrl} style=${_inputStyle} />
                     </div>
                     <button id="cc-sb-llm-save-btn" onClick=${_saveLlmCfg}
-                      style=${{..._btnSmall,background:'var(--bg-tertiary)',color:'var(--text-muted)',alignSelf:'flex-start'}}>Save</button>
+                      style=${{..._btnSmall,background:'var(--bg-tertiary)',color:'var(--text-muted)',alignSelf:'flex-start'}}>${_i18n('smartBridge.save','Save')}</button>
                   </div>
                 </details>
 
@@ -2433,7 +2433,7 @@
                       ${m.content}
                     </div>`;
                   })}
-                  ${sb.chatBusy && html`<div style=${{fontSize:'0.6rem',color:'var(--text-faint)',fontStyle:'italic',alignSelf:'flex-start',padding:'0 .2rem'}}>Thinking\u2026</div>`}
+                  ${sb.chatBusy && html`<div style=${{fontSize:'0.6rem',color:'var(--text-faint)',fontStyle:'italic',alignSelf:'flex-start',padding:'0 .2rem'}}>${_i18n('smartBridge.thinking','Thinking…')}</div>`}
                 </div>`}
 
                 ${sb.chatError && html`<div style=${{fontSize:'0.6rem',color:'#f87171',padding:'.2rem .3rem',background:'rgba(248,113,113,.08)',borderRadius:4}}>${sb.chatError}</div>`}
@@ -2449,7 +2449,7 @@
                   </button>
                 </div>
                 ${msgs.length > 0 && html`<button onClick=${function(){ if(d) d({t:'UPD_SMART_BRIDGE',u:{chatMessages:[],chatError:null}}); }}
-                  style=${{..._btnSmall,background:'transparent',color:'var(--text-faint)',border:'1px solid var(--border)',alignSelf:'flex-start'}}>Clear chat</button>`}
+                  style=${{..._btnSmall,background:'transparent',color:'var(--text-faint)',border:'1px solid var(--border)',alignSelf:'flex-start'}}>${_i18n('smartBridge.clearChat','Clear chat')}</button>`}
               </div>`;
             })()}
 
@@ -2477,16 +2477,16 @@
         // Failed state
         if (sb.failed) {
           return html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
-            <div style=${{fontSize:'0.69rem',color:'#fca5a5'}}>Could not connect to Smart Bridge.</div>
+            <div style=${{fontSize:'0.69rem',color:'#fca5a5'}}>${_i18n('smartBridge.couldNotConnectTo','Could not connect to Smart Bridge.')}</div>
             <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.5}}>
               Start the bridge manually:<br/>
               <code style=${{fontSize:'0.57rem',background:'var(--bg-tertiary)',padding:'2px 4px',borderRadius:3,wordBreak:'break-all'}}>${dl.installPath}</code>
             </div>
             <div style=${{display:'flex',gap:'.3rem'}}>
               <button onClick=${function(){ _connectBridge(d); }}
-                style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit'}}>Retry</button>
+                style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit'}}>${_i18n('smartBridge.retry','Retry')}</button>
               <button onClick=${function(){ _triggerDownload(); _connectBridge(d, {installing:true}); }}
-                style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',background:'#1e3a5f',color:'#93c5fd',fontFamily:'inherit'}}>Re-download</button>
+                style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',background:'#1e3a5f',color:'#93c5fd',fontFamily:'inherit'}}>${_i18n('smartBridge.reDownload','Re-download')}</button>
             </div>
           </div>`;
         }
@@ -2498,10 +2498,10 @@
           </div>
           ${sb.wasInstalled ?
             html`<button onClick=${function(){ _connectBridge(d); }}
-              style=${{padding:'.3rem .7rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit',width:'100%'}}>Connect to Smart Bridge</button>
+              style=${{padding:'.3rem .7rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit',width:'100%'}}>${_i18n('smartBridge.connectToSmartBridge','Connect to Smart Bridge')}</button>
             ${_cleanupRow}` :
             html`<button onClick=${function(){ _triggerDownload(); _connectBridge(d, {installing:true}); }}
-              style=${{padding:'.3rem .7rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit',width:'100%'}}>Install & Connect</button>`}
+              style=${{padding:'.3rem .7rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit',width:'100%'}}>${_i18n('smartBridge.installConnect','Install & Connect')}</button>`}
           <div style=${{display:'flex',gap:'.3rem',flexWrap:'wrap'}}>
             ${Object.keys(_downloads).map(function(k) {
               var d2 = _downloads[k];

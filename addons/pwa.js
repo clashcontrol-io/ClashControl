@@ -5,6 +5,13 @@
 (function() {
   'use strict';
 
+  // i18n passthrough: translated through the core's locale registry (window._cc_t) when it is
+  // present, plain English otherwise, so this addon never depends on the core being newer.
+  function _i18n(key, en, vars) {
+    if (typeof window._cc_t === 'function') return window._cc_t(key, en, vars);
+    return vars ? String(en).replace(/\{(\w+)\}/g, function(m, k) { return Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : m; }) : en;
+  }
+
   var _ccInstallPrompt = null;
   var _updateCheckTimer = null;
   var _onControllerChange = null;
@@ -98,11 +105,11 @@
       var swActive = pwa.swActive || (navigator.serviceWorker && navigator.serviceWorker.controller);
       var swStatus = swActive ? 'active' : pwa.swError ? 'error' : pwa.swRegistered ? 'registered' : 'inactive';
       var swColor = swStatus === 'active' ? '#22c55e' : swStatus === 'registered' ? '#eab308' : '#64748b';
-      var swText = swStatus === 'active' ? 'Service worker active'
-        : swStatus === 'registered' ? 'Service worker installed — will activate on next reload'
-        : swStatus === 'error' ? 'Service worker error: ' + (pwa.swErrorMsg || 'registration failed')
-        : !('serviceWorker' in navigator) ? 'Service workers not supported'
-        : 'Service worker not active';
+      var swText = swStatus === 'active' ? _i18n('pwa.swActive', 'Service worker active')
+        : swStatus === 'registered' ? _i18n('pwa.swRegistered', 'Service worker installed — will activate on next reload')
+        : swStatus === 'error' ? _i18n('pwa.swError', 'Service worker error: {msg}', {msg: (pwa.swErrorMsg || _i18n('pwa.swRegistrationFailed', 'registration failed'))})
+        : !('serviceWorker' in navigator) ? _i18n('pwa.swUnsupported', 'Service workers not supported')
+        : _i18n('pwa.swInactive', 'Service worker not active');
 
       return html`<div style=${{padding:'.5rem 0',fontSize:'0.78rem',color:'var(--text-secondary)',lineHeight:1.7}}>
         <div style=${{display:'flex',alignItems:'center',gap:'.4rem',marginBottom:'.4rem'}}>
@@ -115,12 +122,12 @@
             else window.location.reload();
           });
         }} style=${{padding:'.35rem .7rem',borderRadius:6,background:'var(--accent)',color:'#fff',fontWeight:600,fontSize:'0.8rem',border:'none',cursor:'pointer',marginBottom:'.4rem',fontFamily:'inherit'}}>
-          Update available — click to update</button>`}
+          ${_i18n('pwa.updateAvailable', 'Update available — click to update')}</button>`}
         ${canInstall && html`<button onClick=${function(){
           if(_ccInstallPrompt){_ccInstallPrompt.prompt();_ccInstallPrompt.userChoice.then(function(){_ccInstallPrompt=null;d({t:'UPD_PWA',u:{installAvailable:false}});});}
         }} style=${{padding:'.35rem .7rem',borderRadius:6,background:'#2563eb',color:'#fff',fontWeight:600,fontSize:'0.8rem',border:'none',cursor:'pointer',fontFamily:'inherit'}}>
-          Install as Desktop App</button>`}
-        ${!hasUpdate && !canInstall && html`<span style=${{color:'var(--text-faint)'}}>Everything up to date.</span>`}
+          ${_i18n('pwa.installAsDesktopApp', 'Install as Desktop App')}</button>`}
+        ${!hasUpdate && !canInstall && html`<span style=${{color:'var(--text-faint)'}}>${_i18n('pwa.everythingUpToDate','Everything up to date.')}</span>`}
       </div>`;
     }
   });
