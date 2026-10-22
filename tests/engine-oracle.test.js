@@ -68,6 +68,10 @@ const KNOWN_DISCREPANCIES = {
   'duct-above-wall-flush-side-30mm': ['distance', 'nan'],
   'far-100km-gap-49.9mm-x': ['distance', 'nan'],
   'far-100km-gap-50.1mm-x': ['distance', 'nan'],
+  // ... and the same NaN pseudo-hits fill the 8-point collect pass of a REAL
+  // crossing; _postProcessIntersectPoints drops them all -> hard clash missed
+  // (wall + round column standing on the same floor plane).
+  'wall-end-in-round-column-shared-floor': ['hard', 'final'],
   // [E4] The kernel reports touching faces as a hit; "touch is not a clash"
   // is only enforced by the AABB-overlap-volume filter, which is 0 only for
   // axis-aligned contact. A face contact on a rotated plane becomes HARD.
@@ -294,6 +298,11 @@ function analyticFixtures() {
   // faces that share a plane but are apart: the tri-tri interval step divides 0/0
   add('shared-plane-diagonal-gap-500mm', box(0, 1, 0, 1, 0, 1), box(-1, 0, 0, 1, 1.5, 3), 'separate', { dist: 0.5 });
   add('duct-above-wall-flush-side-30mm', box(0, 0.2, 0, 5, 0, 3), box(0.2, 0.6, 1, 2, g(3.03), 3.4), 'clearance', { dist: g(3.03) - 3 });
+  // a real crossing whose triangle pairs include shared-plane ones: the NaN
+  // pseudo-hits fill the 8-point collect pass and the box filter drops them all
+  add('wall-end-in-round-column-shared-floor', box(0, 1, -0.12, 0.12, 0, 3), cylinder('z', 0, 2.9, 1.0, 0, 0.22, 8), 'crossing');
+  add('wall-end-in-square-column-shared-floor', box(0, 1, -0.12, 0.12, 0, 3), box(0.8, 1.2, -0.2, 0.2, 0, 2.9), 'crossing', { mtd: 0.2 });
+  add('partition-beside-column-shared-floor-109mm', transform(box(-1.5, 1.5, -0.05, 0.05, 0, 3), rot(0, 0, 0.3), [0, 0, 0]), box(1.2, 1.6, 0.6, 1.0, 0, 2.9), 'separate');
   // face contact on a rotated plane (exactly shared Float32 vertices): AABBs overlap
   {
     const A = transform(box(-0.5, 0.5, -0.2, 0.2, 0, 1), rot(0, 0, Math.PI / 6), [0, 0, 0]);
