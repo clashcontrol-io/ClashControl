@@ -20,7 +20,11 @@
 //                box, isolate (ghosted rest), hidden facade
 //   batched    — the same architecture forced into BatchedMesh (_ccForceBatch)
 //   instanced  — columns as IfcMappedItem -> InstancedMesh
+//   verify     — the per-device verification behind the flag's default 'auto' mode
+//                (self-test refusal, persistence, version change, verified, mismatch)
 //   large      — 6 storeys x 3 bays (CC_OCCL_LARGE=NxB) with fit-out (desks, partitions) + MEP;
+//                also a detection run: the pass stands down (why 'detecting') and
+//                the clash list is identical with the pass on vs off;
 //                also measures orbit frame time / triangles on vs off
 // Optional: CC_PROBE_FILE=/abs/model.ifc or CC_PROBE_FILES=a.ifc,b.ifc adds a
 // "probe" scenario on your own files (nothing about them is written anywhere
@@ -181,7 +185,7 @@ async function captureView(page, view) {
     oc.adaptive = false;
     oc.ignoreSelfTest = !!view.ignoreSelfTest;
     const shot = (on) => new Promise((resolve) => {
-      oc.setEnabled(on);
+      if (view.auto) oc.setMode(on ? 'auto' : 'off'); else oc.setEnabled(on);
       window._ccPendingScreenshot = (url) => {
         const info = S.renderer.info.render;
         resolve({ url, tris: info.triangles, calls: info.calls, stats: oc.stats });
@@ -265,6 +269,54 @@ async function orbitPerf(page, frames) {
 // Eye 1.6 m above the model's lowest point. The "centre" views put the
 // camera inside the office's corridor wall (an element around the lens: the
 // pass must not cull through it); the others stand in a room.
+// Detection must never compete with the pass: frames rendered while a run is
+// live report why:'detecting', and the clash list is identical with the pass
+// forced on vs off (field for field; fields that differ between two
+// identical off-runs, e.g. ids/timestamps, are excluded).
+async function detectionCheck(page) {
+  return page.evaluate(async () => {
+    const oc = window._ccOcclusion, raf = () => new Promise((r) => requestAnimationFrame(r));
+    const rules = { hard: true, maxGap: 0.05, excludeSameDiscipline: false, selfClashModels: 'none', fullRerun: true };
+    const run = async (mode) => {
+      oc.setMode(mode); oc.adaptive = false; oc.ignoreSelfTest = true;
+      for (let i = 0; i < 4; i++) await raf();
+      const frames = [];
+      const onFrame = () => { const active = window._ccDetectionActive(); queueMicrotask(() => frames.push({ active, why: oc.stats && oc.stats.why, ran: !!(oc.stats && oc.stats.ran) })); };
+      window._ccHasFrameListener = true; window.addEventListener('cc-render-frame', onFrame);
+      let live = true;
+      const pump = () => { if (!live) return; window._ccInvalidate(1); requestAnimationFrame(pump); };
+      pump();
+      // deterministic probes of the frame's pass while the run is live: right
+      // after it starts, and inside its progress events
+      const probes = [];
+      const probe = () => { const active = window._ccDetectionActive(); const st = oc.probe(); probes.push({ active, why: st && st.why, ran: !!(st && st.ran) }); };
+      window.addEventListener('cc-detect-progress', probe);
+      let result;
+      try { const p = window.ClashControl.runDetection(rules); probe(); result = await p; }
+      finally { live = false; window.removeEventListener('cc-render-frame', onFrame); window.removeEventListener('cc-detect-progress', probe); window._ccHasFrameListener = false; }
+      probe(); // after the run: the pass must be back
+      frames.push(...probes.map((x) => Object.assign({ probe: true }, x)));
+      await raf(); await raf();
+      return { result: result || [], frames };
+    };
+    const off1 = await run('off'), off2 = await run('off'), on = await run('force');
+    const keys = new Set(); [off1, off2, on].forEach((r) => r.result.forEach((c) => Object.keys(c).forEach((k) => keys.add(k))));
+    const valuesOf = (list, k) => list.map((c) => JSON.stringify(c[k] === undefined ? null : c[k])).sort().join('\n');
+    const volatile = [...keys].filter((k) => valuesOf(off1.result, k) !== valuesOf(off2.result, k));
+    const canon = (list) => list.map((c) => JSON.stringify(Object.keys(c).filter((k) => !volatile.includes(k)).sort().map((k) => [k, c[k] === undefined ? null : c[k]]))).sort();
+    const a = canon(off1.result), b = canon(on.result);
+    let firstDiff = null;
+    if (a.length !== b.length) firstDiff = 'count ' + a.length + ' vs ' + b.length;
+    else for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) { firstDiff = a[i].slice(0, 300) + ' VS ' + b[i].slice(0, 300); break; }
+    const during = on.frames.filter((f) => f.active);
+    const after = on.frames.filter((f) => f.probe && !f.active).pop();
+    return { clashes: on.result.length, fieldsCompared: [...keys].length - volatile.length, volatile, identical: !firstDiff, firstDiff,
+      framesDuringDetection: during.length, whysDuringDetection: [...new Set(during.map((f) => f.why))], ranDuringDetection: during.filter((f) => f.ran).length,
+      naturalFramesDuring: during.filter((f) => !f.probe).length, probesDuring: during.filter((f) => f.probe).length,
+      afterRun: after || null };
+  });
+}
+
 const interiorViews = [
   { name: 'interior, in a room, +X', setup: [{ interior: { angle: 0, offset: [-0.25, -0.25] } }] },
   { name: 'interior, in a room, -X', setup: [{ interior: { angle: Math.PI, offset: [0.25, 0.25] } }] },
@@ -299,7 +351,7 @@ const scenarios = [
     { name: 'opening (fitAll)', setup: ['fitAll'] },
     ...interiorViews.slice(0, 3),
   ] },
-  { name: 'large', urls: ['/__fx__/large-architecture.ifc', '/__fx__/large-mep.ifc'], mustCull: true, perf: 48, ignoreSelfTest: true, views: [
+  { name: 'large', urls: ['/__fx__/large-architecture.ifc', '/__fx__/large-mep.ifc'], mustCull: true, perf: 48, detect: true, ignoreSelfTest: true, views: [
     { name: 'opening (fitAll)', setup: ['fitAll'] },
     ...interiorViews,
     { name: 'from above (orbit)', setup: [{ orbit: { theta: 0.7, phi: 0.5 } }] },
@@ -309,7 +361,97 @@ if (probeFiles.length) scenarios.push({ name: 'probe', urls: probeFiles.map((_, 
   { name: 'opening (fitAll)', setup: ['fitAll'] }, ...interiorViews, { name: 'from above (orbit)', setup: [{ orbit: { theta: 0.7, phi: 0.5 } }] },
 ] });
 
+// ── Per-device verification ('auto' mode, the flag's default) ──────────
+// (a) where the depth self-test fails the verdict is 'refused' and culling
+//     never runs; (d) the verdict persists across reloads for the same key and
+//     a different app version is a different key (pending again); (b) with the
+//     self-test overridden the offscreen check passes -> 'verified', culling is
+//     active in auto mode and frames stay identical; (c) an injected pixel
+//     mismatch -> 'refused', culling off, and that refusal persists.
+async function deviceVerification() {
+  const out = { steps: [] };
+  const page = await newPage();
+  const ctx = page.context();
+  const office = ['/__fx__/office-architecture.ifc', '/__fx__/office-mep.ifc'];
+  const status = (p) => p.evaluate(() => window._ccOcclusion.status());
+  const settled = async (p, want) => (await p.waitForFunction((w) => {
+    const st = window._ccOcclusion.status();
+    return (w ? w.includes(st.state) : st.state !== 'pending') ? st : null;
+  }, want || null, { timeout: 180_000 })).jsonValue();
+  const note = (step, st, extra) => { out.steps.push({ step, ...st, ...(extra || {}) }); console.log(`verify ${step}: ${st.state}${st.why ? ' (' + st.why + ')' : ''}${st.source ? ' [' + st.source + ']' : ''} active=${st.active}`); };
+  const autoView = (name, setup, ign) => ({ name, setup, auto: true, ignoreSelfTest: ign });
+  const checkFrames = async (p, label, views, expectActive) => {
+    for (const v of views) {
+      const r = await captureView(p, v);
+      const st = r.stats || {};
+      console.log(`${r.identical ? 'SAME' : 'DIFF'}  verify / ${label} / ${r.view}: tris on/off ${r.trianglesOn}/${r.trianglesOff}, ${st.ran ? 'culled ' + st.culled : 'pass not run (' + st.why + ')'}`);
+      if (!r.identical) fail(`verify / ${label} / ${r.view}: frames differ by ${r.diffPx} px`);
+      if (expectActive === false && st.ran) fail(`verify / ${label} / ${r.view}: culling ran although not verified`);
+      if (expectActive === true && !st.ran) fail(`verify / ${label} / ${r.view}: culling did not run although verified (${st.why})`);
+      out.steps.push({ step: label + ' / ' + r.view, identical: r.identical, ran: !!st.ran, culled: st.culled || 0 });
+    }
+  };
+
+  const st0 = await status(page);
+  if (st0.mode !== 'auto') fail('flag default should be auto mode, got ' + st0.mode);
+  await load(page, office);
+  const st1 = await settled(page);
+  const selfTest = await page.evaluate(() => window._ccOcclusion.selfTest);
+  note('(a) after load', st1, { selfTest });
+  if (selfTest && !selfTest.ok) {
+    if (st1.state !== 'refused' || st1.why !== 'msaa-center-depth') fail('(a) expected refused/msaa-center-depth, got ' + JSON.stringify(st1));
+    await checkFrames(page, '(a) refused', [autoView('opening', ['fitAll'], false), autoView('in a room, +X', [{ interior: { angle: 0, offset: [-0.25, -0.25] } }], false)], false);
+  } else if (st1.state === 'refused') fail('(a) self-test passed but verdict refused: ' + st1.why);
+
+  // (d) persistence for the same key, and a version change -> new key
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window._ccOcclusion && window._ccState3d && window._ccState3d.mg, null, { timeout: 60_000 });
+  const st2 = await status(page);
+  note('(d) reload, same key', st2);
+  if (st2.state !== st1.state || st2.source !== 'stored' || st2.key !== st1.key) fail('(d) verdict did not persist across reload: ' + JSON.stringify(st2));
+  const vpage = await ctx.newPage();
+  await vpage.addInitScript(() => {
+    let v; Object.defineProperty(window, 'CC_VERSION', { configurable: true, get() { return v; }, set(x) { v = Object.assign({}, x, { v: x.v + '-next' }); } });
+  });
+  await vpage.goto('http://127.0.0.1:8768/', { waitUntil: 'domcontentloaded' });
+  await vpage.waitForFunction(() => window._ccOcclusion && window._ccState3d && window._ccState3d.mg, null, { timeout: 60_000 });
+  const st3 = await status(vpage);
+  note('(d) new app version', st3);
+  if (st3.key === st1.key || st3.state !== 'pending' || !/app=[^|]*-next/.test(st3.key)) fail('(d) a new app version must start pending under a new key: ' + JSON.stringify(st3));
+  await vpage.close();
+
+  // (b) self-test overridden: the offscreen check passes and auto mode culls
+  await load(page, office);
+  await page.evaluate(() => { const oc = window._ccOcclusion; oc.ignoreSelfTest = true; oc.verifyBudgetMs = 10000; oc.reverify({ forget: true }); });
+  const st4 = await settled(page, ['verified', 'refused']);
+  note('(b) self-test overridden', st4);
+  if (st4.state !== 'verified' || !st4.active) fail('(b) expected verified + active, got ' + JSON.stringify(st4));
+  else await checkFrames(page, '(b) verified', [autoView('opening', ['fitAll'], true), autoView('in a room, +X', [{ interior: { angle: 0, offset: [-0.25, -0.25] } }], true), autoView('in a room, -X', [{ interior: { angle: Math.PI, offset: [0.25, 0.25] } }], true)], true);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window._ccOcclusion && window._ccState3d && window._ccState3d.mg, null, { timeout: 60_000 });
+  const st5 = await status(page);
+  note('(d) reload after verified', st5);
+  if (st5.state !== 'verified' || st5.source !== 'stored' || !st5.active) fail('(d) verified verdict did not persist: ' + JSON.stringify(st5));
+
+  // (c) injected mismatch -> refused, culling off, refusal persists
+  await load(page, office);
+  await page.evaluate(() => { const oc = window._ccOcclusion; oc.ignoreSelfTest = true; oc.verifyBudgetMs = 10000; oc.injectMismatch = true; oc.reverify({ forget: true }); });
+  const st6 = await settled(page, ['verified', 'refused']);
+  note('(c) injected mismatch', st6);
+  if (st6.state !== 'refused' || !/pixel-mismatch/.test(st6.why) || st6.active) fail('(c) expected refused/pixel-mismatch, got ' + JSON.stringify(st6));
+  await page.evaluate(() => { window._ccOcclusion.injectMismatch = false; });
+  await checkFrames(page, '(c) refused', [autoView('in a room, +X', [{ interior: { angle: 0, offset: [-0.25, -0.25] } }], true)], false);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window._ccOcclusion && window._ccState3d && window._ccState3d.mg, null, { timeout: 60_000 });
+  const st7 = await status(page);
+  note('(c) reload after refusal', st7);
+  if (st7.state !== 'refused' || st7.source !== 'stored' || !/pixel-mismatch/.test(st7.why)) fail('(c) refusal did not persist: ' + JSON.stringify(st7));
+  await browser.close();
+  return out;
+}
+
 const report = { generatedAt: new Date().toISOString(), viewport: W + 'x' + H, scenarios: [] };
+if (!ONLY || ONLY.includes('verify')) report.deviceVerification = await deviceVerification();
 for (const sc of scenarios) {
   if (ONLY && !ONLY.includes(sc.name)) continue;
   const page = await newPage();
@@ -354,6 +496,16 @@ for (const sc of scenarios) {
     await page.evaluate((v) => { window._ccOcclusion.ignoreSelfTest = v; }, !!sc.ignoreSelfTest);
     entry.perf = await orbitPerf(page, sc.perf);
     for (const [k, v] of Object.entries(entry.perf)) console.log(`perf ${sc.name} ${k}: ${v.msMedian} ms/frame median (${v.msMean} mean), ${v.trianglesMean} tris, ${v.callsMean} calls, pass ${v.occlPassMsMean} ms x${v.occlPassRan}, culled ~${v.culledMean}`);
+  }
+  if (sc.detect) {
+    const dc = await detectionCheck(page);
+    entry.detection = dc;
+    console.log(`detection ${sc.name}: ${dc.clashes} clashes, ${dc.fieldsCompared} fields compared (volatile: ${dc.volatile.join(',') || 'none'}), on vs off ${dc.identical ? 'identical' : 'DIFFERENT'}; during the run ${dc.probesDuring} pass probes + ${dc.naturalFramesDuring} rendered frames, why ${JSON.stringify(dc.whysDuringDetection)}, pass ran in ${dc.ranDuringDetection}; after the run ${JSON.stringify(dc.afterRun)}`);
+    if (!dc.identical) fail(`${sc.name}: clash results differ with occlusion on vs off: ${dc.firstDiff}`);
+    if (!dc.clashes) fail(`${sc.name}: detection found no clashes — comparison is vacuous`);
+    if (!dc.framesDuringDetection) fail(`${sc.name}: no frame rendered during detection — cannot check the pass stands down`);
+    if (dc.ranDuringDetection || dc.whysDuringDetection.some((w) => w !== 'detecting')) fail(`${sc.name}: pass did not stand down during detection: ${JSON.stringify(dc.whysDuringDetection)}`);
+    if (!dc.afterRun || dc.afterRun.why === 'detecting') fail(`${sc.name}: pass still standing down after detection finished: ${JSON.stringify(dc.afterRun)}`);
   }
   report.scenarios.push(entry);
   await browser.close();

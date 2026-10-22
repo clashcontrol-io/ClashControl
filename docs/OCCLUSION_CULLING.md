@@ -1,18 +1,24 @@
 # Occlusion culling
 
-Status: **built, behind the `occlusionCulling` safety flag, default OFF** (opt in
-with `?ccSafety=occlusionCulling`). Code: `occlusion-core.js` (pure math,
-`// @ts-check`, unit-tested by `tests/occlusion-core.test.js`) and
-`_occlBegin` / `_occlEnd` / `_occlDepthSelfTest` next to `updateCulling()` in
-`index.html`. Browser differential: `tests/browser/occlusion-culling.mjs` (in
-`ci.yml`'s browser-differential job).
+Status: **built; flag `occlusionCulling` default ON in "verified-auto" form.**
+On means: cull only after *this device* passed an offscreen pixel check of the
+current scene (section 1b). Until then, or if the check fails, nothing changes
+for the user. Kill switch `?ccSafety=-occlusionCulling`. Status:
+`window._ccOcclusion.status()` returns `{state: 'verified'|'refused'|'pending',
+why, key, source, active, mode}`. No UI: no Settings area lists safety flags.
 
-Why default off (section 4): every generated-fixture view is pixel-identical
-with culling on and off, but the proof needs the GPU to interpolate depth per
-MSAA sample. The only GPU available here (SwiftShader, software) evaluates
-depth at the pixel centre instead, and on large model geometry that let a few
-edge pixels differ. The pass now detects that GPU behaviour and refuses to run
-on it; flipping the default needs the differential run on real hardware.
+Code: `occlusion-core.js` (pure math + the verdict key/storage helpers,
+`// @ts-check`, unit-tested by `tests/occlusion-core.test.js`) and, next to
+`updateCulling()` in `index.html`, `_occlBegin` / `_occlEnd` (the per-frame
+pass), `_occlDepthSelfTest`, and the device verification (`_occlVerify*`).
+Browser differential: `tests/browser/occlusion-culling.mjs` (in `ci.yml`'s
+browser-differential job).
+
+Why not unconditionally on: every generated-fixture view is pixel-identical
+with culling on and off, but the proof assumes the GPU interpolates depth per
+MSAA sample. SwiftShader evaluates it at the pixel centre, and on large model
+geometry that let a few edge pixels differ (section 4). So the match check runs
+on the user's own device instead of only in CI.
 
 ## 1. What it does
 
@@ -95,7 +101,9 @@ not sample points.
 
 ### Frames where the pass does not run (draws everything, as before)
 
-`stats.why` names the reason: the post-processing composer path (SAO/outline
+`stats.why` names the reason: `unverified` / `refused` (auto mode before or
+after a failed device check), `detecting` (a clash-detection run is live), the
+post-processing composer path (SAO/outline
 re-render with override materials), `scene.overrideMaterial`, a pending
 shadow-map update while a shadow-casting light exists (culled casters would
 vanish from the shadow map), camera not on layer 0, an unknown projection
@@ -118,6 +126,52 @@ and off.
   boxes), never an occluder.
 * No near-plane clipping of occluder triangles: a triangle with a vertex in
   front of the near plane is dropped and its edges become boundary.
+
+### 1b. Per-device verification (what "auto" means)
+
+* **When:** after the model set changes (load/replace/remove), at idle
+  (`requestIdleCallback` after a short delay; never while `_needsRender > 0`,
+  while orbiting/walking/dragging a section, while a model loads, while
+  detection runs, or with the tab hidden). One view per idle slice; the busy
+  check runs before every slice, so a detection run that starts mid-check
+  pauses it.
+* **What:** the depth self-test first (refuse -> `msaa-center-depth`). Then the
+  current scene from three views (the user's camera, a fit-all view and an
+  eye-height interior view derived from the model bounds; cloned cameras, the
+  user's camera never moves) is rendered twice into an offscreen render target,
+  culled and unculled, and the read-back pixels must be identical (zero
+  tolerance). The target has the canvas's drawing-buffer size and MSAA sample
+  count, so rasterisation, coverage and depth testing are the same as on
+  screen; colour is HalfFloat (when `EXT_color_buffer_float` exists) so tone
+  mapping or 8-bit quantisation cannot hide a difference. Nothing is drawn to
+  the canvas and nothing is invalidated.
+* **Verdict:** every view identical and at least one element culled ->
+  `verified` (culling active from the next frame that renders anyway). Any
+  difference -> `refused` (`pixel-mismatch in <view> view`). A check that culled
+  nothing proves nothing, so it stays `pending` and waits for the next model
+  change. Verdicts are stored in localStorage `cc_occlusion_verdict`
+  (registered in `storage-core.js` as `viewer-device`, derived) per key
+  `gpu=<UNMASKED vendor / renderer, else VENDOR / RENDERER>|app=<CC_VERSION.v>|core=<hash of occlusion-core's source>`,
+  newest 8 keys kept. A stored verdict is never re-checked automatically; a new
+  app version or a changed core is a new key and starts `pending`.
+* **Cost bound:** if the last frame's `render()` took more than half the
+  300 ms slice budget, the check is deferred (backing off 15 s, 30 s, ... up to
+  6 attempts) and stays `pending`; slices that overrun push the next slice out
+  by 15 s. Full-size targets only: a downscaled target would not exercise the
+  same coverage and sample positions.
+
+### 1c. Detection never competes with the pass
+
+`detectClashesAsync` counts its in-flight runs (`window._ccDetectionActive()`
+is true while a run is live or `state.detecting` is set). `_occlBegin` returns
+before any work with `why: 'detecting'` during a run, and the device
+verification counts detection as busy. The clash engine itself never reads
+mesh visibility: triangle extraction uses element geometry and matrices, and
+neither `addons/wasm-engine.js`, `addons/local-engine.js`, `addons/tauri-bridge.js`,
+the worker-pool payload builders nor the detection code read `mesh.visible`,
+`getVisibleAt` or `_occlCulled` (`addons/visibility.js` reads only the *model*
+`visible` flag from state). Hides are also restored before `render()` returns,
+so a run that starts between frames can never observe one.
 
 ## 2. Why this approach
 
@@ -171,7 +225,7 @@ Large fixture, 48-frame orbit (mean per frame): 7036 -> ~4500 triangles,
 contended software setup (first use in a view is higher: JIT, adjacency
 build).
 
-## 4. Large-model check and why the default is off
+## 4. Large-model check (and why the default is verified-auto, not plain on)
 
 Larger models were run through the same test with `CC_PROBE_FILE`:
 
@@ -192,25 +246,35 @@ Larger models were run through the same test with `CC_PROBE_FILE`:
      triangle's plane, which is unbounded for steep triangles. Plain depth
      precision was measured and is fine (24-bit, resolves to 2^-23..2^-26 NDC).
      No margin can prove this away, so it became the self-test precondition.
-* With the self-test honoured (the default behaviour), the pass does not run on
-  SwiftShader, so frames are trivially identical there. Hardware GPUs are
-  expected to pass the self-test (per-sample depth is standard), but that has
-  not been measured here.
+* With the self-test honoured (the default behaviour), SwiftShader's verdict is
+  `refused` and the pass never runs there. Hardware GPUs are expected to pass
+  the self-test (per-sample depth is standard); whether they then cull is
+  decided per device by the runtime check in 1b, not by this sandbox.
 
-**To flip the default:** run
-`CC_PROBE_FILE=/abs/model.ifc node tests/browser/occlusion-culling.mjs` with a
-headed, hardware-GPU Chromium (drop the SwiftShader flags in the script) on
-real projects; if the self-test passes and every view is identical, set
-`defaultEnabled: true` and move `occlusionCulling` into `PROMOTED_FLAGS` in
-`tests/safety-migrations.test.js`.
+### Browser test coverage of the verification
+
+`tests/browser/occlusion-culling.mjs` scenario `verify`: (a) on SwiftShader the
+self-test refuses -> `refused`/`msaa-center-depth`, culling never runs, frames
+identical; (d) the verdict is `stored` after a reload, and a different app
+version is a different key (`pending`); (b) with the self-test overridden the
+offscreen check passes -> `verified`, auto mode culls (6/6/7 elements in the
+checked office views), frames identical, and the verdict survives a reload;
+(c) an injected mismatch -> `refused`/`pixel-mismatch`, culling off, refusal
+persists. Scenario `large` also runs detection with the pass forced on vs off:
+every probe of the pass during the run reports `detecting`, the pass is back
+afterwards, and the 143-clash list is identical on all 47 fields that are
+stable between two identical runs (`id`, `createdAt` differ run to run).
 
 ## 5. Interface notes
 
-* `window._ccOcclusion` (internal plumbing): `enabled`, `setEnabled(bool)`,
-  `adaptive`, `stats` (last pass: ran/why, ms split collect/raster/test, cell
-  size, triangle budget, occluders, candidates, culled, triangles, rejection
-  reasons), `selfTest`, and test-only hooks `debug`, `debugKeep`, `triBudget`,
-  `fixedBudget`, `ignoreSelfTest`.
+* `window._ccOcclusion` (internal plumbing): `status()`, `mode`
+  (`auto`/`force`/`off`), `setMode()`, `enabled` (culling active now),
+  `setEnabled(bool)` (= force/off), `reverify({forget})`, `adaptive`, `stats`
+  (last pass: ran/why, ms split collect/raster/test, cell size, triangle budget,
+  occluders, candidates, culled, triangles, rejection reasons), `selfTest`, and
+  test-only hooks `probe()`, `debug`, `debugKeep`, `triBudget`, `fixedBudget`,
+  `ignoreSelfTest`, `injectMismatch`, `verifyBudgetMs`.
+* `window._ccDetectionActive()`: true while a detection run is in flight.
 * Opt an object out with `userData._occlNever = true`.
 * `tests/browser/occlusion-probe.mjs` (the original measurement probe) still
   measures the share of submitted triangles that reach a pixel.
