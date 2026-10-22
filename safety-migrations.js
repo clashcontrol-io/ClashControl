@@ -68,7 +68,22 @@
     // main-thread JS / stateless-WASM / cached-Engine paths, including under
     // cancellation and injected worker failure; small runs never engage it
     // (see _ccNarrowPool thresholds in index.html).
-    detectWorkerPool: Object.freeze({ fallback: 'main-thread', defaultEnabled: true })
+    detectWorkerPool: Object.freeze({ fallback: 'main-thread', defaultEnabled: true }),
+    // Viewer: conservative CPU occlusion culling (occlusion-core.js +
+    // _occlBegin/_occlEnd in index.html, docs/OCCLUSION_CULLING.md). Per
+    // rendered frame it hides model elements whose whole screen rect is
+    // proven covered by nearer opaque model geometry, then restores them
+    // right after render(). Promoted (defaultEnabled:true) in VERIFIED-AUTO
+    // form: on means "cull only after THIS device passed the offscreen
+    // check" — the current scene rendered culled vs unculled from three views
+    // must read back identical pixels (zero tolerance), after a GPU depth
+    // self-test; the verdict is stored per GPU + app version + core hash and a
+    // refusal is never retried for that key. Until verified nothing changes.
+    // Why not unconditional: on SwiftShader (MSAA depth evaluated at the pixel
+    // centre) real project geometry produced a few differing edge pixels.
+    // Kill switch ?ccSafety=-occlusionCulling; fallback = draw everything that
+    // passes the frustum/LOD cull, as before.
+    occlusionCulling: Object.freeze({ fallback: 'draw-all', defaultEnabled: true })
   });
   var diagnostics = [];
 
