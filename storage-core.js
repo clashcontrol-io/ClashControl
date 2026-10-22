@@ -52,6 +52,9 @@
     { family: 'walk', retention: 'prefs', scope: 'global', owner: 'core',
       keys: ['cc_walkBookmarks', 'cc_walkViewpoints', 'cc_walkBob', 'cc_walkCollision', 'cc_walkFoot',
              'cc_walkFov', 'cc_walkHeight', 'cc_walkInvY', 'cc_walkSens'] },
+    // Occlusion culling's per-device verdict (GPU + build -> verified/refused);
+    // recomputable by re-running the offscreen check, so derived.
+    { family: 'viewer-device', retention: 'derived', scope: 'global', owner: 'core', keys: ['cc_occlusion_verdict'] },
     { family: 'integrations', retention: 'prefs', scope: 'global', owner: 'addons',
       keys: ['cc_addons_active', 'cc_tiles', 'cc_google_tiles_key', 'cc_cesium_ion_token', 'cc_local_engine',
              'cc_local_engine_seen', 'cc_smart_bridge', 'cc_sb_downloaded', 'cc_geo_nudge_step', 'cc_brand_logo'] }
