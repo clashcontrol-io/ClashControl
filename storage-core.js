@@ -27,7 +27,11 @@
     // consumed and cleared by the next load.
     { store: 'pending',  db: 'cc-handoff', retention: 'decay', scope: 'global' },
     // shared-project's persisted FileSystem directory handle.
-    { store: 'handles',  db: 'cc_shared', retention: 'source', scope: 'global' }
+    { store: 'handles',  db: 'cc_shared', retention: 'source', scope: 'global' },
+    // Clash viewpoint snapshots (overview cards, BCF snapshot.png, PDF
+    // report): re-rendered from the loaded geometry on demand, keyed by clash
+    // identity + element geometry hashes, budgeted by planSnapshotGC.
+    { store: 'snapshots', db: 'cc-snapshots', retention: 'derived', scope: 'per-project' }
   ];
 
   var LS_REGISTRY = [
@@ -314,6 +318,27 @@
     return { keys: keys, freedBytes: freed };
   }
 
+  // Snapshot cache budget (derived data): keep at most maxCount entries and
+  // maxBytes in total; the least recently used go first, and any entry whose
+  // key is in `drop` (superseded: the clash's geometry changed) goes always.
+  // entries: [{key, bytes, at}] -> keys to delete, deterministic order.
+  var SNAPSHOT_BUDGET = { maxCount: 600, maxBytes: 40 * 1024 * 1024 };
+  function planSnapshotGC(entries, opts) {
+    opts = opts || {};
+    var maxCount = opts.maxCount != null ? opts.maxCount : SNAPSHOT_BUDGET.maxCount;
+    var maxBytes = opts.maxBytes != null ? opts.maxBytes : SNAPSHOT_BUDGET.maxBytes;
+    var drop = opts.drop || {};
+    var del = [], keep = [];
+    (entries || []).forEach(function(e) { if (!e || !e.key) return; if (drop[e.key]) del.push(e.key); else keep.push(e); });
+    keep.sort(function(a, b) { return (b.at || 0) - (a.at || 0) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0); });
+    var bytes = 0, n = 0;
+    keep.forEach(function(e) {
+      n++; bytes += e.bytes || 0;
+      if (n > maxCount || bytes > maxBytes) del.push(e.key);
+    });
+    return del;
+  }
+
   function formatBytes(n) {
     if (n == null || isNaN(n)) return '—';
     if (n < 1024) return n + ' B';
@@ -333,6 +358,8 @@
     computeBudget: computeBudget,
     planEviction: planEviction,
     planLocalPrune: planLocalPrune,
+    SNAPSHOT_BUDGET: SNAPSHOT_BUDGET,
+    planSnapshotGC: planSnapshotGC,
     formatBytes: formatBytes
   });
 }));

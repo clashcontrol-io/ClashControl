@@ -11,7 +11,7 @@ function clash(id, extra) {
 }
 
 test('classification core is an immutable one-function contract', () => {
-  assert.equal(core.contractVersion, 2);
+  assert.equal(core.contractVersion, 3);
   assert.equal(Object.isFrozen(core), true);
   assert.equal(typeof core.classifyClashes, 'function');
   assert.equal(typeof core.deterministicSeverity, 'function');
@@ -26,18 +26,22 @@ test('classification mutates the supplied records and returns undefined', () => 
   assert.equal(record.aiSeverity, 'critical');
 });
 
-test('opening/space and extreme size-ratio pairs remain false positives', () => {
+test('opening/space pairs remain false positives; the size-ratio rule is gone', () => {
   const items = [
     clash('opening',{elemAType:'IfcOpeningElement'}),
     clash('space',{elemBType:'PrefixIfcSpaceSuffix'}),
-    clash('ratio',{_trainFV:{size_ratio:50.6}}),
   ];
   core.classifyClashes(items);
   for (const item of items) {
     assert.equal(item.aiSeverity, 'info');
     assert.equal(item.aiCategory, 'false_positive');
   }
-  assert.match(items[2].aiReason, /51:1/);
+  // a pipe through a slab IS an extreme size ratio — it is judged by depth x role,
+  // not labelled noise (the old rule filed 99 % of a real struct+HVAC federation as info)
+  const ratio = clash('ratio',{_trainFV:{size_ratio:5000}});
+  core.classifyClashes([ratio]);
+  assert.equal(ratio.aiCategory, 'penetration');
+  assert.equal(ratio.aiSeverity, 'critical');
 });
 
 test('duplicates and soft-clearance boundary preserve their categories', () => {

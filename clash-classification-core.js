@@ -16,6 +16,9 @@
     var INSULATION_MAT = 'insulation';
 
     clashes.forEach(function(c) {
+      // Extent is geometry, not a verdict: stamped on every hard clash (also
+      // AI-triaged ones) so filters and buckets never depend on who judged.
+      if (c.type === 'hard') c.extent = clashExtent(c); else if (c.extent != null) delete c.extent;
       if (c.aiSeverity) return;
 
       var typeA = c.elemAType || '';
@@ -37,12 +40,13 @@
       for (var fi = 0; fi < FP_TYPES.length; fi++) {
         if (typeA.indexOf(FP_TYPES[fi]) !== -1 || typeB.indexOf(FP_TYPES[fi]) !== -1) { isFP = true; break; }
       }
+      // (The old "size ratio > 50 -> info / false positive" rule is gone: it
+      // ran before the role model and labelled 99 % of a real structure +
+      // HVAC federation as noise — a pipe through a slab IS a large size
+      // ratio. Extent + review buckets below decide what needs review.)
       if (isFP) {
         sev = 'info'; cat = 'false_positive';
         reason = 'Opening/space element pair — likely intentional';
-      } else if (fv.size_ratio > 50) {
-        sev = 'info'; cat = 'false_positive';
-        reason = 'Extreme size ratio (' + Math.round(fv.size_ratio) + ':1) — small element inside large one';
       } else if (c.type === 'duplicate') {
         sev = 'info'; cat = 'duplicate';
         reason = 'Duplicate element at same location';
@@ -232,13 +236,55 @@
     return ROLE_CRIT.hasOwnProperty(role) ? ROLE_CRIT[role] : 1;
   }
 
+  // ── Extent: how the two elements overlap ──────────────────────────
+  // Read only from fields BOTH engines could produce: the element bounding-box
+  // sizes (bboxA/bboxB, mm) and the penetration depth (distance < 0, mm — the
+  // browser's separating-axis upper bound on the minimum translation
+  // distance). Hard clashes only; null for every other type.
+  //   'graze'        depth below min(25 mm, 10 % of the thinner element):
+  //                  the surfaces barely overlap (a beam end 15 mm into a
+  //                  column, a duct grazing a slab edge)
+  //   'through'      depth >= the smaller cross-section (thinnest dimension)
+  //                  of the passing element or of the host: one element runs
+  //                  through the other (pipe through a slab, duct through a
+  //                  wall, a pipe fully inside a column)
+  //   'through-thin' a 'through' where that cross-section is <= 30 mm (hanger
+  //                  rods, cables, plates, boards)
+  //   'partial'      anything deeper than a graze that does not go through
+  //   'unknown'      no usable depth/size data — and every local-engine clash:
+  //                  its depth is an AABB-overlap bound, not a penetration
+  // The passing element is the one with the smaller MIDDLE dimension (a duct
+  // 400x600x5000 passes a wall 200x3000x5000); ties go to the smaller volume.
+  var GRAZE_MAX_MM = 25, GRAZE_FRAC = 0.1, THIN_MM = 30;
+  function _dimsSorted(bb) {
+    if (!bb || typeof bb !== 'object') return null;
+    var a = [Number(bb.dx), Number(bb.dy), Number(bb.dz)];
+    for (var i = 0; i < 3; i++) if (!(a[i] >= 0) || !isFinite(a[i])) return null;
+    return a.sort(function(x, y) { return x - y; });
+  }
+  function clashExtent(c) {
+    if (!c || c.type !== 'hard') return null;
+    if (c.source === 'local_engine' || c.depthSemantics === 'aabb') return 'unknown';
+    var d = (typeof c.distance === 'number' && c.distance < 0) ? -c.distance : null;
+    var a = _dimsSorted(c.bboxA), b = _dimsSorted(c.bboxB);
+    if (d == null || !a || !b) return 'unknown';
+    var thin = Math.min(a[0], b[0]);
+    if (d < Math.min(GRAZE_MAX_MM, GRAZE_FRAC * thin)) return 'graze';
+    var aPasses = a[1] < b[1] || (a[1] === b[1] && a[0] * a[1] * a[2] <= b[0] * b[1] * b[2]);
+    var P = aPasses ? a : b, H = aPasses ? b : a;
+    var cross = Math.min(P[0], H[0]);
+    if (d >= cross) return cross <= THIN_MM ? 'through-thin' : 'through';
+    return 'partial';
+  }
+
   // ── Deterministic severity ──────────────────────────────────────────
   // Vocabulary matches aiSeverity exactly (critical / major / minor / info).
   // Inputs read from the clash object: type, distance (mm, negative =
   // penetration depth), clearanceMm (soft gap), requiredClearanceMm (the
   // clearance the rule asked for; default 50), overlapVolM3 (AABB overlap
   // volume from the engine), roleA/roleB (stamped at detection) with a
-  // fallback derived from elemAType/elemBType + disciplines for legacy clashes.
+  // fallback derived from elemAType/elemBType + disciplines for legacy clashes,
+  // bboxA/bboxB (extent, above) and opening.
   //
   // HARD clash, depth d (mm), pair criticality c = max(critA, critB):
   //   d < 10                     -> minor (info when c == 0): tolerance/rounding floor
@@ -247,6 +293,11 @@
   //   c = 1 (terminal, arch ...) -> d >= 100 critical, d >= 10 major
   //   c = 0 (finishes only)      -> never critical; d >= 50 major, else minor
   //   overlap volume >= 0.05 m3 bumps minor/major one tier when c >= 2
+  // then, in this order:
+  //   extent 'through'/'through-thin' + structural     -> +1 tier
+  //   one side a finish (covering, furniture), c > 0  -> -1 tier
+  //   extent 'graze'                                  -> at most minor
+  //   opening 'partial' (opening too small)           -> at least major
   // SOFT clash, gap g vs required clearance r (ratio = g / r):
   //   ratio <= 0.3 -> major (near miss), else minor;  c == 0 drops one tier
   // duplicate / contact (surfaces only touch) -> info;  visibility (sight-line) -> major.
@@ -286,6 +337,12 @@
     else if (depth >= th.major) sev = 'major';
     else sev = 'minor';
     if (crit >= 2 && vol >= 0.05 && (sev === 'minor' || sev === 'major')) sev = _shift(sev, 1);
+    var roleA = _clashRole(c, 'A'), roleB = _clashRole(c, 'B');
+    var ext = clashExtent(c);
+    if ((ext === 'through' || ext === 'through-thin') && (roleA === 'structural' || roleB === 'structural')) sev = _shift(sev, 1);
+    if (crit > 0 && (roleA === 'finish' || roleB === 'finish')) sev = _shift(sev, -1);
+    if (ext === 'graze' && TIERS.indexOf(sev) > 1) sev = 'minor';
+    if (c.opening === 'partial' && TIERS.indexOf(sev) < 2) sev = 'major';
     return sev;
   }
 
@@ -538,8 +595,170 @@
     return c;
   }
 
+  // ════════════════════════════════════════════════════════════════════
+  // Review buckets — "what needs a human" vs "counted, one click to show"
+  // ════════════════════════════════════════════════════════════════════
+  // Every raw clash lands in EXACTLY one bucket (first match wins), so the
+  // bucket counts always add up to the raw total — nothing silently
+  // disappears, it is only filed. Buckets other than 'review' are hidden by
+  // default behind one bar of counts ("1243 inside provisions · 16 touch —
+  // show"). Pure: reads only clash fields + rules (+ an optional context).
+  //   handled    status resolved / closed / denied (a person already decided)
+  //   contact    surfaces only touch (type 'contact')
+  //   provided   passes through an IFC opening made for it
+  //   provision  MEP inside a provision / reservation volume (role group
+  //              'provision' set to classify, the default)
+  //   zone       an element of another suggestion group set to classify
+  //              (zones, spaces, duplicates, proxies — rules.roleChoices)
+  //   twice      the same conflict reported again against an exact copy of
+  //              an element in another model (findTwice)
+  //   embedded   by-design embedment: reinforcement, fasteners, accessories,
+  //              building-element parts, voids/virtual elements, and doors /
+  //              windows sitting in a wall, slab or roof of another model
+  //   finish     finishes only (both sides covering / furniture) or movable
+  //              furniture against anything
+  //   graze      hard clash whose extent is 'graze' (barely overlaps)
+  //   review     everything else — the list a coordinator works through
+  var REVIEW_BUCKETS = ['review', 'contact', 'provided', 'provision', 'zone', 'twice', 'embedded', 'finish', 'graze', 'handled'];
+  var DEFAULT_HIDDEN_BUCKETS = REVIEW_BUCKETS.filter(function(b) { return b !== 'review'; });
+  var ROLE_CHOICE_DEFAULTS = { provision: 'classify', zone: 'classify', space: 'exclude', duplicate: 'include', proxy: 'include' };
+  var EMBEDDED_TYPES = { IfcReinforcingBar:1, IfcReinforcingMesh:1, IfcReinforcingElement:1, IfcTendon:1, IfcTendonAnchor:1,
+    IfcTendonConduit:1, IfcFastener:1, IfcMechanicalFastener:1, IfcDiscreteAccessory:1, IfcBuildingElementPart:1,
+    IfcOpeningElement:1, IfcOpeningStandardCase:1, IfcVirtualElement:1 };
+  var FILL_TYPES = { IfcDoor:1, IfcDoorStandardCase:1, IfcWindow:1, IfcWindowStandardCase:1 };
+  var FILL_HOSTS = { IfcWall:1, IfcWallStandardCase:1, IfcWallElementedCase:1, IfcCurtainWall:1, IfcSlab:1,
+    IfcSlabStandardCase:1, IfcSlabElementedCase:1, IfcRoof:1 };
+  var FURNITURE_TYPES = { IfcFurnishingElement:1, IfcFurniture:1, IfcSystemFurnitureElement:1 };
+  function _ifc(t) { t = String(t || ''); return (t && t.indexOf('Ifc') !== 0) ? 'Ifc' + t : t; }
+  function _roleChoice(group, rules, ctx) {
+    if (ctx && typeof ctx.roleChoice === 'function') return ctx.roleChoice(group, rules);
+    var rc = (rules && rules.roleChoices) || {};
+    if (rc[group]) return rc[group];
+    if (group === 'space' && rules && rules.includeSpaces) return 'include';
+    return ROLE_CHOICE_DEFAULTS[group] || 'include';
+  }
+  function isEmbedded(c) {
+    var a = _ifc(c.elemAType), b = _ifc(c.elemBType);
+    if (EMBEDDED_TYPES[a] || EMBEDDED_TYPES[b]) return true;
+    return !!((FILL_TYPES[a] && FILL_HOSTS[b]) || (FILL_TYPES[b] && FILL_HOSTS[a]));
+  }
+  function isFinishOnly(c) {
+    if (FURNITURE_TYPES[_ifc(c.elemAType)] || FURNITURE_TYPES[_ifc(c.elemBType)]) return true;
+    return _clashRole(c, 'A') === 'finish' && _clashRole(c, 'B') === 'finish';
+  }
+  // ctx (optional): { twice: {clashId: true} } from findTwice, roleChoice(g, rules)
+  function reviewBucket(c, rules, ctx) {
+    if (!c) return 'review';
+    rules = rules || {};
+    var st = c.status;
+    if (st === 'resolved' || st === 'closed' || st === 'denied') return 'handled';
+    if (c.type === 'contact') return 'contact';
+    if (c.opening === 'provided') return 'provided';
+    if (c.provision === 'inside' && _roleChoice('provision', rules, ctx) === 'classify') return 'provision';
+    if (c.roleGroup && c.roleGroup !== 'provision' && _roleChoice(c.roleGroup, rules, ctx) === 'classify') return 'zone';
+    if (c.type === 'duplicate') return 'review';
+    if (ctx && ctx.twice && c.id != null && ctx.twice[c.id]) return 'twice';
+    if (isEmbedded(c)) return 'embedded';
+    if (isFinishOnly(c)) return 'finish';
+    if (clashExtent(c) === 'graze') return 'graze';
+    return 'review';
+  }
+  // Buckets hidden by the rules. rules.hideBuckets (array) wins; the legacy
+  // switches still apply on top (hideContacts:false / hideProvidedOpenings:
+  // false keep those buckets visible), so old projects behave as before.
+  function hiddenBuckets(rules) {
+    rules = rules || {};
+    var h = Array.isArray(rules.hideBuckets) ? rules.hideBuckets.filter(function(b) { return REVIEW_BUCKETS.indexOf(b) > 0; }) : DEFAULT_HIDDEN_BUCKETS.slice();
+    if (rules.hideContacts === false) h = h.filter(function(b) { return b !== 'contact'; });
+    if (rules.hideProvidedOpenings === false) h = h.filter(function(b) { return b !== 'provided'; });
+    return h;
+  }
+  // { review: n, contact: n, ... } over every bucket (zeros included); the
+  // values always sum to clashes.length.
+  function bucketCounts(clashes, rules, ctx) {
+    var out = {};
+    REVIEW_BUCKETS.forEach(function(b) { out[b] = 0; });
+    (clashes || []).forEach(function(c) { out[reviewBucket(c, rules, ctx)]++; });
+    return out;
+  }
+
+  // ── "Twice": one conflict reported against two copies of an element ──
+  // A federation often carries the same physical element in two models (the
+  // architect's copy of a structural column). A pipe crossing it is then
+  // reported twice — once per copy. Copies are found from the clashes
+  // themselves: a hard/duplicate clash between two elements of the same size
+  // (each bbox axis within 2 mm) whose boxes overlap almost completely (AABB
+  // overlap >= 90 % of the element volume). Every other clash of a copy is
+  // keyed by (the other element, copy group, clash type); within a key the
+  // clash on the copy with the smallest element key is kept, the rest are
+  // 'twice'. The clash between the two copies stays in review (it IS the
+  // finding: a duplicate). Deterministic: independent of the input order.
+  function _elemKey(c, side) {
+    var A = side === 'A';
+    var g = A ? c.globalIdA : c.globalIdB;
+    return g ? ('g:' + g) : ('m' + (A ? c.modelAId : c.modelBId) + ':' + (A ? c.elemA : c.elemB));
+  }
+  function _sameSize(c) {
+    var a = _dimsSorted(c.bboxA), b = _dimsSorted(c.bboxB);
+    if (!a || !b) return false;
+    for (var i = 0; i < 3; i++) if (Math.abs(a[i] - b[i]) > 2) return false;
+    var vol = a[0] * a[1] * a[2] * 1e-9;
+    if (c.type === 'duplicate') return true;
+    return vol > 0 && typeof c.overlapVolM3 === 'number' && c.overlapVolM3 >= 0.9 * vol;
+  }
+  function findTwice(clashes) {
+    var parent = {};
+    function find(k) { while (parent[k] && parent[k] !== k) { parent[k] = parent[parent[k]] || parent[k]; k = parent[k]; } return k; }
+    function union(x, y) {
+      var rx = find(x), ry = find(y);
+      if (rx === ry) return;
+      if (rx < ry) parent[ry] = rx; else parent[rx] = ry;
+    }
+    var list = clashes || [], i, c;
+    for (i = 0; i < list.length; i++) {
+      c = list[i];
+      if (!c || (c.type !== 'hard' && c.type !== 'duplicate') || c.modelAId === c.modelBId) continue;
+      if (!_sameSize(c)) continue;
+      var ka = _elemKey(c, 'A'), kb = _elemKey(c, 'B');
+      if (!parent[ka]) parent[ka] = ka;
+      if (!parent[kb]) parent[kb] = kb;
+      union(ka, kb);
+    }
+    var groups = {}, out = {};
+    for (i = 0; i < list.length; i++) {
+      c = list[i];
+      if (!c || c.id == null) continue;
+      var kA = _elemKey(c, 'A'), kB = _elemKey(c, 'B');
+      var inA = !!parent[kA], inB = !!parent[kB];
+      if (!inA && !inB) continue;
+      if (inA && inB && find(kA) === find(kB)) continue;      // the copy-vs-copy clash itself
+      // the copy side (when both sides are copies of different groups, A's)
+      var copySide = inA ? 'A' : 'B';
+      var copyKey = copySide === 'A' ? kA : kB, otherKey = copySide === 'A' ? kB : kA;
+      var gk = otherKey + '|' + find(copyKey) + '|' + c.type;
+      var cur = groups[gk];
+      if (!cur) { groups[gk] = { keep: c, keepKey: copyKey, all: [c] }; continue; }
+      cur.all.push(c);
+      if (copyKey < cur.keepKey || (copyKey === cur.keepKey && String(c.id) < String(cur.keep.id))) { cur.keep = c; cur.keepKey = copyKey; }
+    }
+    Object.keys(groups).forEach(function(k) {
+      var g = groups[k];
+      g.all.forEach(function(x) { if (x !== g.keep) out[x.id] = true; });
+    });
+    return out;
+  }
+
   return Object.freeze({
-    contractVersion: 2,
+    contractVersion: 3,
+    clashExtent: clashExtent,
+    REVIEW_BUCKETS: REVIEW_BUCKETS,
+    DEFAULT_HIDDEN_BUCKETS: DEFAULT_HIDDEN_BUCKETS,
+    reviewBucket: reviewBucket,
+    hiddenBuckets: hiddenBuckets,
+    bucketCounts: bucketCounts,
+    findTwice: findTwice,
+    isEmbedded: isEmbedded,
+    isFinishOnly: isFinishOnly,
     niceTypeLabel: niceTypeLabel,
     typePairTitle: typePairTitle,
     meaningfulName: meaningfulName,

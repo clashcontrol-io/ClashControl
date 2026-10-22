@@ -23,6 +23,7 @@ var PRECACHE = [
   'clash-identity-core.js',
   'clash-reconciliation-core.js',
   'clash-classification-core.js',
+  'clash-triage-core.js',
   'project-codec.js',
   'storage-core.js',
   // Addons that load eagerly at boot — precached so a first-ever offline

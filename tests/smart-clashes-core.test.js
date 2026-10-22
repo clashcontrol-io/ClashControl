@@ -98,12 +98,16 @@ test('finishes (covering, furniture) are never critical; shallow finish clashes 
   assert.equal(sev(hard('finish', 'finish', 49)), 'minor');
   assert.equal(sev(hard('finish', 'finish', 5)), 'info');
   assert.equal(sev(hard('finish', 'finish', 5000)), 'major');
-  // ...but a finish against a structural element is judged by the structural rule
-  assert.equal(sev(hard('finish', 'structural', 30)), 'critical');
+  // ...a finish against a structural element is judged by the structural rule,
+  // then drops one tier: a covering is not the thing that has to move
+  assert.equal(sev(hard('finish', 'structural', 30)), 'major');
+  assert.equal(sev(hard('structural', 'structural', 30)), 'critical');
 });
 
 test('pair criticality is the MAX of the two roles (the low side never dilutes the high side)', () => {
-  assert.equal(sev(hard('finish', 'mep-main', 60)), sev(hard('mep-main', 'mep-main', 60)));
+  // thresholds come from the higher role; a finish side then costs one tier (finish -1)
+  assert.equal(sev(hard('architectural', 'mep-main', 60)), sev(hard('mep-main', 'mep-main', 60)));
+  assert.equal(sev(hard('finish', 'mep-main', 60)), 'major');
   assert.equal(sev(hard('architectural', 'structural', 25)), sev(hard('structural', 'structural', 25)));
 });
 
