@@ -19,7 +19,7 @@ const section = src.slice(identityStart, sectionEnd);
 test('the breadcrumb row renders when available, with a fallback to the plain Floor row', () => {
   assert.ok(/breadcrumb\.length>0/.test(section));
   assert.ok(/breadcrumb\.join\(' › '\)/.test(section));
-  assert.ok(section.indexOf("storey && html`<div style=${ROW}><span style=${LBL}>Floor</span>") !== -1, 'fallback Floor row must survive when breadcrumb is empty');
+  assert.ok(section.indexOf("storey && html`<div style=${ROW}><span style=${LBL}>${_cc_t('aiChat.floor','Floor')}</span>") !== -1, 'fallback Floor row must survive when breadcrumb is empty');
 });
 
 test('the Hosted elements card only renders when there are hosted elements, and caps the list', () => {

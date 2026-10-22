@@ -10444,7 +10444,7 @@ function startApp() {
           _ccValidateProject(data);
           _ccRestoreProject(data, d);
         } catch(err) {
-          alert('Load failed: ' + err.message);
+          alert(_cc_t('dlg.loadFailed','Load failed: {message}',{message:err.message}));
         }
       };
       r.readAsText(f);
@@ -10823,12 +10823,12 @@ function startApp() {
         });
         if (imported > 0) {
           d({t:A.TAB, v:'issues'});
-          alert('Imported ' + imported + ' topic' + (imported>1?'s':'') + ' from BCF.');
+          alert((imported>1 ? _cc_t('dlg.importedTopicsFromBcf','Imported {imported} topics from BCF.',{imported:imported}) : _cc_t('dlg.importedTopicFromBcf','Imported {imported} topic from BCF.',{imported:imported})));
         } else {
-          alert('No valid topics found in BCF file.');
+          alert(_cc_t('dlg.noValidTopicsFoundIn','No valid topics found in BCF file.'));
         }
       }).catch(function(err) {
-        alert('BCF import failed: ' + err.message);
+        alert(_cc_t('dlg.bcfImportFailed','BCF import failed: {message}',{message:err.message}));
       });
   }
 
@@ -13520,7 +13520,7 @@ function startApp() {
       window._ccStartRecording = function() {
         if (_recordingState) return; // already recording
         if (!renderer.domElement.captureStream) {
-          alert('Recording requires Chrome, Firefox, or Edge.');
+          alert(_cc_t('dlg.recordingRequiresChromeFirefoxOr','Recording requires Chrome, Firefox, or Edge.'));
           return;
         }
         invalidate(999);
@@ -16600,7 +16600,7 @@ function startApp() {
             if (window._ccCalibrationPending) {
               window._ccCalibrationPending = false;
               setTimeout(function(){
-                var raw = prompt('What is the real distance for this measurement (in metres)?', dist.toFixed(3));
+                var raw = prompt(_cc_t('dlg.whatIsTheRealDistance','What is the real distance for this measurement (in metres)?'), dist.toFixed(3));
                 if (raw == null) return;
                 var real = parseFloat(raw);
                 if (!isFinite(real) || real <= 0) return;
@@ -20369,7 +20369,7 @@ function startApp() {
           borderTopColor:'var(--accent)',
           animation:'sp 0.8s linear infinite'
         }}></div>
-        <span style=${{fontSize:'0.98rem',color:'var(--accent-subtle)',fontWeight:500,letterSpacing:'.03em'}}>Switching project…</span>
+        <span style=${{fontSize:'0.98rem',color:'var(--accent-subtle)',fontWeight:500,letterSpacing:'.03em'}}>${_cc_t('viewer.switchingProject','Switching project…')}</span>
       </div>`}
       ${s.workspace==='review' && s.diagnostics && html`<div class="cc-overlay-chrome" style=${{position:'absolute',top:'var(--space-3)',left:'var(--space-3)',padding:'var(--space-1) var(--space-2)',pointerEvents:'auto',fontSize:'var(--text-xs)'}}>
         <span style=${{color:fpsColor(perfData.fps),cursor:'pointer',fontWeight:'var(--weight-medium)',fontFamily:'var(--font-mono)'}}
@@ -20533,7 +20533,7 @@ function startApp() {
           </button>`;})}
           <div style=${{borderTop:'1px solid var(--border-subtle)',marginTop:'var(--space-1)',paddingTop:'var(--space-1)'}}>
             <button onClick=${function(){window._ccElementMeasureMenu=null;if(window._ccHoverCoordTick)window._ccHoverCoordTick();}}
-              style=${{...S_BTN,width:'100%',padding:'var(--space-1)',background:'transparent',color:'var(--text-muted)',fontSize:'var(--text-2xs)'}}>Cancel · Esc</button>
+              style=${{...S_BTN,width:'100%',padding:'var(--space-1)',background:'transparent',color:'var(--text-muted)',fontSize:'var(--text-2xs)'}}>${_cc_t('viewer.cancelEsc','Cancel · Esc')}</button>
           </div>
         </div>`;
       })()}
@@ -20554,7 +20554,7 @@ function startApp() {
             var glyphColor = m.type==='length'||m.type==='clearance' ? 'var(--accent)' : m.type==='angle' ? 'var(--color-warning-fg)' : m.type==='element' ? 'var(--color-info-fg)' : 'var(--color-success-fg)';
             var labelTxt = (m.name && m.name.trim()) ? m.name : (window._ccRelabelMeasurement ? window._ccRelabelMeasurement(m,s) : m.label);
             return html`<div key=${m.id} style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',padding:'var(--space-1)',fontSize:'var(--text-xs)',borderBottom:'1px solid var(--border-subtle)'}}
-              onDblClick=${function(){var nv=prompt('Rename measurement', m.name||'');if(nv!=null)d({t:A.UPD_MEASUREMENT,id:m.id,u:{name:nv}});}}>
+              onDblClick=${function(){var nv=prompt(_cc_t('dlg.renameMeasurement','Rename measurement'), m.name||'');if(nv!=null)d({t:A.UPD_MEASUREMENT,id:m.id,u:{name:nv}});}}>
               <span style=${{width:6,height:6,borderRadius:'50%',background:glyphColor,flex:'0 0 auto'}}></span>
               <span style=${{flex:1,minWidth:0,color:'var(--text-primary)',fontFamily:'var(--font-mono)',fontWeight:'var(--weight-semibold)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}}
                 onClick=${function(){if(window._ccFlyToMeasurement)window._ccFlyToMeasurement(m.id);}}
@@ -21575,11 +21575,11 @@ function startApp() {
             <div style=${{color:'var(--text-faint)'}}>${window._ccDateFmt(CC_VERSION.date,{day:'numeric',month:'long',year:'numeric'})}</div>
             <div style=${{marginTop:'.5rem',borderTop:'1px solid var(--border-subtle)',paddingTop:'.4rem',display:'flex',flexDirection:'column',gap:'.3rem'}}>
               <button onClick=${function(){setShowVer(false);if(window._ccToggleTutorial)window._ccToggleTutorial();}}
-                style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',background:'var(--accent)',color:'var(--accent-contrast)',fontSize:'0.8rem',fontWeight:600,borderRadius:6,textAlign:'center',justifyContent:'center'}}}>Quick Start Guide</button>
+                style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',background:'var(--accent)',color:'var(--accent-contrast)',fontSize:'0.8rem',fontWeight:600,borderRadius:6,textAlign:'center',justifyContent:'center'}}}>${_cc_t('header.quickStartGuide','Quick Start Guide')}</button>
               <button onClick=${function(){setShowVer(false);if(window._ccStartTour)window._ccStartTour();}}
-                style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',background:'var(--accent)',color:'var(--accent-contrast)',fontSize:'0.8rem',fontWeight:600,borderRadius:6,textAlign:'center',justifyContent:'center'}}}>Interactive Tour</button>
+                style=${{...S_BTN,width:'100%',padding:'.35rem .5rem',background:'var(--accent)',color:'var(--accent-contrast)',fontSize:'0.8rem',fontWeight:600,borderRadius:6,textAlign:'center',justifyContent:'center'}}}>${_cc_t('header.interactiveTour','Interactive Tour')}</button>
             </div>
-            <div style=${{marginTop:'.3rem',fontSize:'0.69rem',color:'var(--text-faint)'}}>Free, source-available IFC clash detection</div>
+            <div style=${{marginTop:'.3rem',fontSize:'0.69rem',color:'var(--text-faint)'}}>${_cc_t('header.freeSourceAvailableIfc','Free, source-available IFC clash detection')}</div>
           </div>`}
         </div>
         <div>
@@ -21627,11 +21627,11 @@ function startApp() {
                   onKeyDown=${function(e){if(e.key==='Enter')finishCreate();if(e.key==='Escape')setCreating(false);}}
                   style=${{...S_INPUT,fontSize:'0.78rem',padding:'.25rem .4rem',flex:1}} />
                 <button onClick=${finishCreate} disabled=${!createName.trim()}
-                  style=${{...S_BTN,fontSize:'0.69rem',padding:'.2rem .45rem',background:'var(--accent)',color:'var(--accent-contrast)',opacity:createName.trim()?1:0.4}}>Create</button>
+                  style=${{...S_BTN,fontSize:'0.69rem',padding:'.2rem .45rem',background:'var(--accent)',color:'var(--accent-contrast)',opacity:createName.trim()?1:0.4}}>${_cc_t('header.create','Create')}</button>
                 <button onClick=${function(){setCreating(false)}}
                   style=${{...S_BTN,fontSize:'0.8rem',padding:'.1rem .3rem',background:'none',color:'var(--text-faint)',lineHeight:1}}>✕</button>
               </div>
-            </div>` : html`<button onClick=${startCreate} style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.4rem .6rem',background:'none',color:'var(--accent)',fontSize:'0.8rem',borderRadius:0}}>+ New Project</button>`}
+            </div>` : html`<button onClick=${startCreate} style=${{...S_BTN,width:'100%',textAlign:'left',padding:'.4rem .6rem',background:'none',color:'var(--accent)',fontSize:'0.8rem',borderRadius:0}}>${_cc_t('header.newProject','+ New Project')}</button>`}
           </div>`}
         </div>
       </div>
@@ -21650,7 +21650,7 @@ function startApp() {
             title=${connected?'Shared via '+(sp.folderName||'folder'):'Share this project'}
             style=${{...S_BTN,position:'relative',background:bg,color:'#fff',fontWeight:600,padding:'.35rem .8rem',fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'.4rem',boxShadow:connected?'0 2px 8px rgba(26,107,74,.35)':'0 1px 4px rgba(26,107,74,.25)'}}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-            <span class="cc-header-share-label">Share</span>
+            <span class="cc-header-share-label">${_cc_t('header.share','Share')}</span>
             <span style=${{width:7,height:7,borderRadius:'50%',background:dotColor,boxShadow:connected?'0 0 0 2px rgba(255,255,255,.25)':'none'}}></span>
             ${unread>0 && html`<span style=${{position:'absolute',top:-4,right:-4,background:'var(--color-danger)',color:'#fff',fontSize:'0.6rem',fontWeight:700,padding:'1px 5px',borderRadius:99,lineHeight:1.3,minWidth:14,textAlign:'center',boxShadow:'0 1px 3px rgba(0,0,0,.4)'}}>${unread>9?'9+':unread}</span>`}
           </button>`;
@@ -23145,7 +23145,7 @@ function startApp() {
             var crsRef = {current:null};
             return html`<div style=${{marginBottom:'.25rem'}}>
               <div title=${_cc_t('geoplace.mapConversionTitle','IFC4 IfcMapConversion / IfcProjectedCRS read from the model')} style=${{padding:'.2rem .35rem',borderRadius:'var(--radius-xs)',background:'rgba(91,141,239,0.06)',fontSize:'.62rem',color:'var(--text-muted)',fontFamily:'var(--font-mono)',lineHeight:1.5}}>
-                <span style=${{color:'var(--text-secondary)',fontWeight:600}}>${mcModel.epsg||'Projected CRS'}</span>${(mcModel.epsg&&!detectedKey)?' · unrecognised':''}${mcModel.rotationDeg!=null?' · rot '+mcModel.rotationDeg.toFixed(2)+'°':''}<br/>
+                <span style=${{color:'var(--text-secondary)',fontWeight:600}}>${mcModel.epsg||'Projected CRS'}</span>${(mcModel.epsg&&!detectedKey)?' · '+_cc_t('geoplace.unrecognised','unrecognised'):''}${mcModel.rotationDeg!=null?' · '+_cc_t('geoplace.rot','rot')+' '+mcModel.rotationDeg.toFixed(2)+'°':''}<br/>
                 <span style=${{color:'var(--text-faint)'}}>E ${mcModel.eastings!=null?mcModel.eastings.toFixed(1):'—'}, N ${mcModel.northings!=null?mcModel.northings.toFixed(1):'—'}</span>
               </div>
               ${hasEN && !s.modelGeo && window._ccGeoplaceFromCRS && html`<div style=${{display:'flex',gap:'.2rem',marginTop:'.2rem',alignItems:'stretch'}}>
@@ -23157,7 +23157,7 @@ function startApp() {
                 <button onClick=${function(){
                     var key = (crsRef.current && crsRef.current.value) || detectedKey || '28992';
                     window._ccGeoplaceFromCRS(mcModelId, mcModel, key)
-                      .catch(function(err){ alert('CRS placement failed: ' + (err && err.message || err)); });
+                      .catch(function(err){ alert(_cc_t('dlg.crsPlacementFailed','CRS placement failed: {v1}',{v1:(err && err.message || err)})); });
                   }}
                   title=${_cc_t('tip.reprojectTheProjectedEN','Reproject the projected E/N to lat/lon (placement-grade, ~1 m — not RDNAPTRANS survey-grade) and drop the basemap there. The model never moves.')}
                   style=${{fontSize:'.62rem',padding:'.1rem .4rem',background:'var(--accent)',color:'var(--accent-contrast)',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer',whiteSpace:'nowrap'}}>${_cc_t('sidebar.placeFromCRS','Place from CRS')}</button>
@@ -23167,9 +23167,9 @@ function startApp() {
           ${s.modelGeo
             ? html`<div style=${{padding:'.25rem .35rem',borderRadius:'var(--radius-xs)',background:'rgba(91,141,239,0.08)',borderLeft:'2px solid #5b8def',fontSize:'.66rem',color:'var(--text-primary)',fontFamily:'var(--font-mono)',lineHeight:1.5}}>
                 ${(+s.modelGeo.refLat).toFixed(6)}, ${(+s.modelGeo.refLon).toFixed(6)}<br/>
-                <span style=${{color:'var(--text-faint)'}}>${s.modelGeo.source||'manual'} · ${(s.modelGeo.radiusM||0).toFixed(0)}m radius</span>
+                <span style=${{color:'var(--text-faint)'}}>${_cc_t('geoplace.sourceRadius','{source} · {r}m radius',{source:(s.modelGeo.source||_cc_t('geoplace.manual','manual')),r:(s.modelGeo.radiusM||0).toFixed(0)})}</span>
                 <span style=${{display:'flex',alignItems:'center',gap:'.3rem',marginTop:'.2rem'}}>
-                  <span title=${_cc_t('tip.rotateTheMapAnd3d','Rotate the map and 3D context around the anchor — for project-north exports the IFC carries no north, so dial it in here')} style=${{color:'var(--text-faint)'}}>north</span>
+                  <span title=${_cc_t('tip.rotateTheMapAnd3d','Rotate the map and 3D context around the anchor — for project-north exports the IFC carries no north, so dial it in here')} style=${{color:'var(--text-faint)'}}>${_cc_t('modelSidebar.north','north')}</span>
                   <input type="number" step="1" value=${Math.round(((+s.modelGeo.trueNorthDeg)||0)*10)/10}
                     onChange=${function(e){
                       var v = parseFloat(e.target.value); if (!isFinite(v)) v = 0;
@@ -23178,10 +23178,10 @@ function startApp() {
                       if (window._ccTiles3DActive && window._ccTiles3DActive() && window._ccSetTiles3DNorth) window._ccSetTiles3DNorth(v);
                     }}
                     style=${{width:48,padding:'.06rem .2rem',fontSize:'.64rem',fontFamily:'var(--font-mono)',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)'}} />
-                  <span style=${{color:'var(--text-faint)'}}>°${s.modelGeo.northManual ? ' manual' : (s.modelGeo.trueNorthDeg ? ' from IFC' : '')}</span>
+                  <span style=${{color:'var(--text-faint)'}}>°${s.modelGeo.northManual ? ' '+_cc_t('geoplace.manual','manual') : (s.modelGeo.trueNorthDeg ? ' '+_cc_t('geoplace.fromIfc','from IFC') : '')}</span>
                 </span>
                 <span style=${{display:'flex',alignItems:'center',gap:'.2rem',marginTop:'.2rem'}}>
-                  <span title=${_cc_t('tip.slideTheBasemap3dContext','Slide the basemap + 3D context under the model to fine-align it — arrows follow the camera, the model never moves')} style=${{color:'var(--text-faint)'}}>align</span>
+                  <span title=${_cc_t('tip.slideTheBasemap3dContext','Slide the basemap + 3D context under the model to fine-align it — arrows follow the camera, the model never moves')} style=${{color:'var(--text-faint)'}}>${_cc_t('modelSidebar.align','align')}</span>
                   ${(function(){
                     var offX = (+s.modelGeo.offsetX)||0, offZ = (+s.modelGeo.offsetZ)||0;
                     function _step(){ var v = 1; try { v = parseFloat(localStorage.getItem('cc_geo_nudge_step')) || 1; } catch(_){} return v; }
@@ -23240,24 +23240,24 @@ function startApp() {
                   return detected
                     ? html`<button onClick=${function(){
                         window._ccGeoplaceModel(detected.modelId, Object.assign({}, detected.georef, {source:'IfcSite'}))
-                          .catch(function(err){ alert('Geoplace failed: ' + (err && err.message || err)); });
+                          .catch(function(err){ alert(_cc_t('dlg.geoplaceFailed','Geoplace failed: {v1}',{v1:(err && err.message || err)})); });
                       }} style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'var(--accent)',color:'var(--accent-contrast)',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
                         ${_cc_t('sidebar.useIfcSite','Use IfcSite ({coords})',{coords:(+detected.georef.refLat).toFixed(3)+', '+(+detected.georef.refLon).toFixed(3)})}
                       </button>`
                     : null;
                 })()}
                 <button onClick=${function(){
-                  var input = prompt('Enter latitude, longitude (decimal degrees)\nExample: 52.3676, 4.9041 (Amsterdam)');
+                  var input = prompt(_cc_t('dlg.enterLatitudeLongitudeDecimalDegrees','Enter latitude, longitude (decimal degrees)\nExample: 52.3676, 4.9041 (Amsterdam)'));
                   if (!input) return;
                   var parts = input.split(/[,;\s]+/).filter(Boolean).map(parseFloat);
                   if (parts.length < 2 || !isFinite(parts[0]) || !isFinite(parts[1])) {
-                    alert('Could not parse lat/lon — expected two numbers like "52.37, 4.90"');
+                    alert(_cc_t('dlg.couldNotParseLatLon','Could not parse lat/lon — expected two numbers like "52.37, 4.90"'));
                     return;
                   }
                   var firstModelId = s.models[0] && s.models[0].id;
                   if (!firstModelId) return;
                   window._ccGeoplaceModel(firstModelId, {refLat:parts[0], refLon:parts[1], source:'manual'})
-                    .catch(function(err){ alert('Geoplace failed: ' + (err && err.message || err)); });
+                    .catch(function(err){ alert(_cc_t('dlg.geoplaceFailed','Geoplace failed: {v1}',{v1:(err && err.message || err)})); });
                 }} style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'none',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
                   ${_cc_t('sidebar.enterLatLon','Enter lat/lon…')}
                 </button>
@@ -23273,10 +23273,10 @@ function startApp() {
                 }
                 if (!latLon && s.modelGeo && s.modelGeo.refLat != null) latLon = {lat:+s.modelGeo.refLat, lon:+s.modelGeo.refLon, modelId:s.modelGeo.modelId};
                 if (!latLon) {
-                  var li = prompt('Latitude, longitude for the 3D world context\nExample: 52.3676, 4.9041');
+                  var li = prompt(_cc_t('dlg.latitudeLongitudeForThe3d','Latitude, longitude for the 3D world context\nExample: 52.3676, 4.9041'));
                   if (!li) return null;
                   var lp = li.split(/[,;\s]+/).filter(Boolean).map(parseFloat);
-                  if (lp.length < 2 || !isFinite(lp[0]) || !isFinite(lp[1])) { alert('Could not parse lat/lon'); return null; }
+                  if (lp.length < 2 || !isFinite(lp[0]) || !isFinite(lp[1])) { alert(_cc_t('dlg.couldNotParseLatLon2','Could not parse lat/lon')); return null; }
                   latLon = {lat:lp[0], lon:lp[1], modelId:(s.models[0]&&s.models[0].id)};
                 }
                 // World point where the anchor lat/lon sits: the geoplace
@@ -23320,7 +23320,7 @@ function startApp() {
               return html`<button onClick=${function(){
                   var ll = _tilesLatLon(); if (!ll) return;
                   window._ccLoadTiles3D({ preset:'nl', lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north, offset: ll.offset })
-                    .catch(function(err){ alert('PDOK 3D tiles failed: ' + (err && err.message || err)); });
+                    .catch(function(err){ alert(_cc_t('dlg.pdok3dTilesFailed','PDOK 3D tiles failed: {v1}',{v1:(err && err.message || err)})); });
                 }}
                 title=${_cc_t('tip.freeDutchNational3dBuildings','Free Dutch national 3D buildings (Kadaster 3D Basisvoorziening via PDOK, LoD 2.2 from BAG + AHN) around your georeferenced model — no key needed')}
                 style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'var(--accent)',color:'var(--accent-contrast)',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
@@ -23330,12 +23330,12 @@ function startApp() {
                   var itok = '';
                   try { itok = localStorage.getItem('cc_cesium_ion_token') || ''; } catch(_){}
                   if (!itok) {
-                    itok = prompt('Cesium ion access token (stays in your browser).\nFree account: ion.cesium.com \u2192 Access Tokens');
+                    itok = prompt(_cc_t('dlg.cesiumIonAccessTokenStays','Cesium ion access token (stays in your browser).\nFree account: ion.cesium.com → Access Tokens'));
                     if (!itok) return;
                     try { localStorage.setItem('cc_cesium_ion_token', itok.trim()); } catch(_){}
                   }
                   window._ccLoadTiles3D({ ion: {token: itok.trim()}, lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north, offset: ll.offset })
-                    .catch(function(err){ alert('Cesium ion 3D tiles failed: ' + (err && err.message || err)); });
+                    .catch(function(err){ alert(_cc_t('dlg.cesiumIon3dTilesFailed','Cesium ion 3D tiles failed: {v1}',{v1:(err && err.message || err)})); });
                 }}
                 title=${_cc_t('geoplace.osmBuildingsTitle','Worldwide OSM Buildings via Cesium ion (free account token)')}
                 style=${{fontSize:'.66rem',padding:'.22rem .4rem',background:'none',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
@@ -23345,12 +23345,12 @@ function startApp() {
                   var tkey = '';
                   try { tkey = localStorage.getItem('cc_google_tiles_key') || ''; } catch(_){}
                   if (!tkey) {
-                    tkey = prompt('Google Map Tiles API key (stays in your browser).\nGet one: console.cloud.google.com \u2192 Map Tiles API');
+                    tkey = prompt(_cc_t('dlg.googleMapTilesApiKey','Google Map Tiles API key (stays in your browser).\nGet one: console.cloud.google.com → Map Tiles API'));
                     if (!tkey) return;
                     try { localStorage.setItem('cc_google_tiles_key', tkey.trim()); } catch(_){}
                   }
                   window._ccLoadTiles3D({ key: tkey, lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north, offset: ll.offset })
-                    .catch(function(err){ alert('3D tiles failed: ' + (err && err.message || err)); });
+                    .catch(function(err){ alert(_cc_t('dlg.3dTilesFailed','3D tiles failed: {v1}',{v1:(err && err.message || err)})); });
                 }}
                 title=${_cc_t('tip.photorealisticGoogle3dTilesWorldwide','Photorealistic Google 3D Tiles (worldwide; bring your own Map Tiles API key)')}
                 style=${{fontSize:'.66rem',padding:'.22rem .4rem',background:'none',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
@@ -23371,20 +23371,20 @@ function startApp() {
               onChange=${function(e){ if (window._ccSetTiles3DDetail) window._ccSetTiles3DDetail(e.target.value); }}
               title=${_cc_t('tip.tileDetailAdjustsLiveLower','Tile detail — adjusts live; lower detail = fewer tiles, lighter on GPU and memory')}
               style=${{fontSize:'.62rem',padding:'.18rem .2rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-body)'}}>
-              <option value="low">Low</option>
-              <option value="standard">Std</option>
-              <option value="high">High</option>
+              <option value="low">${_cc_t('modelSidebar.low','Low')}</option>
+              <option value="standard">${_cc_t('modelSidebar.std','Std')}</option>
+              <option value="high">${_cc_t('modelSidebar.high','High')}</option>
             </select>`}
             ${(window._ccTiles3DActive && window._ccTiles3DActive() && window._ccSetTiles3DClearing) && html`<select
               value=${String(window._ccTiles3DClearing ? window._ccTiles3DClearing() : -1)}
               onChange=${function(e){ window._ccSetTiles3DClearing(Number(e.target.value)); }}
               title=${_cc_t('tip.clearSiteHidesContextBuildings','Clear site — hides context buildings inside the model footprint (+ margin), e.g. the old existing building your new design replaces')}
               style=${{fontSize:'.62rem',padding:'.18rem .2rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-body)'}}>
-              <option value="-1">Site: keep</option>
-              <option value="0">Clear 0 m</option>
-              <option value="5">Clear +5 m</option>
-              <option value="10">Clear +10 m</option>
-              <option value="25">Clear +25 m</option>
+              <option value="-1">${_cc_t('modelSidebar.siteKeep','Site: keep')}</option>
+              <option value="0">${_cc_t('modelSidebar.clear0M','Clear 0 m')}</option>
+              <option value="5">${_cc_t('modelSidebar.clear5M','Clear +5 m')}</option>
+              <option value="10">${_cc_t('modelSidebar.clear10M','Clear +10 m')}</option>
+              <option value="25">${_cc_t('modelSidebar.clear25M','Clear +25 m')}</option>
             </select>`}
             ${(window._ccTiles3DActive && window._ccTiles3DActive() && window._ccSetTiles3DHeight) && (function(){
               // Height seats the 3D context on the model floor. Auto by
@@ -23399,7 +23399,7 @@ function startApp() {
                   style=${{width:18,height:18,padding:0,fontSize:'.62rem',lineHeight:1,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>${label}</button>`;
               }
               return html`<span title=${_cc_t('tip.verticalPlacementOfThe3d','Vertical placement of the 3D world context. Auto-aligns to the model floor from the streamed geometry; ▼/▲ override manually.')} style=${{display:'flex',alignItems:'center',gap:'.15rem'}}>
-                <span style=${{fontSize:'.6rem',color:'var(--text-faint)'}}>height</span>
+                <span style=${{fontSize:'.6rem',color:'var(--text-faint)'}}>${_cc_t('modelSidebar.height','height')}</span>
                 ${hbtn('▼',-1,'Lower context (manual)')}${hbtn('▲',1,'Raise context (manual)')}
                 <span title=${auto?_cc_t('geoplace.autoAligned','Auto-aligned to model floor'):_cc_t('geoplace.manualHeight','Manual height')} style=${{fontSize:'.6rem',color:auto?'var(--color-success, #22c55e)':'var(--text-muted)',fontFamily:'var(--font-mono)',minWidth:'2.6rem',textAlign:'right'}}>${auto ? 'auto' : (h>0?'+':'')+h.toFixed(1)+'m'}</span>
                 <select value=${String(step())} onChange=${function(e){ try { localStorage.setItem('cc_tiles3d_hstep', e.target.value); } catch(_){} }}
@@ -24304,7 +24304,7 @@ function startApp() {
           <span style=${{fontSize:'0.69rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.04em',flex:1}}>${_cc_t('nav.selectionSets','Selection sets')}</span>
           <button onClick=${function(){
             var refs = multiSel.length ? multiSel : (window._ccSelectedExpressId ? [{expressId:window._ccSelectedExpressId, modelId:window._ccSelectedModelId||null}] : []);
-            if(!refs.length){ alert('Select one or more elements first (click in 3D, or shift-click in the navigator).'); return; }
+            if(!refs.length){ alert(_cc_t('dlg.selectOneOrMoreElements','Select one or more elements first (click in 3D, or shift-click in the navigator).')); return; }
             var name = prompt(_cc_t('nav.nameThisSelectionSet','Name this selection set:'), _cc_t('nav.setN','Set {n}',{n:(s.selectionSets||[]).length+1}));
             if(!name) return;
             d({t:'ADD_SELSET', v:{id:uid(), name:name, refs:refs}});
@@ -24336,7 +24336,7 @@ function startApp() {
                     title=${_cc_t('nav.highlight','Highlight')} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.65rem',padding:'0 .2rem'}}>★</button>
                   <button onClick=${function(){
                       var refs = multiSel.length ? multiSel : (window._ccSelectedExpressId ? [{expressId:window._ccSelectedExpressId, modelId:window._ccSelectedModelId||null}] : []);
-                      if(!refs.length){ alert('Select one or more elements first (click in 3D, or shift-click in the navigator), then use + / − to edit the set.'); return; }
+                      if(!refs.length){ alert(_cc_t('dlg.selectOneOrMoreElements2','Select one or more elements first (click in 3D, or shift-click in the navigator), then use + / − to edit the set.')); return; }
                       var merged = ss.refs.slice();
                       // Match by (expressId, modelId) when the incoming ref
                       // has a modelId — otherwise two different elements
@@ -24350,7 +24350,7 @@ function startApp() {
                     title=${_cc_t('nav.addCurrentSelToSet','Add current selection to this set')} style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'0.75rem',padding:'0 .2rem',fontWeight:700}}>+</button>
                   <button onClick=${function(){
                       var refs = multiSel.length ? multiSel : (window._ccSelectedExpressId ? [{expressId:window._ccSelectedExpressId, modelId:window._ccSelectedModelId||null}] : []);
-                      if(!refs.length){ alert('Select one or more elements first, then use + / − to edit the set.'); return; }
+                      if(!refs.length){ alert(_cc_t('dlg.selectOneOrMoreElements3','Select one or more elements first, then use + / − to edit the set.')); return; }
                       var remaining = ss.refs.filter(function(m){ return !refs.some(function(r){return r.expressId===m.expressId && (!r.modelId || !m.modelId || m.modelId===r.modelId);}); });
                       d({t:'UPD_SELSET_REFS',id:ss.id,refs:remaining});
                     }}
@@ -24550,7 +24550,7 @@ function startApp() {
           <path d="M12 2a4 4 0 0 1 4 4c0 1.95-1.4 3.11-2 4-.6.89-1 1.5-1 3m0 0a4 4 0 0 0-4-4c-1.95 0-3.11 1.4-4 2M12 13v4m-2 3h4"/>
           <circle cx="12" cy="22" r="1"/>
         </svg>
-        <span style=${{fontSize:'0.72rem',fontWeight:700,color:'var(--accent)',flex:1}}>AI Analysis</span>
+        <span style=${{fontSize:'0.72rem',fontWeight:700,color:'var(--accent)',flex:1}}>${_cc_t('clashAISummary.aiAnalysis','AI Analysis')}</span>
         <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',transform:collapsed?'rotate(-90deg)':'rotate(0)',transition:'transform .2s'}}>▼</span>
       </div>
       ${!collapsed && html`<div style=${{marginTop:'.35rem'}}>
@@ -24697,7 +24697,7 @@ function startApp() {
         </button>`}
       </div>
       ${isClash && delta && html`<div style=${{display:'flex',gap:'.3rem',marginTop:'.25rem',alignItems:'center',flexWrap:'wrap'}}>
-        <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',flexShrink:0}}>This run:</span>
+        <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',flexShrink:0}}>${_cc_t('clashStats.thisRun','This run:')}</span>
         ${delta.newCount > 0 && CHIP('New', delta.newCount, 'var(--accent-bg)', 'var(--accent)')}
         ${delta.persisting > 0 && CHIP('Unchanged', delta.persisting, 'var(--tag-bg)', 'var(--text-secondary)')}
         ${delta.autoResolved > 0 && CHIP('Auto-res', delta.autoResolved, 'var(--bg-tertiary)', 'var(--text-muted)')}
@@ -24783,17 +24783,17 @@ function startApp() {
     return html`<div style=${{padding:'.35rem .5rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--accent-bg)'}}>
       <div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginBottom:count>0?'.3rem':0}}>
         <button onClick=${function(){var ids=items.map(function(i){return i.id;}); d({t:A.SELECT_ALL,ids:ids})}}
-          style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--accent)',color:'var(--accent-contrast)'}}>All</button>
+          style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--accent)',color:'var(--accent-contrast)'}}>${_cc_t('bulkAction.all','All')}</button>
         <button onClick=${function(){d({t:A.SELECT_NONE})}}
-          style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>None</button>
+          style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>${_cc_t('bulkAction.none','None')}</button>
         <span style=${{flex:1,fontSize:'0.71rem',color:'var(--accent-subtle)',fontWeight:600}}>${count} selected</span>
         <button onClick=${function(){d({t:A.SELECT_MODE,v:false})}}
-          style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .3rem',background:'none',color:'var(--text-muted)'}}>Cancel</button>
+          style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .3rem',background:'none',color:'var(--text-muted)'}}>${_cc_t('bulkAction.cancel','Cancel')}</button>
       </div>
       ${count > 0 && html`<div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap'}}>
         <select onChange=${function(e){if(!e.target.value)return;d({t:isClash?'BATCH_UPD_CLASH':'BATCH_UPD_ISSUE',u:{status:e.target.value}});e.target.value='';}}
           style=${{...S_INPUT,fontSize:'0.69rem',padding:'.15rem .25rem',width:'auto',flex:1}}>
-          <option value="">Set status...</option>
+          <option value="">${_cc_t('bulkAction.setStatus','Set status...')}</option>
           ${Object.keys(STAT).map(function(k){return html`<option key=${k} value=${k}>${STAT[k].label}</option>`})}
         </select>
         ${!isClash && html`<input type="text" placeholder=${_cc_t('issue.assignToPlaceholder','Assign to...')} onKeyDown=${function(e){
@@ -24859,7 +24859,7 @@ function startApp() {
     return html`<div style=${{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'.2rem',flex:1,
       padding:'.15rem .25rem',borderRadius:6,background:'var(--input-bg)',border:'1px solid var(--border)',minHeight:'1.5rem'}}>
       ${selected.length === 0
-        ? html`<span style=${{fontSize:'0.7rem',color:'var(--text-muted)',padding:'.1rem .2rem'}}>all models</span>`
+        ? html`<span style=${{fontSize:'0.7rem',color:'var(--text-muted)',padding:'.1rem .2rem'}}>${_cc_t('bulkAction.allModels','all models')}</span>`
         : selected.map(function(id, i){
             return html`<span key=${id} style=${chipStyle}>
               ${i > 0 && html`<span style=${{color:'var(--text-faint)',marginRight:'.1rem'}}>+</span>`}
@@ -24937,7 +24937,7 @@ function startApp() {
     return html`<div style=${{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'.2rem',flex:1,
       padding:'.15rem .25rem',borderRadius:6,background:'var(--input-bg)',border:'1px solid var(--border)',minHeight:'1.5rem'}}>
       ${selected.length === 0
-        ? html`<span style=${{fontSize:'0.7rem',color:'var(--text-muted)',padding:'.1rem .2rem'}}>None (cross-model only)</span>`
+        ? html`<span style=${{fontSize:'0.7rem',color:'var(--text-muted)',padding:'.1rem .2rem'}}>${_cc_t('bulkAction.noneCrossModelOnly','None (cross-model only)')}</span>`
         : selected.map(function(id, i){
             var label = id === '__all__' ? 'all models' : _modelSelectLabel(id, models);
             return html`<span key=${id} style=${chipStyle}>
@@ -24953,7 +24953,7 @@ function startApp() {
         onChange=${function(e){ var v=e.target.value; e.target.value='__add__'; addId(v); }}
         style=${{...plusChipStyle,cursor:'pointer',appearance:'none',WebkitAppearance:'none',MozAppearance:'none',
           paddingRight:'.35rem',fontFamily:'inherit'}}>
-        <option value="__add__">+ add</option>
+        <option value="__add__">${_cc_t('bulkAction.add','+ add')}</option>
         ${addOptions.map(function(o){return html`<option key=${o.id} value=${o.id}>${o.label}</option>`})}
       </select>`}
       ${selected.length > 0 && html`<button onClick=${function(ev){ev.preventDefault();clearAll();}}
@@ -24971,7 +24971,7 @@ function startApp() {
     var typeList = Object.keys(ifcTypes).sort();
     if (typeList.length < 2 && tpKeys.length === 0) return null;
     return html`<div>
-      <div style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.2rem'}}>Custom tolerances per type pair</div>
+      <div style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.2rem'}}>${_cc_t('settings.advanced.customTolerances','Custom tolerances per type pair')}</div>
       ${tpKeys.length > 0 && html`<div style=${{marginBottom:'.2rem'}}>
         ${tpKeys.map(function(k){
           return html`<div key=${k} style=${{display:'flex',alignItems:'center',gap:'.2rem',marginBottom:'.1rem',padding:'.15rem .3rem',background:'var(--bg-secondary)',borderRadius:4}}>
@@ -24996,7 +24996,7 @@ function startApp() {
           var key=a<b?a+':'+b:b+':'+a;
           var u=Object.assign({},tpPairs);u[key]=+(tpState.mm||50)||0;
           d({t:A.UPD_RULES,u:{toleranceByTypePair:u}});
-        }} style=${{...S_BTN,fontSize:'0.63rem',padding:'1px 5px',background:'var(--accent-bg)',color:'var(--accent-subtle)'}}>Add</button>
+        }} style=${{...S_BTN,fontSize:'0.63rem',padding:'1px 5px',background:'var(--accent-bg)',color:'var(--accent-subtle)'}}>${_cc_t('bulkAction.add2','Add')}</button>
       </div>`}
     </div>`;
   }
@@ -25018,11 +25018,11 @@ function startApp() {
     var dot = {width:8,height:8,borderRadius:2};
     return html`<div>
       <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.2rem'}}>
-        <span style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)'}}>Discipline matrix</span>
+        <span style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)'}}>${_cc_t('bulkAction.disciplineMatrix','Discipline matrix')}</span>
         ${hasOverrides && html`<button onClick=${function(){d({t:A.UPD_RULES,u:{disciplineMatrix:{}}})}}
-          style=${{...S_BTN,fontSize:'0.57rem',padding:'0 4px',background:'none',color:'var(--text-faint)'}}>Reset overrides</button>`}
+          style=${{...S_BTN,fontSize:'0.57rem',padding:'0 4px',background:'none',color:'var(--text-faint)'}}>${_cc_t('bulkAction.resetOverrides','Reset overrides')}</button>`}
       </div>
-      <div style=${{fontSize:'0.62rem',color:'var(--text-faint)',marginBottom:'.3rem'}}>Which discipline pairs get tested. Same-discipline pairs (the diagonal) are off by default — the single biggest source of clash noise.</div>
+      <div style=${{fontSize:'0.62rem',color:'var(--text-faint)',marginBottom:'.3rem'}}>${_cc_t('bulkAction.whichDisciplinePairsGet','Which discipline pairs get tested. Same-discipline pairs (the diagonal) are off by default — the single biggest source of clash noise.')}</div>
       <table style=${{borderCollapse:'collapse'}}>
         <tbody>
           ${DISC.map(function(rowDisc, i){
@@ -25760,22 +25760,22 @@ function startApp() {
         <button disabled=${!hasItems} onClick=${function(){if(!hasItems)return;exportBCF(bcfItems,'2.1',s.viewpoints,s);setExportOpen(false);}}
           style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:hasItems?'var(--text-primary)':'var(--text-muted)',cursor:hasItems?'pointer':'default',opacity:hasItems?1:0.5,fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
           Export BCF 2.1
-          <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Revit, Navisworks, Solibri</span>
+          <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('modelClashMatrix.revitNavisworksSolibri','Revit, Navisworks, Solibri')}</span>
         </button>
         <button disabled=${!hasItems} onClick=${function(){if(!hasItems)return;exportBCF(bcfItems,'3.0',s.viewpoints,s);setExportOpen(false);}}
           style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:hasItems?'var(--text-primary)':'var(--text-muted)',cursor:hasItems?'pointer':'default',opacity:hasItems?1:0.5,fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
           Export BCF 3.0
-          <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Extended spec, newer tools</span>
+          <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('modelClashMatrix.extendedSpecNewerTools','Extended spec, newer tools')}</span>
         </button>
         <button onClick=${function(){if(window._ccClashReport)window._ccClashReport(s);setExportOpen(false);}}
           style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
           ⎙ Clash report
-          <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Print-ready summary, trend + clusters</span>
+          <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('modelClashMatrix.printReadySummaryTrend','Print-ready summary, trend + clusters')}</span>
         </button>
         <button onClick=${function(){if(window._ccDataQualityReport)window._ccDataQualityReport(s);setExportOpen(false);}}
           style=${{display:'block',width:'100%',textAlign:'left',padding:'.45rem .7rem',fontSize:'0.75rem',background:'none',border:'none',color:'var(--text-primary)',cursor:'pointer',fontFamily:'var(--font-body)',borderTop:'1px solid var(--border-subtle)'}}>
           ⎙ Data quality report
-          <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>Quality Score, BIM basics, ILS, RVB, accessibility</span>
+          <span style=${{display:'block',fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('modelClashMatrix.qualityScoreBimBasics','Quality Score, BIM basics, ILS, RVB, accessibility')}</span>
         </button>
       </div>`}
     </div>`;
@@ -26080,7 +26080,7 @@ function startApp() {
 
 
         ${isClashTab && s.clashes.some(function(c){return c._delta;}) && html`<div>
-          <span style=${FL}>Run delta</span>
+          <span style=${FL}>${_cc_t('issue.runDelta','Run delta')}</span>
           <div style=${{display:'flex',gap:'.2rem',flexWrap:'wrap'}}>
             ${[['all','All'],['new','New'],['persisting','Persisting'],['auto_resolved','Auto-resolved']].map(function(pair){return html`<button key=${pair[0]} onClick=${function(){d({t:A.UPD_FILTERS,u:{deltaState:pair[0]}})}}
               style=${PILL(f.deltaState===pair[0]||(!f.deltaState&&pair[0]==='all'))}>${pair[1]}</button>`;})}
@@ -26088,7 +26088,7 @@ function startApp() {
         </div>`}
 
         ${isClashTab && html`<div>
-          <span style=${FL}>Self / Cross-model</span>
+          <span style=${FL}>${_cc_t('issue.selfCrossModel','Self / Cross-model')}</span>
           <div style=${{display:'flex',gap:'.2rem'}}>
             ${['all','self','cross'].map(function(v){return html`<button key=${v} onClick=${function(){d({t:A.UPD_FILTERS,u:{selfClash:v}})}}
               style=${PILL(f.selfClash===v)}>${v==='all'?'All':v==='self'?'Self':'Cross'}</button>`})}
@@ -27795,10 +27795,10 @@ function startApp() {
               <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.4rem .6rem'}}>
                 <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',flex:1}}>NL/SfB Verdeling</span>
                 <button onClick=${function(){colorByILSDist('nlsfb');}}
-                  title=${activeDistKey==='nlsfb'?'Clear coloring':'Color by NL/SfB'}
+                  title=${activeDistKey==='nlsfb'?_cc_t('dq.clearColoring','Clear coloring'):_cc_t('dq.colorByNlsfb','Color by NL/SfB')}
                   style=${{fontSize:'0.57rem',padding:'1px 5px',background:activeDistKey==='nlsfb'?'var(--accent)':'none',border:'1px solid '+(activeDistKey==='nlsfb'?'var(--accent)':'var(--border)'),borderRadius:3,
                     color:activeDistKey==='nlsfb'?'var(--accent-contrast)':'var(--text-faint)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>
-                  ${activeDistKey==='nlsfb'?'Clear':'Color'}
+                  ${activeDistKey==='nlsfb'?_cc_t('dq.clear','Clear'):_cc_t('dq.color','Color')}
                 </button>
                 <span onClick=${function(){toggleExp('dist_nlsfb');}} style=${{fontSize:'0.57rem',color:'var(--text-faint)',cursor:'pointer'}}>${expanded['dist_nlsfb']?'▲':'▼'}</span>
               </div>
@@ -27829,10 +27829,10 @@ function startApp() {
               <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.4rem .6rem'}}>
                 <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',flex:1}}>ILS Compliance</span>
                 <button onClick=${function(){colorByILSDist('compliance');}}
-                  title=${activeDistKey==='compliance'?'Clear coloring':'Color by compliance'}
+                  title=${activeDistKey==='compliance'?_cc_t('dq.clearColoring','Clear coloring'):_cc_t('dq.colorByCompliance','Color by compliance')}
                   style=${{fontSize:'0.57rem',padding:'1px 5px',background:activeDistKey==='compliance'?'var(--accent)':'none',border:'1px solid '+(activeDistKey==='compliance'?'var(--accent)':'var(--border)'),borderRadius:3,
                     color:activeDistKey==='compliance'?'var(--accent-contrast)':'var(--text-faint)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>
-                  ${activeDistKey==='compliance'?'Clear':'Color'}
+                  ${activeDistKey==='compliance'?_cc_t('dq.clear','Clear'):_cc_t('dq.color','Color')}
                 </button>
               </div>
               <div style=${{padding:'0 .6rem .3rem'}}>
@@ -27847,7 +27847,7 @@ function startApp() {
                     onClick=${function(){highlightILSDistGroup('compliance', val);}}
                     style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.25rem 0',cursor:'pointer',borderBottom:'1px solid var(--border-subtle)'}}>
                     <span style=${{width:8,height:8,borderRadius:'50%',background:compColor,flexShrink:0}}></span>
-                    <span style=${{fontSize:'0.66rem',color:'var(--text-secondary)',flex:1}}>${val}</span>
+                    <span style=${{fontSize:'0.66rem',color:'var(--text-secondary)',flex:1}}>${{'Compliant':_cc_t('dq.compliant','Compliant'),'Minor issues':_cc_t('dq.minorIssues','Minor issues'),'Major issues':_cc_t('dq.majorIssues','Major issues')}[val]||val}</span>
                     <span style=${{fontSize:'0.63rem',fontWeight:600,color:compFg}}>${items.length}</span>
                     <div style=${{width:50,height:5,background:'var(--bg-secondary)',borderRadius:2,overflow:'hidden',flexShrink:0}}>
                       <div style=${{width:pct+'%',height:'100%',background:compColor,borderRadius:2}}></div>
@@ -27878,7 +27878,7 @@ function startApp() {
 
         ${bim && bim._dist && html`<div>
           <div onClick=${function(){toggleSection('dist');}} style=${SEC}>
-            <span>Property Distribution</span>
+            <span>${_cc_t('dataQuality.propertyDistribution','Property Distribution')}</span>
             <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${sections.dist?'▲':'▼'}</span>
           </div>
           ${sections.dist && html`<div style=${{padding:'.3rem 0'}}>
@@ -27892,12 +27892,12 @@ function startApp() {
               return html`<div key=${dk} style=${{borderBottom:'1px solid var(--border-subtle)'}}>
                 <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.3rem .6rem'}}>
                   <span style=${{fontSize:'0.72rem',color:'var(--text-secondary)',flex:1}}>${labels[dk]||dk}</span>
-                  <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${gKeys.length} values</span>
+                  <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${_cc_t('dq.nValues','{n} values',{n:gKeys.length})}</span>
                   <button onClick=${function(){colorByDistribution(dk);}}
-                    title=${isActive?'Clear coloring':'Color in 3D by '+dk}
+                    title=${isActive?_cc_t('dq.clearColoring','Clear coloring'):_cc_t('dq.colorIn3dBy','Color in 3D by {key}',{key:dk})}
                     style=${{fontSize:'0.57rem',padding:'1px 5px',background:isActive?'var(--accent)':'none',border:'1px solid '+(isActive?'var(--accent)':'var(--border)'),borderRadius:3,
                       color:isActive?'var(--accent-contrast)':'var(--text-faint)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>
-                    ${isActive?'Clear':'Color'}
+                    ${isActive?_cc_t('dq.clear','Clear'):_cc_t('dq.color','Color')}
                   </button>
                   <span onClick=${function(){toggleExp('dist_'+dk);}} style=${{fontSize:'0.57rem',color:'var(--text-faint)',cursor:'pointer'}}>${expanded['dist_'+dk]?'▲':'▼'}</span>
                 </div>
@@ -27927,7 +27927,7 @@ function startApp() {
         </div>`}
 
         <div style=${{borderTop:'2px solid var(--border)',marginTop:'.5rem'}}>
-          <div style=${{fontSize:'0.69rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em',padding:'.4rem .6rem',background:'var(--bg-secondary)',borderBottom:'1px solid var(--border-subtle)'}}>IDS Rules</div>
+          <div style=${{fontSize:'0.69rem',fontWeight:700,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.05em',padding:'.4rem .6rem',background:'var(--bg-secondary)',borderBottom:'1px solid var(--border-subtle)'}}>${_cc_t('dataQuality.idsRules','IDS Rules')}</div>
           <${IDSValidationPanel} s=${s} d=${d} />
         </div>
 
@@ -28371,7 +28371,7 @@ function startApp() {
       ${data.rules.map(function(r,i){
         var dup=isDuplicate(i);
         return html`<div key=${'d'+i} style=${{padding:'.4rem',background:dup?'var(--color-danger-bg)':'var(--bg-secondary)',borderRadius:6,marginBottom:'.35rem',border:dup?'1px solid var(--color-danger-border)':'1px solid var(--border-subtle)'}}>
-          ${dup && html`<div style=${{fontSize:'0.57rem',color:'var(--color-danger-fg)',marginBottom:'.2rem',fontWeight:600}}>⚠ Duplicate pair — overridden by earlier rule</div>`}
+          ${dup && html`<div style=${{fontSize:'0.57rem',color:'var(--color-danger-fg)',marginBottom:'.2rem',fontWeight:600}}>${_cc_t('standards.duplicatePair','⚠ Duplicate pair — overridden by earlier rule')}</div>`}
           <div style=${{display:'flex',gap:'.3rem',alignItems:'center',marginBottom:'.25rem'}}>
             <select value=${r.discipline_a} onChange=${function(e){updRow(i,'discipline_a',e.target.value);}}
               style=${selStyle}>
@@ -29984,7 +29984,7 @@ function startApp() {
                       title=${val==='real_clash'?_cc_t('vlist.markRealClash','Mark cluster as a real clash'):val==='false_positive'?_cc_t('vlist.markFalsePositive','Mark cluster as a false positive'):_cc_t('vlist.clearFeedback','Clear feedback')}
                       style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid '+(on?'var(--accent-subtle)':'var(--border)'),background:on?'var(--accent-bg)':'var(--bg-secondary)',color:on?'var(--accent-subtle)':'var(--text-secondary)',fontWeight:on?'var(--weight-semibold)':'var(--weight-regular)'}}>${label}</button>`;};
                     return html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',paddingTop:'var(--space-1)',borderTop:'1px dashed var(--border-subtle)'}}>
-                      <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginRight:'var(--space-1)'}}>Was this useful?</span>
+                      <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginRight:'var(--space-1)'}}>${_cc_t('virtualList.wasThisUseful','Was this useful?')}</span>
                       ${btn('👍 Real clash', 'real_clash', fb0==='real_clash')}
                       ${btn('👎 False positive', 'false_positive', fb0==='false_positive')}
                     </div>`;
@@ -31158,20 +31158,20 @@ function startApp() {
           padding:'.55rem .9rem',fontSize:'var(--text-xs)',color:'var(--text-secondary)',
           boxShadow:'var(--shadow-md)',zIndex:6,maxWidth:520,
           display:'grid',gridTemplateColumns:'auto auto',columnGap:'1.2rem',rowGap:'.25rem'}}>
-        <span><b style=${{color:'var(--text-primary)'}}>WASD / Arrows</b></span><span>${_cc_t('walk.help.move','Move')}</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Mouse</b></span><span>${_cc_t('walk.help.look','Look')}</span>
+        <span><b style=${{color:'var(--text-primary)'}}>${_cc_t('walkModeHUD.wasdArrows','WASD / Arrows')}</b></span><span>${_cc_t('walk.help.move','Move')}</span>
+        <span><b style=${{color:'var(--text-primary)'}}>${_cc_t('walkModeHUD.mouse','Mouse')}</b></span><span>${_cc_t('walk.help.look','Look')}</span>
         <span><b style=${{color:'var(--text-primary)'}}>Shift</b></span><span>${_cc_t('walk.help.sprint','Sprint (×3)')}</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Scroll</b></span><span>${_cc_t('walk.help.adjustSpeed','Adjust speed')}</span>
+        <span><b style=${{color:'var(--text-primary)'}}>${_cc_t('walkModeHUD.scroll','Scroll')}</b></span><span>${_cc_t('walk.help.adjustSpeed','Adjust speed')}</span>
         <span><b style=${{color:'var(--text-primary)'}}>Shift + Scroll</b></span><span>${_cc_t('walk.help.adjustFov','Adjust FOV')}</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Double-click</b></span><span>${_cc_t('walk.help.teleport','Teleport to surface')}</span>
+        <span><b style=${{color:'var(--text-primary)'}}>${_cc_t('walkModeHUD.doubleClick','Double-click')}</b></span><span>${_cc_t('walk.help.teleport','Teleport to surface')}</span>
         <span><b style=${{color:'var(--text-primary)'}}>C</b></span><span>${_cc_t('walk.help.crouch','Toggle crouch')}</span>
         <span><b style=${{color:'var(--text-primary)'}}>P</b></span><span>${_cc_t('walk.help.photo','Photo (hide HUD + save PNG)')}</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Hold Alt</b></span><span>${_cc_t('walk.help.passThrough','Pass through walls')}</span>
-        <span><b style=${{color:'var(--text-primary)'}}>Space / Q · E</b></span><span>${_cc_t('walk.help.upDown','Up · Down (fly)')}</span>
+        <span><b style=${{color:'var(--text-primary)'}}>${_cc_t('walkModeHUD.holdAlt','Hold Alt')}</b></span><span>${_cc_t('walk.help.passThrough','Pass through walls')}</span>
+        <span><b style=${{color:'var(--text-primary)'}}>${_cc_t('walkModeHUD.spaceQE','Space / Q · E')}</b></span><span>${_cc_t('walk.help.upDown','Up · Down (fly)')}</span>
         ${!isPresent && html`<${React.Fragment}><span><b style=${{color:'var(--text-primary)'}}>F</b></span><span>${_cc_t('walk.help.inspect','Inspect hovered element')}</span></${React.Fragment}>`}
         ${!isPresent && html`<${React.Fragment}><span><b style=${{color:'var(--text-primary)'}}>I</b></span><span>${_cc_t('walk.help.createIssue','Create issue at view')}</span></${React.Fragment}>`}
         <span><b style=${{color:'var(--text-primary)'}}>B</b></span><span>${_cc_t('walk.help.bookmark','Bookmark this view')}</span>
-        <span><b style=${{color:'var(--text-primary)'}}>V / Shift+V</b></span><span>${_cc_t('walk.help.saveRestoreViewpoint','Save / restore viewpoint')}</span>
+        <span><b style=${{color:'var(--text-primary)'}}>${_cc_t('walkModeHUD.vShiftV','V / Shift+V')}</b></span><span>${_cc_t('walk.help.saveRestoreViewpoint','Save / restore viewpoint')}</span>
         ${isCoord && html`<${React.Fragment}><span><b style=${{color:'var(--text-primary)'}}>N</b></span><span>${_cc_t('walk.help.nextClash','Fly to next open clash')}</span></${React.Fragment}>`}
         <span><b style=${{color:'var(--text-primary)'}}>Esc</b></span><span>${_cc_t('walk.help.exit','Exit walk mode')}</span>
       </div>`}
@@ -32158,7 +32158,7 @@ function startApp() {
       if (creating) return;
       var name = createName.trim();
       if (!name) return;
-      if (!window._ccSharedCreate) { alert('Sharing service unavailable.'); return; }
+      if (!window._ccSharedCreate) { alert(_cc_t('dlg.sharingServiceUnavailable','Sharing service unavailable.')); return; }
       setCreating(true);
       window._ccSharedCreate(name).then(function(data){
         try{
@@ -32172,7 +32172,7 @@ function startApp() {
         setCreating(false);
         setCreateOpen(false);
         setCreateName('');
-      }).catch(function(){ alert('Could not create shared project. Server may be unavailable.'); setCreating(false); });
+      }).catch(function(){ alert(_cc_t('dlg.couldNotCreateSharedProject','Could not create shared project. Server may be unavailable.')); setCreating(false); });
     }
     function copy(text, kind){
       try {
@@ -33298,7 +33298,7 @@ function startApp() {
           <span style=${{fontSize:'0.92rem',color:'var(--text-primary)',lineHeight:1.45}}>
             ClashControl is free and source-available under SSPL.
             ${' '}<a href="https://github.com/sponsors/clashcontrol-io" target="_blank" rel="noopener"
-              style=${{color:'var(--accent)',textDecoration:'underline',fontWeight:600}}>Support the project</a>${' '}to help keep it running.
+              style=${{color:'var(--accent)',textDecoration:'underline',fontWeight:600}}>${_cc_t('settings.supportTheProject','Support the project')}</a>${' '}to help keep it running.
           </span>
         </div>
       </div>
@@ -33309,17 +33309,17 @@ function startApp() {
         </div>
         <div style=${{flex:1,minWidth:0,overflowY:'auto',padding:'var(--space-2) var(--space-5) var(--space-5) var(--space-5)'}}>
         ${activeTab==='general' && html`<${React.Fragment}>
-        <div style=${SEC}>Viewer</div>
+        <div style=${SEC}>${_cc_t('settings.viewer','Viewer')}</div>
         <div style=${TROW}>
-          <div><div style=${TLBL}>Auto fly-to on click</div><div style=${TSUB}>Camera moves to element when selecting a clash or issue</div></div>
+          <div><div style=${TLBL}>${_cc_t('settings.autoFlyToOn','Auto fly-to on click')}</div><div style=${TSUB}>${_cc_t('settings.cameraMovesToElement','Camera moves to element when selecting a clash or issue')}</div></div>
           <${Toggle} on=${p.autoFlyTo!==false} onToggle=${tog('autoFlyTo')} />
         </div>
         <div style=${TROW}>
-          <div><div style=${TLBL}>Auto highlight element</div><div style=${TSUB}>Highlight the element with a blue box when clicking a clash or issue</div></div>
+          <div><div style=${TLBL}>${_cc_t('settings.autoHighlightElement','Auto highlight element')}</div><div style=${TSUB}>${_cc_t('settings.highlightTheElementWith','Highlight the element with a blue box when clicking a clash or issue')}</div></div>
           <${Toggle} on=${p.autoHighlight!==false} onToggle=${tog('autoHighlight')} />
         </div>
         <div style=${TROW}>
-          <div><div style=${TLBL}>Scroll zoom speed</div><div style=${TSUB}>How fast the viewport zooms when you scroll. Default 1×.</div></div>
+          <div><div style=${TLBL}>${_cc_t('settings.scrollZoomSpeed','Scroll zoom speed')}</div><div style=${TSUB}>${_cc_t('settings.howFastTheViewport','How fast the viewport zooms when you scroll. Default 1×.')}</div></div>
           <div style=${{display:'flex',alignItems:'center',gap:'.5rem'}}>
             <input type="range" min="0.25" max="4" step="0.05"
               value=${p.zoomSens != null ? p.zoomSens : 1}
@@ -33329,56 +33329,56 @@ function startApp() {
           </div>
         </div>
         <div style=${TROW}>
-          <div><div style=${TLBL}>Pointer device</div><div style=${TSUB}>How scrolling/two-finger gestures are interpreted. Auto detects a trackpad from the scroll pattern.</div></div>
+          <div><div style=${TLBL}>${_cc_t('settings.pointerDevice','Pointer device')}</div><div style=${TSUB}>${_cc_t('settings.howScrollingTwoFinger','How scrolling/two-finger gestures are interpreted. Auto detects a trackpad from the scroll pattern.')}</div></div>
           <select value=${p.navInputMode||'auto'} onChange=${function(e){ d({t:A.UPD_PREFS,u:{navInputMode:e.target.value}}); }}
             style=${{background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',padding:'.35rem .5rem',fontSize:'var(--text-xs)'}}>
-            <option value="auto">Auto</option>
-            <option value="mouse">Mouse</option>
-            <option value="trackpad">Trackpad</option>
+            <option value="auto">${_cc_t('settings.auto2','Auto')}</option>
+            <option value="mouse">${_cc_t('settings.mouse','Mouse')}</option>
+            <option value="trackpad">${_cc_t('settings.trackpad','Trackpad')}</option>
           </select>
         </div>
         <div style=${TROW}>
-          <div><div style=${TLBL}>Show grid</div><div style=${TSUB}>Display the reference grid in the 3D view</div></div>
+          <div><div style=${TLBL}>${_cc_t('settings.showGrid','Show grid')}</div><div style=${TSUB}>${_cc_t('settings.displayTheReferenceGrid','Display the reference grid in the 3D view')}</div></div>
           <${Toggle} on=${p.showGrid!==false} onToggle=${tog('showGrid')} />
         </div>
         <div style=${TROW}>
-          <div><div style=${TLBL}>Show axes</div><div style=${TSUB}>Display the X/Y/Z axes indicator</div></div>
+          <div><div style=${TLBL}>${_cc_t('settings.showAxes','Show axes')}</div><div style=${TSUB}>${_cc_t('settings.displayTheXY','Display the X/Y/Z axes indicator')}</div></div>
           <${Toggle} on=${p.showAxes!==false} onToggle=${tog('showAxes')} />
         </div>
         <div style=${TROW}>
-          <div><div style=${TLBL}>Show markers</div><div style=${TSUB}>Display 3D markers — red/amber for clashes, green for issues</div></div>
+          <div><div style=${TLBL}>${_cc_t('settings.showMarkers','Show markers')}</div><div style=${TSUB}>${_cc_t('settings.display3dMarkersRed','Display 3D markers — red/amber for clashes, green for issues')}</div></div>
           <${Toggle} on=${!!p.showMarkers} onToggle=${tog('showMarkers')} />
         </div>
         <div style=${TROW}>
-          <div><div style=${TLBL}>Hover highlight</div><div style=${TSUB}>Highlight elements on mouse hover with wireframe overlay</div></div>
+          <div><div style=${TLBL}>${_cc_t('settings.hoverHighlight','Hover highlight')}</div><div style=${TSUB}>${_cc_t('settings.highlightElementsOnMouse','Highlight elements on mouse hover with wireframe overlay')}</div></div>
           <${Toggle} on=${p.hoverHighlight!==false} onToggle=${tog('hoverHighlight')} />
         </div>
         <div style=${TROW}>
-          <div><div style=${TLBL}>Outline selected</div><div style=${TSUB}>Add glowing outline effect to selected elements</div></div>
+          <div><div style=${TLBL}>${_cc_t('settings.outlineSelected','Outline selected')}</div><div style=${TSUB}>${_cc_t('settings.addGlowingOutlineEffect','Add glowing outline effect to selected elements')}</div></div>
           <${Toggle} on=${p.outlineSelected!==false} onToggle=${tog('outlineSelected')} />
         </div>
 
-        <div style=${SEC}>Import</div>
+        <div style=${SEC}>${_cc_t('settings.import','Import')}</div>
         <div style=${TROW}>
           <div>
-            <div style=${TLBL}>Model unit scale</div>
-            <div style=${TSUB}>Override auto-detected units. Use Auto unless elevations or 2D sheets look wrong.</div>
+            <div style=${TLBL}>${_cc_t('settings.modelUnitScale','Model unit scale')}</div>
+            <div style=${TSUB}>${_cc_t('settings.overrideAutoDetectedUnits','Override auto-detected units. Use Auto unless elevations or 2D sheets look wrong.')}</div>
           </div>
           <select value=${p.unitScaleOverride||'auto'}
             onChange=${function(e){d({t:A.UPD_PREFS,u:{unitScaleOverride:e.target.value}})}}
             style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,padding:'.25rem .5rem',fontSize:'0.8rem'}}>
             <option value="auto">Auto${' ('+(_ccDetectUnitScale(s.models)>=1000?'mm':(_ccDetectUnitScale(s.models)>=100?'cm':'m'))+')'}</option>
-            <option value="1">Meters</option>
-            <option value="100">Centimeters</option>
-            <option value="1000">Millimeters</option>
+            <option value="1">${_cc_t('settings.meters','Meters')}</option>
+            <option value="100">${_cc_t('settings.centimeters','Centimeters')}</option>
+            <option value="1000">${_cc_t('settings.millimeters','Millimeters')}</option>
           </select>
         </div>
 
-        <div style=${SEC}>Language &amp; Region</div>
+        <div style=${SEC}>${_cc_t('settings.languageRegion','Language & Region')}</div>
         <div style=${TROW}>
           <div>
-            <div style=${TLBL}>Language</div>
-            <div style=${TSUB}>Community-contributed UI translation. Anything untranslated stays in English.</div>
+            <div style=${TLBL}>${_cc_t('settings.language','Language')}</div>
+            <div style=${TSUB}>${_cc_t('settings.communityContributedUiTranslation','Community-contributed UI translation. Anything untranslated stays in English.')}</div>
           </div>
           <select value=${localeSel||''}
             onChange=${function(e){
@@ -33391,14 +33391,14 @@ function startApp() {
               }
             }}
             style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,padding:'.25rem .5rem',fontSize:'0.8rem'}}>
-            <option value="">English (default)</option>
+            <option value="">${_cc_t('settings.englishDefault','English (default)')}</option>
             ${localePacks.map(function(pk){return html`<option key=${pk.lang} value=${pk.lang}>${pk.name}</option>`;})}
           </select>
         </div>
         <div style=${TROW}>
           <div>
-            <div style=${TLBL}>Regional building code</div>
-            <div style=${TSUB}>Thresholds used by the Accessibility panel (door width, ramp slope, corridor/turning clearance). Defaults to NL Bbl/NEN.</div>
+            <div style=${TLBL}>${_cc_t('settings.regionalBuildingCode','Regional building code')}</div>
+            <div style=${TSUB}>${_cc_t('settings.thresholdsUsedByThe','Thresholds used by the Accessibility panel (door width, ramp slope, corridor/turning clearance). Defaults to NL Bbl/NEN.')}</div>
           </div>
           <select value=${regionSel||''}
             onChange=${function(e){
@@ -33411,7 +33411,7 @@ function startApp() {
               }
             }}
             style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,padding:'.25rem .5rem',fontSize:'0.8rem'}}>
-            <option value="">NL Bbl/NEN (default)</option>
+            <option value="">${_cc_t('settings.nlBblNenDefault','NL Bbl/NEN (default)')}</option>
             ${regionPacks.map(function(pk){return html`<option key=${pk.region} value=${pk.region}>${pk.name}${pk.verified===false?' (unverified)':''}</option>`;})}
           </select>
         </div>
@@ -34414,7 +34414,7 @@ function startApp() {
     if (!d) return;
     var s = window._ccLatestState || {};
     var storeys = _ccCollectStoreys(s.models || []);
-    if (!storeys.length) { alert('Load a model with storey data first.'); return; }
+    if (!storeys.length) { alert(_cc_t('dlg.loadAModelWithStorey','Load a model with storey data first.')); return; }
     if (window._ccShowStoreyPicker) window._ccShowStoreyPicker(true);
   };
 
@@ -35080,13 +35080,13 @@ function startApp() {
         var pt = toWorld(e, sc.markupTool === 'dimension');
         if (sc.markupTool === 'pin') {
           var sheet = getActiveSheet();
-          if (!sheet) { alert('Create a sheet first.'); return; }
-          var label = prompt('Pin label (optional):') || '';
+          if (!sheet) { alert(_cc_t('dlg.createASheetFirst','Create a sheet first.')); return; }
+          var label = prompt(_cc_t('dlg.pinLabelOptional','Pin label (optional):')) || '';
           d({ t: A.PIN_ADD, v: { id: uid(), sheetId: sheet.id, kind: 'manual', targetId: null, x: -pt[0], z: pt[1], color: '#f59e0b', label: label } });
           return;
         }
         if (sc.markupTool === 'text') {
-          var txt = prompt('Enter text:');
+          var txt = prompt(_cc_t('dlg.enterText','Enter text:'));
           if (txt) d({ t: 'ADD_MARKUP', v: { id: uid(), type: 'text', points: [pt[0], pt[1]], color: '#f59e0b', text: txt } });
           return;
         }
@@ -35175,11 +35175,11 @@ function startApp() {
               cursor: disabled ? 'not-allowed' : 'pointer' }} title=${toolTitles[t] || t}>${toolIcons[t]}</button>`;
         })}
         ${s.markups.filter(function(m){return s.activeSheetId?m.sheetId===s.activeSheetId:!m.sheetId;}).length > 0 && html`<button onClick=${function() { d({ t: 'CLEAR_MARKUPS' }); }}
-          style=${{ ...S_BTN, fontSize: '.55rem', padding: '.25rem .4rem', background: 'var(--overlay-bg)', color: '#ef4444', border: '1px solid var(--border)' }}>Clear all</button>`}
+          style=${{ ...S_BTN, fontSize: '.55rem', padding: '.25rem .4rem', background: 'var(--overlay-bg)', color: '#ef4444', border: '1px solid var(--border)' }}>${_cc_t('view2D.clearAll','Clear all')}</button>`}
       </div>
       <div style=${{ position: 'absolute', top: '.5rem', right: '.5rem', display: 'flex', gap: '.3rem', pointerEvents: 'auto', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
         <button onClick=${function() { d({ t: 'UNDERLAY_MODE', v: null }); }}
-          style=${{ ...S_BTN, fontSize: '.6rem', padding: '.2rem .5rem', background: 'var(--accent)', color: 'var(--accent-contrast)', border: '1px solid var(--accent-hover)' }}>Back to 3D</button>
+          style=${{ ...S_BTN, fontSize: '.6rem', padding: '.2rem .5rem', background: 'var(--accent)', color: 'var(--accent-contrast)', border: '1px solid var(--accent-hover)' }}>${_cc_t('view2D.backTo3d','Back to 3D')}</button>
         ${s.floorPlan && html`<button onClick=${function() { d({ t: 'UNDERLAY_MODE', v: s.underlayMode === 'compare' ? 'view2d' : 'compare' }); }}
           style=${{ ...S_BTN, fontSize: '.6rem', padding: '.2rem .5rem',
             background: s.underlayMode === 'compare' ? 'var(--accent)' : 'var(--overlay-bg)',
@@ -35770,7 +35770,7 @@ function startApp() {
 
   // ── SVG export ───────────────────────────────────────────────────
   function exportSVG(outlines, sheet) {
-    if (!outlines || !outlines.length) { alert('No outlines to export.'); return; }
+    if (!outlines || !outlines.length) { alert(_cc_t('dlg.noOutlinesToExport','No outlines to export.')); return; }
     var paper = (_PAPER_MM || {})[(sheet && sheet.paper && sheet.paper.size) || 'A3'] || { w: 420, h: 297 };
     var orient = (sheet && sheet.paper && sheet.paper.orient) || 'landscape';
     var pw = orient === 'landscape' ? paper.w : paper.h; // paper width mm
@@ -38114,7 +38114,7 @@ function startApp() {
       var cbMatch = text.match(/color\s+by\s+(type|storey|discipline|material)/);
       var cbView = 'by'+cbMatch[1].charAt(0).toUpperCase()+cbMatch[1].slice(1);
       d({t:A.COLOR_BY_CLASS,v:cbView});
-      return _cc_t('nl.reply.coloredBy','Colored by {v1}.',{v1:cbMatch[1]});
+      return _cc_t('nl.reply.coloredBy','Colored by {by}.',{by:cbMatch[1]});
     }
     if (/(?:remove|clear|reset)\s+color/.test(text)) { d({t:A.COLOR_BY_CLASS,v:null}); return _cc_t('nl.reply.colorsReset','Colors reset.'); }
 
@@ -39160,10 +39160,10 @@ function startApp() {
       padding:'.5rem .65rem', fontSize:'0.75rem', color:mutedCol, lineHeight:1.6,
       background:'var(--bg-secondary)', borderRadius:8, margin:'0 0 .3rem'
     }}>
-      ${llmStatus === 'ready' && backendLabel ? html`<span>Ready — using <strong style=${{color:backendColor}}>${backendLabel}</strong>. Describe what you want in plain English.</span>`
-        : llmStatus === 'loading' ? html`<span>Connecting to AI server...</span>`
-        : llmStatus === 'error' ? html`<span style=${{color:'#f87171'}}>AI server unavailable. Basic commands still work via text matching.</span>`
-        : html`<span>Checking AI server... You can still use suggestion chips below.</span>`}
+      ${llmStatus === 'ready' && backendLabel ? html`<span>Ready — using <strong style=${{color:backendColor}}>${backendLabel}</strong>${_cc_t('nl.describeWhatYouWant','. Describe what you want in plain English.')}</span>`
+        : llmStatus === 'loading' ? html`<span>${_cc_t('nl.connectingToAiServer','Connecting to AI server...')}</span>`
+        : llmStatus === 'error' ? html`<span style=${{color:'#f87171'}}>${_cc_t('nl.aiServerUnavailableBasic','AI server unavailable. Basic commands still work via text matching.')}</span>`
+        : html`<span>${_cc_t('nl.checkingAiServerYou','Checking AI server... You can still use suggestion chips below.')}</span>`}
     </div>` : null;
 
     // ── Docked mode: render inline as side panel content ──
@@ -39346,7 +39346,7 @@ function startApp() {
             display:'flex', alignItems:'center', gap:'.5rem'
           }}>
             <span class="spin" style=${{display:'inline-block',width:'.7rem',height:'.7rem',borderRadius:'50%',border:'1.5px solid rgba(26,107,74,.25)',borderTopColor:'#1a6b4a',flexShrink:0}}></span>
-            <span style=${{color:'var(--accent-subtle)',fontStyle:'italic'}}>Thinking</span>
+            <span style=${{color:'var(--accent-subtle)',fontStyle:'italic'}}>${_cc_t('nl.thinking2','Thinking')}</span>
             <span style=${{display:'inline-flex',gap:'.15rem'}}>
               <span style=${{animation:'nlDots 1.4s ease-in-out infinite',color:'var(--accent-subtle)'}}>.</span>
               <span style=${{animation:'nlDots 1.4s ease-in-out .2s infinite',color:'var(--accent-subtle)'}}>.</span>
@@ -39359,7 +39359,7 @@ function startApp() {
             title=${_cc_t('nl.clearChatHistory','Clear chat history')} aria-label=${_cc_t('nl.clearChatHistory','Clear chat history')}
             style=${{background:'none',border:'1px solid '+borderCol,cursor:'pointer',
               color:mutedCol,fontSize:'0.66rem',lineHeight:1,padding:'.25rem .8rem',
-              borderRadius:20,fontWeight:500,opacity:.7}}>Clear chat</button>
+              borderRadius:20,fontWeight:500,opacity:.7}}>${_cc_t('nl.clearChat','Clear chat')}</button>
         </div>`}
         <div ref=${bottomRef}></div>
       </div>
@@ -40207,22 +40207,22 @@ function startApp() {
       ${showTutorial && html`<div onClick=${function(e){if(e.target===e.currentTarget)setShowTutorial(false)}} style=${{position:'fixed',inset:0,background:'rgba(0,0,0,.6)',zIndex:'var(--z-modal)',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',padding:'2rem 0',background:'rgba(0,0,0,.7)'}}>
         <div style=${{background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:12,padding:'1.5rem',maxWidth:560,width:'90vw',maxHeight:'85vh',overflowY:'auto',WebkitOverflowScrolling:'touch',boxShadow:'0 16px 48px rgba(0,0,0,.5)',flexShrink:0}}>
           <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1rem'}}>
-            <span style=${{fontSize:'1.26rem',fontWeight:700}}>Quick Start Guide</span>
+            <span style=${{fontSize:'1.26rem',fontWeight:700}}>${_cc_t('header.quickStartGuide','Quick Start Guide')}</span>
             <button onClick=${function(){setShowTutorial(false)}} style=${{...S_BTN,background:'none',color:'var(--text-muted)',fontSize:'1.38rem',padding:'0 .3rem',lineHeight:1}}>✕</button>
           </div>
           <div style=${{background:'var(--accent-bg)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-md)',padding:'.75rem',marginBottom:'1rem'}}>
-            <div style=${{fontSize:'0.94rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.3rem'}}>What is ClashControl?</div>
+            <div style=${{fontSize:'0.94rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.3rem'}}>${_cc_t('tutorialPortal.whatIsClashcontrol','What is ClashControl?')}</div>
             <div style=${{fontSize:'0.86rem',color:'var(--text-secondary)',lineHeight:1.6}}>
               A free, source-available tool for detecting geometric clashes in IFC building models \u2014 right in your browser. Load BIM files, find collisions between building systems, manage issues, and export results to BCF.
             </div>
           </div>
           <div style=${{display:'flex',flexDirection:'column',gap:'.85rem',fontSize:'0.9rem',color:'var(--text-secondary)',lineHeight:1.6}}>
-            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>1. Load models</div><div>Click the folder icon in the left sidebar or drag & drop files onto the 3D view. Supports${' '}<b>IFC</b>${' '}files directly, or a fast-load${' '}<b>GLB + IFC + .ifcmeta</b>${' '}bundle — drop all three files together. Bundles can be created with${' '}<a href="https://github.com/thomhoffer-arch/Ifc2Ifc" target="_blank" rel="noopener" style=${{color:'var(--color-info-fg)'}}>Ifc2Ifc</a>. For model version diffing, enable${' '}<b>Store IFC GUID</b>${' '}in Revit's IFC export settings to ensure stable element IDs across re-exports.</div></div>
-            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>2. Detect clashes</div><div>Press${' '}<b>/</b>${' '}to open the AI chat and type something like "check structural vs MEP" or "find clashes within 50mm".</div></div>
-            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>3. Review results</div><div>Click any clash to fly to it in 3D. Change status, assign responsibility, or use the chat: "mark all open as resolved".</div></div>
-            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>4. Create issues & export</div><div>Create issues from clashes. Export as BCF 2.1/3.0 for Revit, Navisworks, Solibri, or BIMcollab.</div></div>
+            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>${_cc_t('tutorialPortal.1LoadModels','1. Load models')}</div><div>Click the folder icon in the left sidebar or drag & drop files onto the 3D view. Supports${' '}<b>IFC</b>${' '}files directly, or a fast-load${' '}<b>GLB + IFC + .ifcmeta</b>${' '}bundle — drop all three files together. Bundles can be created with${' '}<a href="https://github.com/thomhoffer-arch/Ifc2Ifc" target="_blank" rel="noopener" style=${{color:'var(--color-info-fg)'}}>Ifc2Ifc</a>. For model version diffing, enable${' '}<b>Store IFC GUID</b>${' '}in Revit's IFC export settings to ensure stable element IDs across re-exports.</div></div>
+            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>${_cc_t('tutorialPortal.2DetectClashes','2. Detect clashes')}</div><div>Press${' '}<b>/</b>${' '}to open the AI chat and type something like "check structural vs MEP" or "find clashes within 50mm".</div></div>
+            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>${_cc_t('tutorialPortal.3ReviewResults','3. Review results')}</div><div>${_cc_t('tutorialPortal.clickAnyClashTo','Click any clash to fly to it in 3D. Change status, assign responsibility, or use the chat: "mark all open as resolved".')}</div></div>
+            <div><div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>${_cc_t('tutorialPortal.4CreateIssuesExport','4. Create issues & export')}</div><div>${_cc_t('tutorialPortal.createIssuesFromClashes','Create issues from clashes. Export as BCF 2.1/3.0 for Revit, Navisworks, Solibri, or BIMcollab.')}</div></div>
             <div style=${{borderTop:'1px solid var(--border-subtle)',paddingTop:'.7rem'}}>
-              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>Keyboard shortcuts</div>
+              <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>${_cc_t('walk.keyboardShortcuts','Keyboard shortcuts')}</div>
               <!-- Pulled from _ccShortcutSections() (also used by the "?"
                    ShortcutsModal) via _ccShortcutRow(key) so this cheat-sheet
                    can't drift from the real keydown handlers or the full
@@ -40253,45 +40253,45 @@ function startApp() {
               <div>
                 <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
                   <span style=${{color:'var(--color-success-fg)',fontSize:'0.9rem'}}>✓</span>
-                  <span style=${{color:'var(--text-primary)',fontWeight:600}}>Source-available launch</span>
+                  <span style=${{color:'var(--text-primary)',fontWeight:600}}>${_cc_t('tutorialPortal.sourceAvailableLaunch','Source-available launch')}</span>
                   <span style=${{color:'var(--color-success-fg)',fontSize:'0.72rem',fontWeight:500,marginLeft:'.2rem'}}>Mar 27, 2026</span>
                 </div>
-                <div style=${{fontSize:'0.75rem',color:'var(--text-faint)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>Publish the full source code on GitHub. Free for everyone to use, inspect, and contribute to. No sign-up, no paywall \u2014 just open your browser and start clashing.</div>
+                <div style=${{fontSize:'0.75rem',color:'var(--text-faint)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>${_cc_t('tutorialPortal.publishTheFullSource','Publish the full source code on GitHub. Free for everyone to use, inspect, and contribute to. No sign-up, no paywall — just open your browser and start clashing.')}</div>
               </div>
               ${/* Faster model loading (GLB+sidecar) — hidden until Ifc2Ifc is fully released */ false && html`<div>
                 <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
                   <span style=${{color:'var(--accent)',fontSize:'0.9rem'}}>◉</span>
-                  <span style=${{color:'var(--text-primary)',fontWeight:600}}>Faster model loading</span>
+                  <span style=${{color:'var(--text-primary)',fontWeight:600}}>${_cc_t('tutorialPortal.fasterModelLoading','Faster model loading')}</span>
                 </div>
                 <div style=${{fontSize:'0.75rem',color:'var(--text-muted)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>Load Revit models near-instantly using GLB + IFC + .ifcmeta bundles — no heavy IFC geometry parsing. Create bundles with <a href="https://github.com/thomhoffer-arch/Ifc2Ifc" target="_blank" rel="noopener" style=${{color:'var(--color-info-fg)'}}>Ifc2Ifc</a>.</div>
               </div>`}
               <div>
                 <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
                   <span style=${{color:'var(--accent)',fontSize:'0.9rem'}}>◉</span>
-                  <span style=${{color:'var(--text-primary)',fontWeight:600}}>Gather training data for AI clash classifier</span>
+                  <span style=${{color:'var(--text-primary)',fontWeight:600}}>${_cc_t('tutorialPortal.gatherTrainingDataFor','Gather training data for AI clash classifier')}</span>
                 </div>
-                <div style=${{fontSize:'0.75rem',color:'var(--text-muted)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>When you label clashes as true/false positives and use the NL command panel, anonymous metadata is collected (with your consent). This builds the dataset needed to train ClashControl\u2019s AI to automatically classify clashes.</div>
+                <div style=${{fontSize:'0.75rem',color:'var(--text-muted)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>${_cc_t('tutorialPortal.whenYouLabelClashes','When you label clashes as true/false positives and use the NL command panel, anonymous metadata is collected (with your consent). This builds the dataset needed to train ClashControl’s AI to automatically classify clashes.')}</div>
               </div>
               <div>
                 <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
                   <span style=${{color:'var(--text-faint)',fontSize:'0.9rem'}}>○</span>
-                  <span style=${{color:'var(--text-muted)'}}>Train & deploy open-source LLM for clash detection</span>
+                  <span style=${{color:'var(--text-muted)'}}>${_cc_t('tutorialPortal.trainDeployOpenSource','Train & deploy open-source LLM for clash detection')}</span>
                 </div>
-                <div style=${{fontSize:'0.75rem',color:'var(--text-faint)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>Once enough data is gathered, train a specialised open-source model that can predict which clashes are real issues and which are false positives \u2014 saving hours of manual review per project.</div>
+                <div style=${{fontSize:'0.75rem',color:'var(--text-faint)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>${_cc_t('tutorialPortal.onceEnoughDataIs','Once enough data is gathered, train a specialised open-source model that can predict which clashes are real issues and which are false positives — saving hours of manual review per project.')}</div>
               </div>
               <div>
                 <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
                   <span style=${{color:'var(--text-faint)',fontSize:'0.9rem'}}>○</span>
-                  <span style=${{color:'var(--text-muted)'}}>Move to dedicated domain</span>
+                  <span style=${{color:'var(--text-muted)'}}>${_cc_t('tutorialPortal.moveToDedicatedDomain','Move to dedicated domain')}</span>
                 </div>
-                <div style=${{fontSize:'0.75rem',color:'var(--text-faint)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>Host ClashControl on its own domain with faster loading, better SEO, and a more professional presence. The app stays free and source-available under SSPL.</div>
+                <div style=${{fontSize:'0.75rem',color:'var(--text-faint)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>${_cc_t('tutorialPortal.hostClashcontrolOnIts','Host ClashControl on its own domain with faster loading, better SEO, and a more professional presence. The app stays free and source-available under SSPL.')}</div>
               </div>
               <div>
                 <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
                   <span style=${{color:'var(--text-faint)',fontSize:'0.9rem'}}>○</span>
-                  <span style=${{color:'var(--text-muted)'}}>User accounts & cloud project storage</span>
+                  <span style=${{color:'var(--text-muted)'}}>${_cc_t('tutorialPortal.userAccountsCloudProject','User accounts & cloud project storage')}</span>
                 </div>
-                <div style=${{fontSize:'0.75rem',color:'var(--text-faint)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>Optional sign-in to save projects in the cloud, collaborate with team members, and sync across devices. The core app remains fully functional without an account.</div>
+                <div style=${{fontSize:'0.75rem',color:'var(--text-faint)',marginLeft:'1.3rem',lineHeight:1.5,marginTop:'.15rem'}}>${_cc_t('tutorialPortal.optionalSignInTo','Optional sign-in to save projects in the cloud, collaborate with team members, and sync across devices. The core app remains fully functional without an account.')}</div>
               </div>
             </div>
           </div>
@@ -41174,7 +41174,7 @@ function startApp() {
               <div style=${{fontSize:'.6rem',color:'var(--text-muted)',marginTop:2}}>/ ${dqTotal}</div>
             </div>
             <div style=${{flex:1}}>
-              <div style=${{fontSize:'.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.3rem'}}>Data Quality Score</div>
+              <div style=${{fontSize:'.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.3rem'}}>${_cc_t('aiChat.dataQualityScore','Data Quality Score')}</div>
               <div style=${{display:'flex',gap:2}}>
                 ${dqChecks.map(function(c){return html`<div key=${c.label} title=${c.label+': '+c.detail} style=${{flex:1,height:4,borderRadius:2,background:c.ok?'var(--color-success-fg)':'var(--color-danger-fg)'}}></div>`;})}
               </div>
@@ -41182,7 +41182,7 @@ function startApp() {
           </div>
           <!-- DQ checks detail -->
           <div style=${CARD}>
-            <div style=${HDR}>Checks</div>
+            <div style=${HDR}>${_cc_t('aiChat.checks','Checks')}</div>
             ${dqChecks.map(function(c){return html`<div key=${c.label} style=${{...ROW,alignItems:'center'}}>
               <span style=${{...LBL,display:'flex',alignItems:'center',gap:'.3rem'}}>
                 <svg width="10" height="10" viewBox="0 0 12 12">
@@ -41198,16 +41198,16 @@ function startApp() {
           </div>
           <!-- Identity -->
           <div style=${CARD}>
-            <div style=${HDR}>Identity</div>
+            <div style=${HDR}>${_cc_t('aiChat.identity','Identity')}</div>
             ${ep&&ep.ifcType     && html`<div style=${ROW}><span style=${LBL}>IFC type</span><span style=${{...VAL,...MONO}}>${ep.ifcType}</span></div>`}
             ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,...MONO,display:'flex',alignItems:'center',gap:'.35rem'}}><span style=${{overflow:'hidden',textOverflow:'ellipsis'}}>${ep.globalId}</span>${_copyBtn(ep.globalId,'GlobalId')}</span></div>`}
             ${ep&&ep.expressId   && html`<div style=${ROW}><span style=${LBL}>Express ID</span><span style=${{...VAL,...MONO,display:'flex',alignItems:'center',gap:'.35rem'}}><span>#${ep.expressId}</span>${_copyBtn(ep.expressId,'Express ID')}</span></div>`}
-            ${ep&&ep.objectType  && html`<div style=${ROW}><span style=${LBL}>Object type</span><span style=${VAL}>${ep.objectType}</span></div>`}
-            ${ep&&ep.description && html`<div style=${ROW}><span style=${LBL}>Description</span><span style=${VAL}>${ep.description}</span></div>`}
+            ${ep&&ep.objectType  && html`<div style=${ROW}><span style=${LBL}>${_cc_t('aiChat.objectType','Object type')}</span><span style=${VAL}>${ep.objectType}</span></div>`}
+            ${ep&&ep.description && html`<div style=${ROW}><span style=${LBL}>${_cc_t('history.field.description','Description')}</span><span style=${VAL}>${ep.description}</span></div>`}
             ${breadcrumb.length>0
-              ? html`<div style=${ROW}><span style=${LBL}>Location</span><span style=${VAL} title=${breadcrumb.join(' › ')}>${breadcrumb.join(' › ')}</span></div>`
-              : storey && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
-            ${ep&&ep.material    && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
+              ? html`<div style=${ROW}><span style=${LBL}>${_cc_t('aiChat.location','Location')}</span><span style=${VAL} title=${breadcrumb.join(' › ')}>${breadcrumb.join(' › ')}</span></div>`
+              : storey && html`<div style=${ROW}><span style=${LBL}>${_cc_t('aiChat.floor','Floor')}</span><span style=${VAL}>${storey}</span></div>`}
+            ${ep&&ep.material    && html`<div style=${ROW}><span style=${LBL}>${_cc_t('aiChat.material','Material')}</span><span style=${VAL}>${ep.material}</span></div>`}
           </div>
           <!-- Hosted elements (e.g. doors/windows hosted in this wall) -->
           ${hostedEls.length>0 && html`<div style=${CARD}>
@@ -41226,7 +41226,7 @@ function startApp() {
           </div>`}
           <!-- Dimensions & Constraints -->
           ${hasConstraints && html`<div style=${CARD}>
-            <div style=${HDR}>Dimensions & Constraints</div>
+            <div style=${HDR}>${_cc_t('aiChat.dimensionsConstraints','Dimensions & Constraints')}</div>
             ${constraintProps.map(function(p){return html`<div style=${ROW}>
               <span style=${LBL}>${p.label}</span>
               <span style=${{...VAL,...(/\d/.test(p.value.charAt(0))||p.value.charAt(0)==='-'?MONO:{})}}>${p.value}</span>
@@ -41267,14 +41267,14 @@ function startApp() {
         <!-- Linked clashes — most important in this workspace -->
         <div style=${CARD}>
           <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.3rem'}}>
-            <div style=${HDR}>Clashes</div>
+            <div style=${HDR}>${_cc_t('aiChat.clashes','Clashes')}</div>
             ${linkedClashes.length>0 && html`<span style=${{fontSize:'.65rem',padding:'.1rem .4rem',borderRadius:'var(--radius-pill)',
               background:'var(--color-danger-bg)',color:'var(--color-danger-fg)',border:'1px solid var(--color-danger-border)',fontWeight:600}}>
               ${linkedClashes.length}
             </span>`}
           </div>
           ${linkedClashes.length===0
-            ? html`<div style=${{fontSize:'.72rem',color:'var(--text-muted)',padding:'.2rem 0'}}>No active clashes on this element.</div>`
+            ? html`<div style=${{fontSize:'.72rem',color:'var(--text-muted)',padding:'.2rem 0'}}>${_cc_t('aiChat.noActiveClashesOn','No active clashes on this element.')}</div>`
             : linkedClashes.slice(0,8).map(function(c){return html`<div key=${c.id} style=${{...ROW,alignItems:'center',cursor:'pointer'}}
                 onClick=${function(){if(window._ccDispatch)window._ccDispatch({t:A.SELECT_CLASH,id:c.id});}}>
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--color-danger)" stroke-width="2"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
@@ -41286,7 +41286,7 @@ function startApp() {
         <!-- Linked issues -->
         ${linkedIssues.length>0 && html`<div style=${CARD}>
           <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.3rem'}}>
-            <div style=${HDR}>Issues</div>
+            <div style=${HDR}>${_cc_t('aiChat.issues','Issues')}</div>
             <span style=${{fontSize:'.65rem',padding:'.1rem .4rem',borderRadius:'var(--radius-pill)',
               background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',border:'1px solid var(--color-warning-border)',fontWeight:600}}>
               ${linkedIssues.length}
@@ -41300,13 +41300,13 @@ function startApp() {
         </div>`}
         <!-- Quick identity -->
         <div style=${CARD}>
-          <div style=${HDR}>Identity</div>
+          <div style=${HDR}>${_cc_t('aiChat.identity','Identity')}</div>
           ${breadcrumb.length>0
-            ? html`<div style=${ROW}><span style=${LBL}>Location</span><span style=${VAL} title=${breadcrumb.join(' › ')}>${breadcrumb.join(' › ')}</span></div>`
-            : storey && html`<div style=${ROW}><span style=${LBL}>Floor</span><span style=${VAL}>${storey}</span></div>`}
-          ${ep&&ep.material    && html`<div style=${ROW}><span style=${LBL}>Material</span><span style=${VAL}>${ep.material}</span></div>`}
-          ${ep&&ep.objectType  && html`<div style=${ROW}><span style=${LBL}>Object type</span><span style=${VAL}>${ep.objectType}</span></div>`}
-          ${ep&&ep.description && html`<div style=${ROW}><span style=${LBL}>Description</span><span style=${VAL}>${ep.description}</span></div>`}
+            ? html`<div style=${ROW}><span style=${LBL}>${_cc_t('aiChat.location','Location')}</span><span style=${VAL} title=${breadcrumb.join(' › ')}>${breadcrumb.join(' › ')}</span></div>`
+            : storey && html`<div style=${ROW}><span style=${LBL}>${_cc_t('aiChat.floor','Floor')}</span><span style=${VAL}>${storey}</span></div>`}
+          ${ep&&ep.material    && html`<div style=${ROW}><span style=${LBL}>${_cc_t('aiChat.material','Material')}</span><span style=${VAL}>${ep.material}</span></div>`}
+          ${ep&&ep.objectType  && html`<div style=${ROW}><span style=${LBL}>${_cc_t('aiChat.objectType','Object type')}</span><span style=${VAL}>${ep.objectType}</span></div>`}
+          ${ep&&ep.description && html`<div style=${ROW}><span style=${LBL}>${_cc_t('history.field.description','Description')}</span><span style=${VAL}>${ep.description}</span></div>`}
           ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,...MONO,opacity:.65,display:'flex',alignItems:'center',gap:'.35rem'}}><span>${ep.globalId.slice(0,16)}…</span>${_copyBtn(ep.globalId,'GlobalId')}</span></div>`}
         </div>
         <!-- Full property sets (Task B: "Properties everywhere" — every
@@ -41323,7 +41323,7 @@ function startApp() {
         </div>`}
         <!-- Dimensions & Constraints -->
         ${hasConstraints && html`<div style=${CARD}>
-          <div style=${HDR}>Dimensions & Constraints</div>
+          <div style=${HDR}>${_cc_t('aiChat.dimensionsConstraints','Dimensions & Constraints')}</div>
           ${constraintProps.map(function(p){return html`<div style=${ROW}>
             <span style=${LBL}>${p.label}</span>
             <span style=${{...VAL,...(/^\s*-?[\d.]/.test(p.value)?MONO:{})}}>${p.value}</span>
@@ -41340,7 +41340,7 @@ function startApp() {
         </div>`}
         <!-- Dimensions if available -->
         ${allDims.length>0 && html`<div style=${CARD}>
-          <div style=${HDR}>Dimensions</div>
+          <div style=${HDR}>${_cc_t('aiChat.dimensions','Dimensions')}</div>
           ${allDims.map(function(d){return html`<div style=${ROW}><span style=${LBL}>${d.l}</span><span style=${{...VAL,...MONO}}>${d.f(d.v)}</span></div>`;})}
         </div>`}
         ${bboxCard}
@@ -41361,16 +41361,16 @@ function startApp() {
               : (el && el.expressId!=null ? [{expressId: el.expressId, modelId: window._ccSelectedModelId||null}] : null);
             var vBtn = {flex:1,padding:'.35rem .5rem',borderRadius:'var(--radius-sm)',background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',fontSize:'.72rem',fontWeight:500,cursor:'pointer',fontFamily:'inherit'};
             return html`<div style=${{display:'flex',gap:'.35rem',width:'100%'}}>
-              <button disabled=${!vRefs} onClick=${function(){if(vRefs&&window._ccTempHide)window._ccTempHide(vRefs);}} title=${_cc_t('shortcuts.view.hide','Hide selected element(s)')} style=${{...vBtn,opacity:vRefs?1:.5}}>Hide</button>
-              <button disabled=${!vRefs} onClick=${function(){if(vRefs&&window._ccIsolate)window._ccIsolate(vRefs);}} title=${_cc_t('shortcuts.view.isolate','Isolate selected element')} style=${{...vBtn,opacity:vRefs?1:.5}}>Isolate</button>
-              <button onClick=${function(){if(window._ccTempUnhide)window._ccTempUnhide();if(window._ccUnisolate)window._ccUnisolate();}} title=${_cc_t('shortcuts.view.showAll','Show all — restore hidden/isolated elements')} style=${vBtn}>Show all</button>
+              <button disabled=${!vRefs} onClick=${function(){if(vRefs&&window._ccTempHide)window._ccTempHide(vRefs);}} title=${_cc_t('shortcuts.view.hide','Hide selected element(s)')} style=${{...vBtn,opacity:vRefs?1:.5}}>${_cc_t('aiChat.hide','Hide')}</button>
+              <button disabled=${!vRefs} onClick=${function(){if(vRefs&&window._ccIsolate)window._ccIsolate(vRefs);}} title=${_cc_t('shortcuts.view.isolate','Isolate selected element')} style=${{...vBtn,opacity:vRefs?1:.5}}>${_cc_t('aiChat.isolate','Isolate')}</button>
+              <button onClick=${function(){if(window._ccTempUnhide)window._ccTempUnhide();if(window._ccUnisolate)window._ccUnisolate();}} title=${_cc_t('shortcuts.view.showAll','Show all — restore hidden/isolated elements')} style=${vBtn}>${_cc_t('aiChat.showAll','Show all')}</button>
             </div>`;
           })()}
         </div>
         <!-- Actions -->
         <div style=${{display:'flex',gap:'.4rem',flexWrap:'wrap'}}>
           <button onClick=${function(){d({t:A.MODAL,v:true,el:el});d({t:A.TAB,v:'issues'});}}
-            style=${{flex:1,padding:'.4rem .6rem',borderRadius:'var(--radius-sm)',background:'var(--accent)',color:'var(--accent-contrast)',border:'none',fontSize:'.74rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>+ New issue</button>
+            style=${{flex:1,padding:'.4rem .6rem',borderRadius:'var(--radius-sm)',background:'var(--accent)',color:'var(--accent-contrast)',border:'none',fontSize:'.74rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>${_cc_t('aiChat.newIssue','+ New issue')}</button>
         </div>
       </div>`;
     }
@@ -42680,16 +42680,16 @@ function startApp() {
       // Popover: centered below the section cluster
       subRow = html`<div style=${{...POP_BASE,left:'50%',transform:'translateX(-50%)',color:'var(--accent)'}}>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h6"/><circle cx="12" cy="12" r="3"/><path d="M15 12h6"/></svg>
-        <span style=${{fontWeight:500,color:'var(--text-primary)'}}>Click a surface to set the section plane</span>
+        <span style=${{fontWeight:500,color:'var(--text-primary)'}}>${_cc_t('topToolbar.clickASurfaceTo','Click a surface to set the section plane')}</span>
         ${SEP_V}
         <button onClick=${function(){ window._ccSectionPickPending=false; setPickOn(false); }}
           style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',
-            fontFamily:'var(--font-body)',fontSize:'var(--text-xs)',padding:'0 .15rem'}}>Esc · Cancel</button>
+            fontFamily:'var(--font-body)',fontSize:'var(--text-xs)',padding:'0 .15rem'}}>${_cc_t('topToolbar.escCancel','Esc · Cancel')}</button>
       </div>`;
     } else if (activeMode === 'slice' && (s.sectionAxis || s.sectionCustom)) {
       // Section cut slider — popover below section button cluster
       subRow = html`<div style=${{...POP_BASE,left:'50%',transform:'translateX(-50%)',color:'var(--text-secondary)'}}>
-        <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--text-muted)',letterSpacing:'.04em',textTransform:'uppercase'}}>Cut</span>
+        <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--text-muted)',letterSpacing:'.04em',textTransform:'uppercase'}}>${_cc_t('topToolbar.cut','Cut')}</span>
         <input type="range" min="0" max="1" step="0.005" value=${s.sectionPos||0.5}
           onInput=${function(e){ var pos=parseFloat(e.target.value); if(s.sectionAxis)d({t:A.SECTION,axis:s.sectionAxis,pos:pos}); else if(s.sectionCustom)d({t:A.SECTION_CUSTOM,v:s.sectionCustom,pos:pos}); }}
           style=${{width:180,accentColor:'var(--accent)'}} />
@@ -42712,7 +42712,7 @@ function startApp() {
       if (planFls.length > 0) {
         // Floor picker — popover below the Plan button
         subRow = html`<div style=${{...POP_BASE,left:'50%',transform:'translateX(-50%)',flexWrap:'wrap',maxWidth:480}}>
-          <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--text-muted)',letterSpacing:'.04em',textTransform:'uppercase',marginRight:'.1rem'}}>Floor</span>
+          <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--text-muted)',letterSpacing:'.04em',textTransform:'uppercase',marginRight:'.1rem'}}>${_cc_t('topToolbar.floor','Floor')}</span>
           ${planFls.slice(0,16).map(function(fl){
             var on = s.floorPlan && s.floorPlan.storeyId===fl.id;
             return html`<button key=${fl.id} onClick=${function(){d({t:A.FLOOR_PLAN,v:{storeyId:fl.id,storeyName:fl.name||'Floor',elevation:fl.elevation||0,cutHeight:1.2}});}}
@@ -42819,14 +42819,14 @@ function startApp() {
               onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
               onMouseLeave=${function(e){e.currentTarget.style.background='transparent';}}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-              <span style=${{flex:1}}>Set current view as home</span>
+              <span style=${{flex:1}}>${_cc_t('topToolbar.setCurrentViewAs','Set current view as home')}</span>
             </div>
             ${hasHome && html`<div onClick=${function(){_clearHomeView();setHomeMenuOpen(false);}}
               style=${{display:'flex',alignItems:'center',gap:'.55rem',padding:'.35rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-secondary)'}}
               onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
               onMouseLeave=${function(e){e.currentTarget.style.background='transparent';}}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6l-1 14H6L5 6"/><path d="M9 6V4h6v2"/></svg>
-              <span style=${{flex:1}}>Clear home view</span>
+              <span style=${{flex:1}}>${_cc_t('topToolbar.clearHomeView','Clear home view')}</span>
             </div>`}
           </div>
           <div onClick=${function(){setHomeMenuOpen(false);}} style=${{position:'fixed',inset:0,zIndex:'var(--z-dropdown)',background:'transparent'}}></div>`;
@@ -42894,19 +42894,19 @@ function startApp() {
                 onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
                 onMouseLeave=${function(e){e.currentTarget.style.background=s.measureMode==='length'?'var(--accent-bg)':'transparent';}}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:I.ruler}}></svg>
-                <span style=${{flex:1}}>Distance</span><span style=${{fontFamily:'var(--font-mono)',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>M / L</span></div>
+                <span style=${{flex:1}}>${_cc_t('topToolbar.distance','Distance')}</span><span style=${{fontFamily:'var(--font-mono)',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>M / L</span></div>
               <div onClick=${function(){clearAllModes({sectionBox:true, sectionAxis:true, sectionCustom:true});d({t:A.MEASURE_MODE,v:'angle'});setMeasurePopOpen(false);}}
                 style=${{display:'flex',alignItems:'center',gap:'.55rem',padding:'.35rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',color:s.measureMode==='angle'?'var(--accent)':'var(--text-primary)',background:s.measureMode==='angle'?'var(--accent-bg)':'transparent'}}
                 onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
                 onMouseLeave=${function(e){e.currentTarget.style.background=s.measureMode==='angle'?'var(--accent-bg)':'transparent';}}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:I.angle}}></svg>
-                <span style=${{flex:1}}>Angle</span><span style=${{fontFamily:'var(--font-mono)',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>A</span></div>
+                <span style=${{flex:1}}>${_cc_t('topToolbar.angle','Angle')}</span><span style=${{fontFamily:'var(--font-mono)',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>A</span></div>
               <div onClick=${function(){clearAllModes({sectionBox:true, sectionAxis:true, sectionCustom:true});d({t:A.MEASURE_MODE,v:'area'});setMeasurePopOpen(false);}}
                 style=${{display:'flex',alignItems:'center',gap:'.55rem',padding:'.35rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',color:s.measureMode==='area'?'var(--accent)':'var(--text-primary)',background:s.measureMode==='area'?'var(--accent-bg)':'transparent'}}
                 onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
                 onMouseLeave=${function(e){e.currentTarget.style.background=s.measureMode==='area'?'var(--accent-bg)':'transparent';}}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:I.area}}></svg>
-                <span style=${{flex:1}}>Area</span><span style=${{fontFamily:'var(--font-mono)',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>R</span></div>
+                <span style=${{flex:1}}>${_cc_t('topToolbar.area','Area')}</span><span style=${{fontFamily:'var(--font-mono)',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>R</span></div>
               ${(s.workspace==='coordinate'||s.workspace==='review') && html`<div style=${{height:1,background:'var(--border-subtle)',margin:'.25rem .15rem'}}></div>`}
               ${(s.workspace==='coordinate'||s.workspace==='review') && html`<div onClick=${function(){clearAllModes({sectionBox:true, sectionAxis:true, sectionCustom:true});d({t:A.MEASURE_MODE,v:'element'});setMeasurePopOpen(false);}}
                 style=${{display:'flex',alignItems:'center',gap:'.55rem',padding:'.35rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',color:s.measureMode==='element'?'var(--accent)':'var(--text-primary)',background:s.measureMode==='element'?'var(--accent-bg)':'transparent'}}
@@ -42919,14 +42919,14 @@ function startApp() {
                 onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
                 onMouseLeave=${function(e){e.currentTarget.style.background=s.measureMode==='clearance'?'var(--accent-bg)':'transparent';}}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:I.clear2}}></svg>
-                <span style=${{flex:1}}>Clearance <span style=${{color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>· min between two elements</span></span></div>`}
+                <span style=${{flex:1}}>Clearance <span style=${{color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>${_cc_t('topToolbar.minBetweenTwoElements','· min between two elements')}</span></span></div>`}
               <div style=${{height:1,background:'var(--border-subtle)',margin:'.25rem .15rem'}}></div>
               <div onClick=${function(){if(window._ccClearAllMeasurementGeo)window._ccClearAllMeasurementGeo();d({t:A.CLEAR_MEASUREMENTS});setMeasurePopOpen(false);}}
                 style=${{display:'flex',alignItems:'center',gap:'.55rem',padding:'.35rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-secondary)'}}
                 onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
                 onMouseLeave=${function(e){e.currentTarget.style.background='transparent';}}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:I.clear}}></svg>
-                <span style=${{flex:1}}>Clear all</span><span style=${{fontFamily:'var(--font-mono)',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>Shift+M</span></div>
+                <span style=${{flex:1}}>${_cc_t('topToolbar.clearAll','Clear all')}</span><span style=${{fontFamily:'var(--font-mono)',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>Shift+M</span></div>
             </div>`;
             })()}
             ${measurePopOpen && html`<div onClick=${function(){setMeasurePopOpen(false);}} style=${{position:'fixed',inset:0,zIndex:'var(--z-dropdown)',background:'transparent'}}></div>`}
@@ -43003,7 +43003,7 @@ function startApp() {
             return html`<button onClick=${click} title=${hint}
               style=${{height:30,padding:'0 .55rem',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'var(--font-body)',fontSize:'.7rem',color:'var(--text-secondary)',display:'inline-flex',alignItems:'center',gap:'.35rem',whiteSpace:'nowrap'}}>
               <span style=${{width:7,height:7,borderRadius:'50%',background:dot,flexShrink:0}}></span>
-              <span style=${{color:'var(--text-muted)',fontSize:'.6rem',textTransform:'uppercase',letterSpacing:'.04em'}}>Engine</span>
+              <span style=${{color:'var(--text-muted)',fontSize:'.6rem',textTransform:'uppercase',letterSpacing:'.04em'}}>${_cc_t('topToolbar.engine','Engine')}</span>
               <span style=${{fontWeight:600,color:'var(--text-primary)'}}>${lbl}</span>
             </button>`;
           })()}
@@ -43061,7 +43061,7 @@ function startApp() {
           onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';e.currentTarget.style.color='var(--ink-primary)';}}
           onMouseLeave=${function(e){e.currentTarget.style.background='none';e.currentTarget.style.color='var(--ink-secondary)';}}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <span style=${{color:'var(--ink-primary)',fontWeight:500}}>Search</span>
+          <span style=${{color:'var(--ink-primary)',fontWeight:500}}>${_cc_t('topToolbar.search','Search')}</span>
           <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',padding:'1px 5px',border:'1px solid var(--hairline)',borderRadius:'var(--radius-xs)',marginLeft:'.15rem'}}>⌘K</span>
         </button>
 
@@ -43097,7 +43097,7 @@ function startApp() {
               borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'var(--font-body)',
               fontSize:'var(--text-xs)',color:'var(--ink-secondary)',letterSpacing:'-.005em'
             }}>
-            <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',letterSpacing:'.04em',textTransform:'uppercase'}}>Style</span>
+            <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',letterSpacing:'.04em',textTransform:'uppercase'}}>${_cc_t('topToolbar.style','Style')}</span>
             <span style=${{color:'var(--ink-primary)',fontWeight:500}}>${curStyleLabel}</span>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9l6 6 6-6"/></svg>
           </button>
@@ -43153,9 +43153,9 @@ function startApp() {
                 var hh = Math.floor(tv); var mm = Math.round((tv-hh)*60);
                 var clock = (hh<10?'0':'')+hh+':'+(mm<10?'0':'')+mm;
                 return html`<div style=${{borderTop:'1px solid var(--hairline)',marginTop:'.3rem',padding:'.55rem .8rem',display:'flex',flexDirection:'column',gap:'.5rem'}}>
-                  <div style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',textTransform:'uppercase',letterSpacing:'.06em'}}>Sun position</div>
+                  <div style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',textTransform:'uppercase',letterSpacing:'.06em'}}>${_cc_t('topToolbar.sunPosition','Sun position')}</div>
                   <label style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'var(--text-xs)',color:'var(--ink-secondary)'}}>
-                    <span style=${{width:60}}>Time</span>
+                    <span style=${{width:60}}>${_cc_t('topToolbar.time','Time')}</span>
                     <input type="range" min="6" max="20" step="0.25" value=${tv}
                       onInput=${function(e){
                         var nv=parseFloat(e.target.value);
@@ -43166,7 +43166,7 @@ function startApp() {
                       style=${{flex:1,accentColor:'var(--accent)'}} />
                     <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-primary)',width:42,textAlign:'right'}}>${clock}</span>
                   </label>
-                  <div style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginTop:'.2rem'}}>Lighting</div>
+                  <div style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',textTransform:'uppercase',letterSpacing:'.06em',marginTop:'.2rem'}}>${_cc_t('topToolbar.lighting','Lighting')}</div>
                   ${[{k:'sun',label:_cc_t('toolbar.sun','Sun'),min:0.2,max:2.5},{k:'ambient',label:_cc_t('toolbar.ambient','Ambient'),min:0.2,max:2.0},{k:'exposure',label:_cc_t('toolbar.exposure','Exposure'),min:0.5,max:1.8},{k:'shadow',label:_cc_t('toolbar.shadow','Shadow'),min:0,max:1.5}].map(function(row){
                     var v = (typeof ls[row.k]==='number') ? ls[row.k] : 1.0;
                     return html`<label key=${row.k} style=${{display:'flex',alignItems:'center',gap:'.5rem',fontSize:'var(--text-xs)',color:'var(--ink-secondary)'}}>
@@ -43183,7 +43183,7 @@ function startApp() {
                     </label>`;
                   })}
                   <button onClick=${function(){ d({t:A.UPD_PREFS,u:{lightSettings:{sun:1,ambient:1,exposure:1,shadow:1,time:13}}}); }}
-                    style=${{alignSelf:'flex-end',background:'none',border:'1px solid var(--hairline-strong)',padding:'.18rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',fontFamily:'var(--font-body)'}}>Reset</button>
+                    style=${{alignSelf:'flex-end',background:'none',border:'1px solid var(--hairline-strong)',padding:'.18rem .55rem',borderRadius:'var(--radius-xs)',cursor:'pointer',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',fontFamily:'var(--font-body)'}}>${_cc_t('topToolbar.reset','Reset')}</button>
                 </div>`;
               }()}
             </div>
@@ -44603,7 +44603,7 @@ function startApp() {
 
     async function _startFolderWatch() {
       if (!window.showDirectoryPicker) {
-        alert('Folder watching requires Chrome or Edge.');
+        alert(_cc_t('dlg.folderWatchingRequiresChromeOr','Folder watching requires Chrome or Edge.'));
         return;
       }
       // The browser's File System Access prompt sounds alarming ("view and
@@ -44675,9 +44675,9 @@ function startApp() {
         boxShadow:'var(--shadow-md)',display:'flex',alignItems:'center',gap:'.6rem',
         fontSize:'0.82rem',fontWeight:500,fontFamily:'inherit'}}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s-8-4.5-8-12a8 8 0 1 1 16 0c0 7.5-8 12-8 12z"/><circle cx="12" cy="10" r="3"/></svg>
-        <span>Click on the model to drop a comment pin</span>
+        <span>${_cc_t('app.clickOnTheModel','Click on the model to drop a comment pin')}</span>
         <button onClick=${function(){d({t:A.COMMENT_MODE,v:false});}}
-          style=${{background:'rgba(255,255,255,.2)',color:'#fff',border:'none',borderRadius:5,padding:'.2rem .5rem',fontSize:'0.74rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>Cancel (Esc)</button>
+          style=${{background:'rgba(255,255,255,.2)',color:'#fff',border:'none',borderRadius:5,padding:'.2rem .5rem',fontSize:'0.74rem',fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>${_cc_t('app.cancelEsc','Cancel (Esc)')}</button>
       </div>`}
       ${s.showRevitBridge && html`<${RevitBridgePanel} s=${s} d=${d} />`}
       ${s.presenting && html`<${PresentationOverlay} s=${s} d=${d} />`}
@@ -44704,15 +44704,15 @@ function startApp() {
         <ul style=${{margin:0,paddingLeft:'1.1rem',color:'var(--text-secondary)',fontSize:'0.72rem',lineHeight:1.6}}>
           ${(whatsNewItems || ['Section cuts and selection on large merged models','Geo placement: real-world map + Dutch 3D buildings (PDOK)','AI element counting ("how many walls on level 1")','Desktop app builds for Windows, macOS and Linux']).map(function(it){ return html`<li key=${it}>${it}</li>`; })}
         </ul>
-        <a href="https://github.com/clashcontrol-io/clashcontrol/blob/main/CHANGELOG.md" target="_blank" rel="noopener" style=${{fontSize:'0.69rem',color:'var(--accent)',textDecoration:'none'}}>Full changelog →</a>
+        <a href="https://github.com/clashcontrol-io/clashcontrol/blob/main/CHANGELOG.md" target="_blank" rel="noopener" style=${{fontSize:'0.69rem',color:'var(--accent)',textDecoration:'none'}}>${_cc_t('app.fullChangelog','Full changelog →')}</a>
       </div>`}
       <${FolderWatchBadge} />
       ${!pwaDismissed && pwaUpdateAvail && html`<div class="cc-bottom-banner" role="region" aria-label=${_cc_t('banner.updateLabel','App update')} style=${{position:'fixed',bottom:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:'var(--z-toast)',
         background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:10,padding:'.6rem 1rem',display:'flex',alignItems:'center',gap:'.75rem',
         boxShadow:'0 4px 24px rgba(0,0,0,.4)',fontSize:'0.85rem',color:'var(--text-primary)',maxWidth:'90vw'}}>
-        <span>New version available</span>
+        <span>${_cc_t('app.newVersionAvailable','New version available')}</span>
         <button onClick=${function(){navigator.serviceWorker.getRegistration().then(function(r){if(r&&r.waiting)r.waiting.postMessage({type:'SKIP_WAITING'});else window.location.reload();});}}
-          style=${{padding:'.3rem .7rem',borderRadius:6,background:'var(--accent)',color:'var(--accent-contrast)',fontWeight:600,fontSize:'0.8rem',border:'none',cursor:'pointer',whiteSpace:'nowrap'}}>Update now</button>
+          style=${{padding:'.3rem .7rem',borderRadius:6,background:'var(--accent)',color:'var(--accent-contrast)',fontWeight:600,fontSize:'0.8rem',border:'none',cursor:'pointer',whiteSpace:'nowrap'}}>${_cc_t('app.updateNow','Update now')}</button>
         <button onClick=${function(){setPwaDismissed(true);}} style=${{background:'none',border:'none',color:'var(--text-muted)',cursor:'pointer',fontSize:'1rem',padding:'0 .2rem',lineHeight:1}}>×</button>
       </div>`}
     </div>`;

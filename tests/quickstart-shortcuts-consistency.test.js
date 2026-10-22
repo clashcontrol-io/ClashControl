@@ -20,7 +20,7 @@ test('_ccShortcutSections and _ccShortcutRow are defined once, and ShortcutsModa
 });
 
 test('the Quick Start Guide keyboard-shortcuts block reads rows via _ccShortcutRow instead of hardcoding its own text', () => {
-  const start = src.indexOf('Keyboard shortcuts</div>');
+  const start = src.indexOf("Keyboard shortcuts')}</div>");
   assert.ok(start !== -1);
   const end = src.indexOf('</div>\n            </div>\n          </div>', start);
   const block = src.slice(start, end === -1 ? start + 3000 : end);
@@ -32,7 +32,7 @@ test('the Quick Start Guide keyboard-shortcuts block reads rows via _ccShortcutR
 });
 
 test('every key _ccShortcutRow is called with in the Quick Start block resolves to a real row (not silently empty)', () => {
-  const start = src.indexOf('Keyboard shortcuts</div>');
+  const start = src.indexOf("Keyboard shortcuts')}</div>");
   const end = src.indexOf('</div>\n            </div>\n          </div>', start);
   const block = src.slice(start, end === -1 ? start + 3000 : end);
   const keys = Array.from(block.matchAll(/_ccShortcutRow\('([^']+)'\)/g)).map((m) => m[1]);
