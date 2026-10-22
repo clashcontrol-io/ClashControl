@@ -15,6 +15,7 @@ function restoreDecisionHarness(overrides = {}) {
   let coldParses = 0;
   const context = {
     window: { _ccSafetyMigrations: { record(event) { events.push(event); } } },
+    _ccGeoCacheLacksSpaces: () => false,
     _ccGeoCacheV8Enabled: () => true,
     _geoDeserialize: () => ({ elements: [] }),
     _ccRestoredGeoMatchesCache: () => true,
@@ -59,6 +60,40 @@ test('candidate semantic mismatch also cold-parses instead of accepting geometry
   assert.equal(result, 'cold');
   assert.equal(h.coldParses, 1);
   assert.deepEqual(h.deleted, ['v8:m']);
+});
+
+// IfcSpace geometry (2026-10-22): caches written before rooms kept their
+// volume carry no `sp:1` marker; with the source IFC stored they are
+// re-parsed once instead of restoring rooms without geometry forever.
+function realLacksSpaces() {
+  const start = source.indexOf('  function _ccGeoCacheLacksSpaces(cached, entry) {');
+  const end = source.indexOf('\n  }\n', start) + 4;
+  assert.ok(start >= 0 && end > start, '_ccGeoCacheLacksSpaces not found');
+  const ctx = {};
+  vm.runInNewContext(source.slice(start, end) + '\nthis.fn = _ccGeoCacheLacksSpaces;', ctx);
+  return ctx.fn;
+}
+
+test('pre-spaces cache (no sp marker) cold-parses once when the source IFC is stored', async () => {
+  let deserializes = 0;
+  const h = restoreDecisionHarness({
+    _ccGeoCacheV8Enabled: () => false,
+    _ccGeoCacheLacksSpaces: realLacksSpaces(),
+    _geoDeserialize: () => { deserializes++; return 'legacy'; },
+  });
+  assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, { v: 7, hasPsets: true }), 'cold');
+  assert.equal(h.coldParses, 1);
+  assert.equal(deserializes, 0);
+  assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, { v: 7, sp: 1, hasPsets: true }), 'legacy');
+  // No source bytes: the old cache is still the only geometry there is.
+  assert.equal(await h.context.restore({ id: 'm' }, { v: 7, hasPsets: true }), 'legacy');
+  assert.equal(h.coldParses, 1);
+});
+
+test('the serializer stamps sp:1 and both restore policies check it first', () => {
+  assert.match(source, /return \{v:_ccGeoCacheV8Enabled\(\)\?8:7, sp:1, hasPsets:hasPsets/);
+  assert.match(source, /if \(_ccGeoCacheLacksSpaces\(cached, entry\)\) return _ccColdParseParkedEntry\(entry\);/);
+  assert.match(source, /if \(_ccGeoCacheLacksSpaces\(cached, entry\)\) return _coldParseAndCache\(entry\);/);
 });
 
 test('candidate never reads or overwrites the legacy cache key', () => {

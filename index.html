@@ -1510,6 +1510,8 @@ function startApp() {
     lightSettings:_ccLoadPref('lightSettings',{sun:1.0, ambient:1.0, exposure:1.0, shadow:1.0, time:13}),
     // Graduated autonomy envelope.  See docs/INTERNALS.md § 21.2
     aiEnvelope:_ccLoadPref('aiEnvelope',{resolveClashes:'nudge'}),
+    // Rooms (IfcSpace volumes) — hidden by default; toggled from the toolbar Style menu.
+    showSpaces:_ccLoadPref('showSpaces',false),
   };
   // Restore section state persisted from previous session
   var _savedSection=(function(){try{return JSON.parse(localStorage.getItem('cc_section')||'null');}catch(e){return null;}})();
@@ -1621,7 +1623,7 @@ function startApp() {
   // action's `u` payload. Was an inline array literal recreated on every
   // UPD_PREFS dispatch; named here so it can't silently drift from what it
   // actually does.
-  var PERSISTED_PREF_KEYS = ['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView','zoomSens','navInputMode'];
+  var PERSISTED_PREF_KEYS = ['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView','zoomSens','navInputMode','showSpaces'];
   var A = {
     ADD_MODEL:'ADD_MODEL', DEL_MODEL:'DEL_MODEL', REPLACE_MODEL:'REPLACE_MODEL', UPD_MODEL:'UPD_MODEL',
     PARK_MODEL:'PARK_MODEL', UNPARK_MODEL:'UNPARK_MODEL', SET_AUTOPARK:'SET_AUTOPARK',
@@ -2699,6 +2701,7 @@ function startApp() {
   // Module-level twin of the project-loader's nested `_restoreCacheOrColdParse`
   // (kept in sync by hand — both must apply the same cache-vs-cold-parse policy).
   function _ccRestoreModelGeometry(entry, cached) {
+    if (_ccGeoCacheLacksSpaces(cached, entry)) return _ccColdParseParkedEntry(entry);
     if (!_ccGeoCacheV8Enabled()) {
       if (cached && cached.v >= 7 && cached.hasPsets) return Promise.resolve(_geoDeserialize(cached));
       return _ccColdParseParkedEntry(entry);
@@ -3469,7 +3472,11 @@ function startApp() {
         props: el.props
       };
     });
-    return {v:_ccGeoCacheV8Enabled()?8:7, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, stats:result.stats};
+    // sp:1 — written by a loader that keeps IfcSpace geometry. Caches without
+    // it predate that (rooms have no volume, or are missing entirely on the
+    // worker path) and are re-parsed once from the stored IFC on restore —
+    // see _ccGeoCacheLacksSpaces.
+    return {v:_ccGeoCacheV8Enabled()?8:7, sp:1, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, stats:result.stats};
   }
 
 
@@ -3552,6 +3559,8 @@ function startApp() {
         props:  ed.props
       };
     });
+    // Rooms get the shared hidden-by-default space look before instancing.
+    _ccMarkSpaceElements(elements);
     // Restore-path parity with the live load: strip survey markers, then
     // instance. See docs/INTERNALS.md § 21.3
     if (typeof _ccStripSurveyMarkers === 'function') {
@@ -3579,6 +3588,15 @@ function startApp() {
       }
     }
     return {meshes:meshes, elements:elements, storeys:cached.storeys, storeyData:cached.storeyData, spatialHierarchy:cached.spatialHierarchy||{}, relatedPairs:cached.relatedPairs||{}, stats:cached.stats};
+  }
+
+  // A geo cache written before IfcSpace geometry was kept (no sp:1 marker)
+  // would restore rooms without volume — or, for worker-path loads, without
+  // the room elements at all — forever. When the source IFC is stored, treat
+  // such a cache as stale so the restore cold-parses once and re-saves a
+  // current cache; with no source bytes the old cache is still the best we have.
+  function _ccGeoCacheLacksSpaces(cached, entry) {
+    return !!(cached && cached.sp !== 1 && entry && entry.buffer);
   }
 
   function _ccRestoredGeoMatchesCache(cached, result) {
@@ -4060,6 +4078,23 @@ function startApp() {
           }
         } catch(e) {}
       }
+      // Rooms (IfcSpace) are decomposed from their storey via IfcRelAggregates,
+      // not contained in it, so they'd otherwise get no storey (navigator
+      // grouping, storey hiding, storey-scoped loads). Containment wins.
+      var aggIds = api.GetLineIDsWithType(modelID, IFC.IFCRELAGGREGATES);
+      for (var ai = 0; ai < aggIds.size(); ai++) {
+        try {
+          var agg = api.GetLine(modelID, aggIds.get(ai));
+          var relObj = agg.RelatingObject ? (agg.RelatingObject.value||agg.RelatingObject) : null;
+          var aggStorey = storeys[relObj] || '';
+          if (aggStorey && agg.RelatedObjects) {
+            for (var aj = 0; aj < agg.RelatedObjects.length; aj++) {
+              var aeid = agg.RelatedObjects[aj].value != null ? agg.RelatedObjects[aj].value : agg.RelatedObjects[aj];
+              if (storeyMap[aeid] == null) storeyMap[aeid] = aggStorey;
+            }
+          }
+        } catch(e) {}
+      }
     } catch(e) { console.warn('Storey extraction failed:', e.message||e); }
     storeyData.sort(function(a,b){return a.elevation-b.elevation;});
     return {map:storeyMap, data:storeyData};
@@ -4516,7 +4551,7 @@ function startApp() {
     elements.forEach(function(el) {
       (el.meshes || []).forEach(function(m) {
         var ik = m.userData._instKey;
-        if (!ik) return;
+        if (!ik || m.userData._ccSpace) return;
         if (!candidates[ik]) candidates[ik] = {geo:m.geometry, mat:m.material, entries:[]};
         candidates[ik].entries.push({mesh:m, expressId:el.expressId});
       });
@@ -4591,7 +4626,7 @@ function startApp() {
         return;
       }
       if (!m.isMesh) return;
-      if (m.userData._instanceRef || m.userData.expressId == null) return;
+      if (m.userData._instanceRef || m.userData.expressId == null || m.userData._ccSpace) return;
       var g = m.geometry, mat = m.material;
       if (!g || !g.index || !g.attributes.position) return;
       if (!_matOk(mat)) return;
@@ -4737,6 +4772,54 @@ function startApp() {
   // one material per colour — the whole point of the #572 shared cache.
   window._ccGetSharedPhongMat = _ccGetSharedPhongMat;
 
+  // ── Rooms / spaces (IfcSpace) ────────────────────────────────────
+  // Spaces load with real geometry (every IFC path) but are a semantic
+  // volume, not building fabric: they render as one shared translucent
+  // material (same look as the Revit live link), never write depth, never
+  // cast shadows, and live on their own Three.js layer. Raycasters default
+  // to layer 0, so spaces never steal picks, hover, zoom-to-cursor, walk
+  // floor probes or occluder tests; the camera only renders the layer while
+  // prefs.showSpaces is on (synced every frame in the render loop). A space
+  // selected while spaces are hidden is shown by also putting it on the
+  // FORCE layer, which the camera always renders but nothing raycasts.
+  // Kept out of: instancing (no _instKey), batching (transparent), render-
+  // style swaps, ghosting, model bounds and clash detection (rules.includeSpaces).
+  var _CC_SPACE_LAYER = 3;
+  var _CC_SPACE_FORCE_LAYER = 4;
+  var _ccSpaceMat = null;
+  function _ccSpaceMaterial() {
+    if (!_ccSpaceMat) {
+      _ccSpaceMat = new THREE.MeshPhongMaterial({
+        color: new THREE.Color(0.30, 0.66, 0.95), opacity: 0.14, transparent: true,
+        depthWrite: false, side: THREE.DoubleSide
+      });
+      _ccSpaceMat._isCCSpaceMat = true;
+    }
+    return _ccSpaceMat;
+  }
+  function _ccIsSpaceEl(el) { return !!(el && el.props && el.props.ifcType === 'IfcSpace'); }
+  function _ccMarkSpaceMesh(mesh) {
+    if (!mesh) return mesh;
+    mesh.material = _ccSpaceMaterial();
+    mesh.userData._ccSpace = true;
+    delete mesh.userData._instKey;
+    mesh.layers.set(_CC_SPACE_LAYER);
+    mesh.renderOrder = 1;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    return mesh;
+  }
+  // Mark every mesh of every IfcSpace element (used after decode / restore /
+  // GLB join, before instancing and batching run).
+  function _ccMarkSpaceElements(elements) {
+    var n = 0;
+    (elements || []).forEach(function(el) {
+      if (!_ccIsSpaceEl(el)) return;
+      (el.meshes || []).forEach(function(m) { _ccMarkSpaceMesh(m); n++; });
+    });
+    return n;
+  }
+
   // Render-style materials are cached per mesh so switching modes is fast.
   // They are not necessarily the material active at model unload time, so a
   // normal scene traversal would never send their Three.js dispose events.
@@ -4876,11 +4959,15 @@ function startApp() {
       var _tmpMtx4 = new THREE.Matrix4(); // reused per placement to avoid 5k-50k allocations per load
       var _estTotal = Math.max(500, Math.round(buffer.byteLength / 500));
       var _streamCount = 0;
-      api.StreamAllMeshes(modelID, function(ifcMesh) {
+      var _spaceGeoEids = {}; // IfcSpace elements that got geometry (see the space pass below)
+      // isSpace: called from the separate IfcSpace pass — web-ifc's
+      // StreamAllMeshes never yields IfcSpace, so rooms are streamed by id
+      // afterwards (mirrored exactly in _ifcWorkerMain).
+      function _onIfcMesh(ifcMesh, isSpace) {
         var expressID = ifcMesh.expressID;
         if (_scopeSet && !_scopeSet[storeyMap[expressID] || '']) { _scopedOut++; return; }
         _streamCount++;
-        if (_skipGeoEids[expressID]) { _skippedPredecode++; return; }
+        if (!isSpace && _skipGeoEids[expressID]) { _skippedPredecode++; return; }
         if (onProgress && (_streamCount & 255) === 0) {
           var _spct = 45 + Math.min(33, Math.round(_streamCount / _estTotal * 33));
           onProgress('Building the 3D model ' + _spct + '%');
@@ -4910,7 +4997,7 @@ function startApp() {
               geoCache[geoExpId] = geo;
             } else { _geoReused++; }
             var c = placed.color;
-            if (c && c.w < 0.05) continue;
+            if (!isSpace && c && c.w < 0.05) continue; // rooms are often styled fully transparent
             var col;
             if (c) col = { r:c.x, g:c.y, b:c.z };
             else { var _fb = new THREE.Color(fallbackColor); col = { r:_fb.r, g:_fb.g, b:_fb.b }; }
@@ -4926,7 +5013,8 @@ function startApp() {
             mesh.userData._geoExpId = geoExpId;
             elBox.expandByObject(mesh);
             _ccBakeMesh(mesh);
-            mesh.userData._instKey = geoExpId + ':' + (mat.uuid || 'na');
+            if (isSpace) _ccMarkSpaceMesh(mesh);
+            else mesh.userData._instKey = geoExpId + ':' + (mat.uuid || 'na');
             elMeshes.push(mesh); meshes.push(mesh);
           } catch(e) { console.warn('Skipped element geometry #'+expressID+': '+(e.message||e)); }
           finally { if (gd) try { gd.delete(); } catch(e2) {} }
@@ -4938,11 +5026,22 @@ function startApp() {
           var pm = propMap[expressID];
           if (pm) { elProps.quantities = _ccCanonQuantities(pm.quantities); elProps.psets = _ccCanonPsets(pm.psets); }
           rawElements.push({expressId:expressID, meshes:elMeshes, box:elBox.clone(), props:elProps});
+          if (isSpace) _spaceGeoEids[expressID] = true;
         }
-      });
+      }
+      api.StreamAllMeshes(modelID, function(ifcMesh) { _onIfcMesh(ifcMesh, false); });
+      var _spaceIds = [];
+      try {
+        var _spv = api.GetLineIDsWithType(modelID, IFC.IFCSPACE);
+        for (var _spi = 0; _spi < _spv.size(); _spi++) _spaceIds.push(_spv.get(_spi));
+      } catch(e) {}
+      if (_spaceIds.length) {
+        try { api.StreamMeshes(modelID, _spaceIds, function(ifcMesh) { _onIfcMesh(ifcMesh, true); }); }
+        catch(e) { console.warn('[IFC] IfcSpace geometry pass failed:', e); }
+      }
 
       if (_skippedPredecode > 0) {
-        console.log('%c[IFC] Skipped ' + _skippedPredecode + ' non-renderable elements before geometry decode (IfcOpeningElement / IfcSpace / IfcVirtualElement / IfcAnnotation / IfcGrid)', 'color:#94a3b8');
+        console.log('%c[IFC] Skipped ' + _skippedPredecode + ' non-renderable elements before geometry decode (IfcOpeningElement / IfcVirtualElement / IfcAnnotation / IfcGrid)', 'color:#94a3b8');
       }
 
       // Provision for void: attach each host's opening boxes (see extractOpeningRecords).
@@ -4963,6 +5062,7 @@ function startApp() {
           var _rids = api.GetLineIDsWithType(modelID, _rtid);
           for (var _rj = 0; _rj < _rids.size(); _rj++) {
             var _reid = _rids.get(_rj);
+            if (_spaceGeoEids[_reid]) continue; // already loaded with geometry
             var _rprops = extractProperties(api, modelID, _reid);
             _rprops.storey = storeyMap[_reid] || '';
             _rprops.material = matMap[_reid] || '';
@@ -5295,6 +5395,14 @@ function startApp() {
             for (var _opj = 0; _opj < _opIds.size(); _opj++) _skipGeoEids[_opIds.get(_opj)] = true;
           } catch(e) {}
         }
+        // IfcSpace: never decoded by the main pass (web-ifc's StreamAllMeshes
+        // doesn't yield it anyway); streamed by id in a separate pass below,
+        // exactly like the main-thread loadIFC.
+        var _spaceIds = [];
+        try {
+          var _spv = api.GetLineIDsWithType(modelID, IFC.IFCSPACE);
+          for (var _spi = 0; _spi < _spv.size(); _spi++) { var _spid = _spv.get(_spi); _spaceIds.push(_spid); _skipGeoEids[_spid] = true; }
+        } catch(e) {}
         var _skippedPredecode = 0;
         // Storey-scoped loading (mirrors the main-thread path): skip
         // geometry outside scope.storeys before decode.
@@ -5379,11 +5487,11 @@ function startApp() {
           return idx;
         }
 
-        api.StreamAllMeshes(modelID, function(ifcMesh) {
+        function _onIfcMesh(ifcMesh, isSpace) {
           var eid = ifcMesh.expressID;
           if (_scopeSet && !_scopeSet[storeyMap[eid] || '']) { _scopedOut++; return; }
           _streamCount++;
-          if (_skipGeoEids[eid]) { _skippedPredecode++; return; }
+          if (!isSpace && _skipGeoEids[eid]) { _skippedPredecode++; return; }
           if ((_streamCount & 255) === 0) {
             var _spct = 45 + Math.min(33, Math.round(_streamCount / _estTotal * 33));
             progress('Building the 3D model ' + _spct + '%');
@@ -5448,7 +5556,12 @@ function startApp() {
               pkAxisX.push(0); pkAxisY.push(0); pkAxisZ.push(0);
             }
           }
-        });
+        }
+        api.StreamAllMeshes(modelID, function(ifcMesh) { _onIfcMesh(ifcMesh, false); });
+        if (_spaceIds.length) {
+          try { api.StreamMeshes(modelID, _spaceIds, function(ifcMesh) { _onIfcMesh(ifcMesh, true); }); }
+          catch(e) { console.warn('[IFC Worker] IfcSpace geometry pass failed:', e); }
+        }
 
         // Provision for void: opening boxes per host, converted on the main thread.
         var openingRecs = {};
@@ -5659,6 +5772,7 @@ function startApp() {
           for (var i = 0; i < pk.expressIds.length; i++) {
             var eid = pk.expressIds[i];
             var gc = pk.geoCounts[i];
+            var _isSp = _pkStr(pk.ifcTypeIdx[i]) === 'IfcSpace';
             var elMeshes = [];
             var elBox = new THREE.Box3();
             for (var g = 0; g < gc; g++) {
@@ -5682,7 +5796,7 @@ function startApp() {
               var hasColor = pk.placementHasColor[pOff];
               var cOff = pOff * 4;
               var ca = hasColor ? pk.placementColors[cOff + 3] : 1;
-              if (hasColor && ca < 0.05) continue;
+              if (!_isSp && hasColor && ca < 0.05) continue; // rooms are often styled fully transparent
               var col;
               if (hasColor) col = { r:pk.placementColors[cOff], g:pk.placementColors[cOff+1], b:pk.placementColors[cOff+2] };
               else { var _fb2 = new THREE.Color(fallbackColor); col = { r:_fb2.r, g:_fb2.g, b:_fb2.b }; }
@@ -5693,7 +5807,8 @@ function startApp() {
               mesh.userData.expressId = eid;
               mesh.userData._ifcMaterial = _pkStr(pk.materialIdx[i]);
               _ccBakeMesh(mesh);
-              mesh.userData._instKey = geoId + ':' + matKey;
+              if (_isSp) _ccMarkSpaceMesh(mesh);
+              else mesh.userData._instKey = geoId + ':' + matKey;
               _tMesh += performance.now() - _tM;
               var _tB = performance.now();
               elBox.expandByObject(mesh);
@@ -11815,12 +11930,18 @@ function startApp() {
     // This is reliable regardless of GPU instancing (InstancedMesh objects report
     // local-geometry bounds at origin when queried via setFromObject, which is wrong).
     function _elemsBBox() {
-      var box = new THREE.Box3();
+      var box = new THREE.Box3(), spaceBox = null;
       modelsRef.current.forEach(function(m) {
         (m.elements || []).forEach(function(el) {
-          if (el.box && !el.box.isEmpty()) box.union(el.box);
+          if (!el.box || el.box.isEmpty()) return;
+          // Rooms (a site-sized IfcSpace is common) must not inflate
+          // fit-to-view / section / plan bounds — used only when a model
+          // holds nothing but spaces.
+          if (_ccIsSpaceEl(el)) { (spaceBox || (spaceBox = new THREE.Box3())).union(el.box); return; }
+          box.union(el.box);
         });
       });
+      if (box.isEmpty() && spaceBox) box.copy(spaceBox);
       if (typeof window._ccGetReferenceLayerBBox === 'function') {
         var rb = window._ccGetReferenceLayerBBox();
         if (rb && !rb.isEmpty()) box.union(rb);
@@ -12847,6 +12968,7 @@ function startApp() {
 
           var eid = obj.userData.expressId;
           if(eid==null) return;
+          if(obj.userData._ccSpace) return; // rooms are already translucent; never ghost them
           var keep = keepAny[eid] || (keepScoped[eid] && meshModelId && keepScoped[eid][meshModelId]);
           if (!keep) {
             _ghostedMeshes.push({mesh:obj, origMaterial:obj.material});
@@ -13153,7 +13275,25 @@ function startApp() {
         if(hlRef.current.isGroup) hlRef.current.traverse(function(c){if(c.isMesh||c.isLine||c.isLineSegments){if(c.geometry)c.geometry.dispose();if(c.material)c.material.dispose();}});
         scene.remove(hlRef.current);hlRef.current=null;
       }
+      // Selected rooms are shown even while "Show spaces" is off: their meshes
+      // join the FORCE layer (always rendered, never raycast) until the
+      // highlight is cleared.
+      var _ccForcedSpaceMeshes = [];
+      function _ccReleaseForcedSpaces() {
+        _ccForcedSpaceMeshes.forEach(function(m){ m.layers.disable(_CC_SPACE_FORCE_LAYER); });
+        _ccForcedSpaceMeshes = [];
+      }
+      function _ccForceShowSpace(expressId, modelId) {
+        var pr = _ccProxyElement(expressId, modelId);
+        if (!pr || !_ccIsSpaceEl(pr.el)) return;
+        (pr.el.meshes || []).forEach(function(m){
+          if (!m || !m.userData._ccSpace) return;
+          m.layers.enable(_CC_SPACE_FORCE_LAYER);
+          _ccForcedSpaceMeshes.push(m);
+        });
+      }
       function _clearHighlightGroups() {
+        _ccReleaseForcedSpaces();
         _clearHlRef();
         if(outlineRef.current){scene.remove(outlineRef.current);outlineRef.current=null;}
         if (window._ccPostOutlineFor) window._ccPostOutlineFor([]);
@@ -13266,6 +13406,7 @@ function startApp() {
         var found = _findMeshByRef(expressId, modelId);
         if(found){
           var meshModelId = modelId || (found.parent && found.parent.userData && found.parent.userData.modelId);
+          if (found.userData._ccSpace) _ccForceShowSpace(expressId, meshModelId);
           var discColor = _discColorForModelId(meshModelId);
           var grp = _buildHighlightGroupForMesh(found, discColor);
           if (grp) {
@@ -13305,6 +13446,7 @@ function startApp() {
           if (!ref || ref.expressId == null) return;
           var mesh = _findMeshByRef(ref.expressId, ref.modelId);
           if (!mesh) return;
+          if (mesh.userData._ccSpace) _ccForceShowSpace(ref.expressId, ref.modelId || (mesh.parent && mesh.parent.userData && mesh.parent.userData.modelId));
           if (mesh.parent) outlineMeshes.push(mesh); // skip off-scene chunk proxies for post-outline
           var color = _PAIR_ROLE_COLOR[ref.role] != null ? _PAIR_ROLE_COLOR[ref.role]
             : _discColorForModelId(ref.modelId || (mesh.parent && mesh.parent.userData && mesh.parent.userData.modelId));
@@ -15406,7 +15548,7 @@ function startApp() {
         mouse.y = -((e.clientY-rect.top)/rect.height)*2+1;
         raycaster.setFromCamera(mouse, S.camera);
         if(!S.mg) return;
-        var hits = raycaster.intersectObjects(S.mg.children, true).filter(function(h){
+        function _pickHitOk(h){
           if(!h.object.visible) return false; // skip storey/type-hidden elements
           if(_isGhostMat(h.object.material)) return false;
           if(h.object.parent && h.object.parent.userData.modelId && !h.object.parent.visible) return false;
@@ -15418,7 +15560,16 @@ function startApp() {
             }
           }
           return true;
-        });
+        }
+        var hits = raycaster.intersectObjects(S.mg.children, true).filter(_pickHitOk);
+        // Rooms (IfcSpace) live on their own layer, so the pass above never
+        // hits them — a wall inside a room stays pickable. With spaces shown,
+        // a click that hits no building element at all picks the room.
+        if (!hits.length && S._spacesShown) {
+          raycaster.layers.set(_CC_SPACE_LAYER);
+          try { hits = raycaster.intersectObjects(S.mg.children, true).filter(_pickHitOk); }
+          finally { raycaster.layers.set(0); }
+        }
 
         // Helper: resolve expressId from a hit (handles InstancedMesh)
         function _hitExpressId(h){
@@ -16456,7 +16607,7 @@ function startApp() {
           var box = new THREE.Box3();
           (modelsRef.current||[]).forEach(function(m){
             if(m.visible===false) return;
-            (m.elements||[]).forEach(function(el){ if(el.box&&!el.box.isEmpty()) box.union(el.box); });
+            (m.elements||[]).forEach(function(el){ if(el.box&&!el.box.isEmpty()&&!_ccIsSpaceEl(el)) box.union(el.box); });
           });
           if(box.isEmpty() && typeof _elemsBBox==='function') box = _elemsBBox();
           if (!box || box.isEmpty()) return;
@@ -16608,6 +16759,11 @@ function startApp() {
       }
       var LOD_HIDE_RATIO  = 0.0000005; // hide entirely — covers < ~0.07% screen (~1px at 1080p)
 
+      function _ccSyncSpaceLayers(cam){
+        if (!cam || !cam.layers) return;
+        if (S._spacesShown) cam.layers.enable(_CC_SPACE_LAYER); else cam.layers.disable(_CC_SPACE_LAYER);
+        cam.layers.enable(_CC_SPACE_FORCE_LAYER);
+      }
       function updateCulling(){
         projScreenMatrix.multiplyMatrices(S.camera.projectionMatrix, S.camera.matrixWorldInverse);
         frustum.setFromProjectionMatrix(projScreenMatrix);
@@ -16769,6 +16925,11 @@ function startApp() {
             updateCulling();
           }
         }
+        // Rooms (IfcSpace) render only while "Show spaces" is on; force-shown
+        // (selected) spaces always. Synced per frame because several code
+        // paths swap S.camera (plan view, ortho toggle, saved viewpoints).
+        _ccSyncSpaceLayers(S.camera);
+        if (S._composer && S._composer.passes && S._composer.passes[0] && S._composer.passes[0].camera) _ccSyncSpaceLayers(S._composer.passes[0].camera);
         try {
           renderer.setViewport(0,0,el.clientWidth,el.clientHeight);
           // cc-render-frame timing — before render().  See docs/INTERNALS.md § 21.38
@@ -17966,6 +18127,7 @@ function startApp() {
       });
       S.mg.traverse(function(obj){
         if(!obj.isMesh||!obj.material) return;
+        if(obj.userData._ccSpace) return; // shared room material — never recolour or ghost-clone it
         var eid=obj.userData.expressId;
         var parent=obj.parent;
         var modelId=parent?parent.userData.modelId:null;
@@ -18030,6 +18192,13 @@ function startApp() {
       if(S.axes) S.axes.visible = s.prefs.showAxes!==false && !s.presenting;
       invalidate();
     }, [s.prefs.showGrid, s.prefs.showAxes, s.presenting]);
+
+    // "Show spaces" — read by the render loop's per-frame camera layer sync.
+    useEffect(function(){
+      var S = state3d.current;
+      S._spacesShown = !!s.prefs.showSpaces;
+      invalidate();
+    }, [s.prefs.showSpaces]);
 
     useEffect(function(){
       var S = state3d.current;
@@ -18242,7 +18411,7 @@ function startApp() {
       if (S.mg) {
         var castOn = style==='rendered';
         S.mg.traverse(function(obj){
-          if (obj.isMesh && !obj.userData._isGround) {
+          if (obj.isMesh && !obj.userData._isGround && !obj.userData._ccSpace) {
             var mat = obj.material;
             var isGlass = castOn && mat && mat.transparent && (mat.opacity < 0.85);
             obj.castShadow = castOn && !isGlass;
@@ -18308,6 +18477,7 @@ function startApp() {
       for (var _mi = 0; _mi < meshList.length; _mi++) {
         var obj = meshList[_mi];
         if (obj.userData._isGround) continue;
+        if (obj.userData._ccSpace) continue; // rooms keep their own translucent look in every style
         if (!obj.userData._origMaterial) obj.userData._origMaterial = obj.material;
         var orig = obj.userData._origMaterial;
         if (S._isGhostMat && S._isGhostMat(obj.material)) continue;
@@ -19620,6 +19790,7 @@ function startApp() {
         });
     }
     function _restoreCacheOrColdParse(entry, cached) {
+      if (_ccGeoCacheLacksSpaces(cached, entry)) return _coldParseAndCache(entry);
       // Flag-off path remains exactly the established v7 behaviour.
       if (!_ccGeoCacheV8Enabled()) {
         if (cached && cached.v >= 7 && cached.hasPsets) return _geoDeserialize(cached);
@@ -20342,11 +20513,16 @@ function startApp() {
     };
   }
 
+  // Non-physical for the 2D floor-plan cut (poché) — IfcSpace included.
   var _NON_PHYSICAL_TYPES = {IfcSpace:true, IfcVirtualElement:true, IfcAnnotation:true, IfcGrid:true};
+  // GLB joins: strip geometry of non-physical types, EXCEPT IfcSpace — rooms
+  // keep their volume and get the shared hidden-by-default space look, same
+  // as the direct IFC paths (_ccMarkSpaceMesh).
   function stripNonPhysicalGeometry(elements, meshes) {
     var stripEids = {};
+    _ccMarkSpaceElements(elements);
     elements.forEach(function(el) {
-      if (el.props && _NON_PHYSICAL_TYPES[el.props.ifcType]) {
+      if (el.props && el.props.ifcType !== 'IfcSpace' && _NON_PHYSICAL_TYPES[el.props.ifcType]) {
         stripEids[el.expressId] = true;
         el.meshes = [];
         el.box = new THREE.Box3();
@@ -20354,7 +20530,7 @@ function startApp() {
     });
     var count = Object.keys(stripEids).length;
     if (!count) return meshes;
-    console.log('%c[GLB] Stripped geometry for ' + count + ' non-physical elements (IfcSpace/IfcVirtualElement/IfcAnnotation/IfcGrid)', 'color:#94a3b8');
+    console.log('%c[GLB] Stripped geometry for ' + count + ' non-physical elements (IfcVirtualElement/IfcAnnotation/IfcGrid)', 'color:#94a3b8');
     return meshes.filter(function(m) { return !stripEids[m.userData.expressId]; });
   }
 
@@ -25437,10 +25613,12 @@ function startApp() {
     (function runExport() {
       var exporter = new THREE.GLTFExporter();
       var exportScene = new THREE.Scene();
+      var _expSpaces = !!(((window._ccLatestState || {}).prefs || {}).showSpaces); // rooms only when shown
       models.forEach(function(model) {
         if (model.visible === false) return;
         (model.elements || []).forEach(function(el) {
           (el.meshes || []).forEach(function(mesh) {
+            if (mesh.userData && mesh.userData._ccSpace && !_expSpaces) return;
             if (mesh.visible) exportScene.add(mesh.clone());
           });
         });
@@ -41491,6 +41669,31 @@ function startApp() {
                   <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-faint)'}}>${i+1}</span>
                 </button>`;
               })}
+              ${function(){
+                // Rooms (IfcSpace volumes) — hidden by default, one persisted toggle.
+                var spOn = !!s.prefs.showSpaces;
+                var spN = 0;
+                (s.models||[]).forEach(function(m){ (m.elements||[]).forEach(function(el){ if (_ccIsSpaceEl(el) && el.meshes && el.meshes.length) spN++; }); });
+                return html`<div style=${{borderTop:'1px solid var(--hairline)',marginTop:'.3rem',paddingTop:'.3rem'}}>
+                  <button role="menuitemcheckbox" aria-checked=${spOn ? 'true' : 'false'} id="cc-show-spaces"
+                    title=${_cc_t('toolbar.showSpacesHint','Rooms (IfcSpace) as translucent volumes. Never part of clash detection.')}
+                    onClick=${function(){ d({t:A.UPD_PREFS,u:{showSpaces:!spOn}}); }}
+                    style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'.6rem',width:'100%',
+                      padding:'.4rem .8rem',background:'none',border:'none',cursor:'pointer',textAlign:'left',
+                      fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',
+                      color:spOn?'var(--ink-primary)':'var(--ink-secondary)',fontWeight:spOn?500:400}}
+                    onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
+                    onMouseLeave=${function(e){e.currentTarget.style.background='none';}}>
+                    <span style=${{display:'inline-flex',alignItems:'center',gap:'.5rem'}}>
+                      <span aria-hidden="true" style=${{width:14,height:14,flex:'0 0 14px',display:'inline-flex',alignItems:'center',justifyContent:'center',
+                        border:'1px solid '+(spOn?'var(--accent)':'var(--hairline-strong)'),borderRadius:'var(--radius-xs)',
+                        background:spOn?'var(--accent)':'none',color:'var(--accent-contrast)',fontSize:'var(--text-2xs)',lineHeight:1}}>${spOn ? '✓' : ''}</span>
+                      ${_cc_t('toolbar.showSpaces','Show spaces')}
+                    </span>
+                    <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-faint)'}}>${spN || ''}</span>
+                  </button>
+                </div>`;
+              }()}
               ${curStyle==='rendered' && function(){
                 var ls=(s.prefs.lightSettings)||{};
                 var tv = (typeof ls.time==='number') ? ls.time : 13;

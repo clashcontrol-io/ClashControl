@@ -72,6 +72,14 @@ const CASES = [
     name: 'degenerate record (null-valued property)',
     generate: { storeyCount: 1, wallsPerStorey: 2, withPsets: true },
   },
+  // IfcSpace rooms: web-ifc's StreamAllMeshes never yields them, so both
+  // paths stream them in a separate by-id pass — fingerprint covers their
+  // boxes and mesh counts.
+  {
+    name: 'spaces (IfcSpace rooms)',
+    generate: { storeyCount: 2, wallsPerStorey: 2, withSpaces: true },
+    expectSpaces: 2,
+  },
 ];
 
 const server = createServer(async (req, res) => {
@@ -254,11 +262,11 @@ try {
   await mkdir(generatedDir, { recursive: true });
   const resolvedCases = [];
   for (const c of CASES) {
-    if (c.url) { resolvedCases.push({ name: c.name, url: c.url }); continue; }
+    if (c.url) { resolvedCases.push({ name: c.name, url: c.url, expectOpenings: c.expectOpenings }); continue; }
     const fileName = c.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '.ifc';
     const filePath = join(generatedDir, fileName);
     await writeFile(filePath, generateSyntheticIfc(c.generate));
-    resolvedCases.push({ name: c.name, url: '/tests/fixtures/_generated-differential/' + fileName });
+    resolvedCases.push({ name: c.name, url: '/tests/fixtures/_generated-differential/' + fileName, expectSpaces: c.expectSpaces });
   }
 
   for (const c of resolvedCases) {
@@ -289,6 +297,14 @@ try {
       fail('[' + c.name + '] expected ' + c.expectOpenings + ' host elements with openings, got ' + workerResult.openings.length);
       allOk = false;
       continue;
+    }
+    if (c.expectSpaces != null) {
+      const spacesWithGeo = workerResult.fingerprint.filter((r) => r.ifcType === 'IfcSpace' && r.meshCount > 0).length;
+      if (spacesWithGeo !== c.expectSpaces) {
+        fail('[' + c.name + '] expected ' + c.expectSpaces + ' IfcSpace elements with geometry, got ' + spacesWithGeo);
+        allOk = false;
+        continue;
+      }
     }
     console.log('DIFFERENTIAL OK — [' + c.name + '] worker and fallback are fingerprint-identical (' +
       workerResult.elementCount + ' elements' +
