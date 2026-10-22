@@ -107,14 +107,31 @@ ClashControl probes `http://127.0.0.1:19780` with a `GET` in `no-cors` mode at s
 
 ## WebSocket handshake
 
-1. ClashControl opens `ws://127.0.0.1:<port>` (default `19780`).
-2. Once the socket is open, CC sends `{"type":"ping"}`.
-3. The Connector responds with `{"type":"pong", ...}` (see below).
-4. Protocol is now active.
+1. ClashControl pairs with the Connector (see [Pairing](#pairing-and-origin-validation) below): `POST http://127.0.0.1:<port>/pair` returns a short-lived token.
+2. ClashControl opens `ws://127.0.0.1:<port>/?cc_token=<token>` (default port `19780`).
+3. Once the socket is open, CC sends `{"type":"ping"}`.
+4. The Connector responds with `{"type":"pong", ...}` (see below).
+5. Protocol is now active.
 
 CC enforces a **5-second handshake timeout** — if the socket is accepted at TCP level but the WebSocket upgrade never completes, CC closes the socket and retries with exponential backoff (1 s → 2 s → 4 s … capped at 30 s).
 
-**Origin validation:** Connectors should validate the `Origin` header against an allow-list of ClashControl origins (plus common localhost dev ports). The literal string `"null"` is **deliberately accepted**: browsers send `Origin: null` for pages opened from `file://`, and being able to run a local dev copy of `index.html` straight from disk is a supported workflow. Requests with no `Origin` header at all (non-browser clients) are also accepted.
+## Pairing and origin validation
+
+Any page open in the user's browser can reach `127.0.0.1`, so a Connector must not trust the network path alone. Required behaviour, applied in this order to **every** HTTP request and WebSocket upgrade, *before any work is done*:
+
+1. **Host** must be a loopback name (`127.0.0.1`, `localhost`, `[::1]`; any port). Anything else is refused (DNS-rebinding guard).
+2. **Origin**, when the header is present, must **exactly** match the ClashControl app: `https://www.clashcontrol.io` or `https://clashcontrol.io`. Self-hosting/development origins are opt-in (the reference Connector reads `CLASHCONTROL_ALLOWED_ORIGINS`, comma-separated, exact origins only). Anything else, including the literal `null` (any page can force `Origin: null` with `<iframe sandbox>`) and `*`, is refused with `403` and **no CORS headers**. Refusing is not optional: CORS only hides a response, it does not stop a "simple" cross-site request from being executed.
+3. **Pairing token.** `POST /pair` (answered only to an allowed `Origin`; `400` if there is none) returns `{"token": "<url-safe random, ≥128-bit>", "expiresIn": 3600, "protocol": 1}`. The reply carries `Access-Control-Allow-Origin: <that exact origin>`, so only the app can read it. The WebSocket upgrade must carry a valid, unexpired token as the `cc_token` query parameter (browsers cannot set WebSocket headers) and is otherwise refused with `401`. A browser WebSocket handshake always includes `Origin`; an upgrade without one is refused. Geometry is only ever streamed to a socket that passed this check.
+
+Tokens are random, held in memory only (stored as digests), expire after about an hour, and are capped in number. ClashControl re-pairs automatically on a `401`. The token must never be logged.
+
+**CORS / Private Network Access.** Echo the validated origin (never `*`) with `Vary: Origin`. Answer `OPTIONS` preflights from an allowed origin with `Access-Control-Allow-Methods: GET, POST, OPTIONS`, `Access-Control-Allow-Headers: Content-Type, X-CC-Pairing-Token` and **`Access-Control-Allow-Private-Network: true`**; Chromium requires the last one before a public `https://` page may talk to loopback.
+
+**Requests with no `Origin` header** are not cross-origin browser requests (browsers always send one on cross-origin POSTs and WebSocket handshakes), so the plain `GET /` health probe above stays open. Anything that streams data still requires the pairing token.
+
+**Compatibility.** ClashControl treats a Connector whose `POST /pair` returns `404`/`405` (or fails) as pre-pairing and connects the old way, so older Connectors keep working until they are updated.
+
+> The Connector binaries/engine that predate this section accepted `localhost` origins of any port or `Access-Control-Allow-Origin: *`. Update to the current Connector, Engine and Smart Bridge.
 
 ---
 
