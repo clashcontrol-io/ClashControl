@@ -1,5 +1,5 @@
 # [ClashControl](https://www.clashcontrol.io)
-> Version: **v7.6.3** (2026-09-30)
+> Version: **v7.6.4** (2026-10-15)
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ec4899?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/clashcontrol-io)
 
@@ -99,7 +99,7 @@ The collection endpoint is [`api/training.js`](api/training.js) — it's a thin 
 
 The optional **Smart Bridge** binary opens a local server on `127.0.0.1:19802` (WebSocket) and `127.0.0.1:19803` (REST). Both sockets are bound to the loopback interface — they are **not** reachable from other machines on your network.
 
-The REST and WebSocket layers enforce an **origin allow-list**: only `https://www.clashcontrol.io`, `https://clashcontrol.io`, and `localhost` / `127.0.0.1` (any port) may connect. CORS is echoed per-request, never wildcarded. A `Host` header check blocks DNS-rebinding attacks. Request bodies are capped at 1 MB. The LLM config file (`~/.clashcontrol/llm-config.json`) is written with `0600` permissions so the API key is not world-readable on multi-user systems. These checks address the 2026 MCP CVE roundup (path-traversal + unauthenticated UI injection + OAuth-token concentration in widely copied reference servers).
+The REST and WebSocket layers enforce an **origin allow-list**: only `https://www.clashcontrol.io` and `https://clashcontrol.io` may connect (extra origins for self-hosting or development are opt-in via the `CLASHCONTROL_ALLOWED_ORIGINS` environment variable; `localhost` is **not** trusted by default), and browser traffic must also present a short-lived pairing token from `POST /pair` (`X-CC-Pairing-Token`, or `?cc_token=` on the WebSocket). Preflights answer `Access-Control-Allow-Private-Network` for Chromium's Private Network Access. CORS is echoed per-request, never wildcarded. A `Host` header check blocks DNS-rebinding attacks. Request bodies are capped at 1 MB. The LLM config file (`~/.clashcontrol/llm-config.json`) is written with `0600` permissions so the API key is not world-readable on multi-user systems. These checks address the 2026 MCP CVE roundup (path-traversal + unauthenticated UI injection + OAuth-token concentration in widely copied reference servers).
 
 ## AI governance
 

@@ -69,6 +69,7 @@ const { WebSocketServer } = require('ws');
 const { checkAutonomy } = require('./bridge-governance');
 const auditLog = require('./bridge-audit');
 const bridgeUpdate = require('./bridge-update');
+const security = require('./bridge-security');
 
 const VERSION  = require('./bridge-version.json').version;
 const WS_PORT  = parseInt(process.env.CLASHCONTROL_WS_PORT || '19802', 10);
@@ -101,7 +102,7 @@ async function getCachedUpdateStatus() {
   }
 }
 
-// ── Origin / Host allow-list (security) ──────────────────────────────────────
+// ── Origin / Host allow-list + pairing token (security) ─────────────────────
 // Why this exists: the bridge runs on localhost but anything the user's
 // browser loads can hit 127.0.0.1. With CORS '*' (the old behaviour) any
 // malicious page could drive ClashControl tools, exfiltrate the LLM API key,
@@ -109,32 +110,40 @@ async function getCachedUpdateStatus() {
 // wave of Q1 2026 (path-traversal, unauthenticated UI injection, OAuth-token
 // concentration; ~30 CVEs across reference SDKs) is exactly this surface.
 //
-// allow-list strategy:
-//   - CORS: only the live app origin + localhost dev. Echo, don't wildcard.
-//   - WebSocket: same allow-list enforced in verifyClient.
-//   - Host header: must point at loopback. Blocks DNS-rebinding attacks where
-//     attacker.com resolves to 127.0.0.1 and tries to round-trip through the
-//     user's browser as a same-origin loopback request.
-const ORIGIN_ALLOW = [
-  'https://www.clashcontrol.io',
-  'https://clashcontrol.io',
-  /^https?:\/\/localhost(:\d+)?$/,
-  /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
-  /^https?:\/\/\[::1\](:\d+)?$/
-];
-function isAllowedOrigin(origin) {
-  if (!origin) return false;
-  for (var i = 0; i < ORIGIN_ALLOW.length; i++) {
-    var a = ORIGIN_ALLOW[i];
-    if (typeof a === 'string' ? a === origin : a.test(origin)) return true;
+// Logic lives in bridge-security.js (unit-tested). Strategy:
+//   - Host header must be loopback: blocks DNS-rebinding.
+//   - Origin, when present, must EXACTLY match the ClashControl app origin
+//     (dev/self-host origins are opt-in via CLASHCONTROL_ALLOWED_ORIGINS).
+//     Rejected with 403 before any work - CORS alone only hides the response,
+//     a "simple" cross-site POST would still execute.
+//   - Browser traffic (it always carries Origin) must also present a
+//     short-lived pairing token from POST /pair: header X-CC-Pairing-Token on
+//     HTTP, ?cc_token= on the WebSocket. Only an allowed origin can read it.
+//   - No Origin => not a cross-origin browser request (MCP stdio server, curl):
+//     governed by the loopback bind + Host check, no token.
+//   - Preflights answer Access-Control-Allow-Private-Network for Chromium PNA.
+const { isAllowedOrigin, isAllowedHost } = security;
+const pairing = security.createPairingStore();
+
+// Shared by both WebSocket listeners (IPv4 + IPv6). The WS channel is only ever
+// used by the ClashControl page, so unlike REST an Origin-less handshake is
+// refused too.
+function verifyBrowserClient(info, cb) {
+  const req = info.req || {};
+  const origin = info.origin || (req.headers && req.headers.origin) || '';
+  if (!isAllowedHost(req.headers && req.headers.host)) {
+    console.warn('[SmartBridge] WS handshake rejected - host not allowed:', (req.headers && req.headers.host) || '(empty)');
+    return cb(false, 421, 'Host not allowed');
   }
-  return false;
-}
-function isAllowedHost(host) {
-  if (!host) return false;
-  // Strip port; allow only loopback hostnames.
-  var bareHost = host.replace(/:\d+$/, '').toLowerCase();
-  return bareHost === '127.0.0.1' || bareHost === 'localhost' || bareHost === '[::1]' || bareHost === '::1';
+  if (!isAllowedOrigin(origin)) {
+    console.warn('[SmartBridge] WS handshake rejected - origin not allowed:', origin || '(empty)');
+    return cb(false, 403, 'Origin not allowed');
+  }
+  if (!pairing.valid(security.tokenFromUrl(req.url))) {
+    console.warn('[SmartBridge] WS handshake rejected - pairing required');
+    return cb(false, 401, 'Pairing required');
+  }
+  return cb(true);
 }
 
 // Stable error codes — clients (UI, CI, integrations) can branch on `code`
@@ -440,14 +449,9 @@ const _sseClients = new Set();  // open GET /events responses (SSE push subscrib
 const wss = new WebSocketServer({
   host: '127.0.0.1',     // loopback only — never expose to the network
   port: WS_PORT,
-  // Reject WS handshakes whose Origin is not in our allow-list. Without this,
-  // any page the user visits could connect and drive ClashControl tools.
-  verifyClient: function(info, cb) {
-    var origin = info.origin || (info.req && info.req.headers && info.req.headers.origin) || '';
-    if (isAllowedOrigin(origin)) return cb(true);
-    console.warn('[SmartBridge] WS handshake rejected — origin not allowed:', origin || '(empty)');
-    return cb(false, 403, 'Origin not allowed');
-  }
+  // Origin + Host + pairing token. Without this any page the user visits
+  // could connect and drive ClashControl tools.
+  verifyClient: verifyBrowserClient
 });
 
 wss.on('listening', () => {
@@ -526,12 +530,7 @@ wss.on('error', (e) => console.error('[SmartBridge] WS server error:', e.message
 const _wss6 = new WebSocketServer({
   host: '::1',
   port: WS_PORT,
-  verifyClient: function(info, cb) {
-    var origin = info.origin || (info.req && info.req.headers && info.req.headers.origin) || '';
-    if (isAllowedOrigin(origin)) return cb(true);
-    console.warn('[SmartBridge] WS handshake rejected — origin not allowed:', origin || '(empty)');
-    return cb(false, 403, 'Origin not allowed');
-  }
+  verifyClient: verifyBrowserClient
 });
 _wss6.on('connection', _onBrowserConnect);
 _wss6.on('listening', () => console.log('[SmartBridge] WebSocket  ws://[::1]:' + WS_PORT));
@@ -643,33 +642,54 @@ function readBody(req) {
 }
 
 const httpServer = http.createServer(async (req, res) => {
-  // ── Origin + Host gate ─────────────────────────────────────────────────────
-  // Echo the request's Origin only if it's in the allow-list. Browsers refuse
-  // ACAO: '*' with credentials anyway; the stricter echo also blocks malicious
-  // sites that fly under the radar without sending credentials.
-  const origin = req.headers.origin || '';
+  // ── Origin + Host + pairing gate ───────────────────────────────────────────
+  // See the security note near the top of this file. Order matters: nothing
+  // below this block runs for a request that fails it.
+  const origin = req.headers.origin;                 // undefined => not a browser cross-origin request
   const host   = req.headers.host   || '';
+  const fail = (code, status, error, withCors) => {
+    const h = { 'Content-Type': 'application/json' };
+    if (withCors && origin) { h['Access-Control-Allow-Origin'] = origin; h['Vary'] = 'Origin'; }
+    res.writeHead(status, h);
+    res.end(JSON.stringify({ error, code }));
+  };
   // DNS-rebinding guard: legit traffic always hits us as 127.0.0.1/localhost.
   // Anything else means a hostile DNS record is pointing at our loopback.
-  if (!isAllowedHost(host)) {
-    res.writeHead(421, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Misdirected request', code: 'host_not_allowed' }));
-    return;
-  }
-  if (origin) {
+  if (!isAllowedHost(host)) return fail('host_not_allowed', 421, 'Misdirected request', false);
+  if (origin !== undefined) {
     if (!isAllowedOrigin(origin)) {
-      // No CORS headers → browser blocks the response. Also return 403 so
-      // server-to-server callers get a clear signal.
-      res.writeHead(403, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Origin not allowed', code: 'origin_not_allowed' }));
-      return;
+      // No CORS headers -> the browser also hides the response; the 403 gives
+      // server-to-server callers a clear signal. Crucially nothing ran.
+      console.warn('[SmartBridge] REST request rejected - origin not allowed:', origin || '(empty)');
+      return fail('origin_not_allowed', 403, 'Origin not allowed', false);
     }
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, X-CC-Pairing-Token');
+    res.setHeader('Access-Control-Max-Age', '600');
+    // Chromium Private Network Access: a public https page talking to loopback
+    // needs this on the preflight.
+    res.setHeader('Access-Control-Allow-Private-Network', 'true');
   }
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+  const pathOnly = (req.url || '/').split('?')[0];
+  if (origin !== undefined) {
+    if (req.method === 'POST' && pathOnly === '/pair') {
+      // Only an allow-listed origin gets here, and only it can read the reply.
+      const t = pairing.issue();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ token: t.token, expiresIn: t.expiresIn, protocol: 1 }));
+      return;
+    }
+    // /status and /health stay open to the app so it can detect the bridge
+    // before it holds a token. Nothing sensitive: version + connection flag.
+    const open = req.method === 'GET' && (pathOnly === '/status' || pathOnly === '/health');
+    if (!open && !pairing.valid(security.tokenFromHeaders(req.headers))) {
+      return fail('pairing_required', 401, 'Pairing required', true);
+    }
+  }
 
   const { pathname } = new URL(req.url || '/', 'http://localhost');
   const json = (code, obj) => {

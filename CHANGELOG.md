@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.6.4 (2026-10-15)
+- Harden the localhost Smart Bridge and add browser-side pairing for all local bridges
+
 ## v7.6.3 (2026-09-30)
 - Section plane outline: sized to the model, covers it in perspective
 

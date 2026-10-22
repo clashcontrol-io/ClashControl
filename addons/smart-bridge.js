@@ -25,6 +25,21 @@
   var _sbHostIdx = 0;
   function _wsUrl()   { return 'ws://'   + _sbHosts[_sbHostIdx] + ':19802'; }
   function _restUrl() { return 'http://' + _sbHosts[_sbHostIdx] + ':19803'; }
+
+  // The bridge only serves the ClashControl origin and requires a short-lived
+  // pairing token (POST /pair) on everything but /status. cc-runtime.js owns the
+  // handshake; a bridge that predates pairing is detected and used as before.
+  var _pairing = (window._ccRuntime && window._ccRuntime.createBridgePairing)
+    ? window._ccRuntime.createBridgePairing() : null;
+  function _sbFetch(path, init) {
+    return _pairing ? _pairing.fetch(_restUrl(), path, init) : fetch(_restUrl() + path, init);
+  }
+  function _pairedWsUrl() {
+    // /pair is served on the REST port, the socket lives on the WS port.
+    return _pairing ? _pairing.wsUrl(_wsUrl(), _restUrl()) : Promise.resolve(_wsUrl());
+  }
+  // For core callers (e.g. the /smart command in index.html).
+  window._ccSmartBridgeFetch = _sbFetch;
   var _ws = null;
   var _connected = false;
   var _releaseTag = 'bridge-v0.3.3'; // fallback; will be updated from GitHub API
@@ -174,7 +189,7 @@
   function _checkForUpdate(d) {
     var fetchOpts = {method:'GET', cache:'no-store'};
     try { if (AbortSignal.timeout) fetchOpts.signal = AbortSignal.timeout(3000); } catch(e){}
-    return fetch(_restUrl() + '/update', fetchOpts)
+    return _sbFetch('/update', fetchOpts)
       .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function(j) {
         if (j && j.update_available) {
@@ -1869,11 +1884,26 @@
 
   // ── WebSocket connection ──────────────────────────────────────────
 
+  var _wsPairing = false; // a pairing handshake is in flight; don't start a second socket
   function _connectWs(d) {
     if (_ws && _ws.readyState <= 1) return;
+    if (_wsPairing) return;
     var capturedGen = _wsGen;
+    _wsPairing = true;
+    // Pair first (browsers can't set WS headers, so the token rides in the URL).
+    // If pairing itself fails (bridge down) fall through to a plain attempt so
+    // the existing onerror/onclose reconnect handling is unchanged.
+    _pairedWsUrl().catch(function() { return _wsUrl(); }).then(function(url) {
+      _wsPairing = false;
+      if (_wsGen !== capturedGen) return; // disconnected while pairing
+      _openWs(d, url, capturedGen);
+    });
+  }
+
+  function _openWs(d, url, capturedGen) {
+    if (_ws && _ws.readyState <= 1) return;
     var _wsOpened = false; // did THIS socket ever reach onopen?
-    try { _ws = new WebSocket(_wsUrl()); } catch (e) { return; }
+    try { _ws = new WebSocket(url); } catch (e) { return; }
 
     _ws.onopen = function() {
       _wsOpened = true;
@@ -1881,7 +1911,7 @@
       if (d) d({t:'UPD_SMART_BRIDGE', u:{connected:true, bridgeUpdating:false, bridgeReconnecting:false}});
       console.log('%c[Smart Bridge] Connected', 'color:#22c55e;font-weight:bold');
       // Fetch stored LLM config so the chat panel pre-fills correctly
-      fetch(_restUrl() + '/llm-config', {cache:'no-store'})
+      _sbFetch('/llm-config', {cache:'no-store'})
         .then(function(r){ return r.ok ? r.json() : null; })
         .then(function(j){ if (j && d) d({t:'UPD_SMART_BRIDGE', u:{llmConfig:j}}); })
         .catch(function(){}); // bridge may not support /llm-config yet — ignore
@@ -2302,7 +2332,7 @@
               function _detectLocal() {
                 var btn = document.getElementById('cc-sb-detect-btn');
                 if (btn) btn.textContent = 'Detecting…';
-                fetch(_restUrl() + '/llm/autodetect')
+                _sbFetch('/llm/autodetect')
                   .then(function(r){ if (r.status === 404) throw new Error('Update your Connector to auto-detect — or pick a preset below'); return r.json(); })
                   .then(function(j){
                     var found = (j && j.found) || [];
@@ -2310,7 +2340,7 @@
                     var pick = found[0];
                     var model = (pick.models && pick.models[0]) || 'local-model';
                     var newCfg = {provider:pick.provider, model:model, baseUrl:pick.baseUrl, apiKey:''};
-                    fetch(_restUrl() + '/llm-config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(newCfg)})
+                    _sbFetch('/llm-config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(newCfg)})
                       .then(function(){ if (d) d({t:'UPD_SMART_BRIDGE', u:{llmConfig:{provider:pick.provider, model:model, baseUrl:pick.baseUrl, hasKey:false}}}); });
                   })
                   .catch(function(e){ if (btn) { btn.textContent = e.message || 'Detect failed'; setTimeout(function(){ if (btn) btn.textContent = 'Connect my desktop LLM'; }, 3400); } });
@@ -2330,7 +2360,7 @@
                 };
                 var btn = document.getElementById('cc-sb-llm-save-btn');
                 if (btn) btn.textContent = 'Saving\u2026';
-                fetch(_restUrl() + '/llm-config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(newCfg)})
+                _sbFetch('/llm-config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(newCfg)})
                   .then(function(){ if (d) d({t:'UPD_SMART_BRIDGE', u:{llmConfig:{provider:newCfg.provider, model:newCfg.model, baseUrl:newCfg.baseUrl, hasKey:!!newCfg.apiKey}}}); if (btn) { btn.textContent = 'Saved \u2713'; setTimeout(function(){ if (btn) btn.textContent='Save'; }, 1800); } })
                   .catch(function(e){ if (btn) btn.textContent = 'Failed'; console.warn('[Smart Bridge] save llm config:', e); });
               }
@@ -2344,7 +2374,7 @@
                 if (d) d({t:'UPD_SMART_BRIDGE', u:{chatBusy:true, chatError:null, chatMessages:updMsgs}});
                 // Build history from current messages (skip the last user msg we just added)
                 var history = msgs.map(function(m){ return {role:m.role, content:m.content}; });
-                fetch(_restUrl() + '/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:msg, history:history})})
+                _sbFetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:msg, history:history})})
                   .then(function(r){ if (!r.ok) return r.json().then(function(j){ throw new Error(j.error || ('HTTP '+r.status)); }); return r.json(); })
                   .then(function(j){ if (d) d({t:'UPD_SMART_BRIDGE', u:{chatBusy:false, chatMessages:updMsgs.concat([{role:'assistant', content:j.response}])}}); })
                   .catch(function(e){ if (d) d({t:'UPD_SMART_BRIDGE', u:{chatBusy:false, chatError:e.message}}); });

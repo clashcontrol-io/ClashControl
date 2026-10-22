@@ -19,6 +19,15 @@
 
   var _localEngineUrl = 'http://localhost:19800';
   var _localEngineWsUrl = 'ws://localhost:19801';
+
+  // The engine only serves the ClashControl origin and requires a short-lived
+  // pairing token (POST /pair) on everything but /status. cc-runtime.js owns the
+  // handshake; an engine that predates pairing is detected and used as before.
+  var _pairing = (window._ccRuntime && window._ccRuntime.createBridgePairing)
+    ? window._ccRuntime.createBridgePairing() : null;
+  function _engineFetch(path, init) {
+    return _pairing ? _pairing.fetch(_localEngineUrl, path, init) : fetch(_localEngineUrl + path, init);
+  }
   var _engineVersion = null;
   var _engineCores = null;
   var _engineBackends = null;
@@ -149,7 +158,7 @@
   function _checkForUpdate(d) {
     var fetchOpts = {method:'GET', cache:'no-store'};
     try { if (AbortSignal.timeout) fetchOpts.signal = AbortSignal.timeout(3000); } catch(e){}
-    return fetch(_localEngineUrl + '/update', fetchOpts)
+    return _engineFetch('/update', fetchOpts)
       .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function(j) {
         if (j && j.update_available) {
@@ -197,7 +206,7 @@
     if (d) d({t:'UPD_LOCAL_ENGINE', u:{updating:true, updateAvailable:false}});
     var fetchOpts = {method:'POST', cache:'no-store'};
     try { if (AbortSignal.timeout) fetchOpts.signal = AbortSignal.timeout(5000); } catch(e){}
-    return fetch(_localEngineUrl + '/update', fetchOpts)
+    return _engineFetch('/update', fetchOpts)
       .then(function() {
         console.log('%c[LocalEngine] Self-update triggered, waiting for restart\u2026', 'color:#fbbf24');
         _pollForRestart(d, 60000); // up to 60s for the update + restart
@@ -1042,25 +1051,34 @@ clashcontrol-engine --install</pre>
   function _detectOnLocalEngine(models, rules, onProgress) {
     var payload = _serializeForLocalEngine(models, rules);
     var progressWs = null;
-    try {
-      progressWs = new WebSocket(_localEngineWsUrl);
-      progressWs.onmessage = function(e) {
+    var progressWanted = true;   // cleared once detection finishes, so a late pairing doesn't open a stale socket
+    // Progress is best-effort: pair first (token rides in the URL, WS can't set
+    // headers), and silently skip the live bar if the engine can't be reached.
+    // /pair is served on the HTTP port; the progress socket is on the next one.
+    (_pairing ? _pairing.wsUrl(_localEngineWsUrl, _localEngineUrl) : Promise.resolve(_localEngineWsUrl))
+      .then(function(wsUrl) {
+        if (!progressWanted) return;
         try {
-          var msg = JSON.parse(e.data);
-          if (msg.type === 'progress' && onProgress && msg.total > 0) onProgress(msg.done, msg.total);
-          if (msg.type === 'phase' && msg.label) {
-            // Fan the engine's phase label out through the global
-            // progress channel so the chat bubble can show "Building
-            // BVH / Narrow phase / Finalising" just like the browser
-            // engine's internal phases.
-            window._ccDetectProgress = window._ccDetectProgress || {done:0,total:0,pct:0};
-            window._ccDetectProgress.phase = msg.label;
-            window.dispatchEvent(new Event('cc-detect-progress'));
-          }
-          if (msg.type === 'complete') console.log('%c[Engine] Done: %s clashes in %sms', 'color:#4ade80', msg.clashCount, msg.duration_ms);
+          progressWs = new WebSocket(wsUrl);
+          progressWs.onmessage = function(e) {
+            try {
+              var msg = JSON.parse(e.data);
+              if (msg.type === 'progress' && onProgress && msg.total > 0) onProgress(msg.done, msg.total);
+              if (msg.type === 'phase' && msg.label) {
+                // Fan the engine's phase label out through the global
+                // progress channel so the chat bubble can show "Building
+                // BVH / Narrow phase / Finalising" just like the browser
+                // engine's internal phases.
+                window._ccDetectProgress = window._ccDetectProgress || {done:0,total:0,pct:0};
+                window._ccDetectProgress.phase = msg.label;
+                window.dispatchEvent(new Event('cc-detect-progress'));
+              }
+              if (msg.type === 'complete') console.log('%c[Engine] Done: %s clashes in %sms', 'color:#4ade80', msg.clashCount, msg.duration_ms);
+            } catch(ex){}
+          };
         } catch(ex){}
-      };
-    } catch(ex){}
+      })
+      .catch(function(){});
 
     // Announce the pre-flight phase immediately — serialising 30k
     // meshes takes a second or two, and without this nothing shows in
@@ -1070,9 +1088,10 @@ clashcontrol-engine --install</pre>
       window.dispatchEvent(new Event('cc-detect-progress'));
     } catch(e){}
 
-    return fetch(_localEngineUrl + '/detect', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)})
+    return _engineFetch('/detect', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)})
     .then(function(r){ return r.json(); })
     .then(function(result) {
+      progressWanted = false;
       if (progressWs) try{progressWs.close();}catch(ex){}
       if (result && result.error) { console.warn('[Engine] Server error:', result.error); return null; }
       if (!result || !result.clashes) return [];
@@ -1147,6 +1166,7 @@ clashcontrol-engine --install</pre>
       return _applyClientSideRuleFilters(mapped, rules);
     })
     .catch(function(err) {
+      progressWanted = false;
       if (progressWs) try{progressWs.close();}catch(ex){}
       console.warn('[Engine] Detection failed, falling back to browser:', err);
       return null;

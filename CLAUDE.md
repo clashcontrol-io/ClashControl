@@ -169,7 +169,7 @@ section-clipping.js         — Non-addon core module: section plane/box clippin
 analytics-consent.js        — Non-addon core module: consent-gated analytics, loaded by every SEO landing page too
 mcp-server.js                — MCP server (stdio) implementing Model Context Protocol for Claude Desktop/Code — distributed via GitHub Releases, not served from clashcontrol.io
 smart-bridge-server.js      — Standalone Smart Bridge binary source — REST/WS bridge that `addons/smart-bridge.js` connects to; distributed via GitHub Releases
-bridge-audit.js, bridge-governance.js, bridge-update.js, bridge-version.json — Smart Bridge binary build/update/governance tooling
+bridge-audit.js, bridge-governance.js, bridge-security.js, bridge-update.js, bridge-version.json — Smart Bridge binary build/update/governance/access-control tooling (`bridge-security.js`: exact Origin allow-list, loopback Host, PNA, pairing tokens — the same policy the Engine and Revit Connector enforce; browser side: `_ccRuntime.createBridgePairing` in `cc-runtime.js`)
 engine/                     — Rust source for the WASM clash accelerator (`addons/wasm-engine-pkg/`) and the native-speed local engine's shared algorithm; the off-by-default `native` cargo feature (rayon `NativeEngine`, `engine/src/native.rs`) is what the desktop app links. Add new code at the END of `engine/src/lib.rs` (panic line numbers end up in the committed wasm; after a wasm-pack rebuild `addons/wasm-engine-pkg` must show no diff)
 desktop/                    — Tauri desktop app (shell + native clash-engine commands; see `docs/TAURI.md`, `desktop/README.md`)
 ```
