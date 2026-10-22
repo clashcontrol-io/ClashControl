@@ -771,6 +771,7 @@
 <script src="cc-runtime.js" defer></script>
 <script src="safety-migrations.js" defer></script>
 <script src="section-clipping.js" defer></script>
+<script src="occlusion-core.js" defer></script>
 <script src="renderer-contract.js" defer></script>
 <script src="clash-discipline-core.js" defer></script>
 <script src="clash-assignment-core.js" defer></script>
@@ -13236,7 +13237,7 @@ function startApp() {
             grp.add(edgeLines);
           }
         } catch(e){}
-        if (wasHidden && mesh.userData._frustumCulled) mesh.visible = false;
+        if (wasHidden && (mesh.userData._frustumCulled || mesh.userData._occlCulled)) mesh.visible = false;
         return grp;
       }
       function _discColorForModelId(modelId) {
@@ -13746,7 +13747,7 @@ function startApp() {
         var wasHidden = !found.visible;
         if(wasHidden) found.visible = true;
         var box = new THREE.Box3().setFromObject(found);
-        if(wasHidden && found.userData._frustumCulled) found.visible = false;
+        if(wasHidden && (found.userData._frustumCulled || found.userData._occlCulled)) found.visible = false;
         if(box.isEmpty()) return;
         var ctr = box.getCenter(new THREE.Vector3());
         var sz = box.getSize(new THREE.Vector3());
@@ -13808,7 +13809,7 @@ function startApp() {
               var mm = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
               if (mm !== modelId) return;
             }
-            if(!obj.visible && obj.userData._frustumCulled){obj.visible=true;hiddenMeshes.push(obj);}
+            if(!obj.visible && (obj.userData._frustumCulled || obj.userData._occlCulled)){obj.visible=true;hiddenMeshes.push(obj);}
             refBox.expandByObject(obj);
             combined.expandByObject(obj);
             foundAny = true;
@@ -16641,6 +16642,478 @@ function startApp() {
         });
       }
 
+      // ── Occlusion culling (safety flag `occlusionCulling`) ──────────
+      // docs/OCCLUSION_CULLING.md. Runs inside the frame it affects, right
+      // before render(), for the exact camera/visibility/materials of that
+      // frame, and the hides are undone right after render() — nothing else
+      // (hover, ghost, reveal, raycasts, magnifier, BCF snapshots) ever sees
+      // an occlusion-hidden mesh. Idle frames stay idle: this only runs when
+      // tick() already decided to render. An element is hidden only when
+      // occlusion-core.js proves its whole screen rect is covered by nearer
+      // opaque model geometry (tests/browser/occlusion-culling.mjs compares
+      // culled and unculled frames pixel for pixel). Off by default: see the
+      // flag's note in safety-migrations.js.
+      var _occlCore = window._ccOcclusionCore || null;
+      var _occl = {
+        on: !!(_occlCore && window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('occlusionCulling')),
+        buf: _occlCore ? _occlCore.createBuffer() : null,
+        hidden: [], hiddenB: [], hiddenBi: [],
+        skip: 0, adaptive: true, stats: null, caps: null, selfTest: null, ignoreSelfTest: false,
+        adj: new WeakMap(), pass: 0, u: null, stack: null, triBudget: 20000,
+        px: new Float64Array(0), py: new Float64Array(0), pz: new Float64Array(0), pv: new Uint8Array(0)
+      };
+      window._ccOcclusion = {
+        get enabled() { return _occl.on; },
+        setEnabled: function(v) { _occl.on = !!v && !!_occlCore; _occl.skip = 0; invalidate(2); },
+        get adaptive() { return _occl.adaptive; },
+        set adaptive(v) { _occl.adaptive = !!v; _occl.skip = 0; },
+        get stats() { return _occl.stats; },
+        get selfTest() { return _occl.selfTest; },
+        // tests only: run the pass even where the depth self-test failed, to
+        // exercise the proof on a software rasteriser with simple geometry
+        set ignoreSelfTest(v) { _occl.ignoreSelfTest = !!v; },
+        set debug(v) { _occl.debug = !!v; },
+        set debugKeep(f) { _occl.debugKeep = typeof f === 'function' ? f : null; },
+        get triBudget() { return _occl.triBudget; },
+        set triBudget(v) { _occl.triBudget = Math.max(_OCCL_TRI_MIN, Math.min(_OCCL_TRI_MAX, +v || 0)); },
+        set fixedBudget(v) { _occl.fixedBudget = !!v; }   // tests: keep triBudget constant   // tests: keep the culled list + coverage buffer in stats
+      };
+      var _OCCL_GAMMA = Math.pow(2, -20);   // float32 transform error, relative (16x the ulp)
+      // Occluder triangles rasterised per frame: adaptive between these bounds so
+      // the raster step stays near _OCCL_RASTER_MS (fewer occluders only means
+      // fewer culls, never a wrong one).
+      var _OCCL_TRI_MIN = 2000, _OCCL_TRI_MAX = 60000, _OCCL_RASTER_MS = 3;
+      var _OCCL_MAX_OCC = 800, _OCCL_MAX_TRIS_EACH = 8000;
+      var _occlHasOwn = Object.prototype.hasOwnProperty;
+      var _occlMatProto = THREE.Material.prototype;
+      var _occlM4 = new THREE.Matrix4(), _occlM4b = new THREE.Matrix4(), _occlBox = new THREE.Box3();
+      var _occlRect = new Float64Array(5), _occlVB = new Float64Array(6), _occlVp = new THREE.Vector4();
+      function _occlCaps() {
+        if (_occl.caps) return _occl.caps;
+        var gl = renderer.getContext(), db = 16, sb = 4;
+        try { var v = gl.getParameter(gl.DEPTH_BITS); if (v > 0) db = v; } catch (_) {}
+        try { var v2 = gl.getParameter(gl.SUBPIXEL_BITS); if (v2 > 0) sb = v2; } catch (_) {}
+        _occl.caps = {
+          eps: 2 * Math.max(Math.pow(2, -20), 16 * Math.pow(2, -db)), // NDC depth margin
+          snap: Math.max(1 / 32, 2 * Math.pow(2, -sb))                 // px: vertex snapping, x4
+        };
+        return _occl.caps;
+      }
+      // Precondition of the proof: the GPU interpolates depth per MSAA
+      // sample. Some rasterisers (SwiftShader, seen in CI and the sandbox)
+      // evaluate one depth at the pixel centre for a partially covered pixel,
+      // i.e. they extrapolate the triangle's plane outside the triangle, and
+      // for steep triangles that is unbounded: an element that is behind an
+      // occluder everywhere on its surface can still win a sample at its
+      // edge. Checked once, on the canvas's own sample count: a flat
+      // occluder and a steep triangle that is behind it everywhere; any of
+      // the triangle's colour in the resolved image fails the check.
+      function _occlDepthSelfTest() {
+        var gl = renderer.getContext(), samples = 0;
+        try { samples = gl.getParameter(gl.SAMPLES) || 0; } catch (_) {}
+        if (!(samples > 1)) return { ok: true, samples: samples };
+        var N = 32, leaked = 0, prevRT = renderer.getRenderTarget(), prevCol = new THREE.Color(), prevA = renderer.getClearAlpha();
+        renderer.getClearColor(prevCol);
+        var cam = new THREE.Camera(), disposables = [];
+        try {
+          [[1, 1e-3], [0.1, 1e-4]].forEach(function(gd) {
+            var g = gd[0], ze = 0.5 + gd[1], x0 = 0.013;
+            var occ = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+              vertexShader: 'void main(){ gl_Position = vec4(position.xy, 0.5, 1.); }',
+              fragmentShader: 'void main(){ gl_FragColor = vec4(1.,0.,0.,1.); }' }));
+            var geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.Float32BufferAttribute([x0, -1, ze, 1, -1, ze + g * (1 - x0), x0, 1, ze,
+              x0, 1, ze, 1, -1, ze + g * (1 - x0), 1, 1, ze + g * (1 - x0)], 3));
+            var tri = new THREE.Mesh(geo, new THREE.ShaderMaterial({ side: THREE.DoubleSide,
+              vertexShader: 'void main(){ gl_Position = vec4(position, 1.); }',
+              fragmentShader: 'void main(){ gl_FragColor = vec4(0.,1.,0.,1.); }' }));
+            occ.renderOrder = 0; tri.renderOrder = 1;
+            var sc = new THREE.Scene(); sc.add(occ); sc.add(tri);
+            var rt = new THREE.WebGLRenderTarget(N, N, { samples: samples });
+            disposables.push(rt, occ.geometry, occ.material, geo, tri.material);
+            renderer.setRenderTarget(rt); renderer.setClearColor(0x000000, 1); renderer.clear(); renderer.render(sc, cam);
+            var buf = new Uint8Array(4 * N * N);
+            renderer.readRenderTargetPixels(rt, 0, 0, N, N, buf);
+            for (var k = 0; k < buf.length; k += 4) if (buf[k + 1] > 0) leaked++;
+          });
+        } finally {
+          renderer.setRenderTarget(prevRT); renderer.setClearColor(prevCol, prevA);
+          disposables.forEach(function(d) { try { d.dispose(); } catch (_) {} });
+        }
+        return { ok: leaked === 0, samples: samples, leakedPixels: leaked };
+      }
+      // Opaque, depth-writing, built-in mesh material with standard depth
+      // test and nothing that discards, offsets or displaces fragments.
+      // Cached per material per pass (materials are shared across meshes).
+      function _occlMatWhy(m) {
+        if (!m || m.visible === false) return 'hidden';
+        if (!(m.isMeshBasicMaterial || m.isMeshLambertMaterial || m.isMeshPhongMaterial || m.isMeshStandardMaterial ||
+              m.isMeshToonMaterial || m.isMeshMatcapMaterial || m.isMeshNormalMaterial)) return 'type';
+        if (m.transparent || m.depthWrite === false) return 'transparent';
+        if (m.depthTest === false || m.colorWrite === false || m.wireframe) return 'overlay';
+        if (m.depthFunc !== THREE.LessEqualDepth && m.depthFunc !== THREE.LessDepth) return 'depthFunc';
+        if (m.alphaTest > 0 || m.alphaHash || m.alphaToCoverage || m.polygonOffset || m.stencilWrite) return 'discard/offset/stencil';
+        if (m.displacementMap || m.transmission > 0 || m.onBeforeCompile !== _occlMatProto.onBeforeCompile) return 'shader';
+        return '';
+      }
+      function _occlMatOk(m) {
+        if (Array.isArray(m)) { for (var i = 0; i < m.length; i++) if (!_occlMatOk(m[i])) return false; return m.length > 0; }
+        if (!m) return false;
+        if (m._ccOcclPass !== _occl.pass) { m._ccOcclPass = _occl.pass; m._ccOcclWhy = _occlMatWhy(m); }
+        return m._ccOcclWhy === '';
+      }
+      // Layer 0 only (rooms/overlays on other layers never take part), no
+      // per-instance render hooks, no skinning/morphing, default draw range.
+      function _occlObjOk(o) {
+        if (o.layers.mask !== 1 || o.userData._occlNever) return false;
+        if (_occlHasOwn.call(o, 'onBeforeRender') || _occlHasOwn.call(o, 'onAfterRender')) return false;
+        if (o.isSkinnedMesh || o.morphTargetInfluences) return false;
+        var g = o.geometry;
+        if (!g || !g.attributes || !g.attributes.position) return false;
+        if (!o.isBatchedMesh && (g.drawRange.start !== 0 || g.drawRange.count !== Infinity)) return false;
+        if (g._ccOcclMorph === undefined) {
+          g._ccOcclMorph = false;
+          for (var k in g.morphAttributes) if (g.morphAttributes[k] && g.morphAttributes[k].length) g._ccOcclMorph = true;
+        }
+        return !g._ccOcclMorph;
+      }
+      function _occlRowAbs3(e) {
+        var a = Math.abs(e[0]) + Math.abs(e[4]) + Math.abs(e[8]);
+        var b = Math.abs(e[1]) + Math.abs(e[5]) + Math.abs(e[9]);
+        var c = Math.abs(e[2]) + Math.abs(e[6]) + Math.abs(e[10]);
+        return Math.max(a, b, c);
+      }
+      // World AABB of a local box under matrix e (column-major), into out[o..o+5];
+      // returns the magnitude bound |M||p| + |t| used for the float32 error term.
+      function _occlWorldBox(e, bmin, bmax, out, o) {
+        var cx = (bmin.x + bmax.x) * 0.5, cy = (bmin.y + bmax.y) * 0.5, cz = (bmin.z + bmax.z) * 0.5;
+        var hx = (bmax.x - bmin.x) * 0.5, hy = (bmax.y - bmin.y) * 0.5, hz = (bmax.z - bmin.z) * 0.5;
+        var wx = e[0] * cx + e[4] * cy + e[8] * cz + e[12], wy = e[1] * cx + e[5] * cy + e[9] * cz + e[13], wz = e[2] * cx + e[6] * cy + e[10] * cz + e[14];
+        var ex = Math.abs(e[0]) * hx + Math.abs(e[4]) * hy + Math.abs(e[8]) * hz;
+        var ey = Math.abs(e[1]) * hx + Math.abs(e[5]) * hy + Math.abs(e[9]) * hz;
+        var ez = Math.abs(e[2]) * hx + Math.abs(e[6]) * hy + Math.abs(e[10]) * hz;
+        out[o] = wx - ex; out[o + 1] = wy - ey; out[o + 2] = wz - ez; out[o + 3] = wx + ex; out[o + 4] = wy + ey; out[o + 5] = wz + ez;
+        var pm = Math.max(Math.abs(bmin.x), Math.abs(bmin.y), Math.abs(bmin.z), Math.abs(bmax.x), Math.abs(bmax.y), Math.abs(bmax.z));
+        return _occlRowAbs3(e) * pm + Math.max(Math.abs(e[12]), Math.abs(e[13]), Math.abs(e[14]));
+      }
+      // Any visible shadow-casting light outside the model group (lights never live in S.mg)?
+      function _occlShadowLights() {
+        var st = [scene];
+        while (st.length) {
+          var n = st.pop();
+          if (!n.visible || n === S.mg) continue;
+          if (n.isLight && n.castShadow) return true;
+          for (var i = 0; i < n.children.length; i++) st.push(n.children[i]);
+        }
+        return false;
+      }
+      function _occlSame16(a, b) { for (var i = 0; i < 16; i++) if (a[i] !== b[i]) return false; return true; }
+      // Per-object cache, kept as a plain own property (Object3D.copy/clone
+      // never copies it, unlike userData): world AABBs, the float-error
+      // magnitude bound and triangle counts per unit, refreshed whenever the
+      // matrix, the geometry or the instance/batch matrices change.
+      function _occlBoxesFor(o, kind) {
+        var c = o._ccOccl, e = o.matrixWorld.elements, g = o.geometry, pos = g.attributes.position;
+        var v1 = kind === 1 ? o.instanceMatrix.version : kind === 2 ? (o._matricesTexture && o._matricesTexture.version != null ? o._matricesTexture.version : -1) : pos.version;
+        var v2 = kind === 1 ? o.count : kind === 2 ? (o.userData.batchExprIds || []).length : (g.index ? g.index.version : -1);
+        if (c && c.g === g && c.v1 === v1 && c.v2 === v2 && v1 !== -1 && _occlSame16(c.mw, e)) return c;
+        if (!c) { c = { mw: new Float64Array(16) }; o._ccOccl = c; }
+        for (var i = 0; i < 16; i++) c.mw[i] = e[i];
+        c.g = g; c.v1 = v1; c.v2 = v2;
+        if (kind === 0) {
+          if (!g.boundingBox) g.computeBoundingBox();
+          c.n = 1; c.box = new Float64Array(6); c.mag = new Float64Array(1); c.tris = new Float64Array(1);
+          c.mag[0] = _occlWorldBox(e, g.boundingBox.min, g.boundingBox.max, c.box, 0);
+          c.tris[0] = (g.index ? g.index.count : pos.count) / 3;
+        } else if (kind === 1) {
+          if (!g.boundingBox) g.computeBoundingBox();
+          var bb = new Float64Array(6), un = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], mag = 0;
+          for (var k = 0; k < o.count; k++) {
+            o.getMatrixAt(k, _occlM4);
+            _occlM4b.multiplyMatrices(o.matrixWorld, _occlM4);
+            mag = Math.max(mag, _occlWorldBox(_occlM4b.elements, g.boundingBox.min, g.boundingBox.max, bb, 0));
+            for (var a = 0; a < 3; a++) { if (bb[a] < un[a]) un[a] = bb[a]; if (bb[a + 3] > un[a + 3]) un[a + 3] = bb[a + 3]; }
+          }
+          c.n = 1; c.box = new Float64Array(un); c.mag = new Float64Array([mag]);
+          c.tris = new Float64Array([o.count * (g.index ? g.index.count : pos.count) / 3]);
+        } else {
+          var ids = o.userData.batchExprIds || [], n = ids.length, gids = o.userData.batchGeomIds || [];
+          c.n = n; c.box = new Float64Array(6 * n); c.mag = new Float64Array(n); c.tris = new Float64Array(n);
+          c.gid = new Int32Array(n).fill(-1);
+          var rng = {};
+          for (var bi = 0; bi < n; bi++) {
+            try {
+              var gid = gids[bi] != null ? gids[bi] : o.getGeometryIdAt(bi);
+              o.getBoundingBoxAt(gid, _occlBox);
+              o.getMatrixAt(bi, _occlM4);
+              _occlM4b.multiplyMatrices(o.matrixWorld, _occlM4);
+              c.mag[bi] = _occlWorldBox(_occlM4b.elements, _occlBox.min, _occlBox.max, c.box, bi * 6);
+              o.getGeometryRangeAt(gid, rng);
+              c.tris[bi] = (rng.indexCount > 0 ? rng.indexCount : rng.vertexCount) / 3;
+              c.gid[bi] = gid;
+            } catch (_) { c.gid[bi] = -1; }
+          }
+        }
+        return c;
+      }
+      // Unit arrays (one unit = a mesh, an InstancedMesh or one batch instance)
+      function _occlUnits(n) {
+        var u = _occl.u;
+        if (u && u.cap >= n) return u;
+        var cap = Math.max(n, u ? u.cap * 2 : 1024);
+        var nu = { cap: cap, o: new Array(cap), kind: new Int8Array(cap), idx: new Int32Array(cap), flags: new Uint8Array(cap),
+          r: new Float64Array(cap * 5), tris: new Float64Array(cap), area: new Float64Array(cap), dv: new Float64Array(cap), zn: new Float64Array(cap) };
+        if (u) {
+          for (var i = 0; i < u.cap; i++) nu.o[i] = u.o[i];
+          nu.kind.set(u.kind); nu.idx.set(u.idx); nu.flags.set(u.flags); nu.r.set(u.r); nu.tris.set(u.tris); nu.area.set(u.area); nu.dv.set(u.dv); nu.zn.set(u.zn);
+        }
+        _occl.u = nu;
+        return nu;
+      }
+      function _occlAdjFor(key, sub, pos, index, first, triCount) {
+        var m = _occl.adj.get(key);
+        if (!m) { m = new Map(); _occl.adj.set(key, m); }
+        var tag = first + ':' + triCount + ':' + pos.version + ':' + (index ? index.version : -1);
+        var hit = m.get(sub);
+        if (hit && hit.tag === tag) return hit.mate;
+        var mate = _occlCore.buildAdjacency(pos.array, index ? index.array : null, first, triCount);
+        m.set(sub, { tag: tag, mate: mate });
+        return mate;
+      }
+      function _occlGrow(n) {
+        if (_occl.px.length >= n) return;
+        var s = Math.max(n, _occl.px.length * 2);
+        _occl.px = new Float64Array(s); _occl.py = new Float64Array(s); _occl.pz = new Float64Array(s); _occl.pv = new Uint8Array(s);
+      }
+
+      // Hide what is provably hidden for this frame; returns true when it ran.
+      function _occlBegin(useComposer) {
+        _occl.stats = null;
+        if (!_occl.on || !_occlCore || !S.mg) return false;
+        var why = null, cam = S.camera, sm = renderer.shadowMap;
+        if (useComposer) why = 'composer';             // SAO/outline passes re-render with override materials
+        else if (scene.overrideMaterial) why = 'override-material';
+        else if (sm.enabled && (sm.autoUpdate || sm.needsUpdate) && _occlShadowLights()) why = 'shadow-update'; // casters must stay
+        else if (!(cam.layers.mask & 1) || !S.mg.visible || !scene.visible) why = 'layers';
+        else if (_occl.skip > 0) { _occl.skip--; why = 'adaptive-skip'; }
+        if (!why && !_occl.selfTest) { try { _occl.selfTest = _occlDepthSelfTest(); } catch (e) { _occl.selfTest = { ok: false, error: String(e && e.message || e) }; } }
+        if (!why && !_occl.selfTest.ok && !_occl.ignoreSelfTest) why = 'msaa-center-depth';
+        var P = cam.projectionMatrix.elements, persp = !!cam.isPerspectiveCamera;
+        if (!why) {
+          var structOk = P[1] === 0 && P[2] === 0 && P[3] === 0 && P[4] === 0 && P[6] === 0 && P[7] === 0 &&
+            (persp ? (P[11] === -1 && P[15] === 0 && P[12] === 0 && P[13] === 0) : (!!cam.isOrthographicCamera && P[11] === 0 && P[15] === 1 && P[8] === 0 && P[9] === 0));
+          if (!structOk) why = 'projection';
+        }
+        if (why) { _occl.stats = { ran: false, why: why }; return false; }
+        var t0 = performance.now();
+        var caps = _occlCaps();
+        scene.updateMatrixWorld();
+        if (cam.parent === null) cam.updateMatrixWorld();
+        renderer.getCurrentViewport(_occlVp);
+        var W = _occlVp.z, H = _occlVp.w;
+        if (!(W > 0 && H > 0)) { _occl.stats = { ran: false, why: 'viewport' }; return false; }
+        var V = cam.matrixWorldInverse.elements;
+        var vRow = _occlRowAbs3(V), vT = Math.max(Math.abs(V[12]), Math.abs(V[13]), Math.abs(V[14]));
+        var fpx = Math.max(Math.abs(P[0]) * W, Math.abs(P[5]) * H) * 0.5;
+        var near = persp ? cam.near : 0;
+        var gPlanes = renderer.clippingPlanes || [], localClip = !!renderer.localClippingEnabled;
+        var cell = Math.max(2, Math.ceil(Math.max(W / 320, H / 180)));
+        // exclusions: whatever the outline pass draws, the hovered element
+        var excl = new Set();
+        if (S._postOutlinePass && S._postOutlinePass.selectedObjects) S._postOutlinePass.selectedObjects.forEach(function(o) { excl.add(o); });
+        var hovB = null, hovI = -1;
+        if (lastHoveredMesh) {
+          if (lastHoveredMesh.isBatchedMesh && lastHoverOriginals && lastHoverOriginals._instanceId != null) { hovB = lastHoveredMesh; hovI = lastHoverOriginals._instanceId; }
+          else excl.add(lastHoveredMesh);
+        }
+
+        // ── 1. collect units (one per mesh / InstancedMesh / batch instance) ──
+        _occl.pass++;
+        var nU = 0, U = _occlUnits(1024), rej = { notModel: 0, object: 0, material: 0, near: 0, offscreen: 0 };
+        var snap = caps.snap, minOccArea = 16 * cell * cell;
+        var stack = _occl.stack || (_occl.stack = []);
+        stack.length = 0; stack.push(S.mg);
+        while (stack.length) {
+          var node = stack.pop();
+          if (!node.visible) continue;
+          var ch = node.children;
+          for (var ci = 0; ci < ch.length; ci++) stack.push(ch[ci]);
+          if (!node.isMesh) continue;
+          var kind = node.isBatchedMesh ? (node.userData._isCCBatch ? 2 : -1)
+            : node.isInstancedMesh ? (node.userData.instanceExprIds ? 1 : -1)
+            : (node.userData.expressId != null ? 0 : -1);
+          if (kind < 0) { rej.notModel++; continue; }
+          if (!_occlObjOk(node)) { rej.object++; continue; }
+          if (!_occlMatOk(node.material)) {
+            rej.material++;
+            var _rm = Array.isArray(node.material) ? 'array' : (node.material && node.material._ccOcclWhy) || 'none';
+            rej[_rm] = (rej[_rm] || 0) + 1;
+            continue;
+          }
+          var cand = ch.length === 0 && !excl.has(node);
+          var single = !Array.isArray(node.material);
+          var mat = single ? node.material : null;
+          var planes = gPlanes;
+          if (localClip && mat && mat.clippingPlanes && mat.clippingPlanes.length) planes = planes.concat(mat.clippingPlanes);
+          var occOk = kind !== 1 && single && (kind === 2 || (node.geometry.groups.length === 0));
+          var pos = node.geometry.attributes.position;
+          if (occOk && !(pos.isBufferAttribute && !pos.isInterleavedBufferAttribute && pos.itemSize === 3 && pos.array instanceof Float32Array)) occOk = false;
+          if (!cand && !occOk) continue;
+          var bx = _occlBoxesFor(node, kind);
+          for (var ii = 0; ii < bx.n; ii++) {
+            if (kind === 2) {
+              if (bx.gid[ii] < 0) continue;
+              var vis = false; try { vis = node.getVisibleAt(ii); } catch (_) { vis = false; }
+              if (!vis) continue;
+            }
+            var b = bx.box, o6 = ii * 6;
+            // world AABB -> view AABB (centre/extent), grown by the float32 error bound
+            var cx = (b[o6] + b[o6 + 3]) * 0.5, cy = (b[o6 + 1] + b[o6 + 4]) * 0.5, cz = (b[o6 + 2] + b[o6 + 5]) * 0.5;
+            var hx = (b[o6 + 3] - b[o6]) * 0.5, hy = (b[o6 + 4] - b[o6 + 1]) * 0.5, hz = (b[o6 + 5] - b[o6 + 2]) * 0.5;
+            var dv = _OCCL_GAMMA * (vRow * bx.mag[ii] + vT) + 1e-9;
+            var vx = V[0] * cx + V[4] * cy + V[8] * cz + V[12], vy = V[1] * cx + V[5] * cy + V[9] * cz + V[13], vz = V[2] * cx + V[6] * cy + V[10] * cz + V[14];
+            var ex = Math.abs(V[0]) * hx + Math.abs(V[4]) * hy + Math.abs(V[8]) * hz + dv;
+            var ey = Math.abs(V[1]) * hx + Math.abs(V[5]) * hy + Math.abs(V[9]) * hz + dv;
+            var ez = Math.abs(V[2]) * hx + Math.abs(V[6]) * hy + Math.abs(V[10]) * hz + dv;
+            _occlVB[0] = vx - ex; _occlVB[1] = vy - ey; _occlVB[2] = vz - ez; _occlVB[3] = vx + ex; _occlVB[4] = vy + ey; _occlVB[5] = vz + ez;
+            if (!_occlCore.projectViewBox(P, persp, W, H, _occlVB, _occlRect) || (persp && -_occlVB[5] < near)) { rej.near++; continue; } // reaches the near plane
+            var x0 = _occlRect[0], y0 = _occlRect[1], x1 = _occlRect[2], y1 = _occlRect[3];
+            if (x1 < 0 || y1 < 0 || x0 > W || y0 > H) { rej.offscreen++; continue; }  // frustum culling's job
+            // Candidates must not need clipping on the GPU: a triangle clipped
+            // against the frustum can produce fragments outside the element's
+            // true depth range (seen: one depth-0 fragment where an element
+            // crossed the top plane), so the proof only holds for elements
+            // whose conservative rect lies wholly inside the viewport.
+            var unitCand = cand && !(kind === 2 && node === hovB && ii === hovI) &&
+              x0 >= 0 && y0 >= 0 && x1 <= W && y1 <= H && (persp ? -P[10] - P[14] / _occlVB[2] < 1 : P[10] * _occlVB[2] + P[14] < 1);
+            if (cand && !unitCand) rej.edge = (rej.edge || 0) + 1;
+            var unitOcc = occOk && bx.tris[ii] <= _OCCL_MAX_TRIS_EACH;
+            if (unitOcc && planes.length) {
+              // only occluders wholly on the kept side of every clipping plane
+              for (var pi = 0; pi < planes.length && unitOcc; pi++) {
+                var pl = planes[pi], n = pl.normal;
+                var dist = n.x * cx + n.y * cy + n.z * cz + pl.constant - (Math.abs(n.x) * hx + Math.abs(n.y) * hy + Math.abs(n.z) * hz);
+                var marg = 4 * _OCCL_GAMMA * (Math.abs(pl.constant) + Math.abs(n.x * cx + n.y * cy + n.z * cz) + 1) + dv;
+                if (!(dist > marg)) unitOcc = false;
+              }
+            }
+            var ax0 = x0 > 0 ? x0 : 0, ay0 = y0 > 0 ? y0 : 0, ax1 = x1 < W ? x1 : W, ay1 = y1 < H ? y1 : H;
+            var area = (ax1 - ax0) * (ay1 - ay0);
+            if (unitOcc && area < minOccArea) unitOcc = false;
+            if (!unitCand && !unitOcc) continue;
+            if (nU === U.cap) U = _occlUnits(nU + 1);
+            U.o[nU] = node; U.kind[nU] = kind; U.idx[nU] = ii; U.flags[nU] = (unitCand ? 1 : 0) | (unitOcc ? 2 : 0);
+            var r5 = nU * 5;
+            U.r[r5] = x0 - 1 - snap; U.r[r5 + 1] = y0 - 1 - snap; U.r[r5 + 2] = x1 + 1 + snap; U.r[r5 + 3] = y1 + 1 + snap; U.r[r5 + 4] = _occlRect[4];
+            U.tris[nU] = bx.tris[ii]; U.area[nU] = area; U.dv[nU] = dv; U.zn[nU] = persp ? -_occlVB[5] : 0;
+            nU++;
+          }
+        }
+
+        // ── 2. rasterise the biggest occluders ──
+        var t1 = performance.now();
+        var buf = _occl.buf;
+        if (_occl.debug && !buf.owner) buf.trackOwners(true);
+        if (!_occl.debug && buf.owner) buf.trackOwners(false);
+        buf.begin(W, H, cell);
+        var dbgOcc = [];
+        var occs = [];
+        for (var oi = 0; oi < nU; oi++) if (U.flags[oi] & 2) occs.push(oi);
+        occs.sort(function(a, b) { return U.area[b] - U.area[a]; });   // biggest on screen first
+        var budget = _occl.triBudget, nOcc = 0, occTris = 0, occSkipped = 0, mvE = _occlM4.elements;
+        for (var qi = 0; qi < occs.length && nOcc < _OCCL_MAX_OCC; qi++) {
+          var u = occs[qi], ur = u * 5, uTris = U.tris[u], uDv = U.dv[u], uZn = U.zn[u];
+          if (uTris > budget) continue;
+          if (nOcc && buf.hiddenSoFar(U.r[ur], U.r[ur + 1], U.r[ur + 2], U.r[ur + 3], U.r[ur + 4], caps.eps)) { occSkipped++; continue; } // adds no coverage
+          var mo = U.o[u], g = mo.geometry, posA = g.attributes.position, idxA = g.index;
+          var m = caps.snap + uDv * (persp ? fpx / Math.max(uZn, near) : fpx);
+          if (m > 0.5) continue;  // float error too large for a provable outline
+          var dz = persp ? Math.abs(P[14]) / (uZn * uZn) * uDv : Math.abs(P[10]) * uDv;
+          var first, triCount, vBase, vCount, mate;
+          if (U.kind[u] === 2) {
+            var rg = mo.getGeometryRangeAt(mo._ccOccl.gid[U.idx[u]]);
+            if (!(rg.indexCount > 0) || !idxA) continue;
+            first = rg.indexStart; triCount = rg.indexCount / 3; vBase = rg.vertexStart; vCount = rg.vertexCount;
+            mo.getMatrixAt(U.idx[u], _occlM4b);
+            _occlM4.multiplyMatrices(mo.matrixWorld, _occlM4b);
+            mate = _occlAdjFor(mo.geometry, rg.indexStart, posA, idxA, first, triCount);
+          } else {
+            first = 0; triCount = (idxA ? idxA.count : posA.count) / 3; vBase = 0; vCount = posA.count;
+            _occlM4.copy(mo.matrixWorld);
+            mate = _occlAdjFor(g, 0, posA, idxA, first, triCount);
+          }
+          var det = _occlM4.determinant();
+          _occlM4.premultiply(cam.matrixWorldInverse);   // model-view, in double
+          _occlGrow(vCount);
+          var pa = posA.array, px = _occl.px, py = _occl.py, pz = _occl.pz, pvv = _occl.pv;
+          for (var vi = 0; vi < vCount; vi++) {
+            var j = (vBase + vi) * 3, X = pa[j], Y = pa[j + 1], Z = pa[j + 2];
+            var ux = mvE[0] * X + mvE[4] * Y + mvE[8] * Z + mvE[12];
+            var uy = mvE[1] * X + mvE[5] * Y + mvE[9] * Z + mvE[13];
+            var uz = mvE[2] * X + mvE[6] * Y + mvE[10] * Z + mvE[14];
+            var w = persp ? -uz : 1;
+            var zn2 = (P[10] * uz + P[14]) / w;
+            if (!(w > 0) || !(zn2 > -1 + 1e-6) || !(zn2 < 1 - 1e-6)) { pvv[vi] = 0; continue; }
+            pvv[vi] = 1;
+            px[vi] = ((P[0] * ux + P[8] * uz + P[12]) / w + 1) * 0.5 * W;
+            py[vi] = ((P[5] * uy + P[9] * uz + P[13]) / w + 1) * 0.5 * H;
+            pz[vi] = zn2;
+          }
+          var side = mo.material.side, cull = side === THREE.FrontSide ? 1 : side === THREE.BackSide ? 2 : 0;
+          if (det < 0 && cull) cull = 3 - cull;   // three flips frontFace for mirrored transforms
+          buf.rasterizeOccluder({ px: px, py: py, pz: pz, pv: pvv, index: idxA ? idxA.array : null, first: first, triCount: triCount,
+            vertBase: vBase, mate: mate, cull: cull, m: m, dz: dz, id: nOcc });
+          if (_occl.debug) {
+            var tl = [];
+            for (var dt = 0; dt < triCount; dt++) {
+              var tv = [];
+              for (var dj = 0; dj < 3; dj++) { var dv2 = (idxA ? idxA.array[first + dt * 3 + dj] : first + dt * 3 + dj) - vBase; tv.push([px[dv2], py[dv2], pz[dv2], pvv[dv2]]); }
+              tl.push(tv);
+            }
+            dbgOcc.push({ kind: U.kind[u], idx: U.idx[u], eid: mo.userData.expressId, cull: cull, m: m, dz: dz, det: det, tris: tl });
+          }
+          budget -= uTris; occTris += uTris; nOcc++;
+        }
+        buf.finalize();
+        var t2 = performance.now();
+        if (_occl.fixedBudget) { /* tests pin the budget */ }
+        else if (budget <= 0 || t2 - t1 > _OCCL_RASTER_MS) {
+          var rms = t2 - t1;
+          if (rms > _OCCL_RASTER_MS) _occl.triBudget = Math.max(_OCCL_TRI_MIN, Math.floor(_occl.triBudget * Math.max(0.5, _OCCL_RASTER_MS / rms)));
+        } else if (t2 - t1 < _OCCL_RASTER_MS * 0.5 && occTris >= _occl.triBudget * 0.8) {
+          _occl.triBudget = Math.min(_OCCL_TRI_MAX, Math.ceil(_occl.triBudget * 1.25));
+        }
+
+        // ── 3. test candidates, hide the provably hidden ──
+        var culled = 0, culledTris = 0, candN = 0, candTris = 0, eps = caps.eps, dbg = _occl.debug ? [] : null;
+        for (var ui = 0; ui < nU; ui++) {
+          if (!(U.flags[ui] & 1)) continue;
+          var ct = U.tris[ui], cr = ui * 5, co = U.o[ui];
+          candN++; candTris += ct;
+          if (!nOcc || !buf.testRect(U.r[cr], U.r[cr + 1], U.r[cr + 2], U.r[cr + 3], U.r[cr + 4], eps)) continue;
+          if (_occl.debugKeep && _occl.debugKeep(co, U.idx[ui])) continue;
+          if (U.kind[ui] === 2) { co.setVisibleAt(U.idx[ui], false); _occl.hiddenB.push(co); _occl.hiddenBi.push(U.idx[ui]); }
+          else { co.visible = false; co.userData._occlCulled = true; _occl.hidden.push(co); }
+          culled++; culledTris += ct;
+          if (_occl.debug) dbg.push({ kind: U.kind[ui], idx: U.idx[ui], eid: co.userData.expressId, rect: [U.r[cr], U.r[cr + 1], U.r[cr + 2], U.r[cr + 3]], z: U.r[cr + 4], obj: co });
+        }
+        for (var uc = 0; uc < nU; uc++) U.o[uc] = null;   // no lingering refs to removed meshes
+        var ms = performance.now() - t0;
+        _occl.stats = { ran: true, ms: ms, msCollect: t1 - t0, msRaster: t2 - t1, msTest: performance.now() - t2, cell: cell, triBudget: _occl.triBudget, occluders: nOcc, occluderTris: occTris, occludersSkipped: occSkipped, candidates: candN,
+          candidateTris: candTris, culled: culled, culledTris: culledTris, rejected: rej };
+        if (dbg) { _occl.stats.debugCulled = dbg; _occl.stats.debugOcc = dbgOcc; _occl.stats.debugBuf = { W: W, H: H, cell: cell, cols: buf.cols, rows: buf.rows, depth: buf.depth.slice(), owner: buf.owner && buf.owner.slice() }; }
+        if (_occl.adaptive && ms > 0.75 && culledTris < 0.01 * candTris) _occl.skip = 8;
+        return true;
+      }
+      function _occlEnd() {
+        var h = _occl.hidden, i;
+        for (i = 0; i < h.length; i++) { h[i].visible = true; h[i].userData._occlCulled = false; }
+        h.length = 0;
+        var hb = _occl.hiddenB, hi = _occl.hiddenBi;
+        for (i = 0; i < hb.length; i++) { try { hb[i].setVisibleAt(hi[i], true); } catch (_) {} }
+        hb.length = 0; hi.length = 0;
+      }
+
       function tick(){
         S.raf=requestAnimationFrame(tick);
         var now = performance.now();
@@ -16777,10 +17250,17 @@ function startApp() {
           }
           // localClippingEnabled is managed by section/floorplan effects; don't reset here.
           // Use the post-processing composer when 'rendered' style + composer ready.
-          if (S._composer && S._postPassesActive && !_isDragFrame && !_isWalkFrame) {
-            S._composer.render();
-          } else {
-            renderer.render(scene,S.camera);
+          var _useComposer = !!(S._composer && S._postPassesActive && !_isDragFrame && !_isWalkFrame);
+          var _occlRan = false;
+          try { _occlRan = _occlBegin(_useComposer); } catch (occlErr) { _occlEnd(); _occl.on = false; _occl.stats = { ran: false, why: 'error', error: String(occlErr && occlErr.message || occlErr) }; console.warn('[occlusion] disabled after error:', occlErr); }
+          try {
+            if (_useComposer) {
+              S._composer.render();
+            } else {
+              renderer.render(scene,S.camera);
+            }
+          } finally {
+            if (_occlRan) _occlEnd();
           }
           // ── Screenshot capture (must happen immediately after render, before buffer swap) ──
           if (window._ccPendingScreenshot) {

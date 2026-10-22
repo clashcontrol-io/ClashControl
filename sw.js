@@ -16,6 +16,7 @@ var PRECACHE = [
   'cc-runtime.js',
   'safety-migrations.js',
   'section-clipping.js',
+  'occlusion-core.js',
   'renderer-contract.js',
   'clash-discipline-core.js',
   'clash-assignment-core.js',

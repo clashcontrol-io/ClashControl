@@ -68,7 +68,20 @@
     // main-thread JS / stateless-WASM / cached-Engine paths, including under
     // cancellation and injected worker failure; small runs never engage it
     // (see _ccNarrowPool thresholds in index.html).
-    detectWorkerPool: Object.freeze({ fallback: 'main-thread', defaultEnabled: true })
+    detectWorkerPool: Object.freeze({ fallback: 'main-thread', defaultEnabled: true }),
+    // Viewer: conservative CPU occlusion culling (occlusion-core.js +
+    // _occlBegin/_occlEnd in index.html, docs/OCCLUSION_CULLING.md). Per
+    // rendered frame it hides model elements whose whole screen rect is
+    // proven covered by nearer opaque model geometry, then restores them
+    // right after render(). Default OFF: tests/browser/occlusion-culling.mjs
+    // is pixel-identical on every generated fixture view, but the proof needs
+    // per-sample MSAA depth, and the only GPU we could test on (SwiftShader)
+    // evaluates depth at the pixel centre, which let a few edge pixels differ
+    // on large model geometry. A one-time GPU self-test now refuses to run
+    // the pass on such rasterisers; it stays opt-in until the differential has
+    // been run on real hardware. Opt in with ?ccSafety=occlusionCulling;
+    // fallback = draw everything that passes the frustum/LOD cull, as before.
+    occlusionCulling: Object.freeze({ fallback: 'draw-all', defaultEnabled: false })
   });
   var diagnostics = [];
 

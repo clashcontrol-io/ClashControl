@@ -27,6 +27,7 @@ const ALL_FLAGS = [
   'ccUiWindowedConflicts', 'ccUiEmptyStates', 'ccUiOperationCenter',
   'ccUiToolbarV2', 'ccUiModalV2', 'ccUiStoreyChooser',
   'storageAutosaveGate', 'storageDetectCaches', 'memorySafeLoad', 'detectWorkerPool',
+  'occlusionCulling',
 ];
 const PROMOTED_FLAGS = ['ccUiEmptyStates', 'detectWorkerPool'];
 
