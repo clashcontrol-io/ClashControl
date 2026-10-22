@@ -166,6 +166,7 @@ project-codec.js            — Non-addon core module: project state encode/deco
 safety-migrations.js        — Non-addon core module: feature-flag gate + migration/self-check plumbing (`window._ccSafetyMigrations`)
 renderer-contract.js        — Non-addon core module: pinned r180 renderer contract, checked by `tests/browser/smoke.mjs`
 section-clipping.js         — Non-addon core module: section plane/box clipping helpers
+occlusion-core.js           — Non-addon core module: conservative CPU occlusion buffer + per-device verdict helpers (`occlusionCulling` flag: culls only after the device passes an offscreen culled-vs-unculled pixel check; never runs during detection)
 analytics-consent.js        — Non-addon core module: consent-gated analytics, loaded by every SEO landing page too
 mcp-server.js                — MCP server (stdio) implementing Model Context Protocol for Claude Desktop/Code — distributed via GitHub Releases, not served from clashcontrol.io
 smart-bridge-server.js      — Standalone Smart Bridge binary source — REST/WS bridge that `addons/smart-bridge.js` connects to; distributed via GitHub Releases
