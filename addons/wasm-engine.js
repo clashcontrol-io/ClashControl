@@ -20,6 +20,7 @@
   var _sweepCheckFailed = false; // sweep-and-prune self-check (independent)
   var _engineCheckFailed = false; // cached-BVH Engine self-check (independent)
   var _eng = null;                // shared wasm Engine instance (cached-BVH path); null until self-check passes
+  var _hasWithin = false;         // binary exports the threshold-seeded min distance (checked in the self-check)
 
   // ── Runtime differential self-check ──────────────────────────────
   // Diffs a freshly-loaded WASM binary against the pure-JS reference
@@ -152,7 +153,35 @@
         return false;
       }
     }
+    // Threshold-seeded min distance (index.html _jsMinDistBVH seedSq): must
+    // equal the JS reference exactly — the full answer below the seed,
+    // [Infinity] at/above it — incl. gaps just inside / at / just beyond a
+    // 50 mm tolerance. A binary without the export keeps the unseeded path.
+    _hasWithin = typeof _wasm.mesh_min_distance_within === 'function' && typeof ref.seedSq === 'function';
+    if (_hasWithin) {
+      var sc = _withinCases(ref);
+      for (var w = 0; w < sc.length; w++) {
+        var wc = sc[w], jsW = ref.minDist(wc.a, wc.b, wc.seedSq), wW;
+        try { wW = _wasm.mesh_min_distance_within(wc.a, wc.b, wc.seedSq); } catch (e) { return false; }
+        if (!_flatEq(jsW, Array.prototype.slice.call(wW))) {
+          console.warn('[WASM Engine] self-check FAILED (seeded min-distance mismatch), case ' + w);
+          return false;
+        }
+      }
+    }
     return true;
+  }
+  // Seeded cases: every min-distance case at a few tolerances, plus boxes
+  // 49.9 / 50.0 / 50.1 mm apart against 50 mm (and the contact tolerance).
+  function _withinCases(ref) {
+    var out = [], md = _minDistCases(), tols = [0.05, 0.0001, 0.5, 2];
+    for (var i = 0; i < md.length; i++) for (var k = 0; k < tols.length; k++) out.push({ a: md[i].a, b: md[i].b, seedSq: ref.seedSq(tols[k]) });
+    var base = _box(0, 1, 0, 1, 0, 1);
+    [0.0499, 0.05, 0.0501, 0.00005, 0.0001, 0.00015].forEach(function(g) {
+      var b = _box(1 + g, 2 + g, 0.25, 0.75, 0.25, 0.75);
+      [0.05, 0.0001].forEach(function(t) { out.push({ a: base, b: b, seedSq: ref.seedSq(t) }); });
+    });
+    return out;
   }
 
   // Cached-BVH Engine self-check. The Engine must return EXACTLY what the
@@ -197,6 +226,18 @@
         if (!got || !same(got, free)) { console.warn('[WASM Engine] engine self-check FAILED (min-distance vs free fn), case ' + k); return false; }
         if (haveRef && !_flatEq(ref.minDist(c.a, c.b), Array.prototype.slice.call(got))) {
           console.warn('[WASM Engine] engine self-check FAILED (min-distance vs JS), case ' + k); return false;
+        }
+      }
+      if (_hasWithin) {
+        if (typeof eng.min_distance_within !== 'function') { console.warn('[WASM Engine] engine self-check FAILED (no seeded min distance)'); return false; }
+        var wcs = _withinCases(ref);
+        for (k = 0; k < wcs.length; k++) {
+          c = wcs[k]; ia = id++; ib = id++;
+          eng.register(ia, c.a); eng.register(ib, c.b);
+          got = eng.min_distance_within(ia, ib, c.seedSq);
+          if (!got || !same(got, _wasm.mesh_min_distance_within(c.a, c.b, c.seedSq))) {
+            console.warn('[WASM Engine] engine self-check FAILED (seeded min-distance vs free fn), case ' + k); return false;
+          }
         }
       }
       // Lifecycle: unregister must make the id unknown (undefined, never a
@@ -372,16 +413,18 @@
    * measured correctly.
    * @param {Float32Array} trisA - flat xyz, 9 floats per triangle
    * @param {Float32Array} trisB - flat xyz, 9 floats per triangle
-   * @param {number} threshold - unused (kept for call-site compatibility;
-   *   there is no cell-size/cutoff concept in the BVH traversal — the real
-   *   minimum is always computed, same as the JS fallback)
+   * @param {number} seedSq - squared search radius (index.html
+   *   _ccMinDistSeedSq): surfaces at or beyond sqrt(seedSq) report Infinity;
+   *   below it the answer is bit-identical to the unseeded search. Infinity /
+   *   0 / undefined = unseeded.
    * @param {Float64Array} [outPair] - optional 6-element buffer [ax,ay,az, bx,by,bz]
-   * @returns {number} distance, or Infinity if either mesh is empty
+   * @returns {number} distance, or Infinity if either mesh is empty / nothing is within the seed
    */
-  function _wasmMinDist(trisA, trisB, threshold, outPair) {
+  function _seeded(seedSq) { return _hasWithin && seedSq > 0 && seedSq !== Infinity; }
+  function _wasmMinDist(trisA, trisB, seedSq, outPair) {
     if (!_wasm) return Infinity;
     try {
-      var result = _wasm.mesh_min_distance(trisA, trisB);
+      var result = _seeded(seedSq) ? _wasm.mesh_min_distance_within(trisA, trisB, seedSq) : _wasm.mesh_min_distance(trisA, trisB);
       if (!result || result.length === 0 || result[0] === Infinity) return Infinity;
       if (outPair && result.length >= 7) {
         outPair[0]=result[1]; outPair[1]=result[2]; outPair[2]=result[3];
@@ -522,13 +565,13 @@
         return raw.length === 0 ? false : raw;
       } catch (e) { _engFail('intersect', e); return null; }
     },
-    minDist: function(trisA, trisB, threshold, outPair) {
+    minDist: function(trisA, trisB, seedSq, outPair) {
       if (!_eng || _engineCheckFailed || !trisA || !trisB) return null;
       try {
         var ia = _engEnsure(trisA), ib = _engEnsure(trisB);
         _engEvictOver();
         _engStats.queries++;
-        var r = _eng.min_distance(ia, ib);
+        var r = _seeded(seedSq) ? _eng.min_distance_within(ia, ib, seedSq) : _eng.min_distance(ia, ib);
         if (r === undefined) throw new Error('mesh id not registered');
         if (!r.length || r[0] === Infinity) return Infinity;
         if (outPair && r.length >= 7) {

@@ -67,6 +67,14 @@ pub fn batch_impl(st: &EngineState, body: &[u8], mode: Mode) -> Result<Vec<u8>, 
     Ok(wire::encode_results(&res))
 }
 
+/// Threshold-seeded min distance: body `[f64 seed_sq][u32 a, u32 b] x n`
+/// (see `mesh_min_distance_within`); results like `min_dist_batch`.
+pub fn within_batch_impl(st: &EngineState, body: &[u8]) -> Result<Vec<u8>, String> {
+    let (seed_sq, pairs) = wire::parse_seeded_pairs(body)?;
+    let res = st.0.read().map_err(poisoned)?.detect_pairs_within(&pairs, seed_sq);
+    Ok(wire::encode_results(&res))
+}
+
 pub fn engine_info_impl(st: &EngineState) -> Result<Value, String> {
     let e = st.0.read().map_err(poisoned)?;
     Ok(json!({
@@ -76,6 +84,7 @@ pub fn engine_info_impl(st: &EngineState) -> Result<Value, String> {
         "threads": e.threads(),
         "meshes": e.len(),
         "floats": e.total_floats(),
+        "within": true,
     }))
 }
 
@@ -119,6 +128,11 @@ pub async fn min_dist_batch(state: tauri::State<'_, EngineState>, request: Reque
 }
 
 #[tauri::command]
+pub async fn min_dist_within_batch(state: tauri::State<'_, EngineState>, request: Request<'_>) -> Result<Response, String> {
+    within_batch_impl(&state, raw_body(&request)?).map(Response::new)
+}
+
+#[tauri::command]
 pub async fn engine_info(state: tauri::State<'_, EngineState>) -> Result<Value, String> {
     engine_info_impl(&state)
 }
@@ -133,6 +147,7 @@ pub const COMMANDS: &[&str] = &[
     "clear_meshes",
     "intersect_batch",
     "min_dist_batch",
+    "min_dist_within_batch",
     "engine_info",
 ];
 
@@ -187,6 +202,18 @@ mod tests {
         assert!(!hard[0].as_ref().unwrap().is_empty(), "A x B is a real hit");
         assert!(hard[1].as_ref().unwrap().is_empty(), "A x C is a miss");
         assert!(hard[3].is_none() && dist[3].is_none(), "unknown id is None, not a miss");
+        assert_eq!(info["within"], true);
+        for seed in [0.0f64, 1e-6, 0.25, 1e4] {
+            let mut body = seed.to_le_bytes().to_vec();
+            body.extend(pair_bytes(&pairs));
+            let got = wire::decode_results(&within_batch_impl(&st, &body).unwrap()).unwrap();
+            for (i, &(a, b)) in pairs.iter().enumerate().take(3) {
+                let want = clashcontrol_engine::mesh_min_distance_within(get(a), get(b), seed);
+                assert_eq!(want.iter().map(|x| x.to_bits()).collect::<Vec<_>>(), got[i].as_ref().unwrap().iter().map(|x| x.to_bits()).collect::<Vec<_>>());
+            }
+            assert!(got[3].is_none());
+        }
+        assert!(within_batch_impl(&st, &[0; 4]).is_err());
     }
 
     #[test]

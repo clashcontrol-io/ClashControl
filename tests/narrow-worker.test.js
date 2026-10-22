@@ -22,12 +22,11 @@ const pkgDir = path.join(REPO, 'addons', 'wasm-engine-pkg');
 function loadMainKernel() {
   const full = fs.readFileSync(path.join(REPO, 'index.html'), 'utf8');
   const startIdx = full.indexOf('var _ttIvalA = new Float64Array(8)');
-  const endMarker = 'window._ccJsMeshIntersectRef = {';
-  const endMarkerIdx = full.indexOf(endMarker);
-  const fnEndMarker = '\n  };\n\n  // ── Point-to-surface distance helpers';
-  const endIdx = full.indexOf(fnEndMarker, endMarkerIdx);
-  assert.ok(startIdx !== -1 && endMarkerIdx !== -1 && endIdx !== -1, 'kernel region markers are stale');
-  const body = full.slice(startIdx, endIdx + '\n  };'.length);
+  // through the hit refinement (_ccTouchVerdict / _ccContainment / depth), which
+  // the worker now also runs (job flag bit2)
+  const endIdx = full.indexOf('function _flushGeoCache(models)');
+  assert.ok(startIdx !== -1 && endIdx > startIdx, 'kernel region markers are stale');
+  const body = full.slice(startIdx, endIdx);
   const window = { _ccSafetyMigrations: null };
   const getWorldTris = (el) => el._triCache;
   const getBVH = (el) => {
@@ -36,7 +35,7 @@ function loadMainKernel() {
   };
   const fns = new Function(
     'window', '_DETECT_CHUNK_SIZE', '_getWorldTris', '_getBVH', '_bvhLRU', '_ccFrameBox',
-    body + '; return {_buildBVHForTris,_meshesIntersect,_meshMinDist,_ccBuildNarrowWorkerSource};'
+    body + '; return {_buildBVHForTris,_meshesIntersect,_meshMinDist,_ccBuildNarrowWorkerSource,_ccMinDistSeedSq,_ccTouchVerdict,_ccContainment,_estimatePenetrationDepthM,_NP_REC};'
   )(window, 80, getWorldTris, getBVH, new Map(), (el) => el.box);
   return fns;
 }
@@ -175,23 +174,25 @@ async function runMode(useWasm) {
   let jobId = 0;
   const results = [];
   // job 1 adds every element; job 2 reuses the cached ones with different flags; job 3 drops + re-adds a few
-  const runJob = async (pairs, flagsFn, add, drop) => {
+  // tolM: the job's threshold-seeded clearance radius (job.seedSq); 0 = unseeded
+  const runJob = async (pairs, flagsFn, add, drop, tolM) => {
     const id = ++jobId;
     const arr = new Int32Array(pairs.length * 3);
     pairs.forEach(([a, b], i) => { arr[i * 3] = els[a].id; arr[i * 3 + 1] = els[b].id; arr[i * 3 + 2] = flagsFn(a, b); });
-    host.send({ t: 'job', id, drop: drop || [], add: (add || []).map((e) => ({ id: e.id, tris: e.tris.slice(), box: e.boxArr })), pairs: arr });
+    host.send({ t: 'job', id, drop: drop || [], add: (add || []).map((e) => ({ id: e.id, tris: e.tris.slice(), box: e.boxArr })), pairs: arr, seedSq: k._ccMinDistSeedSq(tolM) });
     await waitFor(() => host.out.some((m) => (m.t === 'result' || m.t === 'error') && m.id === id));
     const m = host.out.find((mm) => (mm.t === 'result' || mm.t === 'error') && mm.id === id);
     assert.strictEqual(m.t, 'result', 'job failed: ' + m.msg);
-    assert.strictEqual(m.res.length, pairs.length * 12);
+    assert.strictEqual(m.res.length, pairs.length * k._NP_REC);
     results.push(m.res);
     return m.res;
   };
 
-  let hardHits = 0, softFinite = 0, contained = 0;
-  const verify = (pairs, res, flagsFn) => {
+  let hardHits = 0, softFinite = 0, contained = 0, beyondSeed = 0;
+  const refined = { touch: 0, crossing: 0, contain: 0, nested: 0, depth: 0 };
+  const verify = (pairs, res, flagsFn, tolM) => {
     pairs.forEach(([a, b], i) => {
-      const fl = flagsFn(a, b), o = i * 12;
+      const fl = flagsFn(a, b), o = i * k._NP_REC;
       const eA = els[a], eB = els[b];
       let hard = false;
       if (fl & 1) {
@@ -205,7 +206,8 @@ async function runMode(useWasm) {
       } else assert.strictEqual(res[o] & 3, 0);
       if ((fl & 2) && !hard) {
         const out = [0, 0, 0, 0, 0, 0];
-        const d = k._meshMinDist(eA, eB, 0.1, out);
+        const d = k._meshMinDist(eA, eB, tolM, out);
+        if (tolM > 0 && d === Infinity && eA.tris.length && eB.tris.length) beyondSeed++;
         assert.strictEqual((res[o] & 4) !== 0, true, `pair ${a},${b}: soft must be done`);
         assert.strictEqual(res[o + 5], d, `pair ${a},${b}: distance`);
         if (d !== Infinity) {
@@ -216,18 +218,43 @@ async function runMode(useWasm) {
       } else {
         assert.strictEqual((res[o] & 4), 0, `pair ${a},${b}: soft must NOT be computed when hard hit / not requested`);
       }
+      // pre-computed hit refinement == the main-thread functions, exactly
+      const rf = res[o + 12];
+      if (!(fl & 4)) { assert.strictEqual(rf, 0, `pair ${a},${b}: no refinement unless requested`); return; }
+      if (rf & 1) {
+        refined.touch++;
+        const t = k._ccTouchVerdict(eA, eB);
+        assert.strictEqual((rf & 2) ? 'crossing' : 'contact', t, `pair ${a},${b}: touch verdict`);
+        if (t === 'crossing') refined.crossing++;
+      }
+      if (rf & 4) {
+        refined.contain++;
+        const c = k._ccContainment(eA, eB);
+        assert.strictEqual(!!(rf & 8), !!c, `pair ${a},${b}: containment`);
+        if (c) { refined.nested++; assert.deepStrictEqual([res[o + 14], res[o + 15], res[o + 16]], c.pt, `pair ${a},${b}: containment point`); }
+      }
+      if (rf & 16) {
+        refined.depth++;
+        const dp = k._estimatePenetrationDepthM(eA, eB);
+        assert.strictEqual(res[o + 13] !== res[o + 13] ? null : res[o + 13], dp, `pair ${a},${b}: depth`);
+      }
+      if ((fl & 1) && (res[o] & 2)) assert.ok(rf & 1, `pair ${a},${b}: a surface hit always gets its touch verdict`);
+      if ((fl & 1) && !(res[o] & 2)) assert.ok(rf & 4, `pair ${a},${b}: no hit always gets its containment answer`);
     });
   };
 
-  const both = () => 3;
-  const r1 = await runJob(pairIdx, both, els);
-  verify(pairIdx, r1, both);
-  const hardOnly = (a, b) => ((a + b) % 3 === 0 ? 2 : 1); // soft-only for a third, hard-only for the rest
-  const r2 = await runJob(pairIdx, hardOnly, []); // no add: relies on the per-worker element cache
-  verify(pairIdx, r2, hardOnly);
+  const both = () => 7; // hard + soft + refinement
+  const r1 = await runJob(pairIdx, both, els, null, 0.1);
+  verify(pairIdx, r1, both, 0.1);
+  const hardOnly = (a, b) => ((a + b) % 3 === 0 ? 6 : (a + b) % 3 === 1 ? 5 : 1); // soft-only / hard-only (+ refinement), plain hard
+  const r2 = await runJob(pairIdx, hardOnly, [], null, 0); // no add: relies on the per-worker element cache; unseeded
+  verify(pairIdx, r2, hardOnly, 0);
   // drop two elements and re-add them: the cache must forget them exactly
-  const r3 = await runJob(pairIdx.slice(0, 200), both, [els[0], els[4]], [els[0].id, els[4].id]);
-  verify(pairIdx.slice(0, 200), r3, both);
+  const r3 = await runJob(pairIdx.slice(0, 200), both, [els[0], els[4]], [els[0].id, els[4].id], 0.5);
+  verify(pairIdx.slice(0, 200), r3, both, 0.5);
+  assert.ok(beyondSeed > 100, `seeded jobs must exercise pairs beyond the seed (${beyondSeed})`);
+  assert.ok(refined.crossing > 10 && refined.touch > refined.crossing && refined.nested > 0 && refined.depth > 10,
+    'fixture must exercise every refinement answer: ' + JSON.stringify(refined));
   // a job that references an element the worker does not hold must fail loudly (main falls back)
   const badId = ++jobId;
   host.send({ t: 'job', id: badId, drop: [els[1].id], add: [], pairs: new Int32Array([els[1].id, els[2].id, 1]) });
@@ -254,8 +281,13 @@ test('narrow worker (WASM + cached Engine) === main-thread kernel, exact', async
 test('generated worker source is self-contained (no reference to main-thread-only state)', () => {
   const k = loadMainKernel();
   const src = k._ccBuildNarrowWorkerSource();
-  for (const forbidden of ['window.', '_getWorldTris', '_getBVH(', 'document.', 'THREE']) {
+  for (const forbidden of ['window.', 'document.', 'THREE', '_bvhLRU', '_ccOrigin']) {
     assert.ok(!src.includes(forbidden), 'worker source must not reference ' + forbidden);
+  }
+  // the refinement functions call these by name: the worker defines its own
+  // (over its element objects), exactly once
+  for (const shim of ['function _getWorldTris(', 'function _getBVH(', 'function _ccFrameBox(']) {
+    assert.strictEqual(src.split(shim).length - 1, 1, 'worker must define its own ' + shim);
   }
   assert.ok(src.includes('function _triTriTest') && src.includes('function _bvhMinDistTraverse'));
 });

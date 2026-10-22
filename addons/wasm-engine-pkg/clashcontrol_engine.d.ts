@@ -35,6 +35,11 @@ export class Engine {
      * mesh). `None` when either id is not registered.
      */
     min_distance(id_a: number, id_b: number): Float64Array | undefined;
+    /**
+     * Same return value as `mesh_min_distance_within(tris(id_a), tris(id_b),
+     * seed_sq)`. `None` when either id is not registered.
+     */
+    min_distance_within(id_a: number, id_b: number, seed_sq: number): Float64Array | undefined;
     constructor();
     /**
      * Register (or replace) mesh `id`: copies `tris` (9 floats/triangle) and
@@ -123,6 +128,14 @@ export function mesh_intersect_raw(tris_a: Float32Array, tris_b: Float32Array): 
  */
 export function mesh_min_distance(tris_a: Float32Array, tris_b: Float32Array): Float64Array;
 
+/**
+ * `mesh_min_distance` restricted to surfaces closer than `sqrt(seed_sq)`:
+ * `[distance, ax,ay,az, bx,by,bz]` (bit-identical to `mesh_min_distance`)
+ * when the minimum is below the seed, else `[Infinity]` (also for an empty
+ * mesh).
+ */
+export function mesh_min_distance_within(tris_a: Float32Array, tris_b: Float32Array, seed_sq: number): Float64Array;
+
 export function sweep_and_prune(box_min: Float64Array, box_max: Float64Array, model_idx: Uint32Array, in_a: Uint8Array, in_b: Uint8Array, same_model_allowed: Uint8Array, margin: number): Uint32Array;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
@@ -138,6 +151,7 @@ export interface InitOutput {
     readonly engine_is_empty: (a: number) => number;
     readonly engine_len: (a: number) => number;
     readonly engine_min_distance: (a: number, b: number, c: number, d: number) => void;
+    readonly engine_min_distance_within: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly engine_new: () => number;
     readonly engine_register: (a: number, b: number, c: number, d: number) => void;
     readonly engine_total_floats: (a: number) => number;
@@ -145,6 +159,7 @@ export interface InitOutput {
     readonly mesh_intersect: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly mesh_intersect_raw: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly mesh_min_distance: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly mesh_min_distance_within: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly sweep_and_prune: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => void;
     readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
     readonly __wbindgen_export: (a: number, b: number) => number;

@@ -454,3 +454,48 @@ test('dense tessellated box/cylinder pairs: intersect + min-distance EXACTLY equ
   eng.free();
   assert.ok(hits > 250, `fixture must produce many real hits (${hits}/${compared})`);
 });
+
+// ── Threshold-seeded clearance search (index.html _jsMinDistBVH seedSq) ──────
+// mesh_min_distance_within / Engine.min_distance_within must equal the JS
+// seeded reference EXACTLY, and both must equal the unseeded answer whenever
+// it is below the seed ([Infinity] otherwise) — incl. gaps just inside, at
+// and just beyond a 50 mm tolerance and the 0.1 mm contact tolerance.
+test('seeded min-distance: JS === WASM === Engine, and === unseeded below the seed', async () => {
+  const mod = await loadWasm();
+  const js = loadJsReference();
+  const ref = js._ccJsMeshIntersectRef;
+  const eng = new mod.Engine();
+  const rnd = mulberry32(5150);
+  const tolsM = [0.05, 0.0001, 0.01, 0.3, 2];
+  let below = 0, beyond = 0, n = 0;
+  function cmp(label, a, b, seedSq) {
+    const jw = ref.minDist(a, b, seedSq);
+    const ww = Array.from(mod.mesh_min_distance_within(a, b, seedSq));
+    assert.ok(eqArr(jw, ww), label + ': JS vs WASM seeded');
+    eng.register(1, a); eng.register(2, b);
+    assert.ok(eqArr(Array.from(eng.min_distance_within(1, 2, seedSq)), ww), label + ': Engine vs free');
+    const full = ref.minDist(a, b);
+    if (full[0] * full[0] < seedSq) { below++; assert.ok(eqArr(jw, full), label + ': below the seed must equal the unseeded answer'); }
+    else { beyond++; assert.deepStrictEqual(jw, [Infinity], label + ': at/beyond the seed must be [Infinity]'); }
+    n++;
+  }
+  const base = box(0, 1, 0, 1, 0, 1, 3);
+  for (const gapMm of [49.9, 50.0, 50.1, 0.05, 0.1, 0.15, 0, 9.999, 10.001, 300]) {
+    const g = gapMm / 1000;
+    const b = box(1 + g, 2 + g, 0.25, 0.75, 0.25, 0.75, 2);
+    for (const t of tolsM) cmp('gap' + gapMm + 'mm@' + t, base, b, ref.seedSq(t));
+    // anything the 50 mm clearance check would accept keeps its exact distance
+    const d = ref.minDist(base, b)[0];
+    if (d <= 0.05 + 1e-12) assert.ok(eqArr(ref.minDist(base, b, ref.seedSq(0.05)), ref.minDist(base, b)), 'gap ' + gapMm + ' mm within 50 mm keeps its distance');
+  }
+  for (let i = 0; i < 700; i++) {
+    const V = 4, j = () => rnd();
+    const ax = j() * V, ay = j() * V, az = j() * V, s = () => 0.2 + j() * 0.8;
+    const a = box(ax - s(), ax + s(), ay - s(), ay + s(), az - s(), az + s(), 2);
+    const bx = ax + (j() - 0.5) * 4, by = ay + (j() - 0.5) * 4, bz = az + (j() - 0.5) * 4;
+    const b = i % 3 === 0 ? cyl(bx - 1, bx + 1, by, bz, 0.1 + j() * 0.4, 16, 4) : box(bx - s(), bx + s(), by - s(), by + s(), bz - s(), bz + s(), 2);
+    cmp('rand' + i, a, b, ref.seedSq(tolsM[i % tolsM.length]));
+  }
+  eng.free();
+  assert.ok(below > 100 && beyond > 100, 'fixture covers both sides of the seed (below=' + below + ', beyond=' + beyond + ', n=' + n + ')');
+});

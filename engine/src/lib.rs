@@ -566,3 +566,132 @@ impl RegisteredMesh {
         RegisteredMesh { tris, bvh }
     }
 }
+
+// ── Threshold-seeded min distance (2026-10-22) ──────────────────────
+// Appended at the END of the file (see the note above `native`): nothing
+// above shifts, so existing panic locations in the wasm stay put.
+//
+// Mirrors JS `_jsMinDistBVH(bvhA, bvhB, out, seedSq)`: the running best
+// starts at `seed_sq` (squared metres; <= 0 or NaN = unseeded) instead of
+// Infinity. With `>=` pruning and strict `<` updates the seeded best is
+// min(seed_sq, unseeded best) at every step, so whenever the true minimum is
+// below the seed the distance and both closest points are bit-identical to
+// `mesh_min_distance`; when it is not, nothing is written and the result is
+// `[Infinity]`.
+fn min_distance_within_prebuilt(bvh_a: &BvhNode, tris_a: &[f32], bvh_b: &BvhNode, tris_b: &[f32], seed_sq: f64) -> Vec<f64> {
+    let seed = if seed_sq > 0.0 { seed_sq } else { f64::INFINITY };
+    let mut best = seed;
+    let mut out_a = [0.0f64; 3];
+    let mut out_b = [0.0f64; 3];
+    mesh_dist::traverse_min_dist(bvh_a, tris_a, bvh_b, tris_b, &mut best, &mut out_a, &mut out_b);
+    if best == seed {
+        return vec![f64::INFINITY];
+    }
+    vec![
+        best.sqrt(),
+        out_a[0], out_a[1], out_a[2],
+        out_b[0], out_b[1], out_b[2],
+    ]
+}
+
+/// `mesh_min_distance` restricted to surfaces closer than `sqrt(seed_sq)`:
+/// `[distance, ax,ay,az, bx,by,bz]` (bit-identical to `mesh_min_distance`)
+/// when the minimum is below the seed, else `[Infinity]` (also for an empty
+/// mesh).
+#[wasm_bindgen]
+pub fn mesh_min_distance_within(tris_a: &[f32], tris_b: &[f32], seed_sq: f64) -> Vec<f64> {
+    if tris_a.len() < 9 || tris_b.len() < 9 {
+        return vec![f64::INFINITY];
+    }
+    let bvh_a = BvhNode::build(tris_a);
+    let bvh_b = BvhNode::build(tris_b);
+    min_distance_within_prebuilt(&bvh_a, tris_a, &bvh_b, tris_b, seed_sq)
+}
+
+#[wasm_bindgen]
+impl Engine {
+    /// Same return value as `mesh_min_distance_within(tris(id_a), tris(id_b),
+    /// seed_sq)`. `None` when either id is not registered.
+    pub fn min_distance_within(&self, id_a: u32, id_b: u32, seed_sq: f64) -> Option<Vec<f64>> {
+        let a = self.meshes.get(&id_a)?;
+        let b = self.meshes.get(&id_b)?;
+        match (&a.bvh, &b.bvh) {
+            (Some(ba), Some(bb)) => Some(min_distance_within_prebuilt(ba, &a.tris, bb, &b.tris, seed_sq)),
+            _ => Some(vec![f64::INFINITY]),
+        }
+    }
+}
+
+#[cfg(test)]
+mod within_tests {
+    use super::*;
+
+    fn bx(x0: f32, x1: f32, y0: f32, y1: f32, z0: f32, z1: f32) -> Vec<f32> {
+        let v = [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]];
+        let f = [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 2, 3, 7, 2, 7, 6, 1, 2, 6, 1, 6, 5, 0, 3, 7, 0, 7, 4];
+        f.iter().flat_map(|&i| v[i].to_vec()).collect()
+    }
+
+    // index.html _ccMinDistSeedSq (contact tolerance 1e-4)
+    fn seed_for(t: f64) -> f64 {
+        let s = t.max(1e-4) * (1.0 + 1e-9) + 1e-9;
+        s * s
+    }
+
+    fn check(a: &[f32], b: &[f32], t: f64) {
+        let full = mesh_min_distance(a, b);
+        let w = mesh_min_distance_within(a, b, seed_for(t));
+        if full[0] * full[0] < seed_for(t) {
+            assert_eq!(w, full, "t {t}");
+        } else {
+            assert_eq!(w, vec![f64::INFINITY], "t {t}");
+        }
+    }
+
+    #[test]
+    fn within_matches_unseeded_below_seed_and_is_infinite_beyond() {
+        let a = bx(0.0, 1.0, 0.0, 1.0, 0.0, 1.0);
+        // 49.9 / 50.0 / 50.1 mm against a 50 mm tolerance, plus contact-scale gaps
+        for gap_mm in [49.9f64, 50.0, 50.1, 0.0, 0.05, 0.1, 0.2, 10.0, 500.0] {
+            let g = (gap_mm / 1000.0) as f32;
+            let b = bx(1.0 + g, 2.0 + g, 0.25, 0.75, 0.25, 0.75);
+            for t in [0.05f64, 0.0001, 0.2] {
+                check(&a, &b, t);
+            }
+            assert_eq!(mesh_min_distance_within(&a, &b, 0.0), mesh_min_distance(&a, &b));
+        }
+        let mut lcg: u64 = 0x2545F4914F6CDD1D;
+        let mut rnd = move || {
+            lcg = lcg.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((lcg >> 33) as f64) / ((1u64 << 31) as f64)
+        };
+        for _ in 0..300 {
+            let o = [rnd() * 2.0, rnd() * 2.0, rnd() * 2.0];
+            let mut b = bx(0.0, 0.3 + rnd() as f32, 0.0, 0.2, 0.0, 0.4);
+            let ang = rnd() * 3.0;
+            let (s, c) = (ang.sin(), ang.cos());
+            for p in b.chunks_mut(3) {
+                let (x, y) = (p[0] as f64, p[1] as f64);
+                p[0] = (x * c - y * s + o[0]) as f32;
+                p[1] = (x * s + y * c + o[1]) as f32;
+                p[2] = (p[2] as f64 + o[2]) as f32;
+            }
+            check(&a, &b, rnd() * 1.5);
+        }
+    }
+
+    #[test]
+    fn engine_within_matches_free_function() {
+        let a = bx(0.0, 1.0, 0.0, 1.0, 0.0, 1.0);
+        let b = bx(1.03, 2.0, 0.0, 1.0, 0.0, 1.0);
+        let mut eng = Engine::new();
+        eng.register(1, &a);
+        eng.register(2, &b);
+        eng.register(3, &[]);
+        for t in [0.01f64, 0.05, 0.0] {
+            assert_eq!(eng.min_distance_within(1, 2, seed_for(t)).unwrap(), mesh_min_distance_within(&a, &b, seed_for(t)));
+        }
+        assert_eq!(eng.min_distance_within(1, 3, 1.0).unwrap(), vec![f64::INFINITY]);
+        assert!(eng.min_distance_within(1, 9, 1.0).is_none());
+    }
+}

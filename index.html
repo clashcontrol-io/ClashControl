@@ -7084,25 +7084,53 @@ function startApp() {
   var _mmdBest = new Float64Array(1), _mmdOutA = new Float64Array(3), _mmdOutB = new Float64Array(3);
   // JS reference min-distance over two ALREADY-BUILT BVHs (see _jsIntersectBVH:
   // shared verbatim with the narrow-phase worker kernel).
-  function _jsMinDistBVH(bvhA, bvhB, outPair) {
+  //
+  // seedSq (optional, squared metres): threshold-seeded search. The running
+  // best starts at seedSq instead of Infinity, so subtrees whose AABB lower
+  // bound is already >= seedSq are pruned. With `>=` pruning and strict `<`
+  // updates the seeded best equals min(seedSq, unseeded best) at every step,
+  // hence: when the true minimum is < seedSq the distance, both closest
+  // points and the tie-break are bit-identical to the unseeded search; when
+  // it is >= seedSq nothing is ever written and the result is Infinity
+  // ("no surface closer than the seed"). Callers pick a seed strictly above
+  // every distance they classify (_ccMinDistSeedSq). Mirrored in Rust as
+  // mesh_min_distance_within / Engine::min_distance_within.
+  function _jsMinDistBVH(bvhA, bvhB, outPair, seedSq) {
     if (!bvhA || !bvhB) return Infinity;
-    var best = _mmdBest; best[0] = Infinity;
+    var seed = seedSq > 0 ? seedSq : Infinity;
+    var best = _mmdBest; best[0] = seed;
     _bvhMinDistTraverse(bvhA.root, bvhA.tris, bvhB.root, bvhB.tris, best, _mmdOutA, _mmdOutB);
-    if (best[0] === Infinity) return Infinity; // unreachable with 2 non-empty meshes, kept for symmetry with the empty-input early return
+    if (best[0] === seed) return Infinity; // never improved on the seed (or, unseeded, an unreachable empty case)
     if (outPair) {
       outPair[0]=_mmdOutA[0]; outPair[1]=_mmdOutA[1]; outPair[2]=_mmdOutA[2];
       outPair[3]=_mmdOutB[0]; outPair[4]=_mmdOutB[1]; outPair[5]=_mmdOutB[2];
     }
     return Math.sqrt(best[0]);
   }
+  // Squared seed for the threshold-seeded clearance search (see
+  // _jsMinDistBVH): strictly above every distance the pair decision
+  // classifies — the clearance tolerance AND the contact tolerance (a gap
+  // below _CC_CONTACT_TOL_M is a contact) — with a relative + absolute margin
+  // so sqrt() rounding can never turn "beyond the seed" into "within the
+  // tolerance" (_CC_GAP_SLACK_M is 1e-12). No threshold -> unseeded search.
+  var _CC_CONTACT_TOL_M = 1e-4; // absolute contact tolerance — see CONTACT TOLERANCE below
+  function _ccMinDistSeedSq(thresholdM) {
+    if (!(thresholdM > 0)) return Infinity;
+    var s = Math.max(thresholdM, _CC_CONTACT_TOL_M) * (1 + 1e-9) + 1e-9;
+    return s * s;
+  }
+  // thresholdM: the pair's clearance tolerance (metres). Surfaces farther
+  // apart than it (see _ccMinDistSeedSq) report Infinity — the exact distance
+  // of a pair that cannot be a soft clash or a contact is never needed.
   function _meshMinDist(elA, elB, thresholdM, outPair) {
+    var seedSq = _ccMinDistSeedSq(thresholdM);
     // Cached-BVH WASM engine first (see _meshesIntersect). null = engine
     // trouble -> per-pair fall-through to the stateless WASM path, then JS.
     var _wEng = window._ccWasmEngine;
     if (_wEng && typeof _wEng.minDist === 'function') {
       var eA0 = _getWorldTris(elA), eB0 = _getWorldTris(elB);
       if (!eA0.length || !eB0.length) return Infinity;
-      var eD = _wEng.minDist(eA0, eB0, thresholdM, outPair);
+      var eD = _wEng.minDist(eA0, eB0, seedSq, outPair);
       if (eD !== null && eD !== undefined) return eD;
     }
     // Try WASM engine first. Own benchmark (this machine, 2026-09-28, warm
@@ -7117,14 +7145,14 @@ function startApp() {
       var tA = _getWorldTris(elA), tB = _getWorldTris(elB);
       if (!tA.length || !tB.length) return Infinity;
       try {
-        return window._ccWasmMinDist(tA, tB, thresholdM, outPair);
+        return window._ccWasmMinDist(tA, tB, seedSq, outPair);
       } catch (e) {
         console.warn('[clash] WASM minDist failed for this pair, falling back to JS:', e && e.message);
         // fall through to the JS path below for this pair
       }
     }
     // JS fallback
-    return _jsMinDistBVH(_getBVH(elA), _getBVH(elB), outPair);
+    return _jsMinDistBVH(_getBVH(elA), _getBVH(elB), outPair, seedSq);
   }
 
   // ── Narrow-phase worker kernel ────────────────────────────────────────
@@ -7136,12 +7164,21 @@ function startApp() {
   // kernel gains later must be added to this list; tests/narrow-worker.test.js
   // executes the generated source against the main-thread kernel so a missing
   // dependency fails loudly instead of silently in production.
+  var _NP_REC = 17; // floats per worker pair record (layout: _ccNarrowWorkerMain)
   function _ccBuildNarrowWorkerSource() {
     var fns = [
       _triTriTest, _buildBVHNode, _buildBVHForTris, _bvhTraverseAll,
       _pointInBothBoxes, _postProcessIntersectPoints, _jsIntersectBVH,
       _closestPtOnTri, _segSegDistSq, _triTriDistSq, _aabbAabbDistSq, _bvhMinDistTraverse,
-      _jsMinDistBVH
+      _jsMinDistBVH,
+      // hit refinement (crossing vs contact, containment, depth) — the REAL
+      // functions, run on the worker's copy of the same triangles, so a
+      // pre-computed answer equals what the main thread would compute
+      _rayTriHit, _rayAABBHit, _bvhRayCount, _pointInMeshBVH,
+      _closestPtTriDistSq, _pointToAABBDistSq, _bvhClosestDistSq, _closestDistToBVH,
+      _ccContactTol, _ccMeshTopo, _ccFaceAxes, _ccLineInterval, _ccCoplanarOverlapWidth,
+      _ccTriDeep, _ccRefineTraverse, _ccVertexDeepInside, _ccTouchVerdict, _ccBoxIn,
+      _ccContainment, _estimatePenetrationDepthM
     ];
     return [
       'var _ttIvalA=new Float64Array(8),_ttIvalB=new Float64Array(8);',
@@ -7150,6 +7187,16 @@ function startApp() {
       'var _ttdPtA=new Float64Array(3),_ttdPtB=new Float64Array(3);',
       'var _bmdPtA=new Float64Array(3),_bmdPtB=new Float64Array(3);',
       'var _mmdBest=new Float64Array(1),_mmdOutA=new Float64Array(3),_mmdOutB=new Float64Array(3);',
+      'var _PEN_RAY_DIRS=' + JSON.stringify(_PEN_RAY_DIRS) + ';',
+      'var _CC_CONTACT_TOL_M=' + JSON.stringify(_CC_CONTACT_TOL_M) + ',_CC_CONTACT_TOL_REL=' + JSON.stringify(_CC_CONTACT_TOL_REL) +
+        ',_CC_REFINE_MAX_VERTS=' + JSON.stringify(_CC_REFINE_MAX_VERTS) + ',_CC_SAT_MAX_AXES=' + JSON.stringify(_CC_SAT_MAX_AXES) + ';',
+      'var _ccIvA=new Float64Array(2),_ccIvB=new Float64Array(2);',
+      'var _NP_REC=' + _NP_REC + ';',
+      // Worker-side element accessors the refinement functions call. A worker
+      // element E = {tris, box (world), fbox (engine frame), bvh, _topo}.
+      'function _getWorldTris(E){return E.tris;}',
+      'function _getBVH(E){if(E.bvh===undefined)E.bvh=_buildBVHForTris(E.tris);return E.bvh;}',
+      'function _ccFrameBox(E){return E.fbox;}',
       fns.map(function(f) { return f.toString(); }).join('\n'),
       '(' + _ccNarrowWorkerMain.toString() + ')();'
     ].join('\n');
@@ -7157,13 +7204,19 @@ function startApp() {
   // Worker entry point (runs INSIDE the worker; only `self` and the kernel
   // functions above exist there). Protocol (main -> worker):
   //   {t:'init', wasmJs, wasmBin, useEngine}         -> {t:'ready', wasm, engine, err}
-  //   {t:'job', id, drop:[elId], add:[{id,tris,box}], pairs:Int32Array[idA,idB,flags]*m}
-  //        flags bit0 = run the hard test, bit1 = run min-distance when not a hit
-  //                                                  -> {t:'result', id, res:Float64Array(12*m)}
-  //   res record: [status, hx,hy,hz,hDepth, dist, p0..p5]; status bit0 hard done,
-  //   bit1 hard hit, bit2 soft done. Elements stay cached across jobs until dropped.
+  //   {t:'job', id, drop:[elId], add:[{id,tris,box,wbox}], pairs:Int32Array[idA,idB,flags]*m, seedSq}
+  //        flags bit0 = run the hard test, bit1 = run min-distance when not a hit,
+  //        bit2 = pre-compute the hit refinement _ccResolvePair will ask for;
+  //        box = engine-frame box, wbox = world box (_ccContainment's nesting test);
+  //        seedSq = run-wide threshold-seeded search radius² (Infinity = unseeded)
+  //                                                  -> {t:'result', id, res:Float64Array(_NP_REC*m)}
+  //   res record: [status, hx,hy,hz,hDepth, dist, p0..p5, rf, depth, cx,cy,cz];
+  //   status bit0 hard done, bit1 hard hit, bit2 soft done; rf (refinement):
+  //   bit0 touch verdict done, bit1 it is 'crossing', bit2 containment done,
+  //   bit3 contained (point cx,cy,cz), bit4 depth done (NaN = null).
+  //   Elements stay cached across jobs until dropped.
   function _ccNarrowWorkerMain() {
-    var _wasm = null, _eng = null;
+    var _wasm = null, _eng = null, _within = false;
     var _els = new Map();
     function _post(msg, xfer) { self.postMessage(msg, xfer || []); }
     function _boxTris(x0, x1, y0, y1, z0, z1) {
@@ -7204,10 +7257,19 @@ function startApp() {
           var jd = _jsMinDistBVH(bA, bB, o);
           var md = mod.mesh_min_distance(a, b);
           if (md[0] !== jd || !_same(o, Array.prototype.slice.call(md, 1, 7))) return { ok: false, engine: false };
+          // threshold-seeded search (job.seedSq) at a few radii around the answer
+          var within = typeof mod.mesh_min_distance_within === 'function';
+          var seeds = [jd * jd * 0.999, jd * jd, jd * jd * 1.001 + 1e-12, 0.0025, 1e-8];
+          for (var si = 0; within && si < seeds.length; si++) {
+            var ow = [0, 0, 0, 0, 0, 0], jw = _jsMinDistBVH(bA, bB, ow, seeds[si]);
+            var mw = mod.mesh_min_distance_within(a, b, seeds[si]);
+            if (mw[0] !== jw || (jw !== Infinity && !_same(ow, Array.prototype.slice.call(mw, 1, 7)))) return { ok: false, engine: false };
+          }
           if (eng) {
             eng.register(1, a); eng.register(2, b);
             var er = eng.intersect(1, 2), ed = eng.min_distance(1, 2);
-            if (!er || !ed || !_same(er, raw) || !_same(ed, md)) { try { eng.free(); } catch (e0) {} eng = null; }
+            var ew = !within || (typeof eng.min_distance_within === 'function' && _same(eng.min_distance_within(1, 2, seeds[2]), mod.mesh_min_distance_within(a, b, seeds[2])));
+            if (!er || !ed || !_same(er, raw) || !_same(ed, md) || !ew) { try { eng.free(); } catch (e0) {} eng = null; }
           }
         }
         if (eng) { try { eng.clear(); } catch (e1) {} }
@@ -7224,7 +7286,7 @@ function startApp() {
       p.then(function(mod) {
         return mod.default({ module_or_path: d.wasmBin }).then(function() {
           var chk = _selfCheck(mod, !!d.useEngine);
-          if (chk.ok) { _wasm = mod; _eng = chk.engine || null; }
+          if (chk.ok) { _wasm = mod; _eng = chk.engine || null; _within = typeof mod.mesh_min_distance_within === 'function'; }
           _post({ t: 'ready', wasm: !!chk.ok, engine: !!_eng, err: chk.ok ? null : 'worker self-check failed' });
         });
       }).catch(function(e) {
@@ -7232,10 +7294,7 @@ function startApp() {
         _post({ t: 'ready', wasm: false, engine: false, err: String((e && e.message) || e) });
       });
     }
-    function _bvh(E) {
-      if (E.bvh === undefined) E.bvh = _buildBVHForTris(E.tris);
-      return E.bvh;
-    }
+    function _bvh(E) { return _getBVH(E); }
     function _reg(E) {
       if (!E.reg) { _eng.register(E.id, E.tris); E.reg = true; }
     }
@@ -7248,25 +7307,27 @@ function startApp() {
           raw = _eng.intersect(A.id, B.id);
           if (raw === undefined) throw new Error('mesh id not registered');
           if (!raw.length) return false;
-          return _postProcessIntersectPoints(raw.subarray(0, raw.length - 1), raw[raw.length - 1], A.box, B.box, _MI_MARGIN);
+          return _postProcessIntersectPoints(raw.subarray(0, raw.length - 1), raw[raw.length - 1], A.fbox, B.fbox, _MI_MARGIN);
         } catch (e) { _eng = null; }
       }
       if (_wasm) {
         try {
           raw = _wasm.mesh_intersect_raw(A.tris, B.tris);
           if (!raw || !raw.length) return false;
-          return _postProcessIntersectPoints(raw.subarray(0, raw.length - 1), raw[raw.length - 1], A.box, B.box, _MI_MARGIN);
+          return _postProcessIntersectPoints(raw.subarray(0, raw.length - 1), raw[raw.length - 1], A.fbox, B.fbox, _MI_MARGIN);
         } catch (e2) { _wasm = null; }
       }
-      return _jsIntersectBVH(_bvh(A), _bvh(B), A.box, B.box);
+      return _jsIntersectBVH(_bvh(A), _bvh(B), A.fbox, B.fbox);
     }
-    function _wkSoft(A, B, out) {
+    // seedSq: threshold-seeded search radius (see _jsMinDistBVH); identical
+    // answers below it on every path, Infinity at/above it.
+    function _wkSoft(A, B, out, seedSq) {
       if (!A.tris.length || !B.tris.length) return Infinity;
-      var r, j;
+      var r, j, seeded = seedSq > 0 && seedSq !== Infinity;
       if (_eng) {
         try {
           _reg(A); _reg(B);
-          r = _eng.min_distance(A.id, B.id);
+          r = (seeded && _within) ? _eng.min_distance_within(A.id, B.id, seedSq) : _eng.min_distance(A.id, B.id);
           if (r === undefined) throw new Error('mesh id not registered');
           if (!r.length || r[0] === Infinity) return Infinity;
           if (r.length >= 7) for (j = 0; j < 6; j++) out[j] = r[j + 1];
@@ -7275,13 +7336,41 @@ function startApp() {
       }
       if (_wasm) {
         try {
-          r = _wasm.mesh_min_distance(A.tris, B.tris);
+          r = (seeded && _within) ? _wasm.mesh_min_distance_within(A.tris, B.tris, seedSq) : _wasm.mesh_min_distance(A.tris, B.tris);
           if (!r || !r.length || r[0] === Infinity) return Infinity;
           if (r.length >= 7) for (j = 0; j < 6; j++) out[j] = r[j + 1];
           return r[0];
         } catch (e2) { _wasm = null; }
       }
-      return _jsMinDistBVH(_bvh(A), _bvh(B), out);
+      return _jsMinDistBVH(_bvh(A), _bvh(B), out, seeded ? seedSq : undefined);
+    }
+    // Pre-computes what _ccResolvePair will ask for on this pair (touch
+    // verdict on a surface hit or a 0 distance, containment when nothing was
+    // hit, depth of a crossing / nested pair), with the very same functions
+    // the main thread would call — main only reads the answers. Anything not
+    // pre-computed here (e.g. after a minOverlapVolM3 demotion) is computed
+    // on the main thread as before.
+    function _wkRefine(A, B, fl, hit, g, res, o) {
+      var rf = 0, wantDepth = false, t, c = null;
+      if (fl & 1) {
+        if (hit) {
+          t = _ccTouchVerdict(A, B); rf |= 1;
+          if (t === 'crossing') { rf |= 2; wantDepth = true; }
+        } else {
+          c = _ccContainment(A, B); rf |= 4;
+          if (c) { rf |= 8; wantDepth = true; }
+        }
+      } else if ((fl & 2) && !(g <= 0)) {
+        c = _ccContainment(A, B); rf |= 4;
+        if (c) rf |= 8;
+      }
+      if (c) { res[o + 14] = c.pt[0]; res[o + 15] = c.pt[1]; res[o + 16] = c.pt[2]; }
+      if ((fl & 2) && !hit && !c && g === 0) {
+        t = _ccTouchVerdict(A, B); rf |= 1;
+        if (t === 'crossing') { rf |= 2; if (fl & 1) wantDepth = true; }
+      }
+      if (wantDepth) { var dp = _estimatePenetrationDepthM(A, B); res[o + 13] = dp == null ? NaN : dp; rf |= 16; }
+      res[o + 12] = rf;
     }
     function _runJob(d) {
       var i, j;
@@ -7293,27 +7382,33 @@ function startApp() {
         }
       }
       if (d.add) for (i = 0; i < d.add.length; i++) {
-        var a = d.add[i], bx = a.box;
-        _els.set(a.id, { id: a.id, tris: a.tris, bvh: undefined, reg: false,
-          box: { min: { x: bx[0], y: bx[1], z: bx[2] }, max: { x: bx[3], y: bx[4], z: bx[5] } } });
+        var a = d.add[i], bx = a.box, wb = a.wbox || a.box;
+        _els.set(a.id, { id: a.id, tris: a.tris, bvh: undefined, reg: false, _topo: undefined,
+          fbox: { min: { x: bx[0], y: bx[1], z: bx[2] }, max: { x: bx[3], y: bx[4], z: bx[5] } },
+          box: { min: { x: wb[0], y: wb[1], z: wb[2] }, max: { x: wb[3], y: wb[4], z: wb[5] } } });
       }
-      var pairs = d.pairs, m = pairs.length / 3;
-      var res = new Float64Array(m * 12), out = [0, 0, 0, 0, 0, 0];
+      var pairs = d.pairs, m = pairs.length / 3, R = _NP_REC;
+      var res = new Float64Array(m * R), out = [0, 0, 0, 0, 0, 0];
+      var tm = [0, 0, 0], t0, t1; // ms in hard / clearance / refinement (diagnostics only)
       for (i = 0; i < m; i++) {
-        var A = _els.get(pairs[i * 3]), B = _els.get(pairs[i * 3 + 1]), fl = pairs[i * 3 + 2], o = i * 12;
+        var A = _els.get(pairs[i * 3]), B = _els.get(pairs[i * 3 + 1]), fl = pairs[i * 3 + 2], o = i * R;
         if (!A || !B) throw new Error('element not cached in worker');
         var st = 0, hard = false;
+        t0 = performance.now();
         if (fl & 1) {
           hard = _wkHard(A, B); st |= 1;
           if (hard) { st |= 2; res[o + 1] = hard[0]; res[o + 2] = hard[1]; res[o + 3] = hard[2]; res[o + 4] = hard[3]; }
         }
+        t1 = performance.now(); tm[0] += t1 - t0;
         if ((fl & 2) && !hard) {
-          res[o + 5] = _wkSoft(A, B, out); st |= 4;
+          res[o + 5] = _wkSoft(A, B, out, d.seedSq); st |= 4;
           for (j = 0; j < 6; j++) res[o + 6 + j] = out[j];
         }
+        t0 = performance.now(); tm[1] += t0 - t1;
         res[o] = st;
+        if (fl & 4) { _wkRefine(A, B, fl, hard, (st & 4) ? res[o + 5] : Infinity, res, o); tm[2] += performance.now() - t0; }
       }
-      _post({ t: 'result', id: d.id, res: res }, [res.buffer]);
+      _post({ t: 'result', id: d.id, res: res, tm: tm }, [res.buffer]);
     }
     self.onmessage = function(e) {
       var d = e.data;
@@ -7348,17 +7443,24 @@ function startApp() {
     // trisA/trisB: flat triangle arrays (9 floats/tri), NOT raw vertices -
     // matches _meshMinDist's JS-fallback path exactly (own BVH build +
     // _bvhMinDistTraverse), with an outPair-shaped 7-element return.
-    minDist: function(trisA, trisB) {
+    // seedSq (optional): threshold-seeded variant (see _jsMinDistBVH) —
+    // [Infinity] when nothing lies closer than sqrt(seedSq), like the Rust
+    // mesh_min_distance_within.
+    minDist: function(trisA, trisB, seedSq) {
       if (!trisA || !trisB || !trisA.length || !trisB.length) return [Infinity];
       var na = trisA.length / 9, nb = trisB.length / 9;
       var idxA = new Int32Array(na); for (var i = 0; i < na; i++) idxA[i] = i;
       var idxB = new Int32Array(nb); for (var i = 0; i < nb; i++) idxB[i] = i;
       var rootA = _buildBVHNode(trisA, idxA, 0, na);
       var rootB = _buildBVHNode(trisB, idxB, 0, nb);
-      var best = [Infinity], outA = [0,0,0], outB = [0,0,0];
+      var seeded = seedSq > 0 && seedSq !== Infinity;
+      var best = [seeded ? seedSq : Infinity], outA = [0,0,0], outB = [0,0,0];
       _bvhMinDistTraverse(rootA, trisA, rootB, trisB, best, outA, outB);
+      if (seeded && best[0] === seedSq) return [Infinity];
       return [Math.sqrt(best[0]), outA[0],outA[1],outA[2], outB[0],outB[1],outB[2]];
-    }
+    },
+    // The seed the clearance path uses for a tolerance (metres).
+    seedSq: function(thresholdM) { return _ccMinDistSeedSq(thresholdM); }
   };
 
   // ── Point-to-surface distance helpers (used by the hit refinement below) ──
@@ -7445,7 +7547,8 @@ function startApp() {
   // relative term keeps Float32 noise from becoming a crossing even far from
   // the engine origin. A crossing shallower than tau is reported as a contact
   // (documented in MEMORY.md).
-  var _CC_CONTACT_TOL_M = 1e-4;
+  // (_CC_CONTACT_TOL_M = 1e-4 is declared above _ccMinDistSeedSq, which seeds
+  //  the clearance search with it.)
   var _CC_CONTACT_TOL_REL = 4.8e-7;
   var _CC_REFINE_MAX_VERTS = 4096;   // vertex-inside samples per side (strided above this)
   var _CC_SAT_MAX_AXES = 32;         // distinct face normals per mesh used by the depth SAT
@@ -7770,22 +7873,32 @@ function startApp() {
   // _processCandidate and tests/engine-oracle.test.js, so the test scores
   // exactly what the app reports). All coordinates are in the engine frame.
   //   hit    — kernel hard result ([x,y,z,chord] | false); ignored unless o.hard
-  //   distFn — function(out6) -> min surface distance (fills the closest pair)
+  //   distFn — function(out6) -> min surface distance (fills the closest pair);
+  //            may return Infinity for any distance above both gapM and the
+  //            contact tolerance (threshold-seeded search, _ccMinDistSeedSq)
   //   o      — {hard, soft, gapM, minGapM, minOverlapVolM3, overlapVol}
   // Returns {kind:'hard'|'contact'|'soft'|null, pt, depthM, distM, contained}.
   // 'contact' (surfaces meet or are < 0.1 mm apart, interiors disjoint) is
   // reported only by runs that include clearance (o.soft) — a hard-only run
   // never computes distances, so it reports crossings only — and never as a
   // 0 mm soft clash as well.
-  function _ccResolvePair(eA, eB, hit, distFn, o, pairBuf) {
+  //   pre    — optional worker record (_NP_REC floats, see _ccNarrowWorkerMain):
+  //            touch verdict / containment / depth already computed by the
+  //            same functions on the same triangles; used instead of
+  //            recomputing, anything missing is computed here.
+  function _ccResolvePair(eA, eB, hit, distFn, o, pairBuf, pre) {
     var res = { kind: null, pt: null, depthM: 0, distM: Infinity, contained: false, demoted: false };
+    var rf = pre ? pre[12] : 0;
+    function touchVerdict() { return (rf & 1) ? ((rf & 2) ? 'crossing' : 'contact') : _ccTouchVerdict(eA, eB); }
+    function containment() { return (rf & 4) ? ((rf & 8) ? { pt: [pre[14], pre[15], pre[16]] } : null) : _ccContainment(eA, eB); }
+    function depth() { if (rf & 16) { var v = pre[13]; return v !== v ? null : v; } return _estimatePenetrationDepthM(eA, eB); }
     if (o.hard) {
       var touched = false;
       if (hit) {
-        if (_ccTouchVerdict(eA, eB) === 'crossing') { res.kind = 'hard'; res.pt = [hit[0], hit[1], hit[2]]; }
+        if (touchVerdict() === 'crossing') { res.kind = 'hard'; res.pt = [hit[0], hit[1], hit[2]]; }
         else { touched = true; if (!o.soft) return res; } // hard-only run: a touch is not in scope
       } else {
-        var c = _ccContainment(eA, eB);
+        var c = containment();
         if (c) { res.kind = 'hard'; res.pt = c.pt; res.contained = true; }
       }
       // Optional user filter (rules.minOverlapVolM3, default 0 = off): a hard
@@ -7794,7 +7907,7 @@ function startApp() {
       if (res.kind === 'hard' && o.minOverlapVolM3 > 0 && !(o.overlapVol >= o.minOverlapVolM3)) {
         res.kind = null; res.pt = null; res.demoted = true;
       }
-      if (res.kind === 'hard') { var dep = _estimatePenetrationDepthM(eA, eB); res.depthM = dep == null ? 0 : dep; res.distM = 0; return res; }
+      if (res.kind === 'hard') { var dep = depth(); res.depthM = dep == null ? 0 : dep; res.distM = 0; return res; }
       if (touched) {
         // Surfaces meet without interpenetrating: a 'contact' (never also a
         // 0 mm soft clash). Reported only in runs that include clearance.
@@ -7805,8 +7918,11 @@ function startApp() {
     }
     if (!o.soft) return res;
     var g = distFn(pairBuf);
-    if (!o.hard && !(g <= 0) && g !== Infinity) {
-      var c2 = _ccContainment(eA, eB);
+    // g === Infinity: no surface within the seeded search radius (or an empty
+    // mesh, for which _ccContainment finds nothing) — a nested solid can still
+    // sit far from the outer surface, so containment is checked regardless.
+    if (!o.hard && !(g <= 0)) {
+      var c2 = containment();
       if (c2) { g = 0; for (var k = 0; k < 3; k++) { pairBuf[k] = c2.pt[k]; pairBuf[k+3] = c2.pt[k]; } res.contained = true; }
     }
     res.distM = g;
@@ -7818,13 +7934,13 @@ function startApp() {
     // data that was never origin-shifted.)
     if (!res.contained && !res.demoted && g <= _CC_CONTACT_TOL_M) {
       var mid = [(pairBuf[0]+pairBuf[3])/2, (pairBuf[1]+pairBuf[4])/2, (pairBuf[2]+pairBuf[5])/2];
-      if (g > 0 || _ccTouchVerdict(eA, eB) === 'contact') {
+      if (g > 0 || touchVerdict() === 'contact') {
         res.distM = 0;
         if (o.minGapM <= 0) { res.kind = 'contact'; res.pt = mid; }
         return res;
       }
       res.distM = 0;
-      if (o.hard) { res.kind = 'hard'; res.pt = mid; var dep2 = _estimatePenetrationDepthM(eA, eB); res.depthM = dep2 == null ? 0 : dep2; return res; }
+      if (o.hard) { res.kind = 'hard'; res.pt = mid; var dep2 = depth(); res.depthM = dep2 == null ? 0 : dep2; return res; }
       g = 0;
     }
     if (g <= o.gapM + _CC_GAP_SLACK_M && g >= o.minGapM - _CC_GAP_SLACK_M) res.kind = 'soft';
@@ -8401,11 +8517,14 @@ function startApp() {
     if (_activeNarrowPool) { try { _activeNarrowPool.terminate(reason); } catch (e) {} }
   }
 
-  function _ccNarrowPoolCreate(nWorkers) {
+  // opts.seedSq: run-wide threshold-seeded clearance radius² (_ccMinDistSeedSq
+  // of the run's largest tolerance); every pool path answers identically below it.
+  function _ccNarrowPoolCreate(nWorkers, opts) {
+    var seedSq = (opts && opts.seedSq > 0) ? opts.seedSq : Infinity;
     if (_ccNativeNarrowAvailable()) {
       var _natPool = null;
       try {
-        _natPool = window._ccNativeNarrow.createPool({ getWorldTris: _getWorldTris, getBox: _ccFrameBox, postProcess: _postProcessIntersectPoints, margin: _MI_MARGIN });
+        _natPool = window._ccNativeNarrow.createPool({ getWorldTris: _getWorldTris, getBox: _ccFrameBox, postProcess: _postProcessIntersectPoints, margin: _MI_MARGIN, seedSq: seedSq });
       } catch (e) { _natPool = null; }
       if (_natPool) { _activeNarrowPool = _natPool; return _natPool; }
       // native unavailable for this run -> fall through to the Web Worker pool
@@ -8418,9 +8537,9 @@ function startApp() {
     var blobUrl = URL.createObjectURL(new Blob([_ccBuildNarrowWorkerSource()], { type: 'application/javascript' }));
     var t0 = performance.now();
     var pool = {
-      dead: false, reason: null, failed: false, ready: false,
-      results: new Map(),          // candidate index -> Float64Array(12) record
-      stats: { workers: nWorkers, jobs: 0, jobsDone: 0, pairs: 0, pairsDone: 0, wasmWorkers: 0, engineWorkers: 0, initMs: 0, copiedFloats: 0, reason: null }
+      dead: false, reason: null, failed: false, ready: false, seedSq: seedSq,
+      results: new Map(),          // candidate index -> Float64Array(_NP_REC) record
+      stats: { workers: nWorkers, jobs: 0, jobsDone: 0, pairs: 0, pairsDone: 0, wasmWorkers: 0, engineWorkers: 0, initMs: 0, copiedFloats: 0, reason: null, workerMs: [0, 0, 0] }
     };
     var slots = [], queue = [], openWindows = [], elIds = new Map(), nextElId = 1, nextJobId = 1, readyCount = 0;
     var resolveReady, initTimer = null;
@@ -8460,10 +8579,11 @@ function startApp() {
         if (ent) { slot.cache.delete(id); slot.cache.set(id, ent); return; }
         var tris = _getWorldTris(el);
         var copy = tris.slice(); // own buffer; the source array stays valid for main
-        var b = _ccFrameBox(el);
+        var b = _ccFrameBox(el), w = el.box;
         var box = new Float64Array([b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z]);
-        add.push({ id: id, tris: copy, box: box });
-        xfer.push(copy.buffer, box.buffer);
+        var wbox = new Float64Array([w.min.x, w.min.y, w.min.z, w.max.x, w.max.y, w.max.z]);
+        add.push({ id: id, tris: copy, box: box, wbox: wbox });
+        xfer.push(copy.buffer, box.buffer, wbox.buffer);
         slot.cache.set(id, { floats: copy.length });
         slot.floats += copy.length;
         pool.stats.copiedFloats += copy.length;
@@ -8482,7 +8602,7 @@ function startApp() {
         pairs[i * 3] = idOf(job.eA[i]); pairs[i * 3 + 1] = idOf(job.eB[i]); pairs[i * 3 + 2] = job.fl[i];
       }
       xfer.push(pairs.buffer);
-      return { msg: { t: 'job', id: job.id, drop: drop, add: add, pairs: pairs }, xfer: xfer };
+      return { msg: { t: 'job', id: job.id, drop: drop, add: add, pairs: pairs, seedSq: pool.seedSq }, xfer: xfer };
     }
     function pump() {
       if (pool.dead) return;
@@ -8499,10 +8619,11 @@ function startApp() {
     }
     function onResult(sl, d) {
       var job = sl.job;
-      if (!job || job.id !== d.id || !d.res || d.res.length !== job.cidx.length * 12) { pool.fail('protocol-error'); return; }
+      if (!job || job.id !== d.id || !d.res || d.res.length !== job.cidx.length * _NP_REC) { pool.fail('protocol-error'); return; }
       sl.job = null; sl.busy = false;
-      for (var k = 0; k < job.cidx.length; k++) pool.results.set(job.cidx[k], d.res.subarray(k * 12, k * 12 + 12));
+      for (var k = 0; k < job.cidx.length; k++) pool.results.set(job.cidx[k], d.res.subarray(k * _NP_REC, k * _NP_REC + _NP_REC));
       pool.stats.jobsDone++; pool.stats.pairsDone += job.cidx.length;
+      if (d.tm) for (var q = 0; q < 3; q++) pool.stats.workerMs[q] += d.tm[q];
       if (--job.win.pending === 0) { job.win.done = true; job.win.resolve(); }
       pump();
     }
@@ -9417,7 +9538,8 @@ function startApp() {
         _nSoftTests++;
         return d;
       }, { hard: !!rules.hard && !_semanticSkipHard, soft: pairGapM > 0 && _wantsSoftRule, gapM: pairGapM, minGapM: minGapM,
-           minOverlapVolM3: rules.minOverlapVolM3 || 0, overlapVol: ov.vol }, _softPairBuf);
+           minOverlapVolM3: rules.minOverlapVolM3 || 0, overlapVol: ov.vol }, _softPairBuf,
+           (_pr && _pr.length >= _NP_REC) ? _pr : null);
       var kind = _rp2.kind;
       geoDist = _rp2.distM;
       hardPt = kind === 'hard';
@@ -9760,7 +9882,7 @@ function startApp() {
     var _npBlocker = _ccNarrowPoolBlocker(totalCandidates, _npSoft);
     if (!_npBlocker && !(rules.hard || _npSoft)) _npBlocker = 'no-narrow-phase-work';
     if (!_npBlocker) {
-      try { _np = _ccNarrowPoolCreate(_ccNarrowPoolWorkerCount()); } catch (e) { _np = null; _npBlocker = 'create-failed'; }
+      try { _np = _ccNarrowPoolCreate(_ccNarrowPoolWorkerCount(), { seedSq: _ccMinDistSeedSq(runGapM) }); } catch (e) { _np = null; _npBlocker = 'create-failed'; }
       if (!_np) _npBlocker = _npBlocker || 'spawn-failed';
     }
     _ccNarrowPoolCfg.last = _npBlocker ? { used: false, reason: _npBlocker } : null;
@@ -9774,6 +9896,7 @@ function startApp() {
           if (!c.eA.box || !c.eB.box) continue;
           var fl = (rules.hard ? 1 : 0) | ((_pairGapMFor(c.eA, c.eB) > 0 && _wantsSoftRule) ? 2 : 0);
           if (!fl) continue;
+          fl |= 4; // pre-compute the hit refinement too (_ccResolvePair reads it)
           if (!cur || cur.cidx.length >= _NP_JOB_PAIRS) { cur = { cidx: [], eA: [], eB: [], fl: [] }; specs.push(cur); }
           cur.cidx.push(i); cur.eA.push(c.eA); cur.eB.push(c.eB); cur.fl.push(fl);
         } catch (e) { /* a malformed candidate is simply not offloaded; _processCandidate handles it as before */ }
@@ -9786,11 +9909,18 @@ function startApp() {
       var st = _np.stats;
       _npStats = { used: true, workers: st.workers, jobs: st.jobs, jobsDone: st.jobsDone, pairs: st.pairs, pairsDone: st.pairsDone,
         wasmWorkers: st.wasmWorkers, engineWorkers: st.engineWorkers, initMs: st.initMs, copiedMB: Math.round(st.copiedFloats * 4 / 1048576 * 10) / 10,
-        fellBack: _np.failed, reason: _np.reason, native: !!st.native };
+        fellBack: _np.failed, reason: _np.reason, native: !!st.native,
+        // summed over workers: ms in hard tests / clearance / hit refinement
+        workerMs: st.workerMs ? { hard: Math.round(st.workerMs[0]), soft: Math.round(st.workerMs[1]), refine: Math.round(st.workerMs[2]) } : null };
       if (_npSeq === _ccNarrowPoolRunSeq) _ccNarrowPoolCfg.last = _npStats;
       _np.results.clear();
       _npWin = [];
     }
+    // Time-sliced: chunks run back to back until _DETECT_SLICE_MS has passed,
+    // then yield one macrotask (_ccYieldTask — a MessageChannel post, which,
+    // unlike nested setTimeout(0), is not clamped to >= 4 ms; that clamp alone
+    // was ~0.5 s of idle per 10k candidates). Cancellation and progress are
+    // still checked/reported per chunk.
     function _runChunk() {
       var t0 = performance.now();
       while (_runChunkOnce()) {
@@ -9925,11 +10055,6 @@ function startApp() {
   }
 
   // ── Clash Identity & Delta Merge ────────────────────────────── docs/INTERNALS.md §9
-    // Time-sliced: chunks run back to back until _DETECT_SLICE_MS has passed,
-    // then yield one macrotask (_ccYieldTask — a MessageChannel post, which,
-    // unlike nested setTimeout(0), is not clamped to >= 4 ms; that clamp alone
-    // was ~0.5 s of idle per 10k candidates). Cancellation and progress are
-    // still checked/reported per chunk.
   // computeClashPair/computeClashIdentityKey — clash-identity-core.js (plain
   // same-origin <script defer>, not an addon). Was identityCoreV2, a
   // flagged migration with a boot-time equivalence check against an inline

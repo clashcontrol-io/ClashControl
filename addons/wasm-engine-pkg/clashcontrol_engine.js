@@ -97,6 +97,30 @@ export class Engine {
             wasm.__wbindgen_add_to_stack_pointer(16);
         }
     }
+    /**
+     * Same return value as `mesh_min_distance_within(tris(id_a), tris(id_b),
+     * seed_sq)`. `None` when either id is not registered.
+     * @param {number} id_a
+     * @param {number} id_b
+     * @param {number} seed_sq
+     * @returns {Float64Array | undefined}
+     */
+    min_distance_within(id_a, id_b, seed_sq) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.engine_min_distance_within(retptr, this.__wbg_ptr, id_a, id_b, seed_sq);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            let v1;
+            if (r0 !== 0) {
+                v1 = getArrayF64FromWasm0(r0, r1).slice();
+                wasm.__wbindgen_export2(r0, r1 * 8, 8);
+            }
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
     constructor() {
         const ret = wasm.engine_new();
         this.__wbg_ptr = ret;
@@ -299,6 +323,34 @@ export function mesh_min_distance(tris_a, tris_b) {
         const ptr1 = passArrayF32ToWasm0(tris_b, wasm.__wbindgen_export);
         const len1 = WASM_VECTOR_LEN;
         wasm.mesh_min_distance(retptr, ptr0, len0, ptr1, len1);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var v3 = getArrayF64FromWasm0(r0, r1).slice();
+        wasm.__wbindgen_export2(r0, r1 * 8, 8);
+        return v3;
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+    }
+}
+
+/**
+ * `mesh_min_distance` restricted to surfaces closer than `sqrt(seed_sq)`:
+ * `[distance, ax,ay,az, bx,by,bz]` (bit-identical to `mesh_min_distance`)
+ * when the minimum is below the seed, else `[Infinity]` (also for an empty
+ * mesh).
+ * @param {Float32Array} tris_a
+ * @param {Float32Array} tris_b
+ * @param {number} seed_sq
+ * @returns {Float64Array}
+ */
+export function mesh_min_distance_within(tris_a, tris_b, seed_sq) {
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passArrayF32ToWasm0(tris_a, wasm.__wbindgen_export);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArrayF32ToWasm0(tris_b, wasm.__wbindgen_export);
+        const len1 = WASM_VECTOR_LEN;
+        wasm.mesh_min_distance_within(retptr, ptr0, len0, ptr1, len1, seed_sq);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         var v3 = getArrayF64FromWasm0(r0, r1).slice();

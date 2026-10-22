@@ -18,6 +18,8 @@
 // Wire format (little-endian, raw bytes, see engine/src/native.rs `wire`):
 //   register_meshes  body [u32 n][n x (u32 id, u32 nFloats)][f32 data...] -> n
 //   intersect_batch / min_dist_batch  body [u32 a,u32 b]*m -> f64 stream
+//   min_dist_within_batch  body [f64 seedSq][u32 a,u32 b]*m -> same stream
+//        (threshold-seeded clearance; [Infinity] when nothing is within the seed)
 //        [m][k_0, v_0...][k_1, v_1...]...  (k = -1: an id was not registered)
 //   engine_info -> {api, threads, meshes, floats, ...}
 // Core contract consumed: a pool object shaped like the worker pool
@@ -89,6 +91,16 @@
   }
   // pairs: flat array/Uint32Array [a0,b0,a1,b1,...]
   function _encodePairs(pairs) { return new Uint8Array(new Uint32Array(pairs).buffer); }
+  // min_dist_within_batch body: [f64 seedSq][u32 a, u32 b]*m
+  function _encodeSeededPairs(seedSq, pairs) {
+    var b = new Uint8Array(8 + pairs.length * 4);
+    new Float64Array(b.buffer, 0, 1)[0] = seedSq;
+    b.set(new Uint8Array(new Uint32Array(pairs).buffer), 8);
+    return b;
+  }
+  // The engine answers the threshold-seeded command (engine_info.within) and
+  // its answers matched the JS reference in the self-check.
+  var _within = false;
   // -> Array of (Float64Array | null); throws on any structural problem
   function _decodeResults(resp, expected) {
     var buf = _asBuffer(resp);
@@ -239,7 +251,20 @@
           var jd = ref.minDist(a, b);
           if (!dist[i] || !_same(jd, Array.prototype.slice.call(dist[i]))) return 'case ' + i + ' min-distance mismatch';
         }
-        return true;
+        if (!(_info && _info.within) || typeof ref.seedSq !== 'function') return true;
+        // Threshold-seeded command: identical to the JS reference at several radii.
+        var seeds = [ref.seedSq(0.05), ref.seedSq(0.0001), ref.seedSq(0.5), ref.seedSq(2)];
+        return Promise.all(seeds.map(function(sq) { return _invoke('min_dist_within_batch', _encodeSeededPairs(sq, pairs)); })).then(function(ws) {
+          for (var si = 0; si < seeds.length; si++) {
+            var wr = _decodeResults(ws[si], m);
+            if (wr[m - 1] !== null) return 'seeded: unknown id not reported';
+            for (var ci = 0; ci < cases.length; ci++) {
+              if (!wr[ci] || !_same(ref.minDist(cases[ci][0], cases[ci][1], seeds[si]), Array.prototype.slice.call(wr[ci]))) return 'case ' + ci + ' seeded min-distance mismatch';
+            }
+          }
+          _within = true;
+          return true;
+        });
       });
     });
   }
@@ -320,7 +345,9 @@
             if (!softCand.length) return { ok: ok, soft: [] };
             var sp = [];
             softCand.forEach(function(j2) { sp.push(ids[2 * j2], ids[2 * j2 + 1]); });
-            return _invoke('min_dist_batch', _encodePairs(sp)).then(function(r) { return { ok: ok, soft: _decodeResults(r, softCand.length) }; });
+            var seeded = _within && ctx.seedSq > 0 && ctx.seedSq !== Infinity;
+            var call = seeded ? _invoke('min_dist_within_batch', _encodeSeededPairs(ctx.seedSq, sp)) : _invoke('min_dist_batch', _encodePairs(sp));
+            return call.then(function(r) { return { ok: ok, soft: _decodeResults(r, softCand.length) }; });
           }).then(function(res) {
             if (!res || pool.dead) return;
             for (var s = 0; s < softCand.length; s++) {
