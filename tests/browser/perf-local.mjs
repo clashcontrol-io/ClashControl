@@ -142,7 +142,7 @@ try {
 
     const wallStart = performance.now();
     await page.goto('http://127.0.0.1:8766/', { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 60_000 });
+    await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 60_000, polling: 50 });
     const bootMs = performance.now() - wallStart;
 
     const loadStart = performance.now();
@@ -159,17 +159,35 @@ try {
     await page.waitForFunction(() => {
       const s = window._ccLatestState;
       return s && s.models.length === 1 && (s.models[0].elements || []).length >= 2;
-    }, null, { timeout: loadTimeoutMs });
+    }, null, { timeout: loadTimeoutMs, polling: 50 });
     const geometryReadyMs = performance.now() - loadStart;
-    await page.waitForFunction(() => window._ccModelLoading === false, null, { timeout: loadTimeoutMs });
+    await page.waitForFunction(() => window._ccModelLoading === false, null, { timeout: loadTimeoutMs, polling: 50 });
     const completeMs = performance.now() - loadStart;
 
+    // Detection, timed IN the page so the harness's own polling is not part
+    // of the number: engineMs = the engine run (_ccDetectProfile.total_ms:
+    // broad + narrow phase + post-processing), commitMs = the rest of
+    // runDetection (geometry pre-extraction, classify, MERGE_CLASHES
+    // dispatch), uiMs = until the committed result is in React state and
+    // one frame has been painted. detectionMs (harness wall) is kept for
+    // continuity with older reports.
     const detectStart = performance.now();
-    const detected = await page.evaluate(async () => {
+    const timing = await page.evaluate(async () => {
+      const t0 = performance.now();
       const result = await window.ClashControl.runDetection({ selfClashModels: 'all', excludeSelf: false });
-      return result ? result.length : 0;
+      const t1 = performance.now();
+      await new Promise((resolve) => {
+        (function poll() {
+          const s = window._ccLatestState;
+          if (s && !s.detecting && s.clashes.length > 0) requestAnimationFrame(() => resolve());
+          else setTimeout(poll, 0);
+        })();
+      });
+      const t2 = performance.now();
+      const engineMs = (window._ccDetectProfile && window._ccDetectProfile.total_ms) || 0;
+      return { detected: result ? result.length : 0, engineMs, commitMs: Math.max(0, t1 - t0 - engineMs), uiMs: t2 - t1, apiMs: t1 - t0 };
     });
-    await page.waitForFunction(() => window._ccLatestState && window._ccLatestState.clashes.length > 0, null, { timeout: 10_000 });
+    const detected = timing.detected;
     const detectionMs = performance.now() - detectStart;
 
     const metrics = await page.evaluate(() => {
@@ -203,7 +221,7 @@ try {
     if (workerFallback || errors.length || detected < 1) {
       throw new Error(`invalid sample ${run + 1}: fallback=${workerFallback} detected=${detected} errors=${errors.join(' | ')}`);
     }
-    samples.push({ run: run + 1, bootMs, geometryReadyMs, completeMs, detectionMs, totalMs: performance.now() - wallStart, rssBytes, ...metrics });
+    samples.push({ run: run + 1, bootMs, geometryReadyMs, completeMs, detectionMs, engineMs: timing.engineMs, commitMs: timing.commitMs, uiMs: timing.uiMs, totalMs: performance.now() - wallStart, rssBytes, ...metrics });
     await context.close();
     await browser.close();
   }
@@ -211,7 +229,7 @@ try {
   server.close();
 }
 
-const numericKeys = ['bootMs', 'geometryReadyMs', 'completeMs', 'detectionMs', 'totalMs', 'fcpMs', 'resourceCount', 'encodedBytes', 'decodedBytes', 'heapBytes', 'domNodes', 'rssBytes', 'candidates', 'candidatesEstBytes', 'sweepAndPruneMs', 'bvhBuildMs'];
+const numericKeys = ['bootMs', 'geometryReadyMs', 'completeMs', 'detectionMs', 'engineMs', 'commitMs', 'uiMs', 'totalMs', 'fcpMs', 'resourceCount', 'encodedBytes', 'decodedBytes', 'heapBytes', 'domNodes', 'rssBytes', 'candidates', 'candidatesEstBytes', 'sweepAndPruneMs', 'bvhBuildMs'];
 function median(values) {
   const sorted = values.filter(Number.isFinite).toSorted((a, b) => a - b);
   if (!sorted.length) return null;

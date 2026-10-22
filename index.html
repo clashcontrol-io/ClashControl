@@ -8438,6 +8438,7 @@ function startApp() {
             var data = modelResults[gid];
             if (data.wv && data.wv.length) el._wvCache = data.wv;
             if (data.tris && data.tris.length) el._triCache = data.tris;
+            delete el._ccGeoHash; // freshly injected for this run: not subject to the cross-run hash check
           });
         });
         worker.terminate();
@@ -9236,10 +9237,22 @@ function startApp() {
     var _memo = (!rules.fullRerun && _sigNow && _ccRunMemo && _ccRunMemo.sig === _sigNow) ? _ccRunMemo : null;
     var newHashes = {}, changedElements = {};
     var _nChangedEls = 0, _nTotalEls = 0;
+    // Per-element engine caches (triangles / BVH / topology, see _getWorldTris)
+    // survive between runs (a re-run with changed rules no longer re-extracts
+    // every element). Caches a previous run used are stamped with the
+    // element's content hash — the one the smart re-run trusts — and dropped
+    // when it changed, or on a full re-run (rules.fullRerun). Unstamped
+    // caches (fresh this run: GLB pre-extraction, or built outside detection)
+    // are used as they always were.
+    var _dropAllCaches = !!rules.fullRerun;
     models.forEach(function(m) {
       (m.elements||[]).forEach(function(el) {
         var h = _hashElement(el);
         var key = m.id+':'+el.expressId;
+        if (el._ccGeoHash !== undefined && (_dropAllCaches || el._ccGeoHash !== h)) {
+          _bvhLRU.delete(el); _ccDropEngineCaches(el);
+        }
+        el._ccGeoHash = h;
         newHashes[key] = h;
         _nTotalEls++;
         if (_memo && _memo.hashes[key] !== h) { changedElements[key] = true; _nChangedEls++; }
@@ -9790,7 +9803,10 @@ function startApp() {
       }
     });
 
-    _flushGeoCache(models);
+    // (Per-element engine caches are NOT flushed here any more: they are
+    // bounded by the LRU cap, invalidated per element by content hash at the
+    // next run start, dropped on model unload/replace, by opts.clearCachesAfter,
+    // by heap-pressure relief and by the periodic idle cleanup.)
 
     // ── Store detection run summary for AI training ──────────────
     try {
@@ -14722,6 +14738,8 @@ function startApp() {
           var st = window._ccLatestState;
           if (!st || !st.models || !st.models.length) return Promise.resolve(null);
           var r = Object.assign({}, st.rules, rulesOverride || {});
+          // detecting:true like _ccRunDetection (MERGE_CLASHES / STOP_DETECT clear it)
+          if (typeof window._ccDispatch === 'function') window._ccDispatch({t:'DETECTING'});
           // opts.clearCachesAfter: one-shot run/export flow, drop BVH caches
           // (V7 P6.4). opts.coverageModelIds: run-scope for reconciliation
           // (CLAUDE Item 2), so a scoped rulesOverride never auto-resolves a
