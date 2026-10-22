@@ -6282,11 +6282,30 @@ function startApp() {
     if (el._triCache) { _bvhLRUTouch(el); return el._triCache; }
     _bvhLRUEvict();
     _ccEnsureWorldOrigin();
-    var tris = [], ox = _ccOrigin[0], oy = _ccOrigin[1], oz = _ccOrigin[2];
-    _ccGetElementGeometry(el).forEach(function(h) {
-      var pos = h.position, mat = h.transform, idx = h.index;
-      var va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3();
+    var ox = _ccOrigin[0], oy = _ccOrigin[1], oz = _ccOrigin[2];
+    var geos = _ccGetElementGeometry(el), total = 0, g;
+    for (g = 0; g < geos.length; g++) total += Math.ceil((geos[g].index ? geos[g].index.count : geos[g].position.count) / 3) * 9;
+    var out = new Float32Array(total), w = 0;
+    for (g = 0; g < geos.length; g++) {
+      var h = geos[g], pos = h.position, mat = h.transform, idx = h.index;
       var count = idx ? idx.count : pos.count;
+      if (_ccPlainAttr(pos, 3) && (!idx || _ccPlainAttr(idx, 1)) && count % 3 === 0) {
+        // Direct-array path: the very f64 operations of Vector3.applyMatrix4
+        // (incl. the projective w) on the raw attribute values, written
+        // straight into the Float32Array (same f64 -> f32 rounding as before).
+        var pa = pos.array, ps = pos.itemSize, ia2 = idx ? idx.array : null, e = mat.elements;
+        var e0=e[0],e1=e[1],e2=e[2],e3=e[3],e4=e[4],e5=e[5],e6=e[6],e7=e[7],e8=e[8],e9=e[9],e10=e[10],e11=e[11],e12=e[12],e13=e[13],e14=e[14],e15=e[15];
+        for (var k = 0; k < count; k++) {
+          var vi = (ia2 ? ia2[k] : k) * ps;
+          var x = pa[vi], y = pa[vi+1], z = pa[vi+2];
+          var iw = 1 / ( e3 * x + e7 * y + e11 * z + e15 );
+          out[w++] = ( e0 * x + e4 * y + e8 * z + e12 ) * iw - ox;
+          out[w++] = ( e1 * x + e5 * y + e9 * z + e13 ) * iw - oy;
+          out[w++] = ( e2 * x + e6 * y + e10 * z + e14 ) * iw - oz;
+        }
+        continue;
+      }
+      var va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3();
       for (var i = 0; i < count; i += 3) {
         var ia = idx ? idx.getX(i) : i;
         var ib = idx ? idx.getX(i+1) : i+1;
@@ -6294,12 +6313,18 @@ function startApp() {
         va.set(pos.getX(ia), pos.getY(ia), pos.getZ(ia)).applyMatrix4(mat);
         vb.set(pos.getX(ib), pos.getY(ib), pos.getZ(ib)).applyMatrix4(mat);
         vc.set(pos.getX(ic), pos.getY(ic), pos.getZ(ic)).applyMatrix4(mat);
-        tris.push(va.x-ox,va.y-oy,va.z-oz, vb.x-ox,vb.y-oy,vb.z-oz, vc.x-ox,vc.y-oy,vc.z-oz);
+        out[w++]=va.x-ox; out[w++]=va.y-oy; out[w++]=va.z-oz; out[w++]=vb.x-ox; out[w++]=vb.y-oy; out[w++]=vb.z-oz; out[w++]=vc.x-ox; out[w++]=vc.y-oy; out[w++]=vc.z-oz;
       }
-    });
-    el._triCache = new Float32Array(tris);
+    }
+    el._triCache = out;
     _bvhLRU.set(el, true);
     return el._triCache;
+  }
+  // A BufferAttribute whose getX/getY/getZ(i) are exactly array[i*itemSize+k]
+  // (not interleaved, not normalized, not half-float).
+  function _ccPlainAttr(a, minItem) {
+    return !!(a && a.array && a.isBufferAttribute && !a.isInterleavedBufferAttribute && !a.isFloat16BufferAttribute &&
+      !a.normalized && a.itemSize >= minItem && (minItem !== 1 || a.itemSize === 1));
   }
 
   // Element role for severity (structural / MEP run / terminal / finish ...):
