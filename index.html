@@ -6584,7 +6584,21 @@ function startApp() {
 
   // ── BVH (Bounding Volume Hierarchy) for triangles ───────────────
 
-  function _buildBVHNode(tris, indices, lo, hi) {
+  // keys (optional, built at the root when absent): keys[t*3+axis] = the
+  // triangle's split key, (v0+v1)+v2 along `axis` in f64 — exactly the sum the
+  // sort comparator used to recompute on every comparison, so the comparator
+  // returns the same numbers and the sort (hence the tree) is unchanged.
+  function _buildBVHNode(tris, indices, lo, hi, keys) {
+    if (!keys) {
+      var nk = (tris.length / 9) | 0;
+      keys = new Float64Array(nk * 3);
+      for (var k = 0; k < nk; k++) {
+        var ko = k * 9;
+        keys[k*3]   = tris[ko]   + tris[ko+3] + tris[ko+6];
+        keys[k*3+1] = tris[ko+1] + tris[ko+4] + tris[ko+7];
+        keys[k*3+2] = tris[ko+2] + tris[ko+5] + tris[ko+8];
+      }
+    }
     var mnx=Infinity,mny=Infinity,mnz=Infinity;
     var mxx=-Infinity,mxy=-Infinity,mxz=-Infinity;
     for (var i=lo; i<hi; i++) {
@@ -6603,13 +6617,12 @@ function startApp() {
     // In-place subrange sort — a subarray is a view, so no per-node
     // slice/copy-back allocations (they dominated build time on big elements).
     indices.subarray(lo, hi).sort(function(a,b){
-      return (tris[a*9+axis]+tris[a*9+3+axis]+tris[a*9+6+axis])
-            -(tris[b*9+axis]+tris[b*9+3+axis]+tris[b*9+6+axis]);
+      return keys[a*3+axis] - keys[b*3+axis];
     });
     var mid=(lo+hi)>>1;
     node.cnt=hi-lo;
-    node.left =_buildBVHNode(tris,indices,lo,mid);
-    node.right=_buildBVHNode(tris,indices,mid,hi);
+    node.left =_buildBVHNode(tris,indices,lo,mid,keys);
+    node.right=_buildBVHNode(tris,indices,mid,hi,keys);
     return node;
   }
 
@@ -7175,7 +7188,7 @@ function startApp() {
       // functions, run on the worker's copy of the same triangles, so a
       // pre-computed answer equals what the main thread would compute
       _rayTriHit, _rayAABBHit, _bvhRayCount, _pointInMeshBVH,
-      _closestPtTriDistSq, _pointToAABBDistSq, _bvhClosestDistSq, _closestDistToBVH,
+      _closestPtTriDistSq, _pointToAABBDistSq, _bvhClosestDistSq, _closestDistToBVH, _bvhClosestWithin, _ccFartherThan, _ccAnyVertexInBox,
       _ccContactTol, _ccMeshTopo, _ccFaceAxes, _ccLineInterval, _ccCoplanarOverlapWidth,
       _ccTriDeep, _ccRefineTraverse, _ccVertexDeepInside, _ccTouchVerdict, _ccBoxIn,
       _ccContainment, _estimatePenetrationDepthM
@@ -7525,6 +7538,26 @@ function startApp() {
     _bvhClosestDistSq(bvh.root, bvh.tris, px,py,pz, best);
     return Math.sqrt(best[0]);
   }
+  // _bvhClosestDistSq's exact traversal, stopping as soon as the running
+  // minimum is within tau (returns true then).
+  function _bvhClosestWithin(node, tris, px,py,pz, best, tau) {
+    if (_pointToAABBDistSq(px,py,pz,node) >= best[0]) return false;
+    if (node.lo !== undefined) {
+      for (var i=node.lo;i<node.hi;i++) {
+        var d2=_closestPtTriDistSq(px,py,pz,tris,node.idx[i]*9);
+        if (d2<best[0]) { best[0]=d2; if (Math.sqrt(d2) <= tau) return true; }
+      }
+      return false;
+    }
+    return _bvhClosestWithin(node.left,tris,px,py,pz,best,tau) || _bvhClosestWithin(node.right,tris,px,py,pz,best,tau);
+  }
+  // === (_closestDistToBVH(p, bvh) > tau), without finishing the search
+  // once the answer is decided (sqrt is monotonic: the final minimum can only
+  // be smaller than the running one).
+  function _ccFartherThan(px,py,pz, bvh, tau) {
+    if (!bvh || !bvh.root) return Infinity > tau;
+    return !_bvhClosestWithin(bvh.root, bvh.tris, px,py,pz, [Infinity], tau);
+  }
   // ── Hit refinement: crossing vs contact, containment, penetration depth ──
   // The narrow-phase kernel (identical on JS / WASM / Engine / pool / native)
   // only answers "do the two surfaces meet" (plus a raw hit point). Everything
@@ -7594,21 +7627,27 @@ function startApp() {
       vi[i] = id;
     }
     var nv = verts.length / 3;
-    var und = new Map(), dir = new Set(), consistent = true;
+    // Undirected edge table (open addressing on the (lo,hi) vertex-id pair):
+    // use count + which of the two directions were seen. closed = some edge
+    // and every edge used exactly twice; consistent = no directed edge twice.
+    var ecap = 16; while (ecap < n * 6) ecap <<= 1;
+    var emask = ecap - 1, eLo = new Int32Array(ecap).fill(-1), eHi = new Int32Array(ecap);
+    var eCnt = new Int32Array(ecap), eDir = new Uint8Array(ecap), nEdges = 0, consistent = true;
     for (var f = 0; f < n; f++) {
       var a = vi[f*3], b = vi[f*3+1], c = vi[f*3+2];
       if (a === b || b === c || a === c) continue;
-      var es = [a, b, b, c, c, a];
-      for (var e = 0; e < 6; e += 2) {
-        var p = es[e], q = es[e+1];
-        var uk = p < q ? p * nv + q : q * nv + p;
-        und.set(uk, (und.get(uk) || 0) + 1);
-        var dk = p * nv + q;
-        if (dir.has(dk)) consistent = false; else dir.add(dk);
+      for (var e = 0; e < 3; e++) {
+        var p = e === 0 ? a : e === 1 ? b : c, q = e === 0 ? b : e === 1 ? c : a;
+        var lo = p < q ? p : q, hi = p < q ? q : p, bit = p < q ? 1 : 2;
+        var hs = (Math.imul(lo, 73856093) ^ Math.imul(hi, 19349663)) & emask;
+        while (eLo[hs] !== -1 && !(eLo[hs] === lo && eHi[hs] === hi)) hs = (hs + 1) & emask;
+        if (eLo[hs] === -1) { eLo[hs] = lo; eHi[hs] = hi; nEdges++; }
+        eCnt[hs]++;
+        if (eDir[hs] & bit) consistent = false; else eDir[hs] |= bit;
       }
     }
-    var closed = und.size > 0;
-    und.forEach(function(cnt) { if (cnt !== 2) closed = false; });
+    var closed = nEdges > 0;
+    for (var ei = 0; ei < ecap && closed; ei++) if (eLo[ei] !== -1 && eCnt[ei] !== 2) closed = false;
     var orient = 0;
     if (closed && consistent) {
       var rx = verts[0], ry = verts[1], rz = verts[2], vol = 0;
@@ -7776,7 +7815,19 @@ function startApp() {
     for (var i = 0; i < nv; i += step) {
       var x = v[i*3], y = v[i*3+1], z = v[i*3+2];
       if (x <= r.mnx + tau || x >= r.mxx - tau || y <= r.mny + tau || y >= r.mxy - tau || z <= r.mnz + tau || z >= r.mxz - tau) continue;
-      if (_pointInMeshBVH(x, y, z, bvhQ) && _closestDistToBVH(x, y, z, bvhQ) > tau) return true;
+      if (_ccFartherThan(x, y, z, bvhQ, tau) && _pointInMeshBVH(x, y, z, bvhQ)) return true;
+    }
+    return false;
+  }
+  // Cheap precondition of _ccVertexDeepInside(topo(P), ...): some raw vertex
+  // of P passes its box filter against Q's root (the welded, possibly strided
+  // vertex list is a subset of the raw vertices with the same coordinates). If
+  // none does, the topology of P (and Q's closedness) is never needed.
+  function _ccAnyVertexInBox(trisP, r, tau) {
+    for (var i = 0; i + 2 < trisP.length; i += 3) {
+      var x = trisP[i], y = trisP[i+1], z = trisP[i+2];
+      if (x <= r.mnx + tau || x >= r.mxx - tau || y <= r.mny + tau || y >= r.mxy - tau || z <= r.mnz + tau || z >= r.mxz - tau) continue;
+      return true;
     }
     return false;
   }
@@ -7793,9 +7844,11 @@ function startApp() {
     } };
     _ccRefineTraverse(bA.root, bA.tris, bB.root, bB.tris, tau, st);
     if (st.cross) return 'crossing';
-    var tA = _ccMeshTopo(elA), tB = _ccMeshTopo(elB);
-    if (_ccVertexDeepInside(tA, tB, bB, tau) || _ccVertexDeepInside(tB, tA, bA, tau)) return 'crossing';
-    if (st.samples.length && tA.closed && tB.closed) {
+    // topology only when a vertex can be deep inside (or for the coplanar
+    // fallback) — most touching pairs never need it
+    if (_ccAnyVertexInBox(bA.tris, bB.root, tau) && _ccVertexDeepInside(_ccMeshTopo(elA), _ccMeshTopo(elB), bB, tau)) return 'crossing';
+    if (_ccAnyVertexInBox(bB.tris, bA.root, tau) && _ccVertexDeepInside(_ccMeshTopo(elB), _ccMeshTopo(elA), bA, tau)) return 'crossing';
+    if (st.samples.length && _ccMeshTopo(elA).closed && _ccMeshTopo(elB).closed) {
       var h = 4 * tau;
       for (var s = 0; s < st.samples.length; s++) {
         var p = st.samples[s];
@@ -7834,7 +7887,7 @@ function startApp() {
       var picks = [0, (nc >> 1), nc - 1];
       for (var p = 0; p < picks.length; p++) {
         var i = picks[p] * 3;
-        if (_pointInMeshBVH(v[i], v[i+1], v[i+2], bO) && _closestDistToBVH(v[i], v[i+1], v[i+2], bO) > tau) {
+        if (_pointInMeshBVH(v[i], v[i+1], v[i+2], bO) && _ccFartherThan(v[i], v[i+1], v[i+2], bO, tau)) {
           var fb = _ccFrameBox(inner);
           return { pt: [(fb.min.x+fb.max.x)/2, (fb.min.y+fb.max.y)/2, (fb.min.z+fb.max.z)/2] };
         }
