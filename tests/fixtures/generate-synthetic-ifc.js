@@ -27,6 +27,11 @@ function generateSyntheticIfc(opts) {
   const withPsets = !!opts.withPsets;
   const geo = opts.geo || null; // {lat:[d,m,s], lon:[d,m,s], elev}
   const mapConversion = opts.mapConversion || null; // {eastings, northings, epsg}
+  // withSpaces: one IfcSpace (room) per storey, an extruded rectangle that
+  // encloses every wall of that storey (decomposed from the storey via
+  // IfcRelAggregates, like real authoring tools write it). Its height is
+  // storeyHeight - 0.1 so it never touches the next storey's walls.
+  const withSpaces = !!opts.withSpaces;
 
   let id = 0;
   const next = () => ++id;
@@ -151,6 +156,23 @@ function generateSyntheticIfc(opts) {
       }
     }
     lines.push(`#${next()}=IFCRELCONTAINEDINSPATIALSTRUCTURE('2SynthRelCont00000000${id}',$,$,$,(${wallIds.map((w) => '#' + w).join(',')}),#${storeyId});`);
+    if (withSpaces) {
+      const spaceId = next(), spPlacementId = next(), spAxisId = next(), spOriginId = next();
+      const spProfileId = next(), spProfilePlacementId = next(), spShapeId = next(), spRepId = next(), spExtrudeId = next();
+      const spaceGuid = ('7SynthSpace' + spaceId).padEnd(22, '0').slice(0, 22);
+      const cx = ((wallsPerStorey - 1) * 5) / 2;
+      const len = wallsPerStorey * 5;
+      lines.push(`#${spOriginId}=IFCCARTESIANPOINT((${cx.toFixed(1)},0.,0.));`);
+      lines.push(`#${spAxisId}=IFCAXIS2PLACEMENT3D(#${spOriginId},$,$);`);
+      lines.push(`#${spPlacementId}=IFCLOCALPLACEMENT(#${storeyPlacementId},#${spAxisId});`);
+      lines.push(`#${spProfileId}=IFCRECTANGLEPROFILEDEF(.AREA.,$,#${spProfilePlacementId},${len.toFixed(1)},6.);`);
+      lines.push(`#${spProfilePlacementId}=IFCAXIS2PLACEMENT2D(#${profileOriginId},$);`);
+      lines.push(`#${spExtrudeId}=IFCEXTRUDEDAREASOLID(#${spProfileId},#${axisId},#${extrudeDirId},${(storeyHeight - 0.1).toFixed(1)});`);
+      lines.push(`#${spRepId}=IFCSHAPEREPRESENTATION(#${geomCtxId},'Body','SweptSolid',(#${spExtrudeId}));`);
+      lines.push(`#${spShapeId}=IFCPRODUCTDEFINITIONSHAPE($,$,(#${spRepId}));`);
+      lines.push(`#${spaceId}=IFCSPACE('${spaceGuid}',$,'Room ${s}.01','Synthetic room',$,#${spPlacementId},#${spShapeId},'Room ${s}.01',.ELEMENT.,.SPACE.,$);`);
+      lines.push(`#${next()}=IFCRELAGGREGATES('0SynthRelAg000000000${id}',$,$,$,#${storeyId},(#${spaceId}));`);
+    }
   }
 
   lines.push('ENDSEC;');

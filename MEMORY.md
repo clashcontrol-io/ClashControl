@@ -98,6 +98,8 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 - **Z-index:** use the scale in DESIGN.md §Layers (`--z-panel` 100 … `--z-tooltip` 5000). `.cc-desktop-topbar`/`.cc-top-toolbar` are their own stacking contexts on the dropdown tier — a menu nested in them can't rise above that tier.
 - **Measuring overlap:** `getBoundingClientRect` reports unclipped geometry for children under `overflow:hidden`. Confirm "overlap" with a screenshot.
 
+- **Rooms (IfcSpace)** — web-ifc's `StreamAllMeshes` never yields IfcSpace; both loaders stream them in a second `StreamMeshes(spaceIds)` pass. Room meshes are marked by `_ccMarkSpaceMesh` (shared translucent material, no depth write, no `_instKey`) and live on Three.js layer 3 (`_CC_SPACE_LAYER`), which the camera renders only while `prefs.showSpaces`; layer 4 force-shows a selected room. Every default raycaster (layer 0) ignores rooms for free — don't move them to layer 0. Keep them out of new bounds/material sweeps via `userData._ccSpace` / `_ccIsSpaceEl`. Geo caches without `sp:1` cold-parse once (`_ccGeoCacheLacksSpaces`).
+
 ### React / htm / UI
 - **Rules of Hooks:** never call hooks inside `${cond && function(){...}()}` render IIFEs. That crashed clash review (React #310). Extract a component instead (e.g. `ClashToleranceEditor`). Prefer native `<details>` for disclosure, since it needs no state.
 - **htm `<img src=${…}>` must be written `\x3Cimg`.** In plain report strings, split it as `'<im'+'g'`. Otherwise Chromium's preload scanner fetches the literal `${…}` URL (404 noise). The cooked string is identical for the htm parser.
@@ -204,6 +206,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ## Recently completed (details in git history)
 - 2026-07 (Waves 0–5, V7 P0–P6 slices, i18n infra, storage campaign, IFC worker protocol v2): see `git show 0f08459:MEMORY.md`.
 - **2026-09-28 — PR #712** (review + human walkthrough): bit-identical WASM narrow phase; true mesh clearance; reconciliation, project-restore, cross-model `expressId` scoping, shared-sync and BCF fixes; security pass; lint CI job; keyboard/a11y/viewer/floor-plan/clash-list overhaul; daily memory sync removed.
+- **2026-10-22:** IfcSpace rooms load with geometry on every IFC path (hidden by default; toolbar Style menu → "Show spaces"); storeys now also map IfcRelAggregates children (rooms).
 - **2026-09-29:** cached-BVH WASM `Engine` + worker-pool narrow phase + f64 BVH split parity fix; openings, role-aware severity, smart re-runs by default, specific clash titles; `// @ts-check` + typecheck CI; exhaustive-deps 116→0 (7 real stale-closure bugs fixed); design-token pass (0 axe violations); locale auto-detect + saved-pack loading; legacy selection-set resolver; ILS applicability gating; NL Ctrl+/ state fix; Python engine distance/depth parity (ClashControlEngine PR #28); native Rust narrow phase in the Tauri desktop app (`native` cargo feature, rayon `NativeEngine`, raw-byte IPC commands, allow-listed capability).
 
 ---
@@ -243,6 +246,8 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ## Active Work
 
 Update at the start and end of every session; strike (~~…~~ + date) when done and delete struck items after ~30 days.
+
+- ~~2026-10-22: IfcSpace (rooms) loading + display (worker + fallback + GLB paths, hidden by default behind a "Show spaces" toggle, kept out of detection/bounds/batching/render styles, geo-cache refresh, `tests/browser/spaces.mjs`).~~ (2026-10-22)
 
 - ~~2026-10-15: localhost-bridge hardening across ClashControl, ClashControlEngine, ClashControlConnector and the legacy ClashControlSmartBridge (branch `claude/nifty-bell-orposc` in each): exact Origin allow-list enforced server-side, loopback Host, PNA preflight, pairing tokens, browser `createBridgePairing`.~~ (2026-10-15)
 

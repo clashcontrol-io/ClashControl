@@ -398,8 +398,10 @@
   // survey/base-point markers, spatial containers (rooms/areas/spaces), scope
   // boxes, cameras, etc. Left in, they appear as stray geometry "flying" far
   // from the model (base points sit at the survey origin) and pollute clash
-  // results. This mirrors the IFC path, which skips IfcSpace / IfcOpeningElement
-  // / IfcVirtualElement / IfcAnnotation / IfcGrid and survey markers.
+  // results. This mirrors the IFC path, which skips IfcOpeningElement /
+  // IfcVirtualElement / IfcAnnotation / IfcGrid and survey markers (IFC rooms
+  // are loaded but hidden by default behind "Show spaces"; the live link
+  // still drops Revit rooms/areas/spaces here).
   //
   // Honour an explicit visibility flag from the Connector first (most reliable),
   // then fall back to a conservative category keyword list. Kept conservative so
