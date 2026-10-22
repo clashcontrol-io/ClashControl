@@ -1899,6 +1899,9 @@ function startApp() {
     }
     return l || undefined;
   }
+  // Active UI language (BCP-47) for AI requests: the sent locale lets /api/nl, /api/title and
+  // /api/triage answer in the user's language. Falls back to the browser language.
+  window._ccUiLocale = _ccFmtLocaleTag;
   window._ccNumFmt = function(n, digits) {
     if (typeof n !== 'number' || !isFinite(n)) return String(n);
     var tag = _ccFmtLocaleTag(), d = (digits == null) ? null : digits;
@@ -28899,7 +28902,7 @@ function startApp() {
     fetch('/api/triage', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({context:ctx})
+      body:JSON.stringify({context:Object.assign({}, ctx, (typeof window._ccUiLocale === 'function' && window._ccUiLocale()) ? {locale: window._ccUiLocale()} : {})})
     }).then(function(r){
       if (!r.ok) return r.json().then(function(j){ throw new Error(j.error || ('HTTP '+r.status)); }).catch(function(){ throw new Error('HTTP '+r.status); });
       return r.json();
@@ -36582,7 +36585,7 @@ function startApp() {
     return fetch('/api/title', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ clashes: todo.map(function(c){
+      body: JSON.stringify({ context: { locale: (typeof window._ccUiLocale === 'function' ? window._ccUiLocale() : undefined) }, clashes: todo.map(function(c){
         return {
           id: c.id,
           elemAType: c.elemAType, elemAName: c.elemAName,
@@ -36629,7 +36632,8 @@ function startApp() {
     try { return localStorage.getItem('cc_debug') === '1'; } catch(e) { return false; }
   }
   function callServerNL(command, context, replyContext) {
-    var body = { command: command, context: context };
+    var _loc = (typeof window._ccUiLocale === 'function') ? window._ccUiLocale() : null;
+    var body = { command: command, context: _loc ? Object.assign({}, context, { locale: _loc }) : context };
     if (replyContext) body.replyContext = replyContext;
     var t0 = Date.now();
     if (_ccDbg()) console.log('%c[CC NL → /api/nl]','color:#60a5fa;font-weight:bold', { command: command, hasContext: !!context, hasReply: !!replyContext, body: body });
