@@ -78,6 +78,16 @@ function generateKey(name) {
 // blow up a Postgres text column or the 256KB payload cap via one field.
 var FIELD_CAPS = { id: 200, title: 500, description: 5000, assignee: 200, category: 100, source: 100, globalId: 100 };
 
+// `type` is a short clash-type tag ('hard', 'soft', 'clearance', ...) —
+// restricted to a conservative token charset rather than a closed enum so
+// new client types don't need a server deploy.
+var TYPE_RE = /^[A-Za-z0-9_.:-]{1,40}$/;
+var SHORT_FIELD_CAPS = { priority: 40, status: 40, dueDate: 64, createdAt: 64 };
+
+function isValidPoint(p) {
+  return Array.isArray(p) && p.length === 3 && p.every(function(n) { return typeof n === 'number' && Number.isFinite(n); });
+}
+
 function isValidStr(v, cap) {
   return typeof v === 'string' && v.length <= cap;
 }
@@ -94,6 +104,14 @@ function validateIssue(issue) {
   if (issue.assignee != null && !isValidStr(String(issue.assignee), FIELD_CAPS.assignee)) return false;
   if (issue.globalIdA != null && !isValidStr(String(issue.globalIdA), FIELD_CAPS.globalId)) return false;
   if (issue.globalIdB != null && !isValidStr(String(issue.globalIdB), FIELD_CAPS.globalId)) return false;
+  if (issue.category != null && !isValidStr(issue.category, FIELD_CAPS.category)) return false;
+  if (issue.source != null && !isValidStr(issue.source, FIELD_CAPS.source)) return false;
+  if (issue.type != null && !(typeof issue.type === 'string' && TYPE_RE.test(issue.type))) return false;
+  if (issue.point != null && !isValidPoint(issue.point)) return false;
+  for (var f in SHORT_FIELD_CAPS) {
+    if (issue[f] != null && !isValidStr(issue[f], SHORT_FIELD_CAPS[f])) return false;
+  }
+  if (issue.status.length > SHORT_FIELD_CAPS.status) return false;
   if (issue.distance != null && !Number.isFinite(Number(issue.distance))) return false;
   // _updatedAt, when present, must be a value Date can parse — an invalid
   // one would otherwise blow up as an uncaught 500 in the PUT handler's
@@ -150,7 +168,8 @@ module.exports = async function handler(req, res) {
       // POST — Create a new shared project
       case 'POST': {
         var body = req.body || {};
-        var name = (body.name || 'Untitled Project').slice(0, 100);
+        var name = (typeof body.name === 'string' && body.name ? body.name : 'Untitled Project').slice(0, 100);
+        var postUser = isValidStr(body.user, FIELD_CAPS.assignee) && body.user ? body.user : 'anonymous';
 
         // Ensure uniqueness — re-check after every regeneration (the old
         // single retry could still 500 on a second collision).
@@ -209,7 +228,7 @@ module.exports = async function handler(req, res) {
           });
           if (initRows.length) {
             await sql`INSERT INTO shared_issues (id, project_id, data, updated_by)
-              SELECT r.id, ${key}, r.data, ${body.user || 'anonymous'}
+              SELECT r.id, ${key}, r.data, ${postUser}
               FROM jsonb_to_recordset(${JSON.stringify(initRows)}::jsonb) AS r(id text, data jsonb)
               ON CONFLICT (project_id, id) DO NOTHING`;
           }

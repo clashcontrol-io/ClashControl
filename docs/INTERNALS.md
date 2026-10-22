@@ -572,3 +572,29 @@ fail silently.
 
 Rule: a new companion app claims the next free 198xx port, gets a row here,
 and its probe failures must be silent (guard + catch, no unhandled rejections).
+
+## 23. Content-Security-Policy: why there is no `script-src`
+
+Decision (2026-10): `vercel.json` ships only the CSP directives that cannot
+break the app: `frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'`.
+The one `<form>` (index.html, a Preact `onSubmit` handler) has no cross-origin
+action, there are no `<object>`/`<embed>`/`<base>` elements, so these are safe.
+
+A `script-src` is deliberately NOT set, because a robust one needs a build step:
+
+- The core is one ~34k-line inline `<script>` that changes on nearly every commit.
+  A `sha256-` allow-list entry would go stale on each edit (CI bump-version also
+  rewrites index.html), and the project forbids build tooling. `'unsafe-inline'` would
+  make `script-src` nearly worthless against XSS, so it is not worth the churn.
+- Several other inline scripts and `type=importmap`/`type=module` blocks exist, and
+  addons are injected at runtime from same-origin URLs.
+- The print/report popups (`window.open` + `document.write`) inherit the opener
+  CSP and use inline `onclick="window.print()"`; strict `script-src` would break them.
+- web-ifc / WASM engines need `'wasm-unsafe-eval'`, and runtime-loaded CDN modules
+  (Spark.js, 3DTilesRenderer) come from several origins.
+
+Mitigations in place instead: SRI on all classic CDN scripts (`scripts/generate-sri.js
+--check`), `esc()` on every interpolated string in generated HTML reports
+(`tests/report-escaping-wiring.test.js`), exact-match CORS allow-list on `/api/*`.
+Revisit if a build/hash-injection step ever exists (e.g. CI computing inline-script
+hashes into vercel.json at deploy time).
