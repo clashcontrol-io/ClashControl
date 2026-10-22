@@ -633,6 +633,145 @@
   // Matrix keys a UI can list (top-level + MEP sub-disciplines).
   var MATRIX_KEYS = Object.freeze(['structural', 'architectural', 'civil', 'other', 'mep', 'mep.ventilation', 'mep.heating', 'mep.plumbing', 'mep.fire', 'mep.electrical', 'mep.piping']);
 
+
+  // ── Federation role suggestions (pre-run "smart suggestions") ──────────
+  // Groups of elements a coordinator usually wants out of — or labelled
+  // inside — a clash run, for ANY model (any schema / authoring tool /
+  // language). Evidence order, each with a confidence:
+  //   high    stated: PredefinedType (.PROVISIONFORVOID.), a classification
+  //           table role, IfcZone membership, IfcSpatialZone / IfcSpace class
+  //   medium  pack name hints; model majority; geometric evidence that is
+  //           specific (below); exact duplicates across models
+  //   low     catch-all classes with no evidence at all (unclassified proxies)
+  // Geometric heuristics only look at catch-all classes (proxies …) that are
+  // NOT MEP by stated/type evidence — a proxy that is a real equipment item
+  // (a manifold in a heating system, a socket in an electrical model) is
+  // never suggested as a provision or zone:
+  //   provision  >= 3 MEP elements of other models belonging to >= 2
+  //              different trades/systems pass THROUGH its box (they extend
+  //              beyond it), and it carries no material
+  //   zone       a large volume (>= 20 m³) that fully contains >= 10 elements
+  //              of other models, or a thin plate (<= 0.3 m, >= 8× thinner
+  //              than its other sides, those >= 1.5 m) lying inside a
+  //              wall/slab of another model (compartment boundary marker),
+  //              no material
+  //   duplicate  same IFC class and the same box (±2 mm) as an element of
+  //              another model (high when the names match too)
+  // Groups: space, zone, provision, duplicate, proxy.
+  var ROLE_GROUPS = Object.freeze(['provision', 'zone', 'space', 'duplicate', 'proxy']);
+  var DEFAULT_ROLE_CHOICES = Object.freeze({ provision: 'classify', zone: 'classify', space: 'exclude', duplicate: 'include', proxy: 'include' });
+  var _ROLE_SRC_CONF = { 'predefined-type': 'high', classification: 'high', system: 'high', entity: 'high', name: 'medium', model: 'medium', geometry: 'medium' };
+  function roleConfidence(src) { return _ROLE_SRC_CONF[src] || 'low'; }
+  // Effective choice for a group: 'exclude' | 'include' | 'classify'.
+  function roleChoice(group, rules) {
+    var rc = rules && rules.roleChoices;
+    var v = rc && rc[group];
+    if (v === 'exclude' || v === 'include' || v === 'classify') return v;
+    if (group === 'space') return rules && rules.includeSpaces ? 'include' : 'exclude';
+    return DEFAULT_ROLE_CHOICES[group] || 'include';
+  }
+  function _bx(b) { return b && b.min && b.max && b.max.x >= b.min.x ? b : null; }
+  function _isProxyLike(el) { var c = (el.props && el.props.ifcType) || ''; return !!PROXY_LIKE[c] || !c; }
+  function _statedMep(el) {
+    var c = el._ccCls;
+    if (!c) return false;
+    return c.d === 'mep' && (c.stated || c.src === 'type-object' || c.src === 'entity');
+  }
+  // models: [{id, discipline, elements:[{expressId, props, box:{min,max}, _ccCls}]}]
+  // Returns {byEl: Map(el -> {group, role, conf, src, ev, modelId}), groups:{g:{n, high, medium, low, models:{id:n}}}, sig}
+  function suggestRoles(models) {
+    models = models || [];
+    var byEl = new Map();
+    var groups = {};
+    ROLE_GROUPS.forEach(function(g) { groups[g] = { n: 0, high: 0, medium: 0, low: 0, models: {} }; });
+    function put(el, m, group, role, conf, src, ev) {
+      if (byEl.has(el)) return;
+      byEl.set(el, { group: group, role: role || null, conf: conf, src: src, ev: ev || '', modelId: m.id });
+      var g = groups[group]; g.n++; g[conf]++; g.models[m.id] = (g.models[m.id] || 0) + 1;
+    }
+    var cands = [], others = [];
+    models.forEach(function(m) {
+      (m.elements || []).forEach(function(el) {
+        var p = el.props || {};
+        if (p.ifcType === 'IfcSpace') { put(el, m, 'space', null, 'high', 'entity', 'IfcSpace'); return; }
+        var c = el._ccCls;
+        if (c && c.role) { put(el, m, c.role, c.role, roleConfidence(c.roleSrc), c.roleSrc, c.roleEv); return; }
+        var b = _bx(el.box);
+        if (!b) return;
+        var item = { el: el, m: m, b: b, mep: elementDiscipline(el, m.discipline) === 'mep', key: el._ccCls ? matrixKeyOf(el._ccCls) : '', sys: (p.groups && p.groups[0] && p.groups[0].name) || '',
+          wallSlab: /^(IfcWall|IfcSlab|IfcRoof|IfcCovering)/.test(p.ifcType || '') };
+        others.push(item);
+        if (_isProxyLike(el) && !_statedMep(el) && !p.material) cands.push(item);
+      });
+    });
+    // Geometry: sweep on x between candidates and everything else.
+    if (cands.length) {
+      var all = cands.map(function(c) { return { it: c, cand: 1 }; }).concat(others.map(function(o) { return { it: o, cand: 0 }; }));
+      all.sort(function(a, b) { return a.it.b.min.x - b.it.b.min.x; });
+      var activeC = [], activeO = [];
+      var stats = new Map();
+      cands.forEach(function(c) { stats.set(c, { mep: 0, through: 0, keys: {}, nk: 0, contained: 0, inWall: false }); });
+      var ovl = function(a, b) { return a.min.x <= b.max.x && a.max.x >= b.min.x && a.min.y <= b.max.y && a.max.y >= b.min.y && a.min.z <= b.max.z && a.max.z >= b.min.z; };
+      var inside = function(a, b, t) { return a.min.x >= b.min.x - t && a.max.x <= b.max.x + t && a.min.y >= b.min.y - t && a.max.y <= b.max.y + t && a.min.z >= b.min.z - t && a.max.z <= b.max.z + t; };
+      var test = function(c, o) {
+        if (c === o || c.m === o.m || !ovl(c.b, o.b)) return;
+        var st = stats.get(c);
+        var inC = inside(o.b, c.b, 0.001);
+        if (o.mep) { st.mep++; if (!inC) st.through++; var k = o.sys || o.key || 'mep'; if (!st.keys[k]) { st.keys[k] = 1; st.nk++; } }
+        if (inC) st.contained++;
+        if (o.wallSlab && inside(c.b, o.b, 0.01)) st.inWall = true;
+      };
+      for (var i = 0; i < all.length; i++) {
+        var a = all[i], x = a.it.b.min.x;
+        activeC = activeC.filter(function(c) { return c.b.max.x >= x; });
+        activeO = activeO.filter(function(o) { return o.b.max.x >= x; });
+        if (a.cand) { for (var j = 0; j < activeO.length; j++) test(a.it, activeO[j]); activeC.push(a.it); }
+        else { for (var k2 = 0; k2 < activeC.length; k2++) test(activeC[k2], a.it); activeO.push(a.it); }
+        if (!a.cand) { /* a candidate is also an "other" for other candidates */ }
+      }
+      cands.forEach(function(c) {
+        var st = stats.get(c), b = c.b;
+        var ex = [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z].sort(function(p, q) { return p - q; });
+        var vol = ex[0] * ex[1] * ex[2];
+        // Provisions are passed THROUGH (a large compartment volume merely
+        // contains its pipes); zones are tested first.
+        if (vol >= 20 && st.contained >= 10) { put(c.el, c.m, 'zone', 'zone', 'medium', 'geometry', 'encloses ' + st.contained + ' elements'); return; }
+        if (st.through >= 3 && st.nk >= 2) { put(c.el, c.m, 'provision', 'provision', 'medium', 'geometry', st.through + ' MEP elements of ' + st.nk + ' systems pass through'); return; }
+        if (vol >= 20 && st.contained >= 10) { put(c.el, c.m, 'zone', 'zone', 'medium', 'geometry', 'encloses ' + st.contained + ' elements'); return; }
+        if (ex[0] <= 0.3 && ex[1] >= 1.5 && ex[1] >= ex[0] * 8 && st.inWall) { put(c.el, c.m, 'zone', 'zone', 'medium', 'geometry', 'thin plate inside a wall/slab'); return; }
+      });
+    }
+    // Duplicates across models (same class + same box ±2 mm).
+    var seen = {};
+    others.forEach(function(o) {
+      if (byEl.has(o.el)) return;
+      var b = o.b, q = function(v) { return Math.round(v * 500); };
+      var key = (o.el.props.ifcType || '') + '|' + [q(b.min.x), q(b.min.y), q(b.min.z), q(b.max.x), q(b.max.y), q(b.max.z)].join(',');
+      var prev = seen[key];
+      if (prev && prev.m !== o.m) {
+        var same = (prev.el.props.name || '') === (o.el.props.name || '') && !!o.el.props.name;
+        put(o.el, o.m, 'duplicate', null, same ? 'high' : 'medium', 'geometry', 'same box as #' + prev.el.expressId + ' in another model');
+      } else if (!prev) seen[key] = o;
+    });
+    // Catch-all classes with no evidence at all.
+    others.forEach(function(o) {
+      if (byEl.has(o.el) || !_isProxyLike(o.el) || _statedMep(o.el)) return;
+      var p = o.el.props || {};
+      if (p.typeObject || (p.classification && p.classification.length) || (p.groups && p.groups.length)) return;
+      put(o.el, o.m, 'proxy', null, 'low', 'entity', p.ifcType || 'Element');
+    });
+    var h = 2166136261;
+    models.forEach(function(m) {
+      (m.elements || []).forEach(function(el) {
+        var e = byEl.get(el);
+        if (!e) return;
+        var t = m.id + ':' + el.expressId + ':' + e.group;
+        for (var ci = 0; ci < t.length; ci++) h = Math.imul(h ^ t.charCodeAt(ci), 16777619);
+      });
+    });
+    return { byEl: byEl, groups: groups, sig: byEl.size + ':' + (h >>> 0).toString(36) };
+  }
+
   function dataVersion() { return _dataVersion; }
 
   return Object.freeze({
@@ -663,6 +802,11 @@
     registerClassificationTable: registerClassificationTable,
     classificationTables: classificationTables,
     lookupClassification: lookupClassification,
-    dataVersion: dataVersion
+    dataVersion: dataVersion,
+    roleGroups: ROLE_GROUPS,
+    defaultRoleChoices: DEFAULT_ROLE_CHOICES,
+    roleConfidence: roleConfidence,
+    roleChoice: roleChoice,
+    suggestRoles: suggestRoles
   });
 }));

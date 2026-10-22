@@ -182,3 +182,58 @@ test('classifyModel: stated MEP majority beats the file name; signature tracks d
   core.registerHints('locale:extra', { subDisciplines: { electrical: ['zzz'] } });
   assert.notEqual(core.classifyModel(els, 'arch-model.ifc').sig, sig1, 'new pack data changes the signature (smart re-run must not reuse results)');
 });
+
+// ── Federation role suggestions (pre-run "smart suggestions") ──
+function bx(min, max) { return { min: { x: min[0], y: min[1], z: min[2] }, max: { x: max[0], y: max[1], z: max[2] } }; }
+function E(id, ifcType, box, props) { return { expressId: id, box: bx(box[0], box[1]), props: Object.assign({ ifcType }, props || {}) }; }
+
+test('suggestRoles: geometry finds provisions and compartment markers on unnamed proxies; equipment is never suggested', () => {
+  const struct = { id: 's', discipline: 'structural', elements: [
+    E(1, 'IfcSlab', [[0, 0, 3], [20, 10, 3.3]]),
+    E(2, 'IfcBuildingElementProxy', [[9, 6.5, 1.9], [13, 8.5, 2.5]]),            // crossed by 3 trades
+    E(3, 'IfcBuildingElementProxy', [[30, 30, 0], [31, 31, 1]]),                 // touches nothing
+  ] };
+  const mep = { id: 'm', discipline: 'mep', elements: [
+    E(10, 'IfcDuctSegment', [[1, 7.5, 2.0], [19, 8.0, 2.4]], { groups: [SYS('Supply air')] }),
+    E(11, 'IfcPipeSegment', [[9.95, 6, 2.15], [10.05, 9, 2.25]], { groups: [SYS('Sewage')] }),
+    E(12, 'IfcCableCarrierSegment', [[12, 6, 2.1], [12.3, 9, 2.2]], { groups: [SYS('Power')] }),
+    E(13, 'IfcBuildingElementProxy', [[15, 7.3, 1.8], [16, 8.2, 2.6]], { name: 'Fan unit', groups: [SYS('Supply air')] }),
+  ] };
+  const arch = { id: 'a', discipline: 'architectural', elements: [E(20, 'IfcWall', [[32, 0, 0], [38, 0.25, 3]])] };
+  const marker = { id: 'z', discipline: 'architectural', elements: [
+    E(30, 'IfcBuildingElementProxy', [[33, 0.0625, 0.25], [36, 0.125, 2.75]]),
+    E(31, 'IfcColumn', [[1, 1, 0], [1.3, 1.3, 3]]),
+    E(32, 'IfcColumn', [[1, 1, 0], [1.3, 1.3, 3]], { name: 'C1' }),
+  ] };
+  const dup = { id: 'd', discipline: 'structural', elements: [E(40, 'IfcColumn', [[1, 1, 0], [1.3, 1.3, 3]])] };
+  const models = [struct, mep, arch, marker, dup];
+  models.forEach((m) => core.classifyModel(m.elements, m.id));
+  const idx = core.suggestRoles(models);
+  const g = (m, i) => idx.byEl.get(m.elements[i]);
+  assert.deepEqual([g(struct, 1).group, g(struct, 1).src, g(struct, 1).conf], ['provision', 'geometry', 'medium']);
+  assert.deepEqual([g(struct, 2).group, g(struct, 2).conf], ['proxy', 'low'], 'unclassified, low confidence');
+  assert.equal(g(mep, 3), undefined, 'a proxy in a supply-air system is real equipment');
+  assert.deepEqual([g(marker, 0).group, g(marker, 0).src], ['zone', 'geometry']);
+  assert.equal(g(dup, 0).group, 'duplicate');
+  assert.equal(g(struct, 0), undefined);
+  assert.ok(idx.sig && idx.groups.provision.n === 1 && idx.groups.zone.n === 1);
+});
+
+test('suggestRoles: stated roles are high confidence; spaces are a group; choices and defaults', () => {
+  const m = { id: 'x', discipline: 'architectural', elements: [
+    E(1, 'IfcBuildingElementProxy', [[0, 0, 0], [1, 1, 1]], { predefinedType: 'PROVISIONFORVOID' }),
+    E(2, 'IfcSpace', [[0, 0, 0], [5, 5, 3]]),
+  ] };
+  core.classifyModel(m.elements, 'x');
+  const idx = core.suggestRoles([m]);
+  assert.deepEqual([idx.byEl.get(m.elements[0]).group, idx.byEl.get(m.elements[0]).conf], ['provision', 'high']);
+  assert.equal(idx.byEl.get(m.elements[1]).group, 'space');
+  assert.equal(core.roleChoice('provision', {}), 'classify');
+  assert.equal(core.roleChoice('zone', {}), 'classify');
+  assert.equal(core.roleChoice('duplicate', {}), 'include');
+  assert.equal(core.roleChoice('proxy', {}), 'include');
+  assert.equal(core.roleChoice('space', {}), 'exclude');
+  assert.equal(core.roleChoice('space', { includeSpaces: true }), 'include');
+  assert.equal(core.roleChoice('zone', { roleChoices: { zone: 'exclude' } }), 'exclude');
+  assert.equal(core.roleChoice('zone', { roleChoices: { zone: 'bogus' } }), 'classify');
+});
