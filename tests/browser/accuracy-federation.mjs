@@ -11,16 +11,19 @@
 //   3. runs three detections — default rules (hard + 50 mm clearance),
 //      hard-only, and 50 mm clearance-only — timing each;
 //   4. computes ground truth IN THE PAGE with the exact oracle
-//      (tests/_oracle-exact.js injected as a script) on the app's own world
-//      triangles (window._ccGetWorldTris) for every cross-model, in-scope
+//      (tests/_oracle-exact.js injected as a script) on the app's own engine
+//      triangles (window._ccGetWorldTris: Float32, relative to the session
+//      origin — index.html _ccChooseWorldOrigin) for every cross-model, in-scope
 //      element pair whose AABBs are within 50 mm (+1 mm) — all of them at CI
 //      scale; a seeded sample above CC_ORACLE_MAX_PAIRS (default 6000), plus a
 //      sample of the app-reported pairs (planted pairs always included), in
 //      which case precision/recall are sample estimates. Triangles are snapped
 //      to a 2^-30 m grid (strips ±1e-16 transform noise near 0), and a crossing
-//      that vanishes when one element moves 7.6 µm along an axis is bucketed
-//      as 'crossing≤7.6µm' (Float32 rounding of an intended contact) and
-//      excluded from hard precision/recall;
+//      that vanishes when one element moves 0.1 mm along an axis — the app's
+//      documented contact tolerance (index.html _CC_CONTACT_TOL_M) — is
+//      bucketed as 'crossing<0.1mm' and expected to be reported as a CONTACT
+//      (the report also counts how many of those vanish within 7.6 µm, i.e.
+//      are Float32 rounding of an intended flush contact);
 //   5. scores each run's clash list against that truth (confusion matrix,
 //      precision/recall per category, distance error, missed + spurious pairs)
 //      and separately against the planted-case manifest (analytic intent).
@@ -254,20 +257,30 @@ try {
           raw = O.classifyPair(pA.raw, pB.raw, { assumeClosed: true });
         } catch (e) { out.push({ a: A.gid, b: B.gid, error: String(e && e.message || e) }); continue; }
         const within = o.distance === 0 || O.cmpDistToRational(o, 1, 20) <= 0;
-        // Micro-overlap: a crossing that disappears when B moves 2^-17 m
-        // (7.6 µm, exact in float64) along some axis is Float32 rounding of an
-        // intended flush contact (e.g. a slab top 1 ulp above a wall top at
-        // 40 m elevation) — numerically ambiguous, scored separately.
-        let micro = false;
-        if (o.category === 'crossing' || o.category === 'contained') {
-          const st = prep(B).st, D = Math.pow(2, -17);
-          outer: for (let ax = 0; ax < 3; ax++) for (const sg of [1, -1]) {
+        // Micro-overlap: a crossing that disappears when B moves 0.1 mm (the
+        // app's contact tolerance) along some axis is shallower than the
+        // line the app draws between touch and crossing -> expected contact.
+        // micro7: it already vanishes at 2^-17 m (7.6 µm, exact in float64),
+        // i.e. it is Float32 rounding of an intended flush contact (e.g. a slab
+        // top 1 ulp above a wall top at 40 m elevation) — the evidence for the
+        // tolerance choice.
+        const vanishes = (D) => {
+          const st = prep(B).st;
+          for (let ax = 0; ax < 3; ax++) for (const sg of [1, -1]) {
             const t2 = Float64Array.from(st); for (let q = ax; q < t2.length; q += 3) t2[q] += sg * D;
             const c2 = O.classifyPair(prep(A).snapped, t2, { assumeClosed: true }).category;
-            if (c2 !== 'crossing' && c2 !== 'contained') { micro = true; break outer; }
+            if (c2 !== 'crossing' && c2 !== 'contained') return true;
           }
+          return false;
+        };
+        let micro = false, micro7 = false;
+        if (o.category === 'crossing' || o.category === 'contained') {
+          micro = vanishes(1e-4);
+          if (micro) micro7 = vanishes(Math.pow(2, -17));
         }
-        out.push({ micro, a: A.gid, b: B.gid, nameA: A.el.props.name, nameB: B.el.props.name, typeA: A.el.props.ifcType, typeB: B.el.props.ifcType,
+        // a gap below the 0.1 mm contact tolerance is reported as a contact
+        const nearGap = (o.category === 'clearance' || o.category === 'separate') && O.cmpDistToRational(o, 1, 10000) <= 0;
+        out.push({ micro, micro7, nearGap, a: A.gid, b: B.gid, nameA: A.el.props.name, nameB: B.el.props.name, typeA: A.el.props.ifcType, typeB: B.el.props.ifcType,
           cat: o.category, d: o.distance, within, cert: o.certificate, manifold: o.edgeManifoldA && o.edgeManifoldB, ms: o.ms,
           rawCat: raw.category, rawD: raw.distance });
       }
@@ -292,34 +305,45 @@ try {
   // ── 5. scoring ──
   const keyOf = (a, b) => [a, b].sort().join('|');
   const truthBy = new Map(truth.filter((t) => !t.error).map((t) => [keyOf(t.a, t.b), t]));
+  // App semantics (index.html _ccResolvePair): crossing/contained -> hard in a
+  // hard run, a 0 mm soft in a clearance-only run; surfaces that only touch
+  // (incl. crossings shallower than the 0.1 mm contact tolerance) -> 'contact'
+  // in every run; clearance within the window -> soft.
+  // Contacts — incl. gaps below 0.1 mm — are reported only by runs that
+  // include clearance (a hard-only run never computes distances).
   const expectFor = (t, rules) => {
-    if (t.micro) return rules.hard ? 'hard|soft' : 'soft';
+    const clearanceRun = (rules.maxGap || 0) > 0;
+    if (t.micro || t.cat === 'contact' || t.nearGap) return clearanceRun ? 'contact' : 'none';
     const overlap = t.cat === 'crossing' || t.cat === 'contained';
     if (rules.hard && overlap) return 'hard';
     if ((rules.maxGap || 0) > 0 && t.within) return 'soft';
     return 'none';
   };
   const RULESETS = { default: { hard: true, maxGap: 50 }, hardOnly: { hard: true, maxGap: 0 }, clearance50: { hard: false, maxGap: 50 } };
-  const CATS = ['crossing', 'crossing≤7.6µm', 'contained', 'contact', 'clearance≤50mm', 'clearance>50mm', 'separate', 'not-candidate'];
-  const bucket = (t) => !t ? 'not-candidate' : t.micro ? 'crossing≤7.6µm' : (t.cat === 'clearance' || t.cat === 'separate') ? (t.within ? 'clearance≤50mm' : t.cat === 'clearance' ? 'clearance>50mm' : 'separate') : t.cat;
+  const CATS = ['crossing', 'crossing<0.1mm', 'contained', 'contact', 'gap<0.1mm', 'clearance≤50mm', 'clearance>50mm', 'separate', 'not-candidate'];
+  report.oracle.microCrossings = { under0p1mm: truth.filter((t) => t.micro).length, under7p6um: truth.filter((t) => t.micro7).length };
+  console.log(`  crossings shallower than the 0.1 mm contact tolerance: ${report.oracle.microCrossings.under0p1mm} (of which ${report.oracle.microCrossings.under7p6um} vanish within 7.6 µm — Float32 rounding of intended flush contacts)`);
+  const bucket = (t) => !t ? 'not-candidate' : t.micro ? 'crossing<0.1mm' : t.nearGap ? 'gap<0.1mm' : (t.cat === 'clearance' || t.cat === 'separate') ? (t.within ? 'clearance≤50mm' : t.cat === 'clearance' ? 'clearance>50mm' : 'separate') : t.cat;
   function prf(tp, fp, fn) { return { tp, fp, fn, precision: tp + fp ? tp / (tp + fp) : 1, recall: tp + fn ? tp / (tp + fn) : 1 }; }
   for (const [key, res] of Object.entries(results)) {
     const rules = RULESETS[key];
     const appBy = new Map();
-    for (const c of res.clashes) { const k = keyOf(c.a, c.b); if (!appBy.has(k) || (c.type === 'hard' && appBy.get(k).type !== 'hard')) appBy.set(k, c); }
-    const conf = {}; for (const c of CATS) conf[c] = { hard: 0, soft: 0, none: 0 };
-    let hTP = 0, hFP = 0, hFN = 0, iTP = 0, iFP = 0, iFN = 0, xTP = 0, xFP = 0, xFN = 0, sTP = 0, sFP = 0, sFN = 0, exact = 0, n = 0;
+    const rank = { hard: 3, contact: 2, soft: 1 };
+    for (const c of res.clashes) { const k = keyOf(c.a, c.b); if (!appBy.has(k) || (rank[c.type] || 0) > (rank[appBy.get(k).type] || 0)) appBy.set(k, c); }
+    const conf = {}; for (const c of CATS) conf[c] = { hard: 0, contact: 0, soft: 0, none: 0 };
+    let hTP = 0, hFP = 0, hFN = 0, iTP = 0, iFP = 0, iFN = 0, xTP = 0, xFP = 0, xFN = 0, sTP = 0, sFP = 0, sFN = 0, cTP = 0, cFP = 0, cFN = 0, exact = 0, n = 0;
     const dErr = [], missed = [], spurious = [], wrongType = [], distWrong = [];
     const keys = new Set([...truthBy.keys(), ...[...appBy.keys()].filter((k) => !cand.sampled || truthBy.has(k))]);
     for (const k of keys) {
       const t = truthBy.get(k), c = appBy.get(k);
       const got = c ? c.type : 'none';
       const exp = t ? expectFor(t, rules) : 'none';
-      conf[bucket(t)][got === 'hard' || got === 'soft' ? got : 'none']++;
+      conf[bucket(t)][got === 'hard' || got === 'soft' || got === 'contact' ? got : 'none']++;
       n++; if (exp.split('|').includes(got)) exact++;
-      if (t && t.micro) continue; // numerically ambiguous: counted in the confusion matrix only
-      const overlap = t && (t.cat === 'crossing' || t.cat === 'contained');
-      const incl = overlap || (t && t.cat === 'contact');
+      const overlap = t && !t.micro && (t.cat === 'crossing' || t.cat === 'contained');
+      const incl = t && (overlap || t.micro || t.nearGap || t.cat === 'contact');
+      const contactExp = exp === 'contact';
+      if (got === 'contact') { if (contactExp) cTP++; else cFP++; } else if (contactExp) cFN++;
       if (got === 'hard') { if (overlap) hTP++; else hFP++; if (incl) iTP++; else iFP++; if (t && t.cat === 'crossing') xTP++; else xFP++; }
       else { if (overlap && rules.hard) hFN++; if (incl && rules.hard) iFN++; if (t && t.cat === 'crossing' && rules.hard) xFN++; }
       const softExp = exp === 'soft';
@@ -336,6 +360,7 @@ try {
       evaluatedPairs: n, exactOutcomeMatch: exact,
       hard_vs_overlap: prf(hTP, hFP, hFN), hard_vs_crossing_contact_contained: prf(iTP, iFP, iFN), hard_vs_crossing_only: prf(xTP, xFP, xFN),
       soft_within_50mm: prf(sTP, sFP, sFN),
+      contact: prf(cTP, cFP, cFN),
       clearance_error_mm: { n: dErr.length, max: dErr.length ? Math.max(...dErr) : 0, mean: dErr.length ? dErr.reduce((s, v) => s + v, 0) / dErr.length : 0, over1mm: dErr.filter((e) => e > 1).length },
       confusion: conf, missed, spurious, wrongType, distanceOver1mm: distWrong,
     };
@@ -347,12 +372,13 @@ try {
       console.log(`  HARD vs crossing∪contact∪contained  ${f(out.hard_vs_crossing_contact_contained)}`);
       console.log(`  HARD vs crossing only               ${f(out.hard_vs_crossing_only)}`);
     }
-    if (rules.maxGap) console.log(`  SOFT (≤50 mm, incl. contact)        ${f(out.soft_within_50mm)}`);
+    if (rules.maxGap) console.log(`  SOFT (≤50 mm, excl. contact)        ${f(out.soft_within_50mm)}`);
+    console.log(`  CONTACT (surfaces only touch)       ${f(out.contact)}`);
     console.log(`  exact outcome match                 ${exact}/${n}`);
     if (rules.maxGap) console.log(`  clearance error (unmerged rows)     max ${out.clearance_error_mm.max.toFixed(3)} mm, mean ${out.clearance_error_mm.mean.toFixed(3)} mm, >1 mm: ${out.clearance_error_mm.over1mm}/${out.clearance_error_mm.n}`);
     console.log('  confusion (truth row × app column):');
-    console.log('    ' + 'truth'.padEnd(16) + 'hard'.padStart(7) + 'soft'.padStart(7) + 'none'.padStart(7));
-    for (const c of CATS) { const m = conf[c]; if (m.hard + m.soft + m.none) console.log('    ' + c.padEnd(16) + String(m.hard).padStart(7) + String(m.soft).padStart(7) + String(m.none).padStart(7)); }
+    console.log('    ' + 'truth'.padEnd(16) + 'hard'.padStart(7) + 'contact'.padStart(8) + 'soft'.padStart(7) + 'none'.padStart(7));
+    for (const c of CATS) { const m = conf[c]; if (m.hard + m.contact + m.soft + m.none) console.log('    ' + c.padEnd(16) + String(m.hard).padStart(7) + String(m.contact).padStart(8) + String(m.soft).padStart(7) + String(m.none).padStart(7)); }
     const show = (label, arr) => {
       if (!arr.length) return;
       console.log(`  ${label}: ${arr.length}${arr.length > 25 ? ' (first 25)' : ''}`);
@@ -375,7 +401,8 @@ try {
       const within = c.category === 'clearance' || c.category === 'separate' ? (c.toleranceRelation === 'at' ? null : (c.distanceM != null ? c.distanceM <= 0.05 : null)) : true;
       let exp;
       if (rules.hard && (c.category === 'crossing' || c.category === 'contained')) exp = 'hard';
-      else if (rules.maxGap && (c.category === 'contact' || c.category === 'crossing' || c.category === 'contained' || within === true)) exp = 'soft';
+      else if (c.category === 'contact') exp = rules.maxGap ? 'contact' : 'none';
+      else if (rules.maxGap && (c.category === 'crossing' || c.category === 'contained' || within === true)) exp = 'soft';
       else if (within === null && rules.maxGap) exp = 'soft|none';
       else exp = 'none';
       row.runs[key] = { expected: exp, app: got, appMm: hit ? (hit.type === 'soft' ? hit.clearanceMm : hit.distance) : null, opening: hit ? hit.opening : null, ok: exp.split('|').includes(got) };

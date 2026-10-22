@@ -1447,7 +1447,8 @@ function startApp() {
     priority:'all', category:'all', assignee:'all', issueElementType:'all', issueStorey:'all',
     modelPair:null, // {a:modelId, b:modelId} set by clicking a Model clash matrix cell
     showHandled:false, // "Show resolved/denied" toggle — default OFF, see ccUiClashListSummary
-    showProvided:false // "pass through provided openings — show" toggle — default OFF (rules.hideProvidedOpenings)
+    showProvided:false, // "pass through provided openings — show" toggle — default OFF (rules.hideProvidedOpenings)
+    showContacts:false  // "surfaces only touch — show" toggle — default OFF (rules.hideContacts)
   };
   var _ccLoadPref = function(key,fallback){try{var v=localStorage.getItem('cc_'+key);return v!==null?JSON.parse(v):fallback;}catch(e){return fallback;}};
 
@@ -1517,7 +1518,7 @@ function startApp() {
   var _savedSection=(function(){try{return JSON.parse(localStorage.getItem('cc_section')||'null');}catch(e){return null;}})();
   var INIT = {
     models:[], parkedModels:[], clashes:[], issues:[], activeId:null, lastActiveClashId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false, selectionSets:[], searchSets:[], assignmentRules:[],
-    rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, fullRerun:false, hideProvidedOpenings:true, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:1e-5, toleranceByTypePair:{}, useSemanticFilter:true, includeSpaces:false, excludeSameDiscipline:true },
+    rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, fullRerun:false, hideProvidedOpenings:true, hideContacts:true, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:0, toleranceByTypePair:{}, useSemanticFilter:true, includeSpaces:false, excludeSameDiscipline:true },
     detectionSettings:null, // Captured at detection run time: {clearance_mm, discipline_filters, scope:{complete, partialModels?}}
     trainingMode:(function(){try{var v=localStorage.getItem('cc_trainingMode');return v===null?true:v==='1';}catch(e){return true;}}()),
     clashGroupBy:(function(){var v=_ccLoadPref('clashGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), clashSortBy:(function(){var v=_ccLoadPref('clashSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
@@ -2095,7 +2096,7 @@ function startApp() {
     var core = window._ccClashClassificationCore;
     if (core && typeof core.deterministicSeverity === 'function') return core.deterministicSeverity(c);
     // Core script failed to load: keep the list usable with a flat guess.
-    return c.type === 'hard' ? 'major' : c.type === 'duplicate' ? 'info' : 'minor';
+    return c.type === 'hard' ? 'major' : (c.type === 'duplicate' || c.type === 'contact') ? 'info' : 'minor';
   }
   function _clearElCaches(model) {
     _bvhLRURemoveModel(model);
@@ -5965,8 +5966,8 @@ function startApp() {
   var _cc2DContentCenter = null; // {x, z} in canvas world space (x = -worldX, z = worldZ)
 
   // Content hash of everything about an element that can change a pair result
-  // or a clash's payload: identity, world box, every mesh's transform and
-  // vertex/index counts, the identity/classification props that end up on the
+  // or a clash's payload: identity, world box, every mesh's transform,
+  // vertex/index counts and a strided vertex sample, the identity/classification props that end up on the
   // clash (type, name, storey, material ...), the load-bearing flag (severity
   // role) and the opening boxes (provision-for-void). Two independent 32-bit
   // FNV/DJB2 hashes -> 64 bits; numbers quantised to 0.1 mm.
@@ -5996,6 +5997,14 @@ function startApp() {
       var pos = g && g.attributes && g.attributes.position;
       num(pos ? pos.count : 0);
       num(g && g.index ? g.index.count : 0);
+      // Cheap strided vertex sample (<= 64 vertices + the last one): an edit
+      // that keeps the counts, the matrix and the box (e.g. a sloped top face
+      // reshaped inside the same bounds) must not be carried over unseen.
+      if (pos && pos.count) {
+        var vstep = Math.max(1, Math.floor(pos.count / 64));
+        for (var vi = 0; vi < pos.count; vi += vstep) { num(pos.getX(vi)); num(pos.getY(vi)); num(pos.getZ(vi)); }
+        num(pos.getX(pos.count - 1)); num(pos.getY(pos.count - 1)); num(pos.getZ(pos.count - 1));
+      }
       try { m.updateWorldMatrix(true, false); } catch (e) {}
       var me = m.matrixWorld && m.matrixWorld.elements;
       if (me) for (var k = 0; k < 16; k++) num(me[k]);
@@ -6016,7 +6025,7 @@ function startApp() {
     try {
       var r = {};
       Object.keys(rules || {}).sort().forEach(function(k) {
-        if (k === 'fullRerun' || k === 'changeAware' || k === 'hideProvidedOpenings') return;
+        if (k === 'fullRerun' || k === 'changeAware' || k === 'hideProvidedOpenings' || k === 'hideContacts') return;
         r[k] = rules[k];
       });
       var ms = (models || []).map(function(m) {
@@ -6028,7 +6037,7 @@ function startApp() {
         typeof window._ccWasmBatchIntersect === 'function' ? 'b' : ''].join('');
       var sig = _ccStableJSON(r);
       if (!sig) return '';
-      return sig + '#' + ms.join('|') + '#' + eng + '#' + Object.keys(protectedPairs || {}).sort().join(',');
+      return sig + '#' + ms.join('|') + '#' + eng + '#' + Object.keys(protectedPairs || {}).sort().join(',') + '#o' + _ccOrigin.join(',');
     } catch (e) {
       return ''; // cannot be computed -> never matches -> always a full run
     }
@@ -6185,17 +6194,81 @@ function startApp() {
   }
   window._ccElementWorldBox = _ccElementWorldBox;
 
+  // ── Session origin offset (engine frame) ──────────────────────────
+  // Every engine-side coordinate (_getWorldTris / _getWorldVerts and all
+  // their consumers: kernels, BVHs, worker/native pool payloads, the local
+  // engine payload, the visibility addon) is stored as Float32 RELATIVE to
+  // one shared f64 origin. Float32 world coordinates at 100 km have a 7.8 mm
+  // resolution (a 50.1 mm gap read as 46.9 mm); relative to an origin near
+  // the federation they keep µm precision. The origin is the centre of the
+  // union of all element boxes, snapped to a 64 m grid so ordinary edits do
+  // not move it; it changes only when that centre moves by >32 m, and every
+  // per-element engine cache is dropped when it does. Reported points
+  // (clash point, closest pair) are converted back with _ccFromFrame.
+  // Part of the smart re-run signature (_ccRunSignature).
+  var _ccOrigin = [0, 0, 0], _ccOriginSet = false;
+  var _CC_ORIGIN_GRID = 64;
+  function _ccChooseWorldOrigin(models) {
+    var mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity], any = false;
+    (models || []).forEach(function(m) {
+      (m.elements || []).forEach(function(el) {
+        var b = el && el.box;
+        if (!b || !b.min || !isFinite(b.min.x) || !isFinite(b.max.x)) return;
+        any = true;
+        if (b.min.x < mn[0]) mn[0] = b.min.x; if (b.max.x > mx[0]) mx[0] = b.max.x;
+        if (b.min.y < mn[1]) mn[1] = b.min.y; if (b.max.y > mx[1]) mx[1] = b.max.y;
+        if (b.min.z < mn[2]) mn[2] = b.min.z; if (b.max.z > mx[2]) mx[2] = b.max.z;
+      });
+    });
+    var o = [0, 0, 0];
+    if (any) for (var k = 0; k < 3; k++) o[k] = Math.round((mn[k] + mx[k]) / 2 / _CC_ORIGIN_GRID) * _CC_ORIGIN_GRID;
+    var changed = !_ccOriginSet || o[0] !== _ccOrigin[0] || o[1] !== _ccOrigin[1] || o[2] !== _ccOrigin[2];
+    if (changed) {
+      _ccOrigin = o;
+      (models || []).forEach(function(m) { (m.elements || []).forEach(_ccDropEngineCaches); });
+      _bvhLRU.forEach(function(v, el) { _ccDropEngineCaches(el); });
+      _bvhLRU.clear();
+    }
+    _ccOriginSet = true;
+    return changed;
+  }
+  function _ccDropEngineCaches(el) {
+    if (!el) return;
+    delete el._wvCache; delete el._triCache; delete el._bvhCache; delete el._topo; delete el._fbox;
+  }
+  function _ccEnsureWorldOrigin() {
+    if (_ccOriginSet) return;
+    var st = window._ccLatestState;
+    _ccChooseWorldOrigin(st && st.models || []);
+  }
+  // Element box in the engine frame (cached alongside the triangle cache).
+  function _ccFrameBox(el) {
+    var b = el.box;
+    var f = el._fbox;
+    if (f && f._src === b && f._o === _ccOrigin) return f;
+    f = { min: { x: b.min.x - _ccOrigin[0], y: b.min.y - _ccOrigin[1], z: b.min.z - _ccOrigin[2] },
+          max: { x: b.max.x - _ccOrigin[0], y: b.max.y - _ccOrigin[1], z: b.max.z - _ccOrigin[2] }, _src: b, _o: _ccOrigin };
+    el._fbox = f;
+    return f;
+  }
+  window._ccWorldOrigin = function() { _ccEnsureWorldOrigin(); return _ccOrigin.slice(); };
+  window._ccEnsureWorldOrigin = function(models) {
+    if (models) _ccChooseWorldOrigin(models); else _ccEnsureWorldOrigin();
+    return _ccOrigin.slice();
+  };
+
   function _getWorldVerts(el) {
     if (el._wvCache) { _bvhLRUTouch(el); return el._wvCache; }
     _bvhLRUEvict(); // caps peak memory on the soft/clearance path too
-    var all = [];
+    _ccEnsureWorldOrigin();
+    var all = [], ox = _ccOrigin[0], oy = _ccOrigin[1], oz = _ccOrigin[2];
     _ccGetElementGeometry(el).forEach(function(h) {
       var pos = h.position, mat = h.transform;
       var v = new THREE.Vector3();
       for (var i = 0; i < pos.count; i++) {
         v.set(pos.getX(i), pos.getY(i), pos.getZ(i));
         v.applyMatrix4(mat);
-        all.push(v.x, v.y, v.z);
+        all.push(v.x - ox, v.y - oy, v.z - oz); // f64 subtract, THEN Float32
       }
     });
     el._wvCache = new Float32Array(all);
@@ -6208,7 +6281,8 @@ function startApp() {
     // _getBVH — without it the per-element tri caches grow uncapped.
     if (el._triCache) { _bvhLRUTouch(el); return el._triCache; }
     _bvhLRUEvict();
-    var tris = [];
+    _ccEnsureWorldOrigin();
+    var tris = [], ox = _ccOrigin[0], oy = _ccOrigin[1], oz = _ccOrigin[2];
     _ccGetElementGeometry(el).forEach(function(h) {
       var pos = h.position, mat = h.transform, idx = h.index;
       var va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3();
@@ -6220,7 +6294,7 @@ function startApp() {
         va.set(pos.getX(ia), pos.getY(ia), pos.getZ(ia)).applyMatrix4(mat);
         vb.set(pos.getX(ib), pos.getY(ib), pos.getZ(ib)).applyMatrix4(mat);
         vc.set(pos.getX(ic), pos.getY(ic), pos.getZ(ic)).applyMatrix4(mat);
-        tris.push(va.x,va.y,va.z, vb.x,vb.y,vb.z, vc.x,vc.y,vc.z);
+        tris.push(va.x-ox,va.y-oy,va.z-oz, vb.x-ox,vb.y-oy,vb.z-oz, vc.x-ox,vc.y-oy,vc.z-oz);
       }
     });
     el._triCache = new Float32Array(tris);
@@ -6245,7 +6319,8 @@ function startApp() {
     return c;
   }
   // Results that did not come from the browser engine's clash-object builder
-  // (the local engine) get the same role + opening annotations after the fact.
+  // (the local engine) get the same contact classification + role + opening
+  // annotations after the fact.
   function _ccAnnotateClashes(clashes, models) {
     if (!clashes || !clashes.length) return;
     var byModel = {};
@@ -6258,6 +6333,14 @@ function startApp() {
       var a = byModel[c.modelAId], b = byModel[c.modelBId];
       var eA = a && a.els[c.elemA], eB = b && b.els[c.elemB];
       if (!eA || !eB) return;
+      // Same crossing-vs-contact rule as the browser engine (_ccTouchVerdict):
+      // the local engine reports every surface hit as hard and every touch as
+      // a 0 mm clearance; a touch is a 'contact', never a hard/soft clash.
+      if ((c.type === 'hard' || (c.type === 'soft' && c.distance === 0)) && eA.meshes && eB.meshes) {
+        var _v = null;
+        try { _v = _ccTouchVerdict(eA, eB); } catch (e) { _v = null; }
+        if (_v === 'contact') { c.type = 'contact'; c.distance = 0; c.clearanceMm = 0; }
+      }
       if (c.roleA === undefined) c.roleA = _ccRoleOfElement(eA, a.m);
       if (c.roleB === undefined) c.roleB = _ccRoleOfElement(eB, b.m);
       if ((c.type === 'hard' || c.type === 'soft') && c.opening === undefined) {
@@ -6310,10 +6393,12 @@ function startApp() {
       }
       var tris = _getWorldTris(other);
       if (!tris || !tris.length) return null;
-      var hb = host.box, pad = 0.001;
+      // Triangles are in the engine frame; openings are world boxes.
+      var hb = _ccFrameBox(host), pad = 0.001;
       var pts = core.clipTrianglesToBox(tris, [hb.min.x - pad, hb.min.y - pad, hb.min.z - pad],
         [hb.max.x + pad, hb.max.y + pad, hb.max.z + pad], _OPENING_MAX_TRIS);
       if (!pts || !pts.length) return null;
+      for (var pi = 0; pi + 2 < pts.length; pi += 3) { pts[pi] += _ccOrigin[0]; pts[pi+1] += _ccOrigin[1]; pts[pi+2] += _ccOrigin[2]; }
       return core.classifyOpening(ops, pts, _OPENING_TOL_M, type);
     }
     var a = tryHost(eA, eB), b = tryHost(eB, eA);
@@ -6336,12 +6421,17 @@ function startApp() {
     var e2x=b2x-b0x,e2y=b2y-b0y,e2z=b2z-b0z;
     var n2x=e1y*e2z-e1z*e2y, n2y=e1z*e2x-e1x*e2z, n2z=e1x*e2y-e1y*e2x;
     var nl2=n2x*n2x+n2y*n2y+n2z*n2z;
-    if(nl2<1e-10) return false;
+    if(nl2<1e-24) return false;
     var d2=-(n2x*b0x+n2y*b0y+n2z*b0z);
     var da0=n2x*a0x+n2y*a0y+n2z*a0z+d2;
     var da1=n2x*a1x+n2y*a1y+n2z*a1z+d2;
     var da2=n2x*a2x+n2y*a2y+n2z*a2z+d2;
     var eps2 = 1e-6 * Math.sqrt(nl2);
+    // Möller's epsilon snap: a vertex within 1 µm of the other plane IS on it.
+    // Without it a vertex at +1e-13 next to two clearly positive ones passes
+    // the rejection below, picks a same-sign "lone" vertex and the interval
+    // is EXTRAPOLATED beyond the triangle (a 25 mm gap read as a hit).
+    if(Math.abs(da0)<=eps2) da0=0; if(Math.abs(da1)<=eps2) da1=0; if(Math.abs(da2)<=eps2) da2=0;
     if(da0>eps2&&da1>eps2&&da2>eps2) return false;
     if(da0<-eps2&&da1<-eps2&&da2<-eps2) return false;
     // Coplanar pair: flush surface contact (wall base in slab-top plane),
@@ -6355,12 +6445,13 @@ function startApp() {
     var f2x=a2x-a0x,f2y=a2y-a0y,f2z=a2z-a0z;
     var n1x=f1y*f2z-f1z*f2y, n1y=f1z*f2x-f1x*f2z, n1z=f1x*f2y-f1y*f2x;
     var nl1=n1x*n1x+n1y*n1y+n1z*n1z;
-    if(nl1<1e-10) return false;
+    if(nl1<1e-24) return false;
     var d1=-(n1x*a0x+n1y*a0y+n1z*a0z);
     var db0=n1x*b0x+n1y*b0y+n1z*b0z+d1;
     var db1=n1x*b1x+n1y*b1y+n1z*b1z+d1;
     var db2=n1x*b2x+n1y*b2y+n1z*b2z+d1;
     var eps1 = 1e-6 * Math.sqrt(nl1);
+    if(Math.abs(db0)<=eps1) db0=0; if(Math.abs(db1)<=eps1) db1=0; if(Math.abs(db2)<=eps1) db2=0;
     if(db0>eps1&&db1>eps1&&db2>eps1) return false;
     if(db0<-eps1&&db1<-eps1&&db2<-eps1) return false;
 
@@ -6371,11 +6462,20 @@ function startApp() {
     else if(ay>=az) proj=function(x,y,z){return y;};
     else proj=function(x,y,z){return z;};
 
+    // Möller's lone-vertex choice, INCLUDING the zero-distance cases: the
+    // lone vertex (i0) must have a non-zero signed distance, otherwise
+    // r = 0/0. Two vertices exactly in the other plane (an edge lying in it —
+    // everywhere in axis-aligned BIM) pick the off-plane vertex, so the
+    // interval is exactly that edge; all three zero is the coplanar case
+    // (policy: no hit). Returns false only for that all-zero case.
     function interval(out,v0x,v0y,v0z,v1x,v1y,v1z,v2x,v2y,v2z,dd0,dd1,dd2) {
       var i0x,i0y,i0z,i1x,i1y,i1z,i2x,i2y,i2z,di0,di1,di2;
       if(dd0*dd1>0){i0x=v2x;i0y=v2y;i0z=v2z;i1x=v0x;i1y=v0y;i1z=v0z;i2x=v1x;i2y=v1y;i2z=v1z;di0=dd2;di1=dd0;di2=dd1;}
       else if(dd0*dd2>0){i0x=v1x;i0y=v1y;i0z=v1z;i1x=v0x;i1y=v0y;i1z=v0z;i2x=v2x;i2y=v2y;i2z=v2z;di0=dd1;di1=dd0;di2=dd2;}
-      else{i0x=v0x;i0y=v0y;i0z=v0z;i1x=v1x;i1y=v1y;i1z=v1z;i2x=v2x;i2y=v2y;i2z=v2z;di0=dd0;di1=dd1;di2=dd2;}
+      else if(dd1*dd2>0||dd0!==0){i0x=v0x;i0y=v0y;i0z=v0z;i1x=v1x;i1y=v1y;i1z=v1z;i2x=v2x;i2y=v2y;i2z=v2z;di0=dd0;di1=dd1;di2=dd2;}
+      else if(dd1!==0){i0x=v1x;i0y=v1y;i0z=v1z;i1x=v0x;i1y=v0y;i1z=v0z;i2x=v2x;i2y=v2y;i2z=v2z;di0=dd1;di1=dd0;di2=dd2;}
+      else if(dd2!==0){i0x=v2x;i0y=v2y;i0z=v2z;i1x=v0x;i1y=v0y;i1z=v0z;i2x=v1x;i2y=v1y;i2z=v1z;di0=dd2;di1=dd0;di2=dd1;}
+      else return false;
       var p0=proj(i0x,i0y,i0z), p1=proj(i1x,i1y,i1z), p2=proj(i2x,i2y,i2z);
       var r1=di0/(di0-di1), r2=di0/(di0-di2);
       var t1=p0+(p1-p0)*r1;
@@ -6384,21 +6484,25 @@ function startApp() {
       var q2x=i0x+(i2x-i0x)*r2, q2y=i0y+(i2y-i0y)*r2, q2z=i0z+(i2z-i0z)*r2;
       if(t1<t2){out[0]=t1;out[1]=t2;out[2]=q1x;out[3]=q1y;out[4]=q1z;out[5]=q2x;out[6]=q2y;out[7]=q2z;}
       else{out[0]=t2;out[1]=t1;out[2]=q2x;out[3]=q2y;out[4]=q2z;out[5]=q1x;out[6]=q1y;out[7]=q1z;}
+      return true;
     }
     var iA=_ttIvalA, iB=_ttIvalB;
-    interval(iA,a0x,a0y,a0z,a1x,a1y,a1z,a2x,a2y,a2z,da0,da1,da2);
-    interval(iB,b0x,b0y,b0z,b1x,b1y,b1z,b2x,b2y,b2z,db0,db1,db2);
+    if(!interval(iA,a0x,a0y,a0z,a1x,a1y,a1z,a2x,a2y,a2z,da0,da1,da2)) return null;
+    if(!interval(iB,b0x,b0y,b0z,b1x,b1y,b1z,b2x,b2y,b2z,db0,db1,db2)) return null;
     if(iA[0]>=iB[1]||iB[0]>=iA[1]) return null; // strict < to exclude edge-only touches
     var oMin=Math.max(iA[0],iB[0]), oMax=Math.min(iA[1],iB[1]);
     var src=iA[1]-iA[0]>=iB[1]-iB[0]?iA:iB;
     var len=src[1]-src[0];
-    if(len<1e-12) return [src[2],src[3],src[4],0];
+    if(len<1e-12) return (src[2]!==src[2]||src[3]!==src[3]||src[4]!==src[4]) ? null : [src[2],src[3],src[4],0];
     var rMin=(oMin-src[0])/len, rMax=(oMax-src[0])/len;
     var pMinX=src[2]+(src[5]-src[2])*rMin, pMinY=src[3]+(src[6]-src[3])*rMin, pMinZ=src[4]+(src[7]-src[4])*rMin;
     var pMaxX=src[2]+(src[5]-src[2])*rMax, pMaxY=src[3]+(src[6]-src[3])*rMax, pMaxZ=src[4]+(src[7]-src[4])*rMax;
     var sdx=pMaxX-pMinX, sdy=pMaxY-pMinY, sdz=pMaxZ-pMinZ;
-    return [(pMinX+pMaxX)/2, (pMinY+pMaxY)/2, (pMinZ+pMaxZ)/2,
-            Math.sqrt(sdx*sdx+sdy*sdy+sdz*sdz)];
+    var hx=(pMinX+pMaxX)/2, hy=(pMinY+pMaxY)/2, hz=(pMinZ+pMaxZ)/2, hl=Math.sqrt(sdx*sdx+sdy*sdy+sdz*sdz);
+    // Backstop: a NaN (non-finite input) must never count as a hit — it used
+    // to fill the collect cap and make the probe/min-distance report "hit".
+    if(hx!==hx||hy!==hy||hz!==hz||hl!==hl) return null;
+    return [hx, hy, hz, hl];
   }
 
   // ── BVH LRU cache ──  See docs/INTERNALS.md § 21.8
@@ -6436,14 +6540,14 @@ function startApp() {
     while (_bvhLRU.size >= _BVH_CACHE_MAX_FN()) {
       var old = _bvhLRU.keys().next().value;
       _bvhLRU.delete(old);
-      delete old._wvCache; delete old._triCache; delete old._bvhCache;
+      delete old._wvCache; delete old._triCache; delete old._bvhCache; delete old._topo;
     }
   }
   function _bvhLRURemoveModel(model) {
     if (!model || !model.elements) return;
     model.elements.forEach(function(el) {
       _bvhLRU.delete(el);
-      delete el._wvCache; delete el._triCache; delete el._bvhCache;
+      delete el._wvCache; delete el._triCache; delete el._bvhCache; delete el._topo;
     });
   }
 
@@ -6466,7 +6570,7 @@ function startApp() {
         var old = _bvhLRU.keys().next().value;
         if (old === undefined) break;
         _bvhLRU.delete(old);
-        delete old._wvCache; delete old._triCache; delete old._bvhCache;
+        delete old._wvCache; delete old._triCache; delete old._bvhCache; delete old._topo;
         dropped++;
       }
       if (dropped && !_ccPressureRelieved) {
@@ -6677,7 +6781,7 @@ function startApp() {
       if (eRaw === false) return false;
       if (eRaw) {
         var eDepth = eRaw[eRaw.length - 1];
-        return _postProcessIntersectPoints(eRaw.subarray(0, eRaw.length - 1), eDepth, elA.box, elB.box, _MI_MARGIN);
+        return _postProcessIntersectPoints(eRaw.subarray(0, eRaw.length - 1), eDepth, _ccFrameBox(elA), _ccFrameBox(elB), _MI_MARGIN);
       }
       // eRaw === null -> engine trouble; keep going on the per-pair paths below
     }
@@ -6702,7 +6806,7 @@ function startApp() {
           if (!raw || !raw.length) return false;
           var depth = raw[raw.length - 1];
           var rawPts = raw.subarray ? raw.subarray(0, raw.length - 1) : raw.slice(0, raw.length - 1);
-          return _postProcessIntersectPoints(rawPts, depth, elA.box, elB.box, _MI_MARGIN);
+          return _postProcessIntersectPoints(rawPts, depth, _ccFrameBox(elA), _ccFrameBox(elB), _MI_MARGIN);
         } catch (e) {
           console.warn('[clash] WASM intersect failed for this pair, falling back to JS:', e && e.message);
           // fall through to the JS path below for this pair
@@ -6712,7 +6816,7 @@ function startApp() {
       }
     }
     // JS fallback
-    return _jsIntersectBVH(_getBVH(elA), _getBVH(elB), elA.box, elB.box);
+    return _jsIntersectBVH(_getBVH(elA), _getBVH(elB), _ccFrameBox(elA), _ccFrameBox(elB));
   }
 
   // ── True mesh-to-mesh minimum distance (soft/clearance clashes) ──
@@ -6818,11 +6922,10 @@ function startApp() {
   var _ttdPtA = new Float64Array(3), _ttdPtB = new Float64Array(3);
   // ── Point-in-mesh ray-parity test (moved up here from just below
   // _estimatePenetrationDepthM) ────────────────────────────────────
-  // Used both by _estimatePenetrationDepthM (approximate hard-clash
-  // penetration depth) and by _meshMinDistContainmentFix just below
-  // (min-distance containment fix — a closed mesh fully inside another
-  // with no triangle pair actually crossing). See CW-1a's comment above
-  // _estimatePenetrationDepthM for the full rationale.
+  // Used by the hit refinement (_ccContainment / _ccTouchVerdict, below
+  // _ccJsMeshIntersectRef): a closed mesh nested in another, a vertex deep
+  // inside, the coplanar-sides fallback. Callers only use it on CLOSED
+  // (edge-manifold) meshes — an open mesh has no inside.
   function _rayTriHit(ox,oy,oz, dx,dy,dz, tris, o9) {
     var v0x=tris[o9],v0y=tris[o9+1],v0z=tris[o9+2];
     var v1x=tris[o9+3],v1y=tris[o9+4],v1z=tris[o9+5];
@@ -6893,32 +6996,11 @@ function startApp() {
     }
     return votes >= 2;
   }
-  // Post-traversal containment fix for _meshMinDist/_bvhMinDistTraverse:
-  // when the BVH-pruned dual-tree walk found a strictly positive surface
-  // distance, check whether one mesh is fully enclosed inside the other
-  // with no triangle pair actually crossing — e.g. a pipe segment fully
-  // inside a column, no edge pierces a face so _triTriDistSq's
-  // intersection short-circuit never fires, but the solids still overlap
-  // volumetrically. A closed (manifold) mesh fully inside another has
-  // EVERY vertex inside it, so testing just each side's first triangle's
-  // first vertex is enough — stays O(1) extra work per pair. Mirrored
-  // op-for-op in Rust (engine/src/mesh_dist.rs::containment_fix /
-  // engine/src/point_in_mesh.rs) so the WASM path stays bit-identical.
-  function _meshMinDistContainmentFix(bvhA, bvhB, best, outA, outB) {
-    if (best[0] <= 0) return;
-    var tA = bvhA.tris, tB = bvhB.tris;
-    if (_pointInMeshBVH(tA[0], tA[1], tA[2], bvhB)) {
-      best[0] = 0;
-      outA[0]=tA[0]; outA[1]=tA[1]; outA[2]=tA[2];
-      outB[0]=tA[0]; outB[1]=tA[1]; outB[2]=tA[2];
-      return;
-    }
-    if (_pointInMeshBVH(tB[0], tB[1], tB[2], bvhA)) {
-      best[0] = 0;
-      outA[0]=tB[0]; outA[1]=tB[1]; outA[2]=tB[2];
-      outB[0]=tB[0]; outB[1]=tB[1]; outB[2]=tB[2];
-    }
-  }
+  // (The old in-kernel "containment fix" — one unconditional ray-parity test
+  // per pair inside the min-distance kernel — is gone: it ran on open meshes
+  // too (box inside an open shell read "inside", distance 0). Containment is
+  // now a JS post-step on CLOSED meshes only, identical on every path by
+  // construction: see _ccContainment below.)
 
   function _triTriDistSq(trisA, oA9, trisB, oB9, outA, outB) {
     // Intersecting triangles (e.g. an edge of one piercing the other's
@@ -7007,7 +7089,6 @@ function startApp() {
     var best = _mmdBest; best[0] = Infinity;
     _bvhMinDistTraverse(bvhA.root, bvhA.tris, bvhB.root, bvhB.tris, best, _mmdOutA, _mmdOutB);
     if (best[0] === Infinity) return Infinity; // unreachable with 2 non-empty meshes, kept for symmetry with the empty-input early return
-    _meshMinDistContainmentFix(bvhA, bvhB, best, _mmdOutA, _mmdOutB);
     if (outPair) {
       outPair[0]=_mmdOutA[0]; outPair[1]=_mmdOutA[1]; outPair[2]=_mmdOutA[2];
       outPair[3]=_mmdOutB[0]; outPair[4]=_mmdOutB[1]; outPair[5]=_mmdOutB[2];
@@ -7060,7 +7141,6 @@ function startApp() {
       _triTriTest, _buildBVHNode, _buildBVHForTris, _bvhTraverseAll,
       _pointInBothBoxes, _postProcessIntersectPoints, _jsIntersectBVH,
       _closestPtOnTri, _segSegDistSq, _triTriDistSq, _aabbAabbDistSq, _bvhMinDistTraverse,
-      _rayTriHit, _rayAABBHit, _bvhRayCount, _pointInMeshBVH, _meshMinDistContainmentFix,
       _jsMinDistBVH
     ];
     return [
@@ -7070,7 +7150,6 @@ function startApp() {
       'var _ttdPtA=new Float64Array(3),_ttdPtB=new Float64Array(3);',
       'var _bmdPtA=new Float64Array(3),_bmdPtB=new Float64Array(3);',
       'var _mmdBest=new Float64Array(1),_mmdOutA=new Float64Array(3),_mmdOutB=new Float64Array(3);',
-      'var _PEN_RAY_DIRS=' + JSON.stringify(_PEN_RAY_DIRS) + ';',
       fns.map(function(f) { return f.toString(); }).join('\n'),
       '(' + _ccNarrowWorkerMain.toString() + ')();'
     ].join('\n');
@@ -7107,7 +7186,8 @@ function startApp() {
         [_boxTris(-1, 21, 2.5, 2.9, -6.9, -6.1), _boxTris(9.925, 10.075, 0, 3.2, -11.85, -0.15)],
         [_boxTris(0, 1, 0, 1, 0, 1), _boxTris(10, 11, 10, 11, 10, 11)],
         [_boxTris(-5, 5, -5, 5, -5, 5), _boxTris(-1, 1, -1, 1, -1, 1)],
-        [_boxTris(-1, 21, 2.4, 2.6, -0.1, 0.1), _boxTris(9, 11, -1, 5, -1, 1)]
+        [_boxTris(-1, 21, 2.4, 2.6, -0.1, 0.1), _boxTris(9, 11, -1, 5, -1, 1)],
+        [_boxTris(0, 1, 0, 1, 0, 1), _boxTris(-1, 0, 0, 1, 1.5, 3)] // shared planes (old 0/0 case): rejects a stale binary
       ];
       var eng = null;
       try {
@@ -7277,33 +7357,11 @@ function startApp() {
       var rootB = _buildBVHNode(trisB, idxB, 0, nb);
       var best = [Infinity], outA = [0,0,0], outB = [0,0,0];
       _bvhMinDistTraverse(rootA, trisA, rootB, trisB, best, outA, outB);
-      _meshMinDistContainmentFix({root:rootA,tris:trisA}, {root:rootB,tris:trisB}, best, outA, outB);
       return [Math.sqrt(best[0]), outA[0],outA[1],outA[2], outB[0],outB[1],outB[2]];
     }
   };
 
-  // ── Approximate penetration depth for confirmed hard clashes ────
-  // CW-1a. What _triTriTest's [3] ("depth") actually measures is the length
-  // of one triangle pair's SAT overlap interval along their mutual cross-
-  // normal axis — a real number, but not mesh-to-mesh penetration: two large,
-  // shallow-crossing triangles produce a long chord for a near-zero true
-  // interpenetration, and fine tessellation shrinks it regardless of how deep
-  // the solids actually overlap. This block replaces that chord-length with
-  // an MTD-style approximation: for each mesh's vertices that test as lying
-  // *inside* the other mesh (odd-parity ray count against its BVH, 3-axis
-  // majority vote for robustness against axis-aligned edge/vertex grazing),
-  // find that vertex's true closest-point distance to the other mesh's
-  // surface (not just its nearest vertex). The max such distance across both
-  // sides ≈ how far the solids interpenetrate. Callers must treat a null
-  // return as "couldn't tell" (open/non-manifold mesh, or a graze with no
-  // vertex actually inside) and fall back to the existing AABB-overlap
-  // estimate — this is an approximation, not exact solid geometry (that's
-  // CW-1b, the Python manifold3d tier).
-  // (_rayTriHit / _PEN_RAY_DIRS / _rayAABBHit / _bvhRayCount /
-  // _pointInMeshBVH / _meshMinDistContainmentFix moved up above
-  // _triTriDistSq — _meshMinDist's containment fix needs them too, and the
-  // WASM parity test's JS-reference extraction window ends at
-  // _ccJsMeshIntersectRef, before this comment.)
+  // ── Point-to-surface distance helpers (used by the hit refinement below) ──
   // Closest point on a single triangle (Ericson, "Real-Time Collision
   // Detection" §5.1.5 — the standard barycentric-region method) — returns
   // squared distance only, callers don't need the point itself here.
@@ -7365,35 +7423,414 @@ function startApp() {
     _bvhClosestDistSq(bvh.root, bvh.tris, px,py,pz, best);
     return Math.sqrt(best[0]);
   }
-  // Sampling cap mirrors _meshMinDist's shape (step up once vertex count
-  // gets large) but tuned lower — each sample here is a 3-axis BVH ray count
-  // plus, when inside, a full BVH closest-point search, both much pricier
-  // per-sample than a spatial-hash vertex lookup. Only ever called on
-  // CONFIRMED hard-clash pairs (tri-tri already returned a hit), never on
-  // the broad-phase candidate set, so the cap bounds worst case per pair
-  // rather than per detection run.
-  function _estimatePenetrationDepthM(elA, elB) {
-    var bvhA = _getBVH(elA), bvhB = _getBVH(elB);
-    if (!bvhA || !bvhB) return null;
-    var vertsA = _getWorldVerts(elA), vertsB = _getWorldVerts(elB);
-    if (!vertsA.length || !vertsB.length) return null;
-    var best = 0, found = false;
-    var stepA = vertsA.length > 3000 ? 3*Math.ceil(vertsA.length/1000) : 3;
-    for (var i=0; i<vertsA.length; i+=stepA) {
-      if (_pointInMeshBVH(vertsA[i],vertsA[i+1],vertsA[i+2], bvhB)) {
-        var d = _closestDistToBVH(vertsA[i],vertsA[i+1],vertsA[i+2], bvhB);
-        if (isFinite(d) && d>best) { best=d; found=true; }
-      }
-    }
-    var stepB = vertsB.length > 3000 ? 3*Math.ceil(vertsB.length/1000) : 3;
-    for (var i=0; i<vertsB.length; i+=stepB) {
-      if (_pointInMeshBVH(vertsB[i],vertsB[i+1],vertsB[i+2], bvhA)) {
-        var d = _closestDistToBVH(vertsB[i],vertsB[i+1],vertsB[i+2], bvhA);
-        if (isFinite(d) && d>best) { best=d; found=true; }
-      }
-    }
-    return found ? best : null;
+  // ── Hit refinement: crossing vs contact, containment, penetration depth ──
+  // The narrow-phase kernel (identical on JS / WASM / Engine / pool / native)
+  // only answers "do the two surfaces meet" (plus a raw hit point). Everything
+  // below runs in JS on the main thread AFTER that answer, on the pairs that
+  // need it, so it is identical on every path by construction:
+  //   _ccTouchVerdict  — a kernel hit is a CROSSING (interiors overlap) or a
+  //                      CONTACT (surfaces touch, interiors disjoint);
+  //   _ccContainment   — a closed solid nested in another with no surface
+  //                      contact (the kernel cannot see it at all);
+  //   _estimatePenetrationDepthM — the reported depth of a crossing.
+  //
+  // CONTACT TOLERANCE (the line between "touch" and "crossing"):
+  //   tau = 0.1 mm + 4.8e-7 * M   (M = largest |coordinate| of the pair in the
+  //   engine frame, i.e. ~4 Float32 ulps of the coordinate magnitude).
+  // Evidence: in the generated federations every exact crossing the oracle
+  // finds below 7.6 µm deep is Float32 rounding of a designed flush contact
+  // (tests/browser/accuracy-federation.mjs 'crossing≤7.6µm' bucket, all of
+  // them meant to touch); designed crossings start at 1 mm. 0.1 mm sits >10x
+  // above that noise and 10x below the smallest designed crossing; the
+  // relative term keeps Float32 noise from becoming a crossing even far from
+  // the engine origin. A crossing shallower than tau is reported as a contact
+  // (documented in MEMORY.md).
+  var _CC_CONTACT_TOL_M = 1e-4;
+  var _CC_CONTACT_TOL_REL = 4.8e-7;
+  var _CC_REFINE_MAX_VERTS = 4096;   // vertex-inside samples per side (strided above this)
+  var _CC_SAT_MAX_AXES = 32;         // distinct face normals per mesh used by the depth SAT
+
+  // Clearance comparisons allow 1 pm of slack for the f64 rounding of the
+  // computed distance, so an exact gap of exactly the tolerance is reported
+  // regardless of which way the last bit of sqrt() rounds.
+  var _CC_GAP_SLACK_M = 1e-12;
+  function _ccContactTol(rA, rB) {
+    var M = Math.max(Math.abs(rA.mnx), Math.abs(rA.mxx), Math.abs(rA.mny), Math.abs(rA.mxy), Math.abs(rA.mnz), Math.abs(rA.mxz),
+      Math.abs(rB.mnx), Math.abs(rB.mxx), Math.abs(rB.mny), Math.abs(rB.mxy), Math.abs(rB.mnz), Math.abs(rB.mxz));
+    return _CC_CONTACT_TOL_M + _CC_CONTACT_TOL_REL * M;
   }
+
+  // Per-element mesh topology, cached against the triangle array identity:
+  // vertices welded by exact Float32 position (like the oracle), closedness
+  // (every undirected edge used exactly twice — edge-manifold), consistent
+  // orientation (every directed edge once) and its sign (signed volume), the
+  // unique vertices, and the dominant face normals for the depth SAT.
+  function _ccMeshTopo(el) {
+    var tris = _getWorldTris(el);
+    var t = el._topo;
+    if (t && t.tris === tris) return t;
+    var n = (tris.length / 9) | 0, nc = n * 3;
+    // Weld by exact Float32 position (-0 == 0): open-addressing hash on the
+    // coordinate bit patterns, typed arrays only (no per-vertex strings).
+    var f32 = tris instanceof Float32Array ? tris : Float32Array.from(tris);
+    var bits = new Uint32Array(f32.buffer, f32.byteOffset, f32.length);
+    var cap = 16; while (cap < nc * 2) cap <<= 1;
+    var slot = new Int32Array(cap).fill(-1), mask = cap - 1;
+    var verts = [], vi = new Int32Array(nc), vbits = [];
+    for (var i = 0; i < nc; i++) {
+      var bx = bits[i*3], by = bits[i*3+1], bz = bits[i*3+2];
+      if (bx === 0x80000000) bx = 0; if (by === 0x80000000) by = 0; if (bz === 0x80000000) bz = 0;
+      var h = (Math.imul(bx, 73856093) ^ Math.imul(by, 19349663) ^ Math.imul(bz, 83492791)) & mask;
+      var id = -1;
+      while (slot[h] !== -1) {
+        var cand = slot[h];
+        if (vbits[cand*3] === bx && vbits[cand*3+1] === by && vbits[cand*3+2] === bz) { id = cand; break; }
+        h = (h + 1) & mask;
+      }
+      if (id < 0) { id = verts.length / 3; slot[h] = id; vbits.push(bx, by, bz); verts.push(f32[i*3], f32[i*3+1], f32[i*3+2]); }
+      vi[i] = id;
+    }
+    var nv = verts.length / 3;
+    var und = new Map(), dir = new Set(), consistent = true;
+    for (var f = 0; f < n; f++) {
+      var a = vi[f*3], b = vi[f*3+1], c = vi[f*3+2];
+      if (a === b || b === c || a === c) continue;
+      var es = [a, b, b, c, c, a];
+      for (var e = 0; e < 6; e += 2) {
+        var p = es[e], q = es[e+1];
+        var uk = p < q ? p * nv + q : q * nv + p;
+        und.set(uk, (und.get(uk) || 0) + 1);
+        var dk = p * nv + q;
+        if (dir.has(dk)) consistent = false; else dir.add(dk);
+      }
+    }
+    var closed = und.size > 0;
+    und.forEach(function(cnt) { if (cnt !== 2) closed = false; });
+    var orient = 0;
+    if (closed && consistent) {
+      var rx = verts[0], ry = verts[1], rz = verts[2], vol = 0;
+      for (var g = 0; g < n; g++) {
+        var o = g * 9;
+        var ax = tris[o]-rx, ay = tris[o+1]-ry, az = tris[o+2]-rz;
+        var bx = tris[o+3]-rx, by = tris[o+4]-ry, bz = tris[o+5]-rz;
+        var cx = tris[o+6]-rx, cy = tris[o+7]-ry, cz = tris[o+8]-rz;
+        vol += ax*(by*cz-bz*cy) + ay*(bz*cx-bx*cz) + az*(bx*cy-by*cx);
+      }
+      orient = vol > 0 ? 1 : vol < 0 ? -1 : 0;
+    }
+    t = { tris: tris, closed: closed, orient: orient, verts: verts, nv: nv, axes: null };
+    el._topo = t;
+    return t;
+  }
+  // Up to _CC_SAT_MAX_AXES distinct unit face normals (sign-canonical), the
+  // ones carrying the most area first.
+  function _ccFaceAxes(topo) {
+    if (topo.axes) return topo.axes;
+    var tris = topo.tris, n = (tris.length / 9) | 0, acc = new Map();
+    for (var f = 0; f < n; f++) {
+      var o = f * 9;
+      var ux = tris[o+3]-tris[o], uy = tris[o+4]-tris[o+1], uz = tris[o+5]-tris[o+2];
+      var wx = tris[o+6]-tris[o], wy = tris[o+7]-tris[o+1], wz = tris[o+8]-tris[o+2];
+      var nx = uy*wz-uz*wy, ny = uz*wx-ux*wz, nz = ux*wy-uy*wx;
+      var l = Math.sqrt(nx*nx+ny*ny+nz*nz);
+      if (!(l > 0)) continue;
+      nx /= l; ny /= l; nz /= l;
+      var ax = Math.abs(nx), ay = Math.abs(ny), az = Math.abs(nz);
+      var s = (ax >= ay && ax >= az) ? nx : (ay >= az ? ny : nz);
+      if (s < 0) { nx = -nx; ny = -ny; nz = -nz; }
+      var k = Math.round(nx*1e5) + ',' + Math.round(ny*1e5) + ',' + Math.round(nz*1e5);
+      var cur = acc.get(k);
+      if (cur) cur[3] += l; else acc.set(k, [nx, ny, nz, l]);
+    }
+    var list = Array.from(acc.values());
+    list.sort(function(p, q) { return q[3] - p[3]; });
+    topo.axes = list.slice(0, _CC_SAT_MAX_AXES);
+    return topo.axes;
+  }
+
+  // Möller interval of one triangle on the intersection line (same lone-vertex
+  // rule as _triTriTest's interval(); d0..d2 are plane distances).
+  function _ccLineInterval(out, t, o, d0, d1, d2, axis) {
+    var i0, i1, i2, e0, e1, e2;
+    if (d0*d1 > 0) { i0 = 2; i1 = 0; i2 = 1; e0 = d2; e1 = d0; e2 = d1; }
+    else if (d0*d2 > 0) { i0 = 1; i1 = 0; i2 = 2; e0 = d1; e1 = d0; e2 = d2; }
+    else if (d1*d2 > 0 || d0 !== 0) { i0 = 0; i1 = 1; i2 = 2; e0 = d0; e1 = d1; e2 = d2; }
+    else if (d1 !== 0) { i0 = 1; i1 = 0; i2 = 2; e0 = d1; e1 = d0; e2 = d2; }
+    else if (d2 !== 0) { i0 = 2; i1 = 0; i2 = 1; e0 = d2; e1 = d0; e2 = d1; }
+    else return false;
+    var p0 = t[o+i0*3+axis], p1 = t[o+i1*3+axis], p2 = t[o+i2*3+axis];
+    var a = p0 + (p1-p0) * (e0/(e0-e1)), b = p0 + (p2-p0) * (e0/(e0-e2));
+    if (a < b) { out[0] = a; out[1] = b; } else { out[0] = b; out[1] = a; }
+    return true;
+  }
+  var _ccIvA = new Float64Array(2), _ccIvB = new Float64Array(2);
+  // Clip triangle (tB,oB) by the three edge half-spaces of (tA,oA) (unit
+  // normal n from A's own winding => n x edge points inward). Returns
+  // 2*area/perimeter of the overlap polygon — its "width" (0 = no overlap) —
+  // and its centroid in cOut.
+  function _ccCoplanarOverlapWidth(tA, oA, tB, oB, nx, ny, nz, cOut) {
+    var poly = [[tB[oB],tB[oB+1],tB[oB+2]], [tB[oB+3],tB[oB+4],tB[oB+5]], [tB[oB+6],tB[oB+7],tB[oB+8]]];
+    for (var e = 0; e < 3 && poly.length >= 3; e++) {
+      var px = tA[oA+e*3], py = tA[oA+e*3+1], pz = tA[oA+e*3+2];
+      var q = (e + 1) % 3;
+      var ex = tA[oA+q*3]-px, ey = tA[oA+q*3+1]-py, ez = tA[oA+q*3+2]-pz;
+      var mx = ny*ez-nz*ey, my = nz*ex-nx*ez, mz = nx*ey-ny*ex; // n x edge (inward)
+      var next = [];
+      for (var i = 0; i < poly.length; i++) {
+        var u = poly[i], w = poly[(i+1) % poly.length];
+        var du = mx*(u[0]-px)+my*(u[1]-py)+mz*(u[2]-pz), dw = mx*(w[0]-px)+my*(w[1]-py)+mz*(w[2]-pz);
+        if (du >= 0) next.push(u);
+        if ((du >= 0) !== (dw >= 0)) { var s = du / (du - dw); next.push([u[0]+(w[0]-u[0])*s, u[1]+(w[1]-u[1])*s, u[2]+(w[2]-u[2])*s]); }
+      }
+      poly = next;
+    }
+    if (poly.length < 3) return 0;
+    var sx = 0, sy = 0, sz = 0, per = 0, cx = 0, cy = 0, cz = 0;
+    var r = poly[0];
+    for (var j = 0; j < poly.length; j++) {
+      var g = poly[j], h = poly[(j+1) % poly.length];
+      var dx = h[0]-g[0], dy = h[1]-g[1], dz = h[2]-g[2];
+      per += Math.sqrt(dx*dx+dy*dy+dz*dz);
+      if (j >= 1 && j < poly.length - 1) {
+        var ax = g[0]-r[0], ay = g[1]-r[1], az = g[2]-r[2], bx = h[0]-r[0], by = h[1]-r[1], bz = h[2]-r[2];
+        sx += ay*bz-az*by; sy += az*bx-ax*bz; sz += ax*by-ay*bx;
+      }
+      cx += g[0]; cy += g[1]; cz += g[2];
+    }
+    var area = Math.sqrt(sx*sx+sy*sy+sz*sz) / 2;
+    if (cOut) { cOut[0] = cx / poly.length; cOut[1] = cy / poly.length; cOut[2] = cz / poly.length; }
+    return per > 0 ? 2 * area / per : 0;
+  }
+  // One triangle pair: does it certify an interior overlap deeper than tau?
+  //   * transversal: each triangle has vertices more than tau on BOTH sides of
+  //     the other's plane and their intersection segments overlap by > tau;
+  //   * coplanar (all six vertices within tau of the other plane) with an
+  //     overlap patch wider than tau and both solids on the SAME side (known
+  //     outward orientations) — duplicates / coincident faces.
+  // A coplanar overlap whose sides are unknown (orientation 0) is queued in
+  // st.samples for the parity fallback in _ccTouchVerdict.
+  function _ccTriDeep(tA, oA, tB, oB, tau, st) {
+    var a0x=tA[oA],a0y=tA[oA+1],a0z=tA[oA+2], a1x=tA[oA+3],a1y=tA[oA+4],a1z=tA[oA+5], a2x=tA[oA+6],a2y=tA[oA+7],a2z=tA[oA+8];
+    var b0x=tB[oB],b0y=tB[oB+1],b0z=tB[oB+2], b1x=tB[oB+3],b1y=tB[oB+4],b1z=tB[oB+5], b2x=tB[oB+6],b2y=tB[oB+7],b2z=tB[oB+8];
+    var ux=b1x-b0x,uy=b1y-b0y,uz=b1z-b0z, wx=b2x-b0x,wy=b2y-b0y,wz=b2z-b0z;
+    var n2x=uy*wz-uz*wy, n2y=uz*wx-ux*wz, n2z=ux*wy-uy*wx, l2=Math.sqrt(n2x*n2x+n2y*n2y+n2z*n2z);
+    ux=a1x-a0x;uy=a1y-a0y;uz=a1z-a0z; wx=a2x-a0x;wy=a2y-a0y;wz=a2z-a0z;
+    var n1x=uy*wz-uz*wy, n1y=uz*wx-ux*wz, n1z=ux*wy-uy*wx, l1=Math.sqrt(n1x*n1x+n1y*n1y+n1z*n1z);
+    if (!(l1 > 1e-12) || !(l2 > 1e-12)) return false;
+    n2x/=l2; n2y/=l2; n2z/=l2; n1x/=l1; n1y/=l1; n1z/=l1;
+    var da0=n2x*(a0x-b0x)+n2y*(a0y-b0y)+n2z*(a0z-b0z), da1=n2x*(a1x-b0x)+n2y*(a1y-b0y)+n2z*(a1z-b0z), da2=n2x*(a2x-b0x)+n2y*(a2y-b0y)+n2z*(a2z-b0z);
+    var db0=n1x*(b0x-a0x)+n1y*(b0y-a0y)+n1z*(b0z-a0z), db1=n1x*(b1x-a0x)+n1y*(b1y-a0y)+n1z*(b1z-a0z), db2=n1x*(b2x-a0x)+n1y*(b2y-a0y)+n1z*(b2z-a0z);
+    var amx=Math.max(da0,da1,da2), amn=Math.min(da0,da1,da2), bmx=Math.max(db0,db1,db2), bmn=Math.min(db0,db1,db2);
+    if (amn > tau || amx < -tau || bmn > tau || bmx < -tau) return false;
+    if (amx <= tau && amn >= -tau && bmx <= tau && bmn >= -tau) {
+      var cos = n1x*n2x+n1y*n2y+n1z*n2z;
+      if (Math.abs(cos) < 0.999) return false; // tiny non-parallel triangles: no shared face
+      var oProd = st.orientProduct(); // lazily: the mesh topology is only needed here
+      if (oProd !== 0 && cos * oProd < 0) return false; // opposite outward normals: flush contact
+      if (oProd === 0 && st.samples.length >= 8) return false;
+      var cen = [0, 0, 0];
+      var w = _ccCoplanarOverlapWidth(tA, oA, tB, oB, n1x, n1y, n1z, cen);
+      if (!(w > tau)) return false;
+      if (oProd !== 0) return true;
+      st.samples.push([cen[0], cen[1], cen[2], n1x, n1y, n1z]);
+      return false;
+    }
+    if (!(amx > tau && amn < -tau && bmx > tau && bmn < -tau)) return false; // grazing / one-sided touch
+    var Dx=n1y*n2z-n1z*n2y, Dy=n1z*n2x-n1x*n2z, Dz=n1x*n2y-n1y*n2x;
+    var ax=Math.abs(Dx), ay=Math.abs(Dy), az=Math.abs(Dz);
+    var axis = (ax>=ay&&ax>=az) ? 0 : (ay>=az ? 1 : 2), dAx = axis===0 ? ax : axis===1 ? ay : az;
+    if (!(dAx > 0)) return false;
+    if (!_ccLineInterval(_ccIvA, tA, oA, da0, da1, da2, axis)) return false;
+    if (!_ccLineInterval(_ccIvB, tB, oB, db0, db1, db2, axis)) return false;
+    var ov = Math.min(_ccIvA[1], _ccIvB[1]) - Math.max(_ccIvA[0], _ccIvB[0]);
+    return ov * Math.sqrt(Dx*Dx+Dy*Dy+Dz*Dz) / dAx > tau;
+  }
+  function _ccRefineTraverse(nA, tA, nB, tB, tau, st) {
+    if (st.cross) return;
+    if (nA.mnx > nB.mxx + tau || nA.mxx < nB.mnx - tau || nA.mny > nB.mxy + tau || nA.mxy < nB.mny - tau ||
+        nA.mnz > nB.mxz + tau || nA.mxz < nB.mnz - tau) return;
+    var aLeaf = nA.lo !== undefined, bLeaf = nB.lo !== undefined;
+    if (aLeaf && bLeaf) {
+      for (var i = nA.lo; i < nA.hi; i++)
+        for (var j = nB.lo; j < nB.hi; j++)
+          if (_ccTriDeep(tA, nA.idx[i]*9, tB, nB.idx[j]*9, tau, st)) { st.cross = true; return; }
+      return;
+    }
+    if (bLeaf || (!aLeaf && (nA.cnt||1) >= (nB.cnt||1))) {
+      _ccRefineTraverse(nA.left, tA, nB, tB, tau, st);
+      _ccRefineTraverse(nA.right, tA, nB, tB, tau, st);
+    } else {
+      _ccRefineTraverse(nA, tA, nB.left, tB, tau, st);
+      _ccRefineTraverse(nA, tA, nB.right, tB, tau, st);
+    }
+  }
+  // Some vertex of P strictly inside the CLOSED mesh Q, more than tau from
+  // its surface (a solid inside another whose surfaces only touch).
+  function _ccVertexDeepInside(topoP, topoQ, bvhQ, tau) {
+    if (!topoQ.closed || !bvhQ) return false;
+    var v = topoP.verts, r = bvhQ.root, nv = topoP.nv;
+    var step = nv > _CC_REFINE_MAX_VERTS ? Math.ceil(nv / _CC_REFINE_MAX_VERTS) : 1;
+    for (var i = 0; i < nv; i += step) {
+      var x = v[i*3], y = v[i*3+1], z = v[i*3+2];
+      if (x <= r.mnx + tau || x >= r.mxx - tau || y <= r.mny + tau || y >= r.mxy - tau || z <= r.mnz + tau || z >= r.mxz - tau) continue;
+      if (_pointInMeshBVH(x, y, z, bvhQ) && _closestDistToBVH(x, y, z, bvhQ) > tau) return true;
+    }
+    return false;
+  }
+  // 'crossing' (interiors overlap by more than the contact tolerance) or
+  // 'contact' (the surfaces only touch). Called on pairs whose surfaces meet.
+  function _ccTouchVerdict(elA, elB) {
+    var bA = _getBVH(elA), bB = _getBVH(elB);
+    if (!bA || !bB) return 'contact';
+    var tau = _ccContactTol(bA.root, bB.root);
+    var op = null;
+    var st = { cross: false, samples: [], orientProduct: function() {
+      if (op === null) op = _ccMeshTopo(elA).orient * _ccMeshTopo(elB).orient;
+      return op;
+    } };
+    _ccRefineTraverse(bA.root, bA.tris, bB.root, bB.tris, tau, st);
+    if (st.cross) return 'crossing';
+    var tA = _ccMeshTopo(elA), tB = _ccMeshTopo(elB);
+    if (_ccVertexDeepInside(tA, tB, bB, tau) || _ccVertexDeepInside(tB, tA, bA, tau)) return 'crossing';
+    if (st.samples.length && tA.closed && tB.closed) {
+      var h = 4 * tau;
+      for (var s = 0; s < st.samples.length; s++) {
+        var p = st.samples[s];
+        for (var sg = -1; sg <= 1; sg += 2) {
+          var x = p[0] + sg*h*p[3], y = p[1] + sg*h*p[4], z = p[2] + sg*h*p[5];
+          if (_pointInMeshBVH(x, y, z, bA) && _pointInMeshBVH(x, y, z, bB)) return 'crossing';
+        }
+      }
+    }
+    return 'contact';
+  }
+  function _ccBoxIn(a, b, tol) {
+    return a.min.x >= b.min.x - tol && a.max.x <= b.max.x + tol && a.min.y >= b.min.y - tol && a.max.y <= b.max.y + tol &&
+           a.min.z >= b.min.z - tol && a.max.z <= b.max.z + tol;
+  }
+  // A mesh nested inside a CLOSED mesh with no surface contact (E1): the
+  // kernel sees no hit at all. AABB nesting is the cheap precondition; then a
+  // few vertices of the inner mesh by ray parity, each more than tau from the
+  // outer surface. Open containers have no inside (E5). Returns
+  // {pt:[x,y,z] engine frame} or null.
+  function _ccContainment(elA, elB) {
+    var A = elA.box, B = elB.box;
+    if (!A || !B) return null;
+    var order = [];
+    if (_ccBoxIn(A, B, 1e-3)) order.push([elA, elB]);
+    if (_ccBoxIn(B, A, 1e-3)) order.push([elB, elA]);
+    for (var k = 0; k < order.length; k++) {
+      var inner = order[k][0], outer = order[k][1];
+      var tO = _ccMeshTopo(outer);
+      if (!tO.closed) continue;
+      var bO = _getBVH(outer), v = _getWorldTris(inner);
+      if (!bO || !v.length) continue;
+      var tau = _ccContactTol(bO.root, bO.root), nc = v.length / 3;
+      // three corners of the inner mesh (first, middle, last) straight from
+      // its triangle array — no topology/BVH of the inner element needed
+      var picks = [0, (nc >> 1), nc - 1];
+      for (var p = 0; p < picks.length; p++) {
+        var i = picks[p] * 3;
+        if (_pointInMeshBVH(v[i], v[i+1], v[i+2], bO) && _closestDistToBVH(v[i], v[i+1], v[i+2], bO) > tau) {
+          var fb = _ccFrameBox(inner);
+          return { pt: [(fb.min.x+fb.max.x)/2, (fb.min.y+fb.max.y)/2, (fb.min.z+fb.max.z)/2] };
+        }
+      }
+    }
+    return null;
+  }
+  // ── Penetration depth (E6) ──────────────────────────────────────────
+  // Separating-axis estimate of the minimum translation distance: over the
+  // three box axes and the (up to 32, largest-area-first) distinct face
+  // normals of both meshes, the smallest projection overlap
+  // min(maxA-minB, maxB-minA). Moving one element by that amount along that
+  // axis makes the projections disjoint, so the meshes are separated: the
+  // value is a SOUND UPPER BOUND on the true MTD (exact for convex pairs
+  // whose MTD lies along a face normal — boxes, extrusions; it can exceed
+  // the true MTD for non-convex shapes or edge-edge minima). Contained
+  // elements get the distance to push the inner one out. Only called on
+  // crossing / contained pairs; contacts are never given a depth.
+  function _estimatePenetrationDepthM(elA, elB) {
+    var tA = _ccMeshTopo(elA), tB = _ccMeshTopo(elB);
+    if (!tA.nv || !tB.nv) return null;
+    var axes = [[1,0,0],[0,1,0],[0,0,1]].concat(_ccFaceAxes(tA), _ccFaceAxes(tB));
+    var vA = tA.verts, vB = tB.verts, best = Infinity;
+    for (var a = 0; a < axes.length; a++) {
+      var ux = axes[a][0], uy = axes[a][1], uz = axes[a][2];
+      var mnA = Infinity, mxA = -Infinity, mnB = Infinity, mxB = -Infinity, i, d;
+      for (i = 0; i < vA.length; i += 3) { d = ux*vA[i]+uy*vA[i+1]+uz*vA[i+2]; if (d < mnA) mnA = d; if (d > mxA) mxA = d; }
+      for (i = 0; i < vB.length; i += 3) { d = ux*vB[i]+uy*vB[i+1]+uz*vB[i+2]; if (d < mnB) mnB = d; if (d > mxB) mxB = d; }
+      var ov = Math.min(mxA - mnB, mxB - mnA);
+      if (ov < best) best = ov;
+    }
+    return best > 0 ? best : 0;
+  }
+
+  // Decide one candidate pair from the kernel answers (shared by
+  // _processCandidate and tests/engine-oracle.test.js, so the test scores
+  // exactly what the app reports). All coordinates are in the engine frame.
+  //   hit    — kernel hard result ([x,y,z,chord] | false); ignored unless o.hard
+  //   distFn — function(out6) -> min surface distance (fills the closest pair)
+  //   o      — {hard, soft, gapM, minGapM, minOverlapVolM3, overlapVol}
+  // Returns {kind:'hard'|'contact'|'soft'|null, pt, depthM, distM, contained}.
+  // 'contact' (surfaces meet or are < 0.1 mm apart, interiors disjoint) is
+  // reported only by runs that include clearance (o.soft) — a hard-only run
+  // never computes distances, so it reports crossings only — and never as a
+  // 0 mm soft clash as well.
+  function _ccResolvePair(eA, eB, hit, distFn, o, pairBuf) {
+    var res = { kind: null, pt: null, depthM: 0, distM: Infinity, contained: false, demoted: false };
+    if (o.hard) {
+      var touched = false;
+      if (hit) {
+        if (_ccTouchVerdict(eA, eB) === 'crossing') { res.kind = 'hard'; res.pt = [hit[0], hit[1], hit[2]]; }
+        else { touched = true; if (!o.soft) return res; } // hard-only run: a touch is not in scope
+      } else {
+        var c = _ccContainment(eA, eB);
+        if (c) { res.kind = 'hard'; res.pt = c.pt; res.contained = true; }
+      }
+      // Optional user filter (rules.minOverlapVolM3, default 0 = off): a hard
+      // clash whose AABB overlap volume is below it is demoted to the
+      // clearance path.
+      if (res.kind === 'hard' && o.minOverlapVolM3 > 0 && !(o.overlapVol >= o.minOverlapVolM3)) {
+        res.kind = null; res.pt = null; res.demoted = true;
+      }
+      if (res.kind === 'hard') { var dep = _estimatePenetrationDepthM(eA, eB); res.depthM = dep == null ? 0 : dep; res.distM = 0; return res; }
+      if (touched) {
+        // Surfaces meet without interpenetrating: a 'contact' (never also a
+        // 0 mm soft clash). Reported only in runs that include clearance.
+        res.distM = 0;
+        if (o.minGapM <= 0) { res.kind = 'contact'; res.pt = [hit[0], hit[1], hit[2]]; }
+        return res;
+      }
+    }
+    if (!o.soft) return res;
+    var g = distFn(pairBuf);
+    if (!o.hard && !(g <= 0) && g !== Infinity) {
+      var c2 = _ccContainment(eA, eB);
+      if (c2) { g = 0; for (var k = 0; k < 3; k++) { pairBuf[k] = c2.pt[k]; pairBuf[k+3] = c2.pt[k]; } res.contained = true; }
+    }
+    res.distM = g;
+    // Touching within the contact tolerance (a gap below 0.1 mm is as much
+    // modelling/Float32 noise as an overlap below it): contact, unless the
+    // refinement finds a real crossing the kernel did not report. (Gaps use
+    // the absolute part of the tolerance only: in the engine frame the
+    // coordinates are small, and a relative term would swallow real gaps on
+    // data that was never origin-shifted.)
+    if (!res.contained && !res.demoted && g <= _CC_CONTACT_TOL_M) {
+      var mid = [(pairBuf[0]+pairBuf[3])/2, (pairBuf[1]+pairBuf[4])/2, (pairBuf[2]+pairBuf[5])/2];
+      if (g > 0 || _ccTouchVerdict(eA, eB) === 'contact') {
+        res.distM = 0;
+        if (o.minGapM <= 0) { res.kind = 'contact'; res.pt = mid; }
+        return res;
+      }
+      res.distM = 0;
+      if (o.hard) { res.kind = 'hard'; res.pt = mid; var dep2 = _estimatePenetrationDepthM(eA, eB); res.depthM = dep2 == null ? 0 : dep2; return res; }
+      g = 0;
+    }
+    if (g <= o.gapM + _CC_GAP_SLACK_M && g >= o.minGapM - _CC_GAP_SLACK_M) res.kind = 'soft';
+    return res;
+  }
+
 
   function _flushGeoCache(models) {
     (models || []).forEach(function(m) {
@@ -7401,14 +7838,30 @@ function startApp() {
         // Also drop the LRU key — a flushed element left in the Map counts
         // toward the cap and pushes real entries out early.
         _bvhLRU.delete(el);
-        delete el._wvCache; delete el._triCache; delete el._bvhCache;
+        delete el._wvCache; delete el._triCache; delete el._bvhCache; delete el._topo;
       });
     });
   }
 
   // ── L0: Sweep and Prune broad phase ─────────────────────────────
-  function _sweepAndPrune(grpA, grpB, rules, maxGapM) {
-    var margin = maxGapM;
+  // Resolved "may this model clash with itself" — one implementation for both
+  // sweeps and _processCandidate (the duplicates path must see the SAME
+  // answer the sweep used, incl. the single-model-scope override).
+  function _ccSelfClashAllowed(rules, modelId, inA, inB, singleModelScope) {
+    if (singleModelScope) return true;
+    var scmVal = rules.selfClashModels;
+    if (scmVal !== undefined) {
+      if (scmVal === 'none') return false;
+      if (scmVal === 'all') return true;
+      var scmIds = Array.isArray(scmVal) ? scmVal : [scmVal];
+      return scmIds.indexOf(modelId) !== -1;
+    }
+    var scg = rules.selfClashGroup || (rules.excludeSelf ? 'none' : 'both');
+    return scg !== 'none' && (scg === 'both' || (scg === 'a' && !!inA[modelId]) || (scg === 'b' && !!inB[modelId]));
+  }
+  // `margin` is applied to BOTH boxes: pairs up to 2*margin apart survive
+  // (the caller passes runGapM/2 — see _detectClashesCore).
+  function _sweepAndPrune(grpA, grpB, rules, margin) {
 
     var inA = {}, inB = {};
     grpA.forEach(function(m){ inA[m.id]=true; });
@@ -7475,21 +7928,7 @@ function startApp() {
 
         if (sameModel) {
           // linked files flattened twice, etc.) so we must let
-          var scmVal = rules.selfClashModels;
-          var selfAllowed;
-          if (_singleModelScope) {
-            selfAllowed = true;
-          } else if (scmVal !== undefined) {
-            if (scmVal === 'none') { selfAllowed = false; }
-            else if (scmVal === 'all') { selfAllowed = true; }
-            else {
-              var scmIds = Array.isArray(scmVal) ? scmVal : [scmVal];
-              selfAllowed = scmIds.indexOf(cur.m.id) !== -1;
-            }
-          } else {
-            var scg = rules.selfClashGroup || (rules.excludeSelf ? 'none' : 'both');
-            selfAllowed = scg !== 'none' && (scg === 'both' || (scg === 'a' && inA[cur.m.id]) || (scg === 'b' && inB[cur.m.id]));
-          }
+          var selfAllowed = _ccSelfClashAllowed(rules, cur.m.id, inA, inB, _singleModelScope);
           if (!selfAllowed && !rules.duplicates) continue;
           if (!inA[cur.m.id] && !inB[cur.m.id]) continue;
         } else {
@@ -7564,9 +8003,8 @@ function startApp() {
   // Output is decoded back into the EXACT same `{eA,mA,eB,mB,sameModel}`
   // pair-object array `_sweepAndPrune` returns, so nothing downstream of
   // the sweep needs to know which path produced it.
-  function _sweepAndPruneWasm(grpA, grpB, rules, maxGapM) {
+  function _sweepAndPruneWasm(grpA, grpB, rules, margin) {
     if (typeof window._ccWasmSweepAndPrune !== 'function') return null;
-    var margin = maxGapM;
 
     var inA = {}, inB = {};
     grpA.forEach(function(m){ inA[m.id]=true; });
@@ -7596,21 +8034,7 @@ function startApp() {
       wasmInB[mi] = inB[mObj.id] ? 1 : 0;
       // Exact same self-clash rule resolution as the inline loop in
       // _sweepAndPrune — see that function for the field-by-field rationale.
-      var scmVal = rules.selfClashModels;
-      var selfAllowed;
-      if (_singleModelScope) {
-        selfAllowed = true;
-      } else if (scmVal !== undefined) {
-        if (scmVal === 'none') { selfAllowed = false; }
-        else if (scmVal === 'all') { selfAllowed = true; }
-        else {
-          var scmIds = Array.isArray(scmVal) ? scmVal : [scmVal];
-          selfAllowed = scmIds.indexOf(mObj.id) !== -1;
-        }
-      } else {
-        var scg = rules.selfClashGroup || (rules.excludeSelf ? 'none' : 'both');
-        selfAllowed = scg !== 'none' && (scg === 'both' || (scg === 'a' && inA[mObj.id]) || (scg === 'b' && inB[mObj.id]));
-      }
+      var selfAllowed = _ccSelfClashAllowed(rules, mObj.id, inA, inB, _singleModelScope);
       var proceedsSelfRule = selfAllowed || !!rules.duplicates;
       var proceedsMembership = !!(inA[mObj.id] || inB[mObj.id]);
       sameModelAllowed[mi] = (proceedsSelfRule && proceedsMembership) ? 1 : 0;
@@ -7972,7 +8396,7 @@ function startApp() {
     if (_ccNativeNarrowAvailable()) {
       var _natPool = null;
       try {
-        _natPool = window._ccNativeNarrow.createPool({ getWorldTris: _getWorldTris, postProcess: _postProcessIntersectPoints, margin: _MI_MARGIN });
+        _natPool = window._ccNativeNarrow.createPool({ getWorldTris: _getWorldTris, getBox: _ccFrameBox, postProcess: _postProcessIntersectPoints, margin: _MI_MARGIN });
       } catch (e) { _natPool = null; }
       if (_natPool) { _activeNarrowPool = _natPool; return _natPool; }
       // native unavailable for this run -> fall through to the Web Worker pool
@@ -8027,7 +8451,7 @@ function startApp() {
         if (ent) { slot.cache.delete(id); slot.cache.set(id, ent); return; }
         var tris = _getWorldTris(el);
         var copy = tris.slice(); // own buffer; the source array stays valid for main
-        var b = el.box;
+        var b = _ccFrameBox(el);
         var box = new Float64Array([b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z]);
         add.push({ id: id, tris: copy, box: box });
         xfer.push(copy.buffer, box.buffer);
@@ -8440,8 +8864,36 @@ function startApp() {
     // lives in _ccResolveModelScope.
     var pick = function(id) { return _ccResolveModelScope(models, id); };
     var grpA = pick(rules.modelA), grpB = pick(rules.modelB);
+    // One engine-frame origin for the whole run (see _ccChooseWorldOrigin).
+    _ccChooseWorldOrigin(models);
     var maxGapM = (rules.maxGap||0)/1000;
     var minGapM = (rules.minGap||0)/1000;
+    // Largest clearance any pair can ask for: the global gap or a larger
+    // per-type-pair tolerance. The broad phase must keep every pair within it
+    // as a candidate, and the clearance path must run whenever it is > 0.
+    var runGapM = maxGapM;
+    if (rules.toleranceByTypePair) Object.keys(rules.toleranceByTypePair).forEach(function(k) {
+      var tv = +rules.toleranceByTypePair[k] / 1000;
+      if (tv > runGapM) runGapM = tv;
+    });
+    // The sweeps reject a pair when the f64 world boxes are more than
+    // 2*margin apart. The engine measures on Float32 engine-frame triangles,
+    // which can sit up to ~1 ulp (2^-24 relative to the frame coordinate) per
+    // box side closer than the f64 boxes, so the margin carries that slack:
+    // no pair the narrow phase would report within runGapM is ever pruned.
+    var _frameM = 0;
+    models.forEach(function(m) { (m.elements || []).forEach(function(el) {
+      var b = el && el.box; if (!b || !b.min) return;
+      var v = Math.max(Math.abs(b.min.x - _ccOrigin[0]), Math.abs(b.max.x - _ccOrigin[0]), Math.abs(b.min.y - _ccOrigin[1]),
+        Math.abs(b.max.y - _ccOrigin[1]), Math.abs(b.min.z - _ccOrigin[2]), Math.abs(b.max.z - _ccOrigin[2]));
+      if (v > _frameM) _frameM = v;
+    }); });
+    var sweepMargin = runGapM / 2 * (1 + 1e-9) + (_frameM * Math.pow(2, -22) + 1e-9);
+    var _scopeIn = {}, _scopeInA = {}, _scopeInB = {};
+    grpA.forEach(function(m){ _scopeIn[m.id] = true; _scopeInA[m.id] = true; });
+    grpB.forEach(function(m){ _scopeIn[m.id] = true; _scopeInB[m.id] = true; });
+    var _singleScope = Object.keys(_scopeIn).length === 1;
+    function _selfAllowedFor(mId) { return _ccSelfClashAllowed(rules, mId, _scopeInA, _scopeInB, _singleScope); }
     var clashes = [];
     var _tmpSizeA = new THREE.Vector3(), _tmpSizeB = new THREE.Vector3();
     var _tmpCtrA  = new THREE.Vector3(), _tmpCtrB  = new THREE.Vector3();
@@ -8630,8 +9082,8 @@ function startApp() {
     // ── L0: Sweep and Prune — O(n log n + k) candidate pairs ───────
     _mark('sweep_start');
     _phase('Finding candidate pairs');
-    var candidates = _sweepAndPruneWasm(grpA, grpB, rules, maxGapM);
-    if (candidates === null) candidates = _sweepAndPrune(grpA, grpB, rules, maxGapM);
+    var candidates = _sweepAndPruneWasm(grpA, grpB, rules, sweepMargin);
+    if (candidates === null) candidates = _sweepAndPrune(grpA, grpB, rules, sweepMargin);
     _mark('sweep_end');
 
     _mark('bvh_build_end');
@@ -8668,7 +9120,7 @@ function startApp() {
     var _tHard = 0, _tSoft = 0, _tFilters = 0, _nHardTests = 0, _nSoftTests = 0, _nHardTestsBatched = 0, _nHardTestsPooled = 0, _nSoftTestsPooled = 0;
 
     // ── Shared per-pair helpers (also used by the worker-pool prefilter) ──
-    var _wantsSoftRule = (!rules.hard) || (rules.maxGap || 0) > 0;
+    var _wantsSoftRule = (!rules.hard) || runGapM > 0;
     // Per-type-pair tolerance override of the soft gap (metres).
     function _pairGapMFor(eA, eB) {
       var g = maxGapM;
@@ -8787,12 +9239,12 @@ function startApp() {
       // leaves a pair as "untested".
       var hitByIdx = {};
       if (hits && hits.length) {
-        var boxA = group.eA.box;
+        var boxA = _ccFrameBox(group.eA);
         for (var i = 0; i < valid.length; i++) { hitByIdx[i] = false; }
         for (var h = 0; h < hits.length; h++) {
           var meshIdx = hits[h].meshIdx;
           if (meshIdx < 0 || meshIdx >= valid.length) continue;
-          var boxB = group.items[valid[meshIdx].orig].eB.box;
+          var boxB = _ccFrameBox(group.items[valid[meshIdx].orig].eB);
           hitByIdx[meshIdx] = _postProcessIntersectPoints(hits[h].points, hits[h].depth, boxA, boxB, _MI_MARGIN);
         }
       }
@@ -8867,7 +9319,7 @@ function startApp() {
       }
       // Same-model pair let through only because rules.duplicates needed
       // we must NOT emit hard/soft hits for this pair — those would
-      if (sameModel && rules.excludeSelf && rules.duplicates) {
+      if (sameModel && rules.duplicates && !_selfAllowedFor(mA.id)) {
         return;
       }
 
@@ -8938,30 +9390,34 @@ function startApp() {
         }
       }
       _tHard += performance.now() - _t1;
-      if (hardPt && rules.minOverlapVolM3 > 0) {
-        if (_aabbOverlap(bA, bB).vol < rules.minOverlapVolM3) hardPt = false;
-      }
-      // only" run (rules.hard=true, rules.maxGap=0) MUST NOT emit any
-      var _wantsSoft = _wantsSoftRule;
-      if (!hardPt && pairGapM>0 && _wantsSoft) {
-        var _t2 = performance.now();
+      // Hit refinement + clearance (see _ccResolvePair): a kernel hit is split
+      // into crossing (hard) vs contact; nested closed solids are hard; the
+      // clearance path runs only when nothing harder was found.
+      var ov=_aabbOverlap(bA, bB);
+      var _rp2 = _ccResolvePair(eA, eB, hardPt, function(out) {
+        var _t2 = performance.now(), d;
         if (_pr && (_pr[0] & 4)) {
-          // Worker-computed: exactly what _meshMinDist(eA, eB, ..., _softPairBuf) yields.
-          geoDist = _pr[5];
-          if (geoDist !== Infinity) { for (var _pj = 0; _pj < 6; _pj++) _softPairBuf[_pj] = _pr[6 + _pj]; }
+          // Worker-computed: exactly what _meshMinDist(eA, eB, ..., out) yields.
+          d = _pr[5];
+          if (d !== Infinity) { for (var _pj = 0; _pj < 6; _pj++) out[_pj] = _pr[6 + _pj]; }
           _nSoftTestsPooled++;
         } else {
-          geoDist = _meshMinDist(eA, eB, pairGapM, _softPairBuf);
+          d = _meshMinDist(eA, eB, pairGapM, out);
         }
         _tSoft += performance.now() - _t2;
         _nSoftTests++;
-        isSoft = geoDist<=pairGapM && geoDist>=minGapM;
-      }
+        return d;
+      }, { hard: !!rules.hard && !_semanticSkipHard, soft: pairGapM > 0 && _wantsSoftRule, gapM: pairGapM, minGapM: minGapM,
+           minOverlapVolM3: rules.minOverlapVolM3 || 0, overlapVol: ov.vol }, _softPairBuf);
+      var kind = _rp2.kind;
+      geoDist = _rp2.distM;
+      hardPt = kind === 'hard';
+      isSoft = kind === 'soft';
 
-      if (hardPt || isSoft) {
+      if (kind) {
         var cpx, cpy, cpz;
-        if (hardPt) {
-          cpx=hardPt[0]; cpy=hardPt[1]; cpz=hardPt[2];
+        if (_rp2.pt) {
+          cpx=_rp2.pt[0]; cpy=_rp2.pt[1]; cpz=_rp2.pt[2];
         } else {
           var ax=bA.max.x-bA.min.x, ay=bA.max.y-bA.min.y, az=bA.max.z-bA.min.z;
           var bx=bB.max.x-bB.min.x, by=bB.max.y-bB.min.y, bz=bB.max.z-bB.min.z;
@@ -8972,41 +9428,30 @@ function startApp() {
           cpy=_softPairBuf[1]*wA+_softPairBuf[4]*wB;
           cpz=_softPairBuf[2]*wA+_softPairBuf[5]*wB;
         }
+        // engine frame -> world
+        cpx += _ccOrigin[0]; cpy += _ccOrigin[1]; cpz += _ccOrigin[2];
         var dist;
-        if (hardPt) {
-          // Real (approximate) penetration depth — see _estimatePenetrationDepthM
-          // above. Falls back to hardPt[3] (the old tri-pair chord-length proxy)
-          // whenever it can't tell: throws, or returns null (open/non-manifold
-          // mesh, or a graze with no vertex of either side actually inside the
-          // other — see the "thin post fully through a slab" test). If THAT is
-          // also 0, the AABB-overlap estimate below is the final fallback,
-          // same three-tier structure as before this existed.
-          var penM = null;
-          try { penM = _estimatePenetrationDepthM(eA, eB); } catch (_penErr) { penM = null; }
-          var meshDepthMm = penM != null ? Math.round(penM * 1000) : Math.round(hardPt[3] * 1000);
-          if (meshDepthMm > 0) {
-            dist = -meshDepthMm;
-          } else {
-            var ox = Math.min(bA.max.x, bB.max.x) - Math.max(bA.min.x, bB.min.x);
-            var oy = Math.min(bA.max.y, bB.max.y) - Math.max(bA.min.y, bB.min.y);
-            var oz = Math.min(bA.max.z, bB.max.z) - Math.max(bA.min.z, bB.min.z);
-            dist = -Math.max(1, Math.round(Math.min(ox, oy, oz) * 1000));
-          }
+        if (kind === 'hard') {
+          // Separating-axis penetration depth (an upper bound on the minimum
+          // translation distance, see _estimatePenetrationDepthM); a crossing
+          // is at least the contact tolerance deep, so never below 1 mm.
+          dist = -Math.max(1, Math.round(_rp2.depthM * 1000));
+        } else if (kind === 'contact') {
+          dist = 0;
         } else {
           dist = Math.round(geoDist*1000);
         }
         var b=_buildClashBase(eA, eB, mA, mB, [cpx,cpy,cpz], sameModel);
-        var ov=_aabbOverlap(bA, bB);
-        var clrMm=isSoft?Math.round(geoDist*1000):null;
+        var clrMm=isSoft?Math.round(geoDist*1000):(kind === 'contact' ? 0 : null);
         // Provision for void: does the passing element sit inside an IFC
         // opening of the other one? 'provided' | 'partial' | (absent).
         // Classification only — hard/soft detection above is untouched.
         var _openStatus = null;
-        try { _openStatus = _ccOpeningStatusForPair(eA, eB, hardPt ? 'hard' : 'soft'); } catch (_opErr) { _openStatus = null; }
+        if (kind !== 'contact') { try { _openStatus = _ccOpeningStatusForPair(eA, eB, hardPt ? 'hard' : 'soft'); } catch (_opErr) { _openStatus = null; } }
         if (_openStatus) b.obj.opening = _openStatus;
         if (isSoft) b.obj.requiredClearanceMm = Math.round(pairGapM*1000);
         clashes.push(Object.assign(b.obj, {
-          type:hardPt?'hard':'soft', distance:dist,
+          type:kind, distance:dist,
           title:_niceClashTitle(b.tA, b.tB, sameModel), // placeholder: replaced by _ccApplyDefaultTitle right after the push
           description:b.tA+': '+b.nA+' ('+mA.name+') vs '+b.tB+': '+b.nB+' ('+mB.name+')',
           overlapVolM3:ov.vol, clearanceMm:clrMm,
@@ -9026,7 +9471,7 @@ function startApp() {
               disc_pair:[mA.discipline,mB.discipline].sort().join(':'),
               same_storey:(b.pA.storey||'')===(b.pB.storey||'')&&!!(b.pA.storey||b.pB.storey),
               same_model:sameModel,
-              clash_type:hardPt?'hard':'soft',
+              clash_type:kind,
               overlap_vol_m3:ov.vol,
               pen_depth_mm:penMm,
               clearance_mm:clrMm,
@@ -9098,8 +9543,13 @@ function startApp() {
     var merged = [];
     var mergeMap = {}; // key → array of {idx, point}
     clashes.forEach(function(c) {
-      var keyA = c.modelAId+':'+c.elemA+':'+c.modelBId+':'+c.elemBType;
-      var keyB = c.modelBId+':'+c.elemB+':'+c.modelAId+':'+c.elemAType;
+      // Rows only merge within one type (hard / soft / contact / duplicate):
+      // a merged row carries ONE type and distance, so a near-miss partner
+      // absorbed into a hard row (or a contact into a clearance row) would be
+      // reported as something it is not.
+      var _mk = ':' + c.type;
+      var keyA = c.modelAId+':'+c.elemA+':'+c.modelBId+':'+c.elemBType+_mk;
+      var keyB = c.modelBId+':'+c.elemB+':'+c.modelAId+':'+c.elemAType+_mk;
 
       var mergedIdx = null;
       var mergedSide = null; // 'A' or 'B'
@@ -9297,7 +9747,7 @@ function startApp() {
 
     // ── Optional narrow-phase worker pool (see _ccNarrowPoolCreate) ──
     var _NP_W = _NP_WINDOW_CHUNKS * _DETECT_CHUNK_SIZE; // candidates per prefetch window (chunk-aligned)
-    var _npSoft = maxGapM > 0 || !!(rules.toleranceByTypePair && Object.keys(rules.toleranceByTypePair).some(function(k) { return rules.toleranceByTypePair[k] > 0; }));
+    var _npSoft = runGapM > 0;
     var _npBlocker = _ccNarrowPoolBlocker(totalCandidates, _npSoft);
     if (!_npBlocker && !(rules.hard || _npSoft)) _npBlocker = 'no-narrow-phase-work';
     if (!_npBlocker) {
@@ -9906,6 +10356,7 @@ function startApp() {
             var mappedType = 'manual';
             if (topicType === 'issue' || topicType === 'error') mappedType = 'hard';
             else if (topicType === 'warning') mappedType = 'soft';
+            else if (topicType === 'contact') mappedType = 'contact';
             // Recover Revit element IDs from cc:revitA / cc:revitB labels (see exportBCF).
             // Same pattern recovers AI provenance written by exportBCF: cc:aiModel,
             // cc:aiSource, cc:aiAt. Carries the audit-trail chip through BCF round-trips.
@@ -10257,7 +10708,7 @@ function startApp() {
       : '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Version VersionId="2.1"><DetailedVersion>2.1</DetailedVersion></Version>');
 
     if (v3) {
-      zip.file('extensions.xml', '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Extensions><TopicTypes><TopicType>Issue</TopicType><TopicType>Warning</TopicType><TopicType>Request</TopicType></TopicTypes><TopicStatuses><TopicStatus>Open</TopicStatus><TopicStatus>In Progress</TopicStatus><TopicStatus>Closed</TopicStatus></TopicStatuses><Priorities><Priority>Critical</Priority><Priority>High</Priority><Priority>Normal</Priority><Priority>Low</Priority></Priorities></Extensions>');
+      zip.file('extensions.xml', '<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<Extensions><TopicTypes><TopicType>Issue</TopicType><TopicType>Warning</TopicType><TopicType>Contact</TopicType><TopicType>Request</TopicType></TopicTypes><TopicStatuses><TopicStatus>Open</TopicStatus><TopicStatus>In Progress</TopicStatus><TopicStatus>Closed</TopicStatus></TopicStatuses><Priorities><Priority>Critical</Priority><Priority>High</Priority><Priority>Normal</Priority><Priority>Low</Priority></Priorities></Extensions>');
       zip.file('project.bcfp','<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<ProjectInfo><Project ProjectId="'+_ccGetBcfProjectGuid().toLowerCase()+'"><Name>ClashControl</Name></Project></ProjectInfo>');
     } else {
       zip.file('project.bcfp','<?xml version="1.0" encoding="UTF-8"?>\n'+attrComment+'<ProjectExtension xmlns="http://www.buildingsmart-tech.org/bcf/project/2.1"><Project ProjectId="'+_ccGetBcfProjectGuid()+'"><Name>ClashControl</Name></Project><ExtensionSchema/></ProjectExtension>');
@@ -10275,7 +10726,7 @@ function startApp() {
       }
       if (v3) g = String(g).toLowerCase();
       var f = zip.folder(g);
-      var type = it.type==='hard'?'Issue':it.type==='soft'?'Warning':'Request';
+      var type = it.type==='hard'?'Issue':it.type==='soft'?'Warning':it.type==='contact'?'Contact':'Request';
       var st = it.status==='resolved'||it.status==='closed'?'Closed':it.status==='in_progress'?'In Progress':'Open';
       var priority = it.priority || (it.type==='hard'?'Critical':'Normal');
       priority = priority.charAt(0).toUpperCase() + priority.slice(1);
@@ -23174,7 +23625,7 @@ function startApp() {
       // but they are not clashes, and must not count toward Total/Hard/
       // Soft. Without this guard, "Total 21 / Hard 21" could report even
       // when only 12 were genuine geometric hard clashes.
-      var c = {total:0, untitled:0, open:0, inProg:0, resolved:0, hard:0, soft:0, dup:0, vis:0, dataQuality:0};
+      var c = {total:0, untitled:0, open:0, inProg:0, resolved:0, hard:0, soft:0, dup:0, vis:0, contact:0, dataQuality:0};
       for (var i=0; i<items.length; i++) {
         var it = items[i];
         if (isClash && it._idsValidation) { c.dataQuality++; continue; }
@@ -23188,6 +23639,7 @@ function startApp() {
           else if (it.type==='soft') c.soft++;
           else if (it.type==='duplicate') c.dup++;
           else if (it.type==='visibility') c.vis++;
+          else if (it.type==='contact') c.contact++;
         }
       }
       return c;
@@ -23884,10 +24336,10 @@ function startApp() {
     var canRun = models.length > 0 && !s.detecting;
 
     var PRESETS = [
-      {label:_cc_t('run.preset.hard.label','Hard clashes'),    note:_cc_t('run.preset.hard.note','Elements that physically overlap'),                    desc:_cc_t('run.preset.hard.desc','Every model against every other — hits where geometry actually intersects.'), r:{modelA:'all',modelB:'all',hard:true,maxGap:0,duplicates:false,excludeSelf:false}},
-      {label:_cc_t('run.preset.structVsMep.label','Structure vs MEP'),note:_cc_t('run.preset.structVsMep.note','Beams or columns hitting pipes & ducts'),               desc:_cc_t('run.preset.structVsMep.desc','Structural elements clashing with mechanical / electrical / plumbing.'),     r:{modelA:'disc:structural',modelB:'disc:mep',hard:true,maxGap:50,duplicates:false,excludeSelf:false}},
-      {label:_cc_t('run.preset.wallsVsMep.label','Walls vs MEP'),note:_cc_t('run.preset.wallsVsMep.note','Pipes & ducts running through walls or floors'),        desc:_cc_t('run.preset.wallsVsMep.desc','Architectural elements clashing with MEP runs.'),                            r:{modelA:'disc:architectural',modelB:'disc:mep',hard:true,maxGap:50,duplicates:false,excludeSelf:false}},
-      {label:_cc_t('run.preset.crossModel.label','Cross-model'),note:_cc_t('run.preset.crossModel.note','Anything from one team’s file hitting another'),        desc:_cc_t('run.preset.crossModel.desc','All models, ignore each model’s own internal clashes.'),                  r:{modelA:'all',modelB:'all',hard:true,maxGap:0,duplicates:false,excludeSelf:true}},
+      {label:_cc_t('run.preset.hard.label','Hard clashes'),    note:_cc_t('run.preset.hard.note','Elements that physically overlap'),                    desc:_cc_t('run.preset.hard.desc','Every model against every other — hits where geometry actually intersects.'), r:{modelA:'all',modelB:'all',hard:true,maxGap:0,minGap:0,duplicates:false,excludeSelf:false}},
+      {label:_cc_t('run.preset.structVsMep.label','Structure vs MEP'),note:_cc_t('run.preset.structVsMep.note','Beams or columns hitting pipes & ducts'),               desc:_cc_t('run.preset.structVsMep.desc','Structural elements clashing with mechanical / electrical / plumbing.'),     r:{modelA:'disc:structural',modelB:'disc:mep',hard:true,maxGap:50,minGap:0,duplicates:false,excludeSelf:false}},
+      {label:_cc_t('run.preset.wallsVsMep.label','Walls vs MEP'),note:_cc_t('run.preset.wallsVsMep.note','Pipes & ducts running through walls or floors'),        desc:_cc_t('run.preset.wallsVsMep.desc','Architectural elements clashing with MEP runs.'),                            r:{modelA:'disc:architectural',modelB:'disc:mep',hard:true,maxGap:50,minGap:0,duplicates:false,excludeSelf:false}},
+      {label:_cc_t('run.preset.crossModel.label','Cross-model'),note:_cc_t('run.preset.crossModel.note','Anything from one team’s file hitting another'),        desc:_cc_t('run.preset.crossModel.desc','All models, ignore each model’s own internal clashes.'),                  r:{modelA:'all',modelB:'all',hard:true,maxGap:0,minGap:0,duplicates:false,excludeSelf:true}},
       {label:_cc_t('run.preset.nearMisses.label','Near misses'),note:_cc_t('run.preset.nearMisses.note','Things within a clearance distance (e.g. 100 mm)'),     desc:_cc_t('run.preset.nearMisses.desc','No physical overlap, but elements too close — clearance / tolerance check.'), r:{modelA:'all',modelB:'all',hard:false,maxGap:100,duplicates:false,excludeSelf:true}},
       {label:_cc_t('run.preset.duplicates.label','Duplicates'),note:_cc_t('run.preset.duplicates.note','Same element modelled twice in the same place'),         desc:_cc_t('run.preset.duplicates.desc','Pure duplicate detection — usually data hygiene, not coordination.'),         r:{modelA:'all',modelB:'all',hard:false,maxGap:0,duplicates:true,excludeSelf:false}}
     ];
@@ -24026,7 +24478,7 @@ function startApp() {
             <div style=${{display:'flex',flexDirection:'column',gap:'.25rem'}}>
               <label style=${{display:'flex',alignItems:'center',gap:'.35rem',cursor:'pointer',padding:'.2rem 0'}}>
                 <input type="radio" name="clashtype" checked=${rules.hard && (rules.maxGap||0)===0}
-                  onChange=${function(){d({t:A.UPD_RULES,u:{hard:true,maxGap:0}})}}
+                  onChange=${function(){d({t:A.UPD_RULES,u:{hard:true,maxGap:0,minGap:0}})}}
                   style=${{margin:0,accentColor:'var(--accent)'}} />
                 <div>
                   <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>${_cc_t('run.hardOnly','Hard clashes only')}</div>
@@ -24035,7 +24487,7 @@ function startApp() {
               </label>
               <label style=${{display:'flex',alignItems:'center',gap:'.35rem',cursor:'pointer',padding:'.2rem 0'}}>
                 <input type="radio" name="clashtype" checked=${rules.hard && (rules.maxGap||0)>0}
-                  onChange=${function(){d({t:A.UPD_RULES,u:{hard:true,maxGap:rules.maxGap||50}})}}
+                  onChange=${function(){d({t:A.UPD_RULES,u:{hard:true,maxGap:rules.maxGap||50,minGap:0}})}}
                   style=${{margin:0,accentColor:'var(--accent)'}} />
                 <div>
                   <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>${_cc_t('run.hardPlusNear','Hard clashes + near misses')}</div>
@@ -24369,6 +24821,9 @@ function startApp() {
       // Clashes passing through an IFC opening made for them are hidden by
       // default (rules.hideProvidedOpenings) — counted + one click to show.
       if (isClashTab && s.rules.hideProvidedOpenings !== false && !f.showProvided) base = base.filter(function(c){ return c.opening !== 'provided'; });
+      // Touching surfaces (type 'contact': flush faces, a pipe resting on a
+      // beam) are not clashes: hidden by default, counted, one click to show.
+      if (isClashTab && s.rules.hideContacts !== false && !f.showContacts) base = base.filter(function(c){ return c.type !== 'contact'; });
       if (!isClashTab || !s.idsValidation || !s.idsValidation.results || !s.idsValidation.results.length) return base;
       var idsItems = s.idsValidation.results.map(function(r, i) {
         return {
@@ -24390,7 +24845,7 @@ function startApp() {
         };
       });
       return base.concat(idsItems);
-    }, [isClashTab, s.clashes, s.issues, s.idsValidation, f.status, f.showHandled, f.showProvided, s.rules.hideProvidedOpenings]);
+    }, [isClashTab, s.clashes, s.issues, s.idsValidation, f.status, f.showHandled, f.showProvided, f.showContacts, s.rules.hideProvidedOpenings, s.rules.hideContacts]);
 
 
     var visibleModelIds = useMemo(function(){
@@ -24500,6 +24955,19 @@ function startApp() {
       return n;
     }, [s.clashes, isClashTab, visibleModelIds, s.rules.hideProvidedOpenings]);
 
+    var contactCount = useMemo(function(){
+      if (!isClashTab || s.rules.hideContacts === false) return 0;
+      var n = 0;
+      for (var i=0;i<s.clashes.length;i++) {
+        var c = s.clashes[i];
+        if (c.type !== 'contact') continue;
+        if (c.modelAId && !visibleModelIds[c.modelAId]) continue;
+        if (c.modelBId && !visibleModelIds[c.modelBId]) continue;
+        n++;
+      }
+      return n;
+    }, [s.clashes, isClashTab, visibleModelIds, s.rules.hideContacts]);
+
     var items = useMemo(function(){
       return rawItems.filter(function(it){
         if(isClashTab && (it.modelAId || it.modelBId)) {
@@ -24554,10 +25022,10 @@ function startApp() {
 
     var counts = useMemo(function(){
       return {
-        oC: s.clashes.filter(function(c){return c.status==='open' && !(c.opening==='provided' && s.rules.hideProvidedOpenings!==false)}).length,
+        oC: s.clashes.filter(function(c){return c.status==='open' && !(c.opening==='provided' && s.rules.hideProvidedOpenings!==false) && !(c.type==='contact' && s.rules.hideContacts!==false)}).length,
         oI: s.issues.filter(function(i){return i.status!=='resolved'&&i.status!=='closed';}).length
       };
-    }, [s.clashes, s.issues, s.rules.hideProvidedOpenings]);
+    }, [s.clashes, s.issues, s.rules.hideProvidedOpenings, s.rules.hideContacts]);
     var oC=counts.oC, oI=counts.oI;
     var FL={fontSize:'0.69rem',color:'var(--text-muted)',marginBottom:'.15rem',display:'block'};
     var PILL=function(active){return Object.assign({},S_BTN,{fontSize:'0.69rem',padding:'.15rem .35rem',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'var(--accent-contrast)':'var(--text-faint)'});};
@@ -24581,6 +25049,11 @@ function startApp() {
         <span style=${{flex:1}}>${providedCount} ${_cc_t('opening.passThrough','pass through provided openings')} —</span>
         <button onClick=${function(){d({t:A.UPD_FILTERS,u:{showProvided:!f.showProvided}})}}
           style=${{...S_BTN,padding:'.1rem .4rem',fontSize:'0.68rem',color:'var(--accent-hover)',background:'none',border:'none',textDecoration:'underline',cursor:'pointer'}}>${f.showProvided ? _cc_t('opening.hide','hide') : _cc_t('opening.show','show')}</button>
+      </div>`}
+      ${isClashTab && contactCount > 0 && html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-tertiary)',fontSize:'0.68rem',color:'var(--text-muted)'}}>
+        <span style=${{flex:1}} title=${_cc_t('contact.title','Surfaces meet but nothing interpenetrates (flush faces, an element resting on another) — not a clash')}>${contactCount} ${_cc_t('contact.only','only touch (contact)')} —</span>
+        <button onClick=${function(){d({t:A.UPD_FILTERS,u:{showContacts:!f.showContacts}})}}
+          style=${{...S_BTN,padding:'.1rem .4rem',fontSize:'0.68rem',color:'var(--accent-hover)',background:'none',border:'none',textDecoration:'underline',cursor:'pointer'}}>${f.showContacts ? _cc_t('opening.hide','hide') : _cc_t('opening.show','show')}</button>
       </div>`}
       ${isClashTab && rawItems.length > 0 && rawItems.some(function(c){return c.aiSeverity;}) && html`<${ClashAISummary} items=${rawItems} />`}
       ${!isExplorerTab && !isStandardsTab && rawItems.length > 0 && html`<${ClashStatsBar} items=${rawItems} isClash=${isClashTab} delta=${isClashTab ? s.lastDeltaSummary : null} history=${isClashTab ? (s.runHistory||null) : null}
@@ -27360,7 +27833,7 @@ function startApp() {
       // when the engine couldn't compute one. Filter to physically plausible
       // values in millimetres so the AI prompt isn't poisoned.
       if (typeof c.distance==='number' && isFinite(c.distance) && Math.abs(c.distance) < 1e6) dists.push(c.distance);
-      if (c.type==='soft') soft++; else if (c.type==='duplicate') dup++; else hard++;
+      if (c.type==='soft') soft++; else if (c.type==='duplicate') dup++; else if (c.type!=='contact') hard++;
     });
     var span = [maxP[0]-minP[0], maxP[1]-minP[1], maxP[2]-minP[2]];
     if (!isFinite(span[0])) span = [0,0,0];
@@ -36794,7 +37267,7 @@ function startApp() {
       duplicates:false, excludeSelf:false, excludeTypes:[],
       useSemanticFilter:s.rules.useSemanticFilter!==false,
       fullRerun:!!s.rules.fullRerun,
-      minOverlapVolM3:s.rules.minOverlapVolM3||1e-5
+      minOverlapVolM3:s.rules.minOverlapVolM3||0
     }, init));
     var rules = st[0], setRules = st[1];
     var stRan = useState(false), ran = stRan[0], setRan = stRan[1];
@@ -36934,14 +37407,14 @@ function startApp() {
         <div style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)',marginBottom:'.25rem'}}>${_cc_t('run.whatType','What type of clashes?')}</div>
         <div style=${{display:'flex',flexDirection:'column',gap:'.15rem'}}>
           <label style=${chkRow}>
-            <input type="radio" name=${'ctype_'+idx} checked=${clashType==='hard'} onChange=${function(){updMany({hard:true,maxGap:0})}} style=${{margin:0,accentColor:'var(--accent)'}} />
+            <input type="radio" name=${'ctype_'+idx} checked=${clashType==='hard'} onChange=${function(){updMany({hard:true,maxGap:0,minGap:0})}} style=${{margin:0,accentColor:'var(--accent)'}} />
             <div>
               <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>${_cc_t('run.hardOnly','Hard clashes only')}</div>
               <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('setup.hardOnlyDesc','Elements that physically intersect')}</div>
             </div>
           </label>
           <label style=${chkRow}>
-            <input type="radio" name=${'ctype_'+idx} checked=${clashType==='mixed'} onChange=${function(){updMany({hard:true,maxGap:rules.maxGap>0?rules.maxGap:50})}} style=${{margin:0,accentColor:'var(--accent)'}} />
+            <input type="radio" name=${'ctype_'+idx} checked=${clashType==='mixed'} onChange=${function(){updMany({hard:true,maxGap:rules.maxGap>0?rules.maxGap:50,minGap:0})}} style=${{margin:0,accentColor:'var(--accent)'}} />
             <div>
               <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>${_cc_t('run.hardPlusNear','Hard clashes + near misses')}</div>
               <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('setup.hardPlusNearDesc','Intersections and elements too close')}</div>

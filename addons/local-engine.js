@@ -667,8 +667,14 @@ clashcontrol-engine --install</pre>
   //     See docs/V7_RELEASE_PLAN.md P0, docs/IMPROVEMENT_PLAN.md CW-1, and MEMORY.md
   //     Known Issues for the fuller history.
 
+  // Engine-frame origin of the last payload (index.html _ccChooseWorldOrigin):
+  // coordinates are sent relative to it (f64 subtract before serialising) and
+  // reported points are shifted back in _clashFromEngineResult.
+  var _payloadOrigin = [0, 0, 0];
   function _serializeForLocalEngine(models, rules) {
     var elements = [];
+    _payloadOrigin = (typeof window !== 'undefined' && typeof window._ccEnsureWorldOrigin === 'function') ? window._ccEnsureWorldOrigin(models) : [0, 0, 0];
+    var _ox = _payloadOrigin[0], _oy = _payloadOrigin[1], _oz = _payloadOrigin[2];
     models.forEach(function(m) {
       if (!m.elements) return;
       m.elements.forEach(function(el) {
@@ -687,7 +693,7 @@ clashcontrol-engine --install</pre>
           for (var i = 0; i < pos.count; i++) {
             v.set(pos.getX(i), pos.getY(i), pos.getZ(i));
             v.applyMatrix4(mesh.matrixWorld);
-            verts.push(v.x, v.y, v.z);
+            verts.push(v.x - _ox, v.y - _oy, v.z - _oz);
           }
           if (idx) { for (var j = 0; j < idx.count; j++) indices.push(idx.getX(j) + offset); }
           else { for (var j = 0; j < pos.count; j++) indices.push(j + offset); }
@@ -758,7 +764,8 @@ clashcontrol-engine --install</pre>
     // didn't emit one.
     var pt;
     if (c.point && c.point.length >= 3) {
-      pt = [c.point[0], c.point[1], c.point[2]];
+      var _po = (typeof _payloadOrigin !== 'undefined' && _payloadOrigin) || [0, 0, 0];
+      pt = [c.point[0] + _po[0], c.point[1] + _po[1], c.point[2] + _po[2]];
     } else {
       var cA = elA.box && elA.box.getCenter && elA.box.getCenter(new THREE.Vector3());
       var cB = elB.box && elB.box.getCenter && elB.box.getCenter(new THREE.Vector3());
@@ -834,11 +841,11 @@ clashcontrol-engine --install</pre>
   // callers must fall back to the browser engine rather than show
   // under-filtered "faster" results.
   //
-  // `minOverlapVolM3` is gated only above the app's own shipped baseline
-  // epsilon (1e-5, index.html INIT.rules default) — that default exists to
-  // suppress degenerate zero-volume float noise, not as a meaningful user
-  // filter, and gating on it unconditionally would disable the local engine
-  // for every default-configuration run.
+  // `minOverlapVolM3` is gated only above 1e-5 — the app's OLD shipped
+  // default (index.html INIT.rules now defaults it to 0: touches are told
+  // apart by real contact classification instead), which may still sit in
+  // saved rules; gating on it unconditionally would disable the local engine
+  // for those runs.
   var _ENGINE_VOL_EPSILON = 1e-5;
 
   // Resolve a modelA/modelB scope selector to what the engine can actually run.

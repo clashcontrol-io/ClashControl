@@ -46,6 +46,11 @@
       } else if (c.type === 'duplicate') {
         sev = 'info'; cat = 'duplicate';
         reason = 'Duplicate element at same location';
+      } else if (c.type === 'contact') {
+        // Surfaces touch, nothing interpenetrates (flush faces, an element
+        // resting on another): reported for completeness, not a clash.
+        sev = 'info'; cat = 'contact';
+        reason = 'Surfaces touch — no interpenetration';
       } else if (c.type === 'soft') {
         // Severity comes from the shared deterministic model (gap vs the
         // required clearance, weighted by element role) — see
@@ -68,7 +73,7 @@
         if (typeof c.distance === 'number' && c.distance < 0) reason += ' — ' + Math.round(-c.distance) + 'mm deep';
       }
 
-      if (cat !== 'false_positive' && cat !== 'duplicate') {
+      if (cat !== 'false_positive' && cat !== 'duplicate' && cat !== 'contact') {
         var matA = fv.mat_cat_a || '';
         var matB = fv.mat_cat_b || '';
         if (matA === INSULATION_MAT || matB === INSULATION_MAT) {
@@ -244,7 +249,7 @@
   //   overlap volume >= 0.05 m3 bumps minor/major one tier when c >= 2
   // SOFT clash, gap g vs required clearance r (ratio = g / r):
   //   ratio <= 0.3 -> major (near miss), else minor;  c == 0 drops one tier
-  // duplicate -> info;  visibility (sight-line) -> major.
+  // duplicate / contact (surfaces only touch) -> info;  visibility (sight-line) -> major.
   var TIERS = ['info', 'minor', 'major', 'critical'];
   function _shift(sev, delta) {
     var i = TIERS.indexOf(sev) + delta;
@@ -262,7 +267,7 @@
   var HARD_THRESH = { 3:{major:10, critical:20}, 2:{major:10, critical:50}, 1:{major:10, critical:100}, 0:{major:50, critical:Infinity} };
   function deterministicSeverity(c) {
     if (!c) return 'info';
-    if (c.type === 'duplicate') return 'info';
+    if (c.type === 'duplicate' || c.type === 'contact') return 'info';
     if (c.type === 'visibility') return 'major';
     var crit = pairCriticality(c);
     if (c.type !== 'hard') {
@@ -484,6 +489,7 @@
     else if (b.text.toLowerCase() < a.text.toLowerCase()) { first = b; second = a; }
     var directed = a.mep !== b.mep;
     if (c.type === 'duplicate') verb = 'duplicates';
+    else if (c.type === 'contact') verb = 'touches';
     else if (opening === 'partial') verb = directed ? 'through' : 'in';
     else if (opening === 'provided') verb = directed ? 'through' : 'in';
     else if (c.type === 'soft') verb = 'too close to';

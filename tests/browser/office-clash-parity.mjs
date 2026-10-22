@@ -599,8 +599,11 @@ try {
               const geo = new window.THREE.BufferGeometry();
               geo.setAttribute('position', new window.THREE.Float32BufferAttribute(tris, 3));
               el.meshes = [new window.THREE.Mesh(geo)];
-              delete el._triCache; delete el._wvCache; delete el._bvhCache;
-              const wt = window._ccGetWorldTris(el);
+              delete el._triCache; delete el._wvCache; delete el._bvhCache; delete el._topo; delete el._fbox;
+              // World box straight from the tessellation (f64, like the loader's
+              // boxes) — NOT from _ccGetWorldTris, which returns engine-frame
+              // (session-origin-relative) Float32 coordinates.
+              const wt = tris;
               const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
               for (let i = 0; i < wt.length; i += 3) for (let c = 0; c < 3; c++) { if (wt[i + c] < mn[c]) mn[c] = wt[i + c]; if (wt[i + c] > mx[c]) mx[c] = wt[i + c]; }
               el.box = new window.THREE.Box3(new window.THREE.Vector3(mn[0], mn[1], mn[2]), new window.THREE.Vector3(mx[0], mx[1], mx[2]));

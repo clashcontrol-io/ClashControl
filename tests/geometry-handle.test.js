@@ -70,7 +70,7 @@ function mockMesh(points, indices, matrix, extra) {
   }, extra || {});
 }
 
-function loadApi() {
+function loadApi(origin) {
   const geoBlock = extract(
     'function _ccGetElementGeometry(el) {',
     '\n  window._ccGetElementGeometry = _ccGetElementGeometry;'
@@ -82,7 +82,8 @@ function loadApi() {
   const wvBlock = extract('function _getWorldVerts(el) {', '\n  function _getWorldTris(el) {');
   const trisBlock = extract('function _getWorldTris(el) {', '\n\n  function _getBVH');
   const three = makeThreeStub();
-  const fn = new Function('THREE', `
+  const fn = new Function('THREE', '_ccOrigin', `
+    function _ccEnsureWorldOrigin(){}
     var _bvhLRU = new Map();
     function _bvhLRUTouch(){}
     function _bvhLRUEvict(){}
@@ -92,7 +93,7 @@ function loadApi() {
     ${trisBlock}
     return { getElementGeometry: _ccGetElementGeometry, elementWorldBox: _ccElementWorldBox, getWorldVerts: _getWorldVerts, getWorldTris: _getWorldTris };
   `);
-  return fn(three);
+  return fn(three, origin || [0, 0, 0]);
 }
 
 // ── _ccGetElementGeometry structural correctness ────────────────────────────
@@ -242,4 +243,19 @@ test('the accessibility-check center(el) helper now routes through _ccElementWor
   const body = source.slice(idx, source.indexOf('\n    }', idx) + 10);
   assert.match(body, /window\._ccElementWorldBox\(el\)/);
   assert.doesNotMatch(body, /setFromObject/, 'must no longer build its own Box3 via setFromObject');
+});
+
+// Session origin offset (E7): world coordinates are stored RELATIVE to one
+// f64 origin, subtracted before the Float32 conversion — a 100 km world
+// coordinate keeps sub-mm precision instead of a 7.8 mm Float32 grid.
+test('engine frame: _getWorldTris/_getWorldVerts subtract the session origin in f64 BEFORE Float32 storage', () => {
+  const api = loadApi([100000, 0, 0]);
+  const m = mockMesh([[0, 0, 0], [0.0501, 0, 0], [0, 1, 0]], [0, 1, 2], translationMatrix(100001, 2, 3));
+  const tris = api.getWorldTris({ meshes: [m] });
+  assert.deepEqual(Array.from(tris), Array.from(new Float32Array([1, 2, 3, 1.0501, 2, 3, 1, 3, 3])));
+  // without the origin the same 50.1 mm edge collapses onto the Float32 grid at 100 km
+  const raw = loadApi([0, 0, 0]).getWorldTris({ meshes: [mockMesh([[0, 0, 0], [0.0501, 0, 0], [0, 1, 0]], [0, 1, 2], translationMatrix(100001, 2, 3))] });
+  assert.notEqual(raw[3] - raw[0], Math.fround(1.0501) - 1);
+  const verts = api.getWorldVerts({ meshes: [m] });
+  assert.equal(verts[0], 1);
 });

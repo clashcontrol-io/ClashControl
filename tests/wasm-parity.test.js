@@ -36,7 +36,7 @@ function loadJsReference() {
   assert.ok(startIdx !== -1, 'could not locate _ttIvalA in index.html — line-range extraction is stale');
   const endMarkerIdx = full.indexOf(endMarker);
   assert.ok(endMarkerIdx !== -1, 'could not locate _ccJsMeshIntersectRef in index.html — extraction is stale');
-  const fnEndMarker = '\n  };\n\n  // ── Approximate penetration depth';
+  const fnEndMarker = '\n  };\n\n  // ── Point-to-surface distance helpers';
   const endIdx = full.indexOf(fnEndMarker, endMarkerIdx);
   assert.ok(endIdx !== -1, 'could not locate end of _ccJsMeshIntersectRef in index.html — extraction is stale');
   const body = full.slice(startIdx, endIdx + '\n  };'.length);
@@ -47,9 +47,9 @@ function loadJsReference() {
   const _bvhLRU = new Map();
   const _DETECT_CHUNK_SIZE = 80;
   const js = new Function(
-    'window', '_DETECT_CHUNK_SIZE', '_getWorldTris', '_getBVH', '_bvhLRU',
+    'window', '_DETECT_CHUNK_SIZE', '_getWorldTris', '_getBVH', '_bvhLRU', '_ccFrameBox',
     body + '; return {_triTriTest,_buildBVHNode,_bvhTraverseAll,_ccJsMeshIntersectRef:window._ccJsMeshIntersectRef};'
-  )(window, _DETECT_CHUNK_SIZE, _getWorldTris, _getBVH, _bvhLRU);
+  )(window, _DETECT_CHUNK_SIZE, _getWorldTris, _getBVH, _bvhLRU, (el) => el.box);
   return js;
 }
 
@@ -255,8 +255,8 @@ test('min-distance parity: intersecting/contained meshes must report EXACTLY 0 i
   // one triangle actually pierces the other, or one mesh is fully enclosed
   // in the other with no crossing triangle pair at all, the old code
   // reported a small but nonzero gap instead of the true 0. Both the
-  // tri-tri intersection short-circuit AND the point-in-mesh containment
-  // fix must be exercised here, in both the JS reference and WASM.
+  // tri-tri intersection short-circuit must be exercised here, in both the
+  // JS reference and WASM (containment is a JS post-step, see below).
   const mod = await loadWasm();
   const js = loadJsReference();
 
@@ -284,14 +284,18 @@ test('min-distance parity: intersecting/contained meshes must report EXACTLY 0 i
   runCmp('duct-through-column', duct, column);
   runCmp('duct-through-column (reversed)', column, duct);
 
-  // Fully contained: a small box entirely inside a bigger one, with no
-  // face of the small box crossing a face of the big one at all — the
-  // containment fix (point-in-mesh), not the tri-tri short-circuit, is
-  // what must catch this.
+  // Fully contained: the kernel reports the pure SURFACE distance (4 here)
+  // in both engines; containment is decided in JS afterwards, on closed
+  // meshes only (index.html _ccContainment) — the in-kernel parity fix ran
+  // on open meshes too and was removed.
   const bigBox = box(-5, 5, -5, 5, -5, 5);
   const smallBoxInside = box(-1, 1, -1, 1, -1, 1);
-  runCmp('fully-contained-box', bigBox, smallBoxInside);
-  runCmp('fully-contained-box (reversed)', smallBoxInside, bigBox);
+  for (const [nm, a, b] of [['fully-contained-box', bigBox, smallBoxInside], ['fully-contained-box (reversed)', smallBoxInside, bigBox]]) {
+    const j = js._ccJsMeshIntersectRef.minDist(a, b);
+    const w = Array.from(mod.mesh_min_distance(a, b));
+    assert.deepStrictEqual(w, j, `${nm}: exact parity`);
+    assert.strictEqual(j[0], 4, `${nm}: surface distance`);
+  }
 });
 
 // ── Cached-BVH Engine (engine/src/lib.rs `Engine`) ───────────────────

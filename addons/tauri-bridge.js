@@ -258,6 +258,9 @@
   // ── Worker-pool-shaped native pool (one per detection run) ──────
   function _createPool(ctx) {
     if (_failed || !ctx || typeof ctx.getWorldTris !== 'function' || typeof ctx.postProcess !== 'function') return null;
+    // Triangles come in the core's engine frame (session origin subtracted),
+    // so the hit filter must use the boxes in that same frame.
+    var _boxOf = function(el) { return typeof ctx.getBox === 'function' ? ctx.getBox(el) : el.box; };
     var t0 = Date.now();
     var pool = {
       dead: false, reason: null, failed: false, ready: true,
@@ -309,7 +312,7 @@
               if (!raw) { ok[j] = 0; continue; } // unknown id: leave it to the main thread, never a silent miss
               var rec = recs[j]; rec[0] |= 1;
               if (raw.length) {
-                var pts = ctx.postProcess(raw.subarray(0, raw.length - 1), raw[raw.length - 1], eA[j].box, eB[j].box, ctx.margin);
+                var pts = ctx.postProcess(raw.subarray(0, raw.length - 1), raw[raw.length - 1], _boxOf(eA[j]), _boxOf(eB[j]), ctx.margin);
                 if (pts) { rec[0] |= 2; rec[1] = pts[0]; rec[2] = pts[1]; rec[3] = pts[2]; rec[4] = pts[3]; hitFlag[j] = 1; }
               }
             }

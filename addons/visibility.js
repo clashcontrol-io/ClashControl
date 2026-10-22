@@ -323,6 +323,9 @@
       // Pre-warm BVH for obstructers and pre-compute their bboxes so the
       // outer loop can early-skip on a segment-vs-bbox test before
       // descending into the BVH proper.
+      // Engine BVH triangles are stored relative to the core's session origin
+      // (index.html _ccChooseWorldOrigin): ray origins must be shifted too.
+      var _O = (typeof window._ccWorldOrigin === 'function') ? window._ccWorldOrigin() : [0, 0, 0];
       var obstructerSnapshot = obstructers.map(function(entry){
         var b = entry.el.box;
         return {
@@ -384,7 +387,7 @@
               if (snap.bvh === null) snap.bvh = false;
             }
             if (!snap.bvh) continue;
-            var h = _bvhRayCast(snap.bvh.root, snap.bvh.tris, V[0], V[1], V[2], dxL, dyL, dzL, bestT);
+            var h = _bvhRayCast(snap.bvh.root, snap.bvh.tris, V[0] - _O[0], V[1] - _O[1], V[2] - _O[2], dxL, dyL, dzL, bestT);
             if (h < bestT) { bestT = h; hitBlocker = snap.entry; if (h < 0.05) break; }
           }
           if (hitBlocker) {
@@ -662,6 +665,7 @@
         return true;
       });
       var maxRange = rule.maxRange != null ? rule.maxRange : 25.0;
+      var _O = (typeof window._ccWorldOrigin === 'function') ? window._ccWorldOrigin() : [0, 0, 0]; // see obstructerSnapshot above
       var obstSnaps = obstructers.map(function(entry){
         var b = entry.el.box;
         return {
@@ -698,7 +702,7 @@
             if (snap.bvh === null) snap.bvh = false;
           }
           if (!snap.bvh) continue;
-          var h = _bvhRayCast(snap.bvh.root, snap.bvh.tris, V[0], V[1], V[2], dxL, dyL, dzL, lenL);
+          var h = _bvhRayCast(snap.bvh.root, snap.bvh.tris, V[0] - _O[0], V[1] - _O[1], V[2] - _O[2], dxL, dyL, dzL, lenL);
           if (h > 0 && h < lenL) return false;
         }
         return true;

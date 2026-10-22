@@ -31,13 +31,19 @@ const stableJson = between('function _ccStableJSON(o) {', '  function _ccCanonOn
 const hashSrc = between('function _hashElement(el) {', '  // Everything that must be identical');
 const sigSrc = between('function _ccRunSignature(models, rules, protectedPairs) {', '  // ── Type-pair impossibility memo');
 function load(win) {
-  return new Function('window', stableJson + hashSrc + sigSrc + '; return {_hashElement:_hashElement,_ccRunSignature:_ccRunSignature};')(win);
+  return new Function('window', '_ccOrigin', stableJson + hashSrc + sigSrc + '; return {_hashElement:_hashElement,_ccRunSignature:_ccRunSignature};')(win, win._origin || [0, 0, 0]);
 }
 const fns = load({ _ccClashClassificationCore: core, _ccWasmIntersect: function () {}, _ccWasmMinDist: function () {} });
 
-function mesh(matrix, pos, idx) {
+// Position attribute stand-in: `count` synthetic vertices (k, 2k, 3k) * 0.01
+// unless explicit coordinates are given.
+function posAttr(count, coords) {
+  const c = coords || null;
+  return { count, getX: (i) => c ? c[i * 3] : i * 0.01, getY: (i) => c ? c[i * 3 + 1] : i * 0.02, getZ: (i) => c ? c[i * 3 + 2] : i * 0.03 };
+}
+function mesh(matrix, pos, idx, coords) {
   const m = {
-    geometry: { attributes: { position: { count: pos } }, index: idx ? { count: idx } : null },
+    geometry: { attributes: { position: posAttr(pos, coords) }, index: idx ? { count: idx } : null },
     matrixWorld: { elements: matrix.slice() },
     updateWorldMatrix() {},
   };
@@ -55,6 +61,7 @@ function element(over) {
 function cloneEl(e, mut) {
   const c = JSON.parse(JSON.stringify({ expressId: e.expressId, box: e.box, props: e.props }));
   c.meshes = e.meshes.map((m) => mesh(m.matrixWorld.elements, m.geometry.attributes.position.count, m.geometry.index && m.geometry.index.count));
+  e.meshes.forEach((m, i) => { c.meshes[i].geometry.attributes.position = m.geometry.attributes.position; });
   if (mut) mut(c);
   return c;
 }
@@ -65,7 +72,12 @@ test('_hashElement is stable for an untouched element and changes for every rele
   assert.equal(h(base), h(cloneEl(base)), 'identical content -> identical hash');
   assert.notEqual(h(base), h(cloneEl(base, (c) => { c.box.max.x += 0.001; })), 'bbox edit (1 mm)');
   assert.notEqual(h(base), h(cloneEl(base, (c) => { c.meshes[0].matrixWorld.elements[13] += 0.01; })), 'mesh moved 10 mm with the same bbox');
-  assert.notEqual(h(base), h(cloneEl(base, (c) => { c.meshes[0].geometry.attributes.position.count = 25; })), 'vertex count');
+  assert.notEqual(h(base), h(cloneEl(base, (c) => { c.meshes[0].geometry.attributes.position = posAttr(25); })), 'vertex count');
+  // same counts, same matrix, same box — only a vertex moved (e.g. a sloped top reshaped inside the bounds)
+  assert.notEqual(h(base), h(cloneEl(base, (c) => {
+    const p = c.meshes[0].geometry.attributes.position, gx = p.getX;
+    c.meshes[0].geometry.attributes.position = Object.assign({}, p, { getX: (i) => (i === 0 ? gx(i) + 0.05 : gx(i)) });
+  })), 'vertex data edited with identical counts/matrix/box');
   assert.notEqual(h(base), h(cloneEl(base, (c) => { c.meshes.push(mesh(IDENT, 8, 12)); })), 'mesh added');
   assert.notEqual(h(base), h(cloneEl(base, (c) => { c.props.name = 'W2'; })), 'renamed (name is on the clash)');
   assert.notEqual(h(base), h(cloneEl(base, (c) => { c.props.ifcType = 'IfcSlab'; })), 'type changed');
@@ -100,6 +112,7 @@ test('_ccRunSignature: identical run configuration -> identical signature; displ
   assert.equal(sig([M2, M1], RULES, null), base, 'model order is irrelevant');
   assert.equal(sig([M1, M2], Object.assign({}, RULES, { fullRerun: true }), null), base, 'fullRerun only picks the mode');
   assert.equal(sig([M1, M2], Object.assign({}, RULES, { hideProvidedOpenings: false }), null), base, 'hideProvidedOpenings is display-only');
+  assert.equal(sig([M1, M2], Object.assign({}, RULES, { hideContacts: false }), null), base, 'hideContacts is display-only');
   assert.equal(sig([M1, M2], Object.assign({}, RULES, { changeAware: true }), null), base, 'the legacy changeAware key is a no-op');
 });
 
@@ -247,4 +260,10 @@ test('office fixture: level 0 carries three voided walls; the MEP file is byte-i
   assert.equal(b.mep, a.mep);
   const guidsOf = (t) => (t.match(/IFCWALL\('([^']+)'/g) || []);
   assert.equal(guidsOf(a.architecture).length, 15);
+});
+
+test('_ccRunSignature: a different engine-frame origin invalidates the smart re-run baseline', () => {
+  const a = load({ _ccClashClassificationCore: core, _origin: [0, 0, 0] })._ccRunSignature([M1, M2], RULES, null);
+  const b = load({ _ccClashClassificationCore: core, _origin: [100032, 0, 64] })._ccRunSignature([M1, M2], RULES, null);
+  assert.notEqual(a, b);
 });

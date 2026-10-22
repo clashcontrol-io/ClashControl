@@ -13,11 +13,13 @@
 //      against the oracle: precision/recall per category, distance error,
 //      penetration error, NaN outputs.
 //
-// It PASSES today: engine disagreements are RECORDED, not failed on — except
-// that any disagreement on an analytic fixture that is NOT listed in
-// KNOWN_DISCREPANCIES below fails (so new regressions are caught), and a
-// listed one that starts agreeing is reported as "fixed" so the table can be
-// tightened. When the engine is fixed, delete its rows: they become strict.
+// The engine side is the app's REAL pair decision (index.html _ccResolvePair:
+// kernel hit -> crossing/contact refinement, containment, depth, clearance).
+// Strict: any analytic fixture disagreement NOT listed in KNOWN_DISCREPANCIES
+// (empty since the 2026-10-22 accuracy fixes) fails, and so does any seeded
+// random pair. Documented semantics the truth follows: a crossing shallower
+// than / a gap below the 0.1 mm contact tolerance is a contact; contacts are
+// reported only by runs that include clearance.
 //
 // Report: JSON at $CC_ORACLE_REPORT (default: <os.tmpdir()>/cc-engine-oracle-report.json)
 // plus console tables.
@@ -49,36 +51,9 @@ const DIST_EPS_M = 1e-6;             // |engine − exact| above 1 µm counts as
 // assertion.
 // ════════════════════════════════════════════════════════════════════════════
 const KNOWN_DISCREPANCIES = {
-  // [E1] Containment is not a hard clash: no triangle pair crosses, so the
-  // tri-tri kernel misses; only the soft path's containment fix sees it
-  // (reported as a 0 mm clearance clash, or nothing in a hard-only run).
-  'pipe-inside-column': ['hard', 'final'],
-  'tiny-cube-inside-huge-slab': ['hard', 'final'],
-  'open-plate-inside-box': ['hard', 'final'],
-  // [E2] rules.minOverlapVolM3 (1e-5 m³ AABB-overlap volume) drops real
-  // penetrations of small/thin elements and every zero-thickness element.
-  'anchor-rod-2mm-through-slab': ['hard', 'final'],
-  'tiny-cube-10mm-into-huge-slab': ['hard', 'final'],
-  'open-plate-through-box': ['hard', 'final'],
-  // [E3] _triTriTest 0/0: a triangle with an edge lying exactly in the other
-  // triangle's plane (common in axis-aligned BIM: faces sharing a plane)
-  // yields a NaN interval, the NaN point array is truthy, and _triTriDistSq
-  // returns distance 0 for elements that are metres apart.
-  'shared-plane-diagonal-gap-500mm': ['final', 'distance', 'nan'],
-  'duct-above-wall-flush-side-30mm': ['distance', 'nan'],
-  'far-100km-gap-49.9mm-x': ['distance', 'nan'],
-  'far-100km-gap-50.1mm-x': ['distance', 'nan'],
-  // ... and the same NaN pseudo-hits fill the 8-point collect pass of a REAL
-  // crossing; _postProcessIntersectPoints drops them all -> hard clash missed
-  // (wall + round column standing on the same floor plane).
-  'wall-end-in-round-column-shared-floor': ['hard', 'final'],
-  // [E4] The kernel reports touching faces as a hit; "touch is not a clash"
-  // is only enforced by the AABB-overlap-volume filter, which is 0 only for
-  // axis-aligned contact. A face contact on a rotated plane becomes HARD.
-  'rotated-30deg-face-contact': ['hard', 'final'],
-  // [E5] The containment fix's ray-parity test runs on open meshes too: a
-  // box inside an open shell reads "inside" -> distance 0 instead of 0.4 m.
-  'box-inside-open-box': ['final', 'distance'],
+  // Empty: E1 (containment), E2 (minOverlapVolM3), E3 (edge-in-plane 0/0),
+  // E4 (contact vs crossing) and E5 (open-mesh parity) were fixed on
+  // 2026-10-22 — every analytic fixture is a strict assertion now.
 };
 
 // ── Engine extraction (same technique as tests/wasm-parity.test.js) ─────────
@@ -92,9 +67,9 @@ function loadEngine() {
   const window = { _ccSafetyMigrations: null };
   const _getWorldTris = (el) => el._triCache;
   const _getWorldVerts = (el) => el._verts;
-  return new Function('window', '_DETECT_CHUNK_SIZE', '_getWorldTris', '_getWorldVerts',
-    body + '; return {_triTriTest,_buildBVHForTris,_bvhTraverseAll,_jsIntersectBVH,_jsMinDistBVH,_estimatePenetrationDepthM,_MI_MARGIN};'
-  )(window, 80, _getWorldTris, _getWorldVerts);
+  return new Function('window', '_DETECT_CHUNK_SIZE', '_getWorldTris', '_getWorldVerts', '_ccFrameBox',
+    body + '; return {_triTriTest,_buildBVHForTris,_bvhTraverseAll,_jsIntersectBVH,_jsMinDistBVH,_estimatePenetrationDepthM,_ccResolvePair,_ccTouchVerdict,_MI_MARGIN};'
+  )(window, 80, _getWorldTris, _getWorldVerts, (el) => el.box);
 }
 
 function f32(a) { return a instanceof Float32Array ? a : Float32Array.from(a); }
@@ -116,57 +91,64 @@ function overlapVol(a, b) {
 }
 // Mirrors _processCandidate's decision for one pair (index.html, "L1+L2" block):
 // hard = kernel hit && AABB overlap >= minOverlapVolM3; soft only when not hard.
+// Runs the app's REAL pair decision (index.html _ccResolvePair: kernel hit ->
+// crossing/contact refinement, containment, SAT depth, clearance) with the JS
+// reference kernels, for each ruleset.
+function mkEl(js, t) {
+  const b = aabb(t);
+  const el = { _triCache: t, _verts: uniqVerts(t), box: b };
+  el._bvhCache = js._buildBVHForTris(t);
+  return el;
+}
+const RULESETS = {
+  default: { hard: true, maxGap: 50, minGap: 0, minOverlapVolM3: 0 },
+  hardOnly: { hard: true, maxGap: 0, minGap: 0, minOverlapVolM3: 0 },
+  clearance50: { hard: false, maxGap: 50, minGap: 0, minOverlapVolM3: 0 },
+};
 function runEngine(js, trisA, trisB) {
   const tA = f32(trisA), tB = f32(trisB);
-  const boxA = aabb(tA), boxB = aabb(tB);
-  const bA = js._buildBVHForTris(tA), bB = js._buildBVHForTris(tB);
+  const elA = mkEl(js, tA), elB = mkEl(js, tB);
+  const bA = elA._bvhCache, bB = elB._bvhCache;
   const raw = []; const dep = [0];
   js._bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, raw, 24, dep, false);
-  const hit = js._jsIntersectBVH(bA, bB, boxA, boxB);
+  const hit = js._jsIntersectBVH(bA, bB, elA.box, elB.box);
   const out = [0, 0, 0, 0, 0, 0];
-  const dist = js._jsMinDistBVH(bA, bB, out);
-  let pen = null;
-  if (hit) {
-    const elA = { _triCache: tA, _verts: uniqVerts(tA) }, elB = { _triCache: tB, _verts: uniqVerts(tB) };
-    try { pen = js._estimatePenetrationDepthM(elA, elB); } catch (e) { pen = 'throw:' + e.message; }
+  const surfDist = js._jsMinDistBVH(bA, bB, out);
+  const vol = overlapVol(elA.box, elB.box);
+  const outcomes = {};
+  let resolvedDist = null, depthM = null;
+  for (const [k, r] of Object.entries(RULESETS)) {
+    const gapM = r.maxGap / 1000;
+    const res = js._ccResolvePair(elA, elB, r.hard ? hit : false, (o6) => js._jsMinDistBVH(bA, bB, o6),
+      { hard: r.hard, soft: gapM > 0 && (!r.hard || gapM > 0), gapM, minGapM: r.minGap / 1000, minOverlapVolM3: r.minOverlapVolM3, overlapVol: vol }, [0, 0, 0, 0, 0, 0]);
+    outcomes[k] = res.kind || 'none';
+    if (k === 'clearance50') resolvedDist = res.distM;
+    if (res.kind === 'hard' && depthM == null) depthM = Math.max(1, Math.round(res.depthM * 1000)) / 1000;
+    if (res.pt && res.pt.some((v) => Number.isNaN(v))) outcomes[k + '_nanPt'] = true;
   }
-  const vol = overlapVol(boxA, boxB);
-  // the depth the app stores on a hard clash (clash.distance = -depth mm):
-  // estimator, else the tri-pair chord, else the smallest AABB overlap extent
-  let appDepthM = null;
-  if (hit) {
-    const mm = typeof pen === 'number' ? Math.round(pen * 1000) : Math.round(hit[3] * 1000);
-    if (mm > 0) appDepthM = mm / 1000;
-    else {
-      const ox = Math.min(boxA.max.x, boxB.max.x) - Math.max(boxA.min.x, boxB.min.x);
-      const oy = Math.min(boxA.max.y, boxB.max.y) - Math.max(boxA.min.y, boxB.min.y);
-      const oz = Math.min(boxA.max.z, boxB.max.z) - Math.max(boxA.min.z, boxB.min.z);
-      appDepthM = Math.max(1, Math.round(Math.min(ox, oy, oz) * 1000)) / 1000;
-    }
-  }
-  // user-visible outputs (distance, closest pair, hit point/depth, penetration)
-  const nan = [dist, ...out, ...(hit ? hit : []), ...(typeof pen === 'number' ? [pen] : [])].some((v) => Number.isNaN(v));
-  // NaN inside the raw tri-tri point list (later dropped by the box filter, but
-  // it still makes the probe pass report "hit" and costs a collect pass)
+  // The engine's reported distance: the clearance run's resolved distance
+  // (containment -> 0), or the surface distance when it is beyond the window.
+  const dist = resolvedDist != null && Number.isFinite(resolvedDist) ? resolvedDist : surfDist;
+  const nan = [surfDist, ...out, ...(hit ? hit : [])].some((v) => Number.isNaN(v)) || Object.keys(outcomes).some((k) => k.endsWith('_nanPt'));
   const nanRaw = raw.some((v) => Number.isNaN(v)) || Number.isNaN(dep[0]);
-  return { rawHit: raw.length > 0, kernelHit: !!hit, hitPt: hit || null, dist, pen, appDepthM, overlapVol: vol, nan, nanRaw, rawPts: raw.length / 3 };
+  return { rawHit: raw.length > 0, kernelHit: !!hit, hitPt: hit || null, dist, surfDist, pen: depthM, appDepthM: depthM, overlapVol: vol, nan, nanRaw, rawPts: raw.length / 3, outcomes };
 }
-function engineOutcome(e, rules) {
-  const hard = !!(rules.hard && e.kernelHit && !(rules.minOverlapVolM3 > 0 && e.overlapVol < rules.minOverlapVolM3));
-  const gap = (rules.maxGap || 0) / 1000, minGap = (rules.minGap || 0) / 1000;
-  const wantsSoft = !rules.hard || (rules.maxGap || 0) > 0;
-  const soft = !hard && gap > 0 && wantsSoft && e.dist <= gap && e.dist >= minGap;
-  return hard ? 'hard' : soft ? 'soft' : 'none';
-}
-const RULES_DEFAULT = { hard: true, maxGap: 50, minGap: 0, minOverlapVolM3: 1e-5 };
-const RULES_HARD = { hard: true, maxGap: 0, minGap: 0, minOverlapVolM3: 1e-5 };
-const RULES_CLEAR = { hard: false, maxGap: 50, minGap: 0, minOverlapVolM3: 1e-5 };
+function engineOutcome(e, key) { return e.outcomes[key]; }
+// Truth: crossing/contained -> hard (or a 0 mm soft in a clearance-only run);
+// contact -> 'contact' whenever the run reports anything; clearance within
+// the window -> soft. o.microContact marks a crossing shallower than the
+// engine's documented contact tolerance (0.1 mm): expected 'contact'.
+// Contacts (incl. gaps below the 0.1 mm contact tolerance) are reported only
+// by runs that include clearance; a hard-only run reports crossings only.
 function truthOutcome(o, rules) {
-  const overlap = o.category === 'crossing' || o.category === 'contained';
-  if (rules.hard && overlap) return 'hard';
+  const overlap = (o.category === 'crossing' || o.category === 'contained') && !o.microContact;
+  const nearGap = (o.category === 'clearance' || o.category === 'separate') && O.cmpDistToRational(o, 1, 10000) <= 0;
+  const touch = o.category === 'contact' || o.microContact || nearGap;
+  const clearanceRun = (rules.maxGap || 0) > 0;
+  if (overlap) return rules.hard ? 'hard' : (clearanceRun ? 'soft' : 'none');
+  if (touch) return clearanceRun ? 'contact' : 'none';
   const within = o.distance === 0 || O.cmpDistToRational(o, TOL_RAT[0], TOL_RAT[1]) <= 0;
-  const wantsSoft = !rules.hard || (rules.maxGap || 0) > 0;
-  if (wantsSoft && (rules.maxGap || 0) > 0 && within) return 'soft';
+  if (clearanceRun && within) return 'soft';
   return 'none';
 }
 
@@ -326,7 +308,18 @@ function analyticFixtures() {
   add('open-plate-through-box', plateZ(-1, 2, -1, 2, 0.5), box(0, 1, 0, 1, 0, 1), 'crossing');
   add('open-plate-inside-box', plateZ(0.2, 0.8, 0.2, 0.8, 0.5), box(0, 1, 0, 1, 0, 1), 'contained');
   add('box-inside-open-box', box(0.4, 0.6, 0.4, 0.6, 0.4, 0.6), f32(meshFrom(boxV(0, 1, 0, 1, 0, 1), BOXF.slice(0, 10))), 'separate');
-  // 100 km from origin (Float32 world coordinates — the app has no origin shift)
+  // Contact tolerance (0.1 mm, index.html _CC_CONTACT_TOL_M): a 15 µm overlap
+  // is Float32-noise scale -> contact; 0.49 mm is a real crossing. Walls that
+  // overlap end-to-end with identical height/thickness have NO transversal
+  // triangle crossing (every intersection lies in shared planes) — only the
+  // coplanar same-side rule sees it.
+  add('micro-overlap-15um-reads-contact', box(0, 1, 0, 1, 0, 1), box(0, 1, 0, 1, 1 - Math.pow(2, -16), 2), 'crossing');
+  add('overlap-0.49mm-is-hard', box(0, 1, 0, 1, 0, 1), box(0.25, 0.75, 0.25, 0.75, 1 - Math.pow(2, -11), 2), 'crossing', { mtd: Math.pow(2, -11) });
+  add('gap-61um-reads-contact', box(0, 1, 0, 1, 0, 1), box(0.25, 0.75, 0.25, 0.75, 1 + Math.pow(2, -14), 2), 'clearance', { dist: Math.pow(2, -14) });
+  add('walls-overlap-1mm-shared-planes', box(0, 1, 0, 0.25, 0, 3), box(1 - Math.pow(2, -10), 2, 0, 0.25, 0, 3), 'crossing', { mtd: Math.pow(2, -10) });
+  // 100 km from origin as RAW Float32 world coordinates (what the kernels
+  // would see without the app's session origin shift — index.html
+  // _ccChooseWorldOrigin subtracts one before Float32 storage).
   const K = 100000;
   add('far-100km-duct-through-wall', box(K - 1, K + 9, K + 0.6, K + 1.4, 2.5, 2.9), box(K + 4.9, K + 5.1, K - 2, K + 4, 0, 3.2), 'crossing', { mtd: 0.7 });
   add('far-100km-wall-on-slab', box(K, K + 5, K, K + 0.2, 0, 3), box(K - 1, K + 6, K - 1, K + 1, -0.25, 0), 'contact');
@@ -411,35 +404,56 @@ function truthBucket(o) {
   }
   return o.category;
 }
+// The engine's documented contact tolerance (index.html _CC_CONTACT_TOL_M):
+// an exact crossing that disappears when B moves this far along an axis is
+// shallower than the tolerance and is expected to read 'contact'.
+const CONTACT_TOL_M = 1e-4;
+function isMicroCrossing(fx, o) {
+  if (o.category !== 'crossing' && o.category !== 'contained') return false;
+  const b = Float64Array.from(fx.b);
+  for (let ax = 0; ax < 3; ax++) for (const sg of [1, -1]) {
+    const t2 = Float64Array.from(b);
+    for (let q = ax; q < t2.length; q += 3) t2[q] += sg * CONTACT_TOL_M;
+    const c2 = O.classifyPair(fx.a, t2).category;
+    if (c2 !== 'crossing' && c2 !== 'contained') return true;
+  }
+  return false;
+}
 function evaluate(js, fx, opts) {
   const o = O.classifyPair(fx.a, fx.b, opts);
   const e = runEngine(js, fx.a, fx.b);
-  const overlap = o.category === 'crossing' || o.category === 'contained';
-  const touch = overlap || o.category === 'contact';
-  const exactD = touch ? 0 : o.distance;
+  // Only pay for the shifted-oracle check when the engine actually says contact.
+  if ((o.category === 'crossing' || o.category === 'contained') && e.outcomes.default === 'contact') o.microContact = isMicroCrossing(fx, o);
+  const overlap = (o.category === 'crossing' || o.category === 'contained') && !o.microContact;
+  const touch = overlap || o.category === 'contact' || o.microContact;
+  const nearGap = (o.category === 'clearance' || o.category === 'separate') && O.cmpDistToRational(o, 1, 10000) <= 0;
+  const exactD = (touch || nearGap) ? 0 : o.distance;
   const out = {
-    name: fx.name, truth: o.category, bucket: truthBucket(o), exactDistM: exactD, certificate: o.certificate,
+    name: fx.name, truth: o.microContact ? 'crossing<0.1mm' : o.category, bucket: o.microContact ? 'contact' : truthBucket(o), exactDistM: exactD, certificate: o.certificate,
     closed: [o.closedA, o.closedB],
     engine: { rawHit: e.rawHit, kernelHit: e.kernelHit, dist: e.dist, pen: e.pen, appDepthM: e.appDepthM, overlapVol: e.overlapVol, nan: e.nan, nanRaw: e.nanRaw, rawPts: e.rawPts },
     outcomes: {}, disagree: [],
   };
-  for (const [k, rules] of [['default', RULES_DEFAULT], ['hardOnly', RULES_HARD], ['clearance50', RULES_CLEAR]]) {
-    out.outcomes[k] = { engine: engineOutcome(e, rules), truth: truthOutcome(o, rules) };
+  for (const [k, rules] of Object.entries(RULESETS)) {
+    out.outcomes[k] = { engine: engineOutcome(e, k), truth: truthOutcome(o, rules) };
   }
-  const engHard = engineOutcome(e, RULES_HARD) === 'hard';
+  const engHard = engineOutcome(e, 'hardOnly') === 'hard';
   if (engHard !== overlap) out.disagree.push('hard');
   if (out.outcomes.default.engine !== out.outcomes.default.truth) out.disagree.push('final');
+  if (out.outcomes.clearance50.engine !== out.outcomes.clearance50.truth) out.disagree.push('clearanceRun');
   out.distErrM = Number.isFinite(e.dist) ? Math.abs(e.dist - exactD) : Infinity;
   if (!(out.distErrM <= DIST_EPS_M)) out.disagree.push('distance');
   if (e.nan) out.disagree.push('nan');
   if (fx.mtd != null) out.penErrM = e.appDepthM == null ? null : Math.abs(e.appDepthM - fx.mtd);
   if (fx.mtd != null) out.mtdM = fx.mtd;
+  // the app reports whole millimetres, at least 1 mm for a crossing
+  if (fx.mtd != null && !(e.appDepthM != null && Math.round(e.appDepthM * 1000) === Math.max(1, Math.round(fx.mtd * 1000)))) out.disagree.push('depth');
   if (fx.intendedDist != null) out.representationErrM = Math.abs(o.distance - fx.intendedDist);
   return { o, e, row: out };
 }
 function confusion(rows, key) {
   const m = {};
-  for (const c of CATS) m[c] = { hard: 0, soft: 0, none: 0 };
+  for (const c of CATS) m[c] = { hard: 0, contact: 0, soft: 0, none: 0 };
   for (const r of rows) m[r.bucket][r.outcomes[key].engine]++;
   return m;
 }
@@ -464,6 +478,7 @@ function summarize(rows) {
     hard_vs_crossing_only: prf(rows, crossT, hardE),
     kernel_vs_overlap: prf(rows, overlapT, kernelE),
     soft_within_50mm_clearanceRun: prf(rows, softT, softE),
+    contact_default_run: prf(rows, (r) => r.outcomes.default.truth === 'contact', (r) => r.outcomes.default.engine === 'contact'),
     default_run_exact_match: rows.filter((r) => r.outcomes.default.engine === r.outcomes.default.truth).length,
     distance_error_m: { max: dErr.length ? Math.max(...dErr) : 0, mean: dErr.length ? dErr.reduce((s, v) => s + v, 0) / dErr.length : 0, over1um: rows.filter((r) => !(r.distErrM <= DIST_EPS_M)).length },
     nan_outputs: rows.filter((r) => r.engine.nan).length,
@@ -479,12 +494,13 @@ function printSummary(label, s) {
   console.log(`  HARD vs crossing only                 ${f(s.hard_vs_crossing_only)}`);
   console.log(`  kernel hit vs crossing∪contained      ${f(s.kernel_vs_overlap)}`);
   console.log(`  SOFT (clearance-only run, ≤50 mm)     ${f(s.soft_within_50mm_clearanceRun)}`);
+  console.log(`  CONTACT (default run)                 ${f(s.contact_default_run)}`);
   console.log(`  default run exact outcome match       ${s.default_run_exact_match}/${s.n}`);
   console.log(`  distance error  max ${s.distance_error_m.max.toExponential(3)} m  mean ${s.distance_error_m.mean.toExponential(3)} m  >1µm: ${s.distance_error_m.over1um}`);
   console.log(`  NaN outputs     ${s.nan_outputs} user-visible, ${s.nan_in_raw_kernel_points} pairs with NaN raw tri-tri points (dropped by the box filter)`);
   console.log('  default-run confusion (truth row × engine column):');
-  console.log('    ' + 'truth'.padEnd(16) + 'hard'.padStart(7) + 'soft'.padStart(7) + 'none'.padStart(7));
-  for (const c of CATS) { const m = s.confusion_default[c]; if (m.hard + m.soft + m.none) console.log('    ' + c.padEnd(16) + String(m.hard).padStart(7) + String(m.soft).padStart(7) + String(m.none).padStart(7)); }
+  console.log('    ' + 'truth'.padEnd(16) + 'hard'.padStart(7) + 'contact'.padStart(8) + 'soft'.padStart(7) + 'none'.padStart(7));
+  for (const c of CATS) { const m = s.confusion_default[c]; if (m.hard + m.contact + m.soft + m.none) console.log('    ' + c.padEnd(16) + String(m.hard).padStart(7) + String(m.contact).padStart(8) + String(m.soft).padStart(7) + String(m.none).padStart(7)); }
 }
 
 const REPORT = { generatedAt: null, tolerance_m: TOL_M, analytic: [], random: [], summaries: {}, knownDiscrepancyStatus: {} };
@@ -597,4 +613,7 @@ test('engine vs exact oracle: seeded random mesh pairs (recorded, not asserted)'
   }
   writeReport();
   assert.ok(rows.length > 0);
+  // Strict since the accuracy fixes: every seeded random pair must agree with
+  // ground truth (hard / contact / soft outcome per run, distance, depth, NaN).
+  assert.deepStrictEqual(dis.map((r) => r.name + ': ' + r.disagree.join(',')), [], 'random pairs disagree with the exact oracle');
 });

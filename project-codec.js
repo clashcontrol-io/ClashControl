@@ -39,7 +39,12 @@
     data.models.forEach(function(model) {
       dispatch({t:actions.ADD_MODEL, v:Object.assign({}, model, {meshes:[],elements:[],_stub:true})});
     });
-    dispatch({t:actions.UPD_RULES, u:data.rules});
+    var rules = data.rules;
+    // 1e-5 m³ was the shipped minOverlapVolM3 default until touches got real
+    // contact classification; it dropped genuine small penetrations, so a
+    // project saved with the old default loads with the new one (0 = off).
+    if (rules && rules.minOverlapVolM3 === 1e-5) rules = Object.assign({}, rules, {minOverlapVolM3: 0});
+    dispatch({t:actions.UPD_RULES, u:rules});
     if (data.clashes) dispatch({t:actions.SET_CLASHES, v:data.clashes});
     if (data.runHistory || data.lastDeltaSummary) dispatch({
       t:actions.LOAD_PROJECT_STATE,

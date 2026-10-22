@@ -24,7 +24,7 @@ function loadMainKernel() {
   const startIdx = full.indexOf('var _ttIvalA = new Float64Array(8)');
   const endMarker = 'window._ccJsMeshIntersectRef = {';
   const endMarkerIdx = full.indexOf(endMarker);
-  const fnEndMarker = '\n  };\n\n  // ── Approximate penetration depth';
+  const fnEndMarker = '\n  };\n\n  // ── Point-to-surface distance helpers';
   const endIdx = full.indexOf(fnEndMarker, endMarkerIdx);
   assert.ok(startIdx !== -1 && endMarkerIdx !== -1 && endIdx !== -1, 'kernel region markers are stale');
   const body = full.slice(startIdx, endIdx + '\n  };'.length);
@@ -35,9 +35,9 @@ function loadMainKernel() {
     return el._bvhCache;
   };
   const fns = new Function(
-    'window', '_DETECT_CHUNK_SIZE', '_getWorldTris', '_getBVH', '_bvhLRU',
+    'window', '_DETECT_CHUNK_SIZE', '_getWorldTris', '_getBVH', '_bvhLRU', '_ccFrameBox',
     body + '; return {_buildBVHForTris,_meshesIntersect,_meshMinDist,_ccBuildNarrowWorkerSource};'
-  )(window, 80, getWorldTris, getBVH, new Map());
+  )(window, 80, getWorldTris, getBVH, new Map(), (el) => el.box);
   return fns;
 }
 

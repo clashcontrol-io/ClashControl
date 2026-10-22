@@ -26,13 +26,13 @@ function loadJsReference() {
   const full = fs.readFileSync(path.join(REPO, 'index.html'), 'utf8');
   const startIdx = full.indexOf('var _ttIvalA = new Float64Array(8)');
   const endMarkerIdx = full.indexOf('window._ccJsMeshIntersectRef = {');
-  const endIdx = full.indexOf('\n  };\n\n  // ── Approximate penetration depth', endMarkerIdx);
+  const endIdx = full.indexOf('\n  };\n\n  // ── Point-to-surface distance helpers', endMarkerIdx);
   assert.ok(startIdx !== -1 && endMarkerIdx !== -1 && endIdx !== -1, 'JS reference extraction is stale');
   const body = full.slice(startIdx, endIdx + '\n  };'.length);
   const window = { _ccSafetyMigrations: null };
-  return new Function('window', '_DETECT_CHUNK_SIZE', '_getWorldTris', '_getBVH', '_bvhLRU',
+  return new Function('window', '_DETECT_CHUNK_SIZE', '_getWorldTris', '_getBVH', '_bvhLRU', '_ccFrameBox',
     body + '; return {ref:window._ccJsMeshIntersectRef,post:_postProcessIntersectPoints,margin:_MI_MARGIN};'
-  )(window, 80, () => [], () => null, new Map());
+  )(window, 80, () => [], () => null, new Map(), (el) => el.box);
 }
 
 function box(x0, x1, y0, y1, z0, z1) {
