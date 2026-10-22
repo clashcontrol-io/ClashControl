@@ -29,11 +29,24 @@ function mulberry32(seed) {
  * @param {object} [opts]
  * @param {number} [opts.nlev=3] - number of building storeys (levels 0, 3.5, 7, ...)
  * @param {number} [opts.seed=1337] - PRNG seed for deterministic GUIDs
+ * Opt-in extensions (each defaults off; omitting them reproduces the
+ * committed fixtures byte for byte). Added for the occlusion-culling
+ * differential (tests/browser/occlusion-culling.mjs):
+ * @param {boolean} [opts.mappedColumns] - columns as IfcMappedItem of one
+ *   shared IfcRepresentationMap, so the loader instances them (InstancedMesh)
+ * @param {number} [opts.bays=1] - repeat the architecture plan this many
+ *   times along +X (20.4 m apart), for a larger model
+ * @param {boolean} [opts.fitOut] - per storey and bay: two partitions and a
+ *   grid of desk-sized IfcBuildingElementProxy boxes (interior clutter that
+ *   walls and slabs hide)
  * @returns {{ architecture: string, mep: string }}
  */
 function generate(opts) {
   opts = opts || {};
   const nlev = opts.nlev || 3;
+  const bays = opts.bays || 1;
+  const mappedColumns = !!opts.mappedColumns;
+  const fitOut = !!opts.fitOut;
   const rnd = mulberry32(opts.seed || 1337);
   // Separate stream for opening/void GUIDs so adding openings to the
   // architecture model never shifts the GUIDs of the pre-existing elements
@@ -78,22 +91,40 @@ function generate(opts) {
     });
     L.push(`#${n()}=IFCRELAGGREGATES('${g()}',$,$,$,#${B},(${storeys.map((s) => '#' + s.id).join(',')}));`);
     const EXT = D(0, 0, 1);
+    const mapCache = {};
     // element: cls, name, storey, origin [x,y,z rel storey], axis (extrusion
     // world dir), ref (local x), profile {rect:[xd,yd]}|{circ:r}, depth, psets
     function el(cls, nm, st, o, axis, ref, prof, depth, props, predef) {
       const pt = P(...o);
       const ax = A3(pt, axis ? D(...axis) : null, ref ? D(...ref) : null);
       const pl = n(); L.push(`#${pl}=IFCLOCALPLACEMENT(#${st.pl},#${ax});`);
-      const pr = n();
-      if (prof.rect) L.push(`#${pr}=IFCRECTANGLEPROFILEDEF(.AREA.,$,#${A2},${prof.rect[0]},${prof.rect[1]});`);
-      else L.push(`#${pr}=IFCCIRCLEPROFILEDEF(.AREA.,$,#${A2},${prof.circ});`);
-      const sp = A3(ORIG);
-      const so = n(); L.push(`#${so}=IFCEXTRUDEDAREASOLID(#${pr},#${sp},#${EXT},${depth});`);
-      const rep = n(); L.push(`#${rep}=IFCSHAPEREPRESENTATION(#${CTX},'Body','SweptSolid',(#${so}));`);
-      const pds = n(); L.push(`#${pds}=IFCPRODUCTDEFINITIONSHAPE($,$,(#${rep}));`);
+      let pds;
+      if (prof.mapped) {
+        // one shared IfcRepresentationMap per key, one IfcMappedItem per use
+        if (!mapCache[prof.mapped]) {
+          const pr0 = n(); L.push(`#${pr0}=IFCRECTANGLEPROFILEDEF(.AREA.,$,#${A2},${prof.rect[0]},${prof.rect[1]});`);
+          const so0 = n(); L.push(`#${so0}=IFCEXTRUDEDAREASOLID(#${pr0},#${A3(ORIG)},#${EXT},${depth});`);
+          const rep0 = n(); L.push(`#${rep0}=IFCSHAPEREPRESENTATION(#${CTX},'Body','SweptSolid',(#${so0}));`);
+          const rm = n(); L.push(`#${rm}=IFCREPRESENTATIONMAP(#${A3(ORIG)},#${rep0});`);
+          mapCache[prof.mapped] = rm;
+        }
+        const op = n(); L.push(`#${op}=IFCCARTESIANTRANSFORMATIONOPERATOR3D($,$,#${ORIG},$,$);`);
+        const mi = n(); L.push(`#${mi}=IFCMAPPEDITEM(#${mapCache[prof.mapped]},#${op});`);
+        const rep = n(); L.push(`#${rep}=IFCSHAPEREPRESENTATION(#${CTX},'Body','MappedRepresentation',(#${mi}));`);
+        pds = n(); L.push(`#${pds}=IFCPRODUCTDEFINITIONSHAPE($,$,(#${rep}));`);
+      } else {
+        const pr = n();
+        if (prof.rect) L.push(`#${pr}=IFCRECTANGLEPROFILEDEF(.AREA.,$,#${A2},${prof.rect[0]},${prof.rect[1]});`);
+        else L.push(`#${pr}=IFCCIRCLEPROFILEDEF(.AREA.,$,#${A2},${prof.circ});`);
+        const sp = A3(ORIG);
+        const so = n(); L.push(`#${so}=IFCEXTRUDEDAREASOLID(#${pr},#${sp},#${EXT},${depth});`);
+        const rep = n(); L.push(`#${rep}=IFCSHAPEREPRESENTATION(#${CTX},'Body','SweptSolid',(#${so}));`);
+        pds = n(); L.push(`#${pds}=IFCPRODUCTDEFINITIONSHAPE($,$,(#${rep}));`);
+      }
       const e = n();
       const extra = (cls === 'IFCWALL' || cls === 'IFCSLAB' || cls === 'IFCCOLUMN' || cls === 'IFCBEAM'
-        || cls === 'IFCDUCTSEGMENT' || cls === 'IFCPIPESEGMENT' || cls === 'IFCFLOWTERMINAL') ? `,${predef || '$'}` : '';
+        || cls === 'IFCDUCTSEGMENT' || cls === 'IFCPIPESEGMENT' || cls === 'IFCFLOWTERMINAL'
+        || cls === 'IFCBUILDINGELEMENTPROXY') ? `,${predef || '$'}` : '';
       L.push(`#${e}=${cls}('${g()}',$,'${nm}',$,$,#${pl},#${pds},$${extra});`);
       st.els.push(e);
       if (props) {
@@ -135,8 +166,11 @@ function generate(opts) {
   const alongX = [[1, 0, 0], [0, 1, 0]];
   const alongY = [[0, 1, 0], [-1, 0, 0]];
 
-  const architecture = mkIfc('Architecture.ifc', (st, el, opening) => {
-    st.forEach((s, k) => {
+  const architecture = mkIfc('Architecture.ifc', (st, el0, opening) => {
+    st.forEach((s, k) => { for (let bay = 0; bay < bays; bay++) {
+      // bay 0 is the original plan, untouched; further bays shift along +X
+      const bx = bay * 20.4, sfx = bay ? ` B${bay}` : '';
+      const el = bay ? (cls, nm, s2, o, ...rest) => el0(cls, nm + sfx, s2, [o[0] + bx, o[1], o[2]], ...rest) : el0;
       el('IFCSLAB', `Floor slab L${k}`, s, [10, 6, -0.25], null, null, { rect: [20.4, 12.4] }, 0.25, { IsExternal: false, LoadBearing: true, FireRating: 'REI 90' }, '.FLOOR.');
       const southWall = el('IFCWALL', `Facade South L${k}`, s, [10, 0, 0], null, null, { rect: [20, 0.3] }, 3.2, { IsExternal: true, LoadBearing: false, FireRating: 'EI 60' }, '.STANDARD.');
       el('IFCWALL', `Facade North L${k}`, s, [10, 12, 0], null, null, { rect: [20, 0.3] }, 3.2, { IsExternal: true, LoadBearing: false }, '.STANDARD.');
@@ -154,14 +188,18 @@ function generate(opts) {
       //     the wall around the hole -> "opening too small".
       // The openings are cut into the wall meshes by web-ifc (IfcRelVoids-
       // Element), exactly like a real architectural model.
-      if (k === 0) {
+      if (k === 0 && bay === 0) {
         opening(corridorWall, 'Opening: supply duct', s, [9.8, 6.5, 2.7], ...alongX, { rect: [0.86, 0.46] }, 0.4);
         opening(southWall, 'Opening: sprinkler', s, [5, -0.2, 3.0], ...alongY, { rect: [0.14, 0.14] }, 0.4);
         opening(westWall, 'Opening: undersized', s, [-0.2, 6.5, 2.7], ...alongX, { rect: [0.6, 0.3] }, 0.4);
       }
-      for (const x of [5, 15]) for (const y of [3, 9]) el('IFCCOLUMN', `Column ${x}/${y} L${k}`, s, [x, y, 0], null, null, { rect: [0.4, 0.4] }, 3.25, { LoadBearing: true }, '.COLUMN.');
+      for (const x of [5, 15]) for (const y of [3, 9]) el('IFCCOLUMN', `Column ${x}/${y} L${k}`, s, [x, y, 0], null, null, mappedColumns ? { rect: [0.4, 0.4], mapped: 'column' } : { rect: [0.4, 0.4] }, 3.25, { LoadBearing: true }, '.COLUMN.');
       el('IFCBEAM', `Beam grid 3 L${k}`, s, [0, 3, 2.95], ...alongX, { rect: [0.3, 0.5] }, 20, { LoadBearing: true }, '.BEAM.');
-    });
+      if (fitOut) {
+        for (const x of [5, 15]) el('IFCWALL', `Partition ${x} L${k}`, s, [x, 9, 0], null, null, { rect: [0.1, 5.4] }, 3.0, { IsExternal: false }, '.PARTITIONING.');
+        for (const x of [2.5, 7.5, 12.5, 17.5]) for (const y of [1.5, 4.5, 7.5, 10.5]) el('IFCBUILDINGELEMENTPROXY', `Desk ${x}/${y} L${k}`, s, [x, y, 0], null, null, { rect: [1.6, 0.8] }, 0.75, null, '.ELEMENT.');
+      }
+    } });
   });
 
   const mep = mkIfc('MEP.ifc', (st, el) => {

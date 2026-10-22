@@ -123,7 +123,7 @@ jobs:
           fi
           echo "Changed files:"
           echo "$CHANGED"
-          if echo "$CHANGED" | grep -qE '^(index\.html|addons/|engine/|clash-discipline-core\.js|cc-runtime\.js)'; then
+          if echo "$CHANGED" | grep -qE '^(index\.html|addons/|engine/|clash-discipline-core\.js|cc-runtime\.js|occlusion-core\.js|tests/browser/occlusion-culling\.mjs)'; then
             echo "app-code=true" >> "$GITHUB_OUTPUT"
           else
             echo "app-code=false" >> "$GITHUB_OUTPUT"
@@ -168,3 +168,6 @@ jobs:
 
       - name: IfcSpace rooms load with geometry, hidden by default, never steal picks or clashes
         run: node tests/browser/spaces.mjs
+
+      - name: Occlusion culling on vs off renders identical pixels (every view)
+        run: node tests/browser/occlusion-culling.mjs
