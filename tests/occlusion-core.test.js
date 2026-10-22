@@ -201,3 +201,46 @@ test('projectViewBox: perspective rect contains the projected corners, depth is 
   }
   assert.equal(core.projectViewBox(P, true, W, H, [-1, -1, -5, 1, 1, 0.5], out), false, 'box through the camera is never culled');
 });
+
+// ── per-device verdict (runtime verification) ──
+test('verdict key: GPU string, app version and core hash all separate verdicts', () => {
+  const k = core.verdictKey('ANGLE (Vendor, GPU X)', '7.6.4');
+  assert.match(k, /^gpu=ANGLE \(Vendor, GPU X\)\|app=7\.6\.4\|core=[0-9a-f]{8}$/);
+  assert.notEqual(k, core.verdictKey('ANGLE (Vendor, GPU Y)', '7.6.4'));
+  assert.notEqual(k, core.verdictKey('ANGLE (Vendor, GPU X)', '7.6.5'), 'a new app version must not reuse a verdict');
+  assert.notEqual(k, core.verdictKey('ANGLE (Vendor, GPU X)', '7.6.4', 'deadbeef'), 'a changed core must not reuse a verdict');
+  assert.equal(k, core.verdictKey('ANGLE  (Vendor,   GPU X) ', '7.6.4'), 'whitespace in the GPU string is normalised');
+  assert.match(core.CORE_HASH, /^[0-9a-f]{8}$/);
+});
+
+test('verdict storage: round trip, only verified/refused count, malformed input is no verdict', () => {
+  const k = core.verdictKey('gpu', '1.0.0');
+  let raw = null;
+  assert.equal(core.readVerdict(raw, k), null);
+  raw = core.writeVerdict(raw, k, { state: 'refused', why: 'pixel-mismatch', at: 5 });
+  assert.deepEqual(core.readVerdict(raw, k), { state: 'refused', why: 'pixel-mismatch', at: 5 });
+  raw = core.writeVerdict(raw, k, { state: 'verified', why: '', at: 6 });
+  assert.equal(core.readVerdict(raw, k).state, 'verified');
+  assert.equal(core.readVerdict(raw, core.verdictKey('gpu', '1.0.1')), null, 'version bump -> pending again');
+  assert.equal(core.readVerdict('{not json', k), null);
+  assert.equal(core.readVerdict('[1,2]', k), null);
+  assert.equal(core.readVerdict(JSON.stringify({ [k]: { state: 'pending' } }), k), null);
+  assert.equal(core.readVerdict(JSON.stringify({ [k]: { state: 'verified', why: 3 } }), k).why, '');
+});
+
+test('verdict storage keeps only the newest entries', () => {
+  let raw = null;
+  for (let i = 0; i < 12; i++) raw = core.writeVerdict(raw, core.verdictKey('gpu' + i, '1'), { state: 'verified', at: i + 1 }, 8);
+  const all = JSON.parse(raw);
+  assert.equal(Object.keys(all).length, 8);
+  assert.equal(core.readVerdict(raw, core.verdictKey('gpu0', '1')), null);
+  assert.equal(core.readVerdict(raw, core.verdictKey('gpu11', '1')).state, 'verified');
+});
+
+test('firstDifference: exact comparison, any single change is found', () => {
+  const a = new Float32Array([0, 1, 2, 3]), b = new Float32Array(a);
+  assert.equal(core.firstDifference(a, b), -1);
+  b[2] = 2.0000002; assert.equal(core.firstDifference(a, b), 2);
+  assert.equal(core.firstDifference(new Uint8Array([1, 2]), new Uint8Array([1, 2, 3])), 0);
+  assert.equal(core.firstDifference(new Float32Array([NaN]), new Float32Array([NaN])), -1);
+});

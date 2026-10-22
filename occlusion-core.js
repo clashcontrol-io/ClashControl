@@ -428,5 +428,73 @@
     return true;
   }
 
-  return { buildAdjacency: buildAdjacency, createBuffer: createBuffer, projectViewBox: projectViewBox };
+  // ── Per-device verdict (runtime verification, docs/OCCLUSION_CULLING.md) ──
+  // A verdict says whether culled and unculled frames rendered identically on
+  // one GPU for one build. It is keyed by the GPU string, the app version and
+  // a hash of this module's own source, so a new build or a changed
+  // algorithm starts from 'pending' again and never reuses an old verdict.
+
+  /** @param {string} str */
+  function fnv1a(str) {
+    var h = 2166136261;
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return ('0000000' + h.toString(16)).slice(-8);
+  }
+  var CORE_HASH = fnv1a(String(buildAdjacency) + String(createBuffer) + String(projectViewBox));
+
+  /** @param {string} gpu @param {string} appVersion @param {string} [coreHash] */
+  function verdictKey(gpu, appVersion, coreHash) {
+    return 'gpu=' + String(gpu || 'unknown').replace(/\s+/g, ' ').trim() + '|app=' + String(appVersion || '0') + '|core=' + (coreHash || CORE_HASH);
+  }
+
+  /** @param {any} raw stored JSON string (or null) @returns {Object<string, any>} */
+  function parseVerdicts(raw) {
+    if (!raw) return {};
+    try {
+      var o = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      return o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+    } catch (_) { return {}; }
+  }
+
+  /**
+   * Stored verdict for key, or null. Only 'verified'/'refused' are ever
+   * stored; anything else (or a malformed entry) reads as no verdict.
+   * @param {any} raw @param {string} key
+   */
+  function readVerdict(raw, key) {
+    var v = parseVerdicts(raw)[key];
+    if (!v || (v.state !== 'verified' && v.state !== 'refused')) return null;
+    return { state: v.state, why: typeof v.why === 'string' ? v.why : '', at: v.at || 0 };
+  }
+
+  /**
+   * JSON to store after recording verdict for key; keeps the newest `keep`
+   * keys (other GPUs/builds) so the entry cannot grow without bound.
+   * @param {any} raw @param {string} key @param {{state:string, why?:string, at?:number}} verdict @param {number} [keep]
+   */
+  function writeVerdict(raw, key, verdict, keep) {
+    var all = parseVerdicts(raw);
+    all[key] = { state: verdict.state, why: verdict.why || '', at: verdict.at || Date.now() };
+    var keys = Object.keys(all).sort(function(a, b) { return (all[b].at || 0) - (all[a].at || 0); });
+    var out = {};
+    keys.slice(0, keep || 8).forEach(function(k) { out[k] = all[k]; });
+    return JSON.stringify(out);
+  }
+
+  /** JSON to store after dropping key's verdict. @param {any} raw @param {string} key */
+  function forgetVerdict(raw, key) {
+    var all = parseVerdicts(raw);
+    delete all[key];
+    return JSON.stringify(all);
+  }
+
+  /** @param {ArrayLike<number>} a @param {ArrayLike<number>} b @returns {number} index of the first difference, -1 if identical */
+  function firstDifference(a, b) {
+    if (a.length !== b.length) return 0;
+    for (var i = 0; i < a.length; i++) if (a[i] !== b[i] && !(a[i] !== a[i] && b[i] !== b[i])) return i;
+    return -1;
+  }
+
+  return { buildAdjacency: buildAdjacency, createBuffer: createBuffer, projectViewBox: projectViewBox,
+    CORE_HASH: CORE_HASH, verdictKey: verdictKey, readVerdict: readVerdict, writeVerdict: writeVerdict, forgetVerdict: forgetVerdict, firstDifference: firstDifference };
 }));
