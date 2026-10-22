@@ -294,7 +294,11 @@ async function detectionCheck(page) {
       let result;
       try { const p = window.ClashControl.runDetection(rules); probe(); result = await p; }
       finally { live = false; window.removeEventListener('cc-render-frame', onFrame); window.removeEventListener('cc-detect-progress', probe); window._ccHasFrameListener = false; }
-      probe(); // after the run: the pass must be back
+      // after the run: the pass must be back once the app has committed the
+      // result (state.detecting is cleared by the reducer, which can land a
+      // tick after the API promise resolves)
+      for (let i = 0; i < 100 && window._ccDetectionActive(); i++) await new Promise((r) => setTimeout(r, 20));
+      probe();
       frames.push(...probes.map((x) => Object.assign({ probe: true }, x)));
       await raf(); await raf();
       return { result: result || [], frames };
