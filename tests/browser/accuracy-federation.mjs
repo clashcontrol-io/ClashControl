@@ -15,8 +15,12 @@
 //      triangles (window._ccGetWorldTris) for every cross-model, in-scope
 //      element pair whose AABBs are within 50 mm (+1 mm) — all of them at CI
 //      scale; a seeded sample above CC_ORACLE_MAX_PAIRS (default 6000), plus a
-//      sample of the app-reported pairs, in which case precision/recall are
-//      sample estimates;
+//      sample of the app-reported pairs (planted pairs always included), in
+//      which case precision/recall are sample estimates. Triangles are snapped
+//      to a 2^-30 m grid (strips ±1e-16 transform noise near 0), and a crossing
+//      that vanishes when one element moves 7.6 µm along an axis is bucketed
+//      as 'crossing≤7.6µm' (Float32 rounding of an intended contact) and
+//      excluded from hard precision/recall;
 //   5. scores each run's clash list against that truth (confusion matrix,
 //      precision/recall per category, distance error, missed + spurious pairs)
 //      and separately against the planted-case manifest (analytic intent).
@@ -140,20 +144,22 @@ try {
   for (const [key, run] of Object.entries(RUNS)) {
     const r = await page.evaluate(async (rules) => {
       const gid = new Map();
-      for (const m of window._ccLatestState.models) for (const el of m.elements) gid.set(m.id + ':' + el.expressId, (el.props && el.props.globalId) || '');
+      for (const m of window._ccLatestState.models) for (const el of m.elements) gid.set(m.id + ':' + el.expressId, { g: (el.props && el.props.globalId) || '', t: el.props && el.props.ifcType });
       const t0 = performance.now();
       const res = await window.ClashControl.runDetection(rules);
       const ms = performance.now() - t0;
       const out = [];
       for (const c of res || []) {
-        const base = { type: c.type, distance: c.distance, clearanceMm: c.clearanceMm, opening: c.opening || null, merged: false };
+        const base = { type: c.type, distance: c.distance, clearanceMm: c.clearanceMm, opening: c.opening || null, merged: false, overlapVolM3: c.overlapVolM3 };
         out.push(Object.assign({ a: c.globalIdA, b: c.globalIdB }, base));
         // merged rows: expand every grouped partner element as its own pair
         if (c._groupedElems && c._groupedElems.length) {
           for (const e of c._groupedElems) {
+            // the row does not record which side was merged: a grouped element
+            // on the B side has the row's elemBType, on the A side elemAType
             const ga = gid.get(c.modelBId + ':' + e), gb = gid.get(c.modelAId + ':' + e);
-            if (ga && ga !== c.globalIdB) out.push(Object.assign({ a: c.globalIdA, b: ga }, base, { merged: true }));
-            else if (gb && gb !== c.globalIdA) out.push(Object.assign({ a: gb, b: c.globalIdB }, base, { merged: true }));
+            if (ga && ga.t === c.elemBType && ga.g !== c.globalIdB) out.push(Object.assign({ a: c.globalIdA, b: ga.g }, base, { merged: true }));
+            if (gb && gb.t === c.elemAType && gb.g !== c.globalIdA) out.push(Object.assign({ a: gb.g, b: c.globalIdB }, base, { merged: true }));
           }
         }
       }
@@ -170,7 +176,8 @@ try {
   await page.addScriptTag({ content: `(function(){var module={exports:{}};var exports=module.exports;var require=function(){throw new Error('no require')};\n${oracleSrc}\nwindow.__ccOracle=module.exports;})();` });
   const reported = new Set();
   for (const r of Object.values(results)) for (const c of r.clashes) reported.add([c.a, c.b].sort().join('|'));
-  const cand = await page.evaluate(({ maxPairs, reportedKeys, seed }) => {
+  const plantedKeys = gen.manifest.cases.map((c) => [c.a.globalId, c.b.globalId].sort().join('|'));
+  const cand = await page.evaluate(({ maxPairs, reportedKeys, seed, plantedKeys }) => {
     const st = window._ccLatestState;
     const rules = Object.assign({}, st.rules);
     const els = [];
@@ -209,12 +216,14 @@ try {
       pairs.forEach((p, k) => { if (!pick.has(k) && rep.has([els[p[0]].gid, els[p[1]].gid].sort().join('|'))) repIdx.push(k); });
       for (let k = repIdx.length - 1; k > 0; k--) { const r = Math.floor(rnd() * (k + 1)); [repIdx[k], repIdx[r]] = [repIdx[r], repIdx[k]]; }
       repIdx.slice(0, Math.floor(maxPairs / 2)).forEach((k) => pick.add(k));
+      const pk = new Set(plantedKeys); // planted cases are always evaluated
+      pairs.forEach((p, k) => { if (pk.has([els[p[0]].gid, els[p[1]].gid].sort().join('|'))) pick.add(k); });
       chosen = [...pick].sort((a, b) => a - b).map((k) => pairs[k]);
     }
     window.__ccPairs = chosen;
     window.__ccPrep = new Map();
     return { elements: els.length, candidates: pairs.length, chosen: chosen.length, sampled };
-  }, { maxPairs: MAX_PAIRS, reportedKeys: [...reported], seed: SEED });
+  }, { maxPairs: MAX_PAIRS, reportedKeys: [...reported], seed: SEED, plantedKeys });
   console.log(`\n=== ORACLE: ${cand.elements} elements with geometry, ${cand.candidates} in-scope cross-model candidate pairs (AABB within 51 mm); evaluating ${cand.chosen}${cand.sampled ? ' (SAMPLED — precision/recall below are sample estimates)' : ' (all)'}`);
   const tOr = Date.now();
   const truth = [];
@@ -232,7 +241,7 @@ try {
       const snap = (t) => { const o = new Float64Array(t.length); for (let i = 0; i < t.length; i++) o[i] = Math.round(t[i] * SN) / SN; return o; };
       const prep = (e) => {
         let m = window.__ccPrep.get(e);
-        if (!m) { const t = window._ccGetWorldTris(e.el); m = { raw: O.prepareMesh(t, { assumeClosed: true }), snapped: O.prepareMesh(snap(t), { assumeClosed: true }) }; window.__ccPrep.set(e, m); }
+        if (!m) { const t = window._ccGetWorldTris(e.el), st = snap(t); m = { raw: O.prepareMesh(t, { assumeClosed: true }), snapped: O.prepareMesh(st, { assumeClosed: true }), st }; window.__ccPrep.set(e, m); }
         return m;
       };
       for (const [i, j] of window.__ccPairs.slice(off, off + n)) {
@@ -245,7 +254,20 @@ try {
           raw = O.classifyPair(pA.raw, pB.raw, { assumeClosed: true });
         } catch (e) { out.push({ a: A.gid, b: B.gid, error: String(e && e.message || e) }); continue; }
         const within = o.distance === 0 || O.cmpDistToRational(o, 1, 20) <= 0;
-        out.push({ a: A.gid, b: B.gid, nameA: A.el.props.name, nameB: B.el.props.name, typeA: A.el.props.ifcType, typeB: B.el.props.ifcType,
+        // Micro-overlap: a crossing that disappears when B moves 2^-17 m
+        // (7.6 µm, exact in float64) along some axis is Float32 rounding of an
+        // intended flush contact (e.g. a slab top 1 ulp above a wall top at
+        // 40 m elevation) — numerically ambiguous, scored separately.
+        let micro = false;
+        if (o.category === 'crossing' || o.category === 'contained') {
+          const st = prep(B).st, D = Math.pow(2, -17);
+          outer: for (let ax = 0; ax < 3; ax++) for (const sg of [1, -1]) {
+            const t2 = Float64Array.from(st); for (let q = ax; q < t2.length; q += 3) t2[q] += sg * D;
+            const c2 = O.classifyPair(prep(A).snapped, t2, { assumeClosed: true }).category;
+            if (c2 !== 'crossing' && c2 !== 'contained') { micro = true; break outer; }
+          }
+        }
+        out.push({ micro, a: A.gid, b: B.gid, nameA: A.el.props.name, nameB: B.el.props.name, typeA: A.el.props.ifcType, typeB: B.el.props.ifcType,
           cat: o.category, d: o.distance, within, cert: o.certificate, manifold: o.edgeManifoldA && o.edgeManifoldB, ms: o.ms,
           rawCat: raw.category, rawD: raw.distance });
       }
@@ -271,14 +293,15 @@ try {
   const keyOf = (a, b) => [a, b].sort().join('|');
   const truthBy = new Map(truth.filter((t) => !t.error).map((t) => [keyOf(t.a, t.b), t]));
   const expectFor = (t, rules) => {
+    if (t.micro) return rules.hard ? 'hard|soft' : 'soft';
     const overlap = t.cat === 'crossing' || t.cat === 'contained';
     if (rules.hard && overlap) return 'hard';
     if ((rules.maxGap || 0) > 0 && t.within) return 'soft';
     return 'none';
   };
   const RULESETS = { default: { hard: true, maxGap: 50 }, hardOnly: { hard: true, maxGap: 0 }, clearance50: { hard: false, maxGap: 50 } };
-  const CATS = ['crossing', 'contained', 'contact', 'clearance≤50mm', 'clearance>50mm', 'separate', 'not-candidate'];
-  const bucket = (t) => !t ? 'not-candidate' : (t.cat === 'clearance' || t.cat === 'separate') ? (t.within ? 'clearance≤50mm' : t.cat === 'clearance' ? 'clearance>50mm' : 'separate') : t.cat;
+  const CATS = ['crossing', 'crossing≤7.6µm', 'contained', 'contact', 'clearance≤50mm', 'clearance>50mm', 'separate', 'not-candidate'];
+  const bucket = (t) => !t ? 'not-candidate' : t.micro ? 'crossing≤7.6µm' : (t.cat === 'clearance' || t.cat === 'separate') ? (t.within ? 'clearance≤50mm' : t.cat === 'clearance' ? 'clearance>50mm' : 'separate') : t.cat;
   function prf(tp, fp, fn) { return { tp, fp, fn, precision: tp + fp ? tp / (tp + fp) : 1, recall: tp + fn ? tp / (tp + fn) : 1 }; }
   for (const [key, res] of Object.entries(results)) {
     const rules = RULESETS[key];
@@ -286,22 +309,25 @@ try {
     for (const c of res.clashes) { const k = keyOf(c.a, c.b); if (!appBy.has(k) || (c.type === 'hard' && appBy.get(k).type !== 'hard')) appBy.set(k, c); }
     const conf = {}; for (const c of CATS) conf[c] = { hard: 0, soft: 0, none: 0 };
     let hTP = 0, hFP = 0, hFN = 0, iTP = 0, iFP = 0, iFN = 0, xTP = 0, xFP = 0, xFN = 0, sTP = 0, sFP = 0, sFN = 0, exact = 0, n = 0;
-    const dErr = [], missed = [], spurious = [], wrongType = [];
+    const dErr = [], missed = [], spurious = [], wrongType = [], distWrong = [];
     const keys = new Set([...truthBy.keys(), ...[...appBy.keys()].filter((k) => !cand.sampled || truthBy.has(k))]);
     for (const k of keys) {
       const t = truthBy.get(k), c = appBy.get(k);
       const got = c ? c.type : 'none';
       const exp = t ? expectFor(t, rules) : 'none';
       conf[bucket(t)][got === 'hard' || got === 'soft' ? got : 'none']++;
-      n++; if (got === exp) exact++;
+      n++; if (exp.split('|').includes(got)) exact++;
+      if (t && t.micro) continue; // numerically ambiguous: counted in the confusion matrix only
       const overlap = t && (t.cat === 'crossing' || t.cat === 'contained');
       const incl = overlap || (t && t.cat === 'contact');
       if (got === 'hard') { if (overlap) hTP++; else hFP++; if (incl) iTP++; else iFP++; if (t && t.cat === 'crossing') xTP++; else xFP++; }
       else { if (overlap && rules.hard) hFN++; if (incl && rules.hard) iFN++; if (t && t.cat === 'crossing' && rules.hard) xFN++; }
       const softExp = exp === 'soft';
       if (got === 'soft') { if (softExp) sTP++; else sFP++; } else if (softExp) sFN++;
-      if (got === 'soft' && t && typeof c.clearanceMm === 'number') dErr.push(Math.abs(c.clearanceMm - (t.cat === 'clearance' || t.cat === 'separate' ? t.d * 1000 : 0)));
-      const desc = { key: k, pair: (t ? `${t.nameA} [${t.typeA}] x ${t.nameB} [${t.typeB}]` : k.split('|').map((g) => nameOf.get(g) || g).join(' x ')), truth: t ? t.cat : 'not a candidate (AABB > 51 mm apart)', exactMm: t ? +(t.d * 1000).toFixed(3) : null, expected: exp, app: got, appMm: c ? (c.type === 'soft' ? c.clearanceMm : c.distance) : null, merged: c ? c.merged : false, opening: c ? c.opening : null };
+      // merged rows carry the row's distance, not each partner's: skip them
+      if (got === 'soft' && t && !c.merged && typeof c.clearanceMm === 'number') dErr.push(Math.abs(c.clearanceMm - (t.cat === 'clearance' || t.cat === 'separate' ? t.d * 1000 : 0)));
+      const desc = { key: k, pair: (t ? `${t.nameA} [${t.typeA}] x ${t.nameB} [${t.typeB}]` : k.split('|').map((g) => nameOf.get(g) || g).join(' x ')), truth: t ? t.cat : 'not a candidate (AABB > 51 mm apart)', exactMm: t ? +(t.d * 1000).toFixed(3) : null, expected: exp, app: got, appMm: c ? (c.type === 'soft' ? c.clearanceMm : c.distance) : null, merged: c ? c.merged : false, opening: c ? c.opening : null, appOverlapVolM3: c ? c.overlapVolM3 : null };
+      if (got === 'soft' && t && !c.merged && typeof c.clearanceMm === 'number' && dErr[dErr.length - 1] > 1) distWrong.push(desc);
       if (got === 'none' && exp !== 'none') missed.push(desc);
       else if (got !== 'none' && exp === 'none') spurious.push(desc);
       else if (got !== exp) wrongType.push(desc);
@@ -311,7 +337,7 @@ try {
       hard_vs_overlap: prf(hTP, hFP, hFN), hard_vs_crossing_contact_contained: prf(iTP, iFP, iFN), hard_vs_crossing_only: prf(xTP, xFP, xFN),
       soft_within_50mm: prf(sTP, sFP, sFN),
       clearance_error_mm: { n: dErr.length, max: dErr.length ? Math.max(...dErr) : 0, mean: dErr.length ? dErr.reduce((s, v) => s + v, 0) / dErr.length : 0, over1mm: dErr.filter((e) => e > 1).length },
-      confusion: conf, missed, spurious, wrongType,
+      confusion: conf, missed, spurious, wrongType, distanceOver1mm: distWrong,
     };
     report.runs[key] = out;
     const f = (x) => `P=${x.precision.toFixed(3)} R=${x.recall.toFixed(3)} (tp ${x.tp} fp ${x.fp} fn ${x.fn})`;
@@ -323,16 +349,16 @@ try {
     }
     if (rules.maxGap) console.log(`  SOFT (≤50 mm, incl. contact)        ${f(out.soft_within_50mm)}`);
     console.log(`  exact outcome match                 ${exact}/${n}`);
-    if (rules.maxGap) console.log(`  clearance error vs exact            max ${out.clearance_error_mm.max.toFixed(3)} mm, mean ${out.clearance_error_mm.mean.toFixed(3)} mm, >1 mm: ${out.clearance_error_mm.over1mm}/${out.clearance_error_mm.n}`);
+    if (rules.maxGap) console.log(`  clearance error (unmerged rows)     max ${out.clearance_error_mm.max.toFixed(3)} mm, mean ${out.clearance_error_mm.mean.toFixed(3)} mm, >1 mm: ${out.clearance_error_mm.over1mm}/${out.clearance_error_mm.n}`);
     console.log('  confusion (truth row × app column):');
     console.log('    ' + 'truth'.padEnd(16) + 'hard'.padStart(7) + 'soft'.padStart(7) + 'none'.padStart(7));
     for (const c of CATS) { const m = conf[c]; if (m.hard + m.soft + m.none) console.log('    ' + c.padEnd(16) + String(m.hard).padStart(7) + String(m.soft).padStart(7) + String(m.none).padStart(7)); }
     const show = (label, arr) => {
       if (!arr.length) return;
       console.log(`  ${label}: ${arr.length}${arr.length > 25 ? ' (first 25)' : ''}`);
-      for (const d of arr.slice(0, 25)) console.log(`    - ${d.pair}: truth ${d.truth}${d.exactMm != null ? ' ' + d.exactMm + ' mm' : ''}; expected ${d.expected}, app ${d.app}${d.appMm != null ? ' (' + d.appMm + ' mm)' : ''}${d.merged ? ' [merged row]' : ''}${d.opening ? ' [opening ' + d.opening + ']' : ''}`);
+      for (const d of arr.slice(0, 25)) console.log(`    - ${d.pair}: truth ${d.truth}${d.exactMm != null ? ' ' + d.exactMm + ' mm' : ''}; expected ${d.expected}, app ${d.app}${d.appMm != null ? ' (' + d.appMm + ' mm)' : ''}${d.merged ? ' [merged row]' : ''}${d.app === 'hard' && d.truth === 'contact' ? ' [AABB overlap ' + (d.appOverlapVolM3 != null ? d.appOverlapVolM3.toExponential(2) : '?') + ' m³]' : ''}${d.opening ? ' [opening ' + d.opening + ']' : ''}`);
     };
-    show('MISSED', missed); show('SPURIOUS', spurious); show('WRONG TYPE', wrongType);
+    show('MISSED', missed); show('SPURIOUS', spurious); show('WRONG TYPE', wrongType); show('CLEARANCE OFF BY > 1 mm', distWrong);
   }
 
   // planted manifest (analytic intent) per run
