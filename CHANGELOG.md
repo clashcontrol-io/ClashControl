@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.6.5 (2026-10-22)
+- CLAUDE.md: list occlusion-core.js in the file overview
+
 ## v7.6.4 (2026-10-15)
 - Harden the localhost Smart Bridge and add browser-side pairing for all local bridges
 
