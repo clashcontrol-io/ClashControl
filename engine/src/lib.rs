@@ -32,7 +32,7 @@ use wasm_bindgen::prelude::*;
 mod bvh;
 mod tri_tri;
 mod mesh_dist;
-mod point_in_mesh;
+// (point_in_mesh: containment moved out of the kernel, see index.html _ccContainment)
 mod broadphase;
 
 use bvh::BvhNode;
@@ -156,7 +156,7 @@ fn min_distance_prebuilt(bvh_a: &BvhNode, tris_a: &[f32], bvh_b: &BvhNode, tris_
     let mut out_a = [0.0f64; 3];
     let mut out_b = [0.0f64; 3];
     mesh_dist::traverse_min_dist(bvh_a, tris_a, bvh_b, tris_b, &mut best, &mut out_a, &mut out_b);
-    mesh_dist::containment_fix(bvh_a, tris_a, bvh_b, tris_b, &mut best, &mut out_a, &mut out_b);
+    // Pure surface distance: containment is decided in JS (closed meshes only).
     vec![
         best.sqrt(),
         out_a[0], out_a[1], out_a[2],

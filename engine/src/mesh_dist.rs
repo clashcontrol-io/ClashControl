@@ -13,7 +13,6 @@
 //! of its real (small) distance.
 
 use crate::bvh::{BvhKind, BvhNode};
-use crate::point_in_mesh::point_in_mesh_bvh;
 use crate::tri_tri::tri_tri_test;
 
 #[inline(always)]
@@ -295,48 +294,6 @@ pub fn traverse_min_dist(
         let (lb, rb) = match &nb.kind { BvhKind::Inner { left, right, .. } => (left, right), _ => unreachable!() };
         traverse_min_dist(na, tris_a, lb, tris_b, best, out_a, out_b);
         traverse_min_dist(na, tris_a, rb, tris_b, best, out_a, out_b);
-    }
-}
-
-/// Post-traversal containment fix: when the BVH-pruned dual-tree walk
-/// (`traverse_min_dist`) found a strictly positive surface distance, check
-/// whether one mesh is fully enclosed inside the other with no triangle
-/// pair actually crossing — e.g. a pipe segment fully inside a column, no
-/// edge pierces a face so `tri_tri_dist_sq`'s intersection short-circuit
-/// above never fires, but the solids still overlap volumetrically. A
-/// closed (manifold) mesh fully inside another has EVERY vertex inside it,
-/// so testing just each side's first triangle's first vertex is enough —
-/// stays O(1) extra work per pair. Same ray-parity point-in-mesh test as
-/// index.html's `_estimatePenetrationDepthM` (`point_in_mesh::point_in_mesh_bvh`).
-/// Mirrors JS `_meshMinDistContainmentFix` exactly.
-pub fn containment_fix(
-    root_a: &BvhNode,
-    tris_a: &[f32],
-    root_b: &BvhNode,
-    tris_b: &[f32],
-    best: &mut f64,
-    out_a: &mut [f64; 3],
-    out_b: &mut [f64; 3],
-) {
-    if *best <= 0.0 {
-        return;
-    }
-    let ax = tris_a[0] as f64;
-    let ay = tris_a[1] as f64;
-    let az = tris_a[2] as f64;
-    if point_in_mesh_bvh(ax, ay, az, root_b, tris_b) {
-        *best = 0.0;
-        *out_a = [ax, ay, az];
-        *out_b = [ax, ay, az];
-        return;
-    }
-    let bx = tris_b[0] as f64;
-    let by = tris_b[1] as f64;
-    let bz = tris_b[2] as f64;
-    if point_in_mesh_bvh(bx, by, bz, root_a, tris_a) {
-        *best = 0.0;
-        *out_a = [bx, by, bz];
-        *out_b = [bx, by, bz];
     }
 }
 

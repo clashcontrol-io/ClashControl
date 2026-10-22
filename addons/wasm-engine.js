@@ -74,7 +74,16 @@
       { name: 'duct-wall-reversed', a: wall, b: duct },
       { name: 'no-hit', a: farA, b: farB },
       { name: 'coplanar-touch', a: coplanarA, b: coplanarB },
-      { name: 'dense-cylinders', a: cylA, b: cylB }
+      { name: 'dense-cylinders', a: cylA, b: cylB },
+      // Edge lying exactly in the other triangle's plane (Möller 0/0 case,
+      // fixed 2026-10-22): a pre-fix binary returns NaN points here, so a
+      // stale cached wasm can never pass this check.
+      { name: 'edge-in-plane-crossing', a: new Float32Array([0,0,0, 4,0,0, 2,0,2]), b: new Float32Array([1,0,1, 3,0,1, 2,1,1]) },
+      { name: 'shared-plane-boxes', a: _box(0, 1, 0, 1, 0, 1), b: _box(-1, 0, 0, 1, 1.5, 3) },
+      { name: 'wall-on-slab-shared-floor', a: _box(0, 1, -0.12, 0.12, 0, 3), b: _box(0.8, 1.2, -0.2, 0.2, 0, 2.9) },
+      // vertex 1e-13 off the other plane (Möller epsilon snap, 2026-10-22)
+      { name: 'near-plane-vertex', a: new Float32Array([-63.975,0,-0.12005, -63.975,3.29,-0.12005, -61.12145,2.3214,-0.12005]),
+        b: new Float32Array([-57,6.938894e-16,-6.3, -57,-6.938894e-16,0, -50.5595,-6.938894e-16,0]) }
     ];
   }
   function _minDistCases() {
@@ -91,7 +100,10 @@
       { a: new Float32Array([0,0,0, 3,0,0, 0,4,0]), b: new Float32Array([3,4,0, 6,4,0, 3,8,0]) },
       { a: new Float32Array([0,0,0, 1,0,0, 0,1,0]), b: new Float32Array([50,50,50, 51,50,50, 50,51,50]) },
       { a: slabTri, b: deviceTri },
-      { a: crossA, b: crossB }
+      { a: crossA, b: crossB },
+      // shared-plane boxes 0.5 m apart: the old 0/0 made this distance 0
+      { a: _box(0, 1, 0, 1, 0, 1), b: _box(-1, 0, 0, 1, 1.5, 3) },
+      { a: new Float32Array([0,0,0, 4,0,0, 2,0,2]), b: new Float32Array([1,0,1, 3,0,1, 2,1,1]) }
     ];
     return mdCases;
   }

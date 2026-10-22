@@ -28,12 +28,10 @@ fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
 // JS `Math.max`/`Math.min` semantics: NaN propagates (returns NaN if EITHER
 // operand is NaN), unlike Rust's `f64::max`/`f64::min` methods, which are
 // IEEE 754 minNum/maxNum — they ignore a NaN operand and return the other
-// one. This distinction is load-bearing: a genuinely degenerate triangle
-// pair (an edge lying exactly in the other triangle's plane) produces a
-// literal 0.0/0.0 = NaN inside `interval()`, and JS's overlap-interval
-// `Math.max`/`Math.min` then propagates that NaN into the final "hit" point
-// — a real (if odd) behavior of the reference this crate must reproduce
-// bit-for-bit, not silently paper over. Signed-zero tie-break also mirrors
+// one. Since the 2026-10-22 degenerate-case fix `interval()` no longer
+// produces NaN for an edge lying in the other plane, and a NaN result is
+// never a hit (both engines), but the overlap still uses JS semantics so
+// non-finite input behaves identically. Signed-zero tie-break also mirrors
 // the ECMA-262 spec (`Math.max(+0,-0) === +0`, `Math.min(+0,-0) === -0`).
 #[inline(always)]
 fn js_max(a: f64, b: f64) -> f64 {
@@ -60,8 +58,13 @@ fn js_min(a: f64, b: f64) -> f64 {
 /// — mirrors the JS `_ttIvalA`/`_ttIvalB` scratch layout exactly.
 type Ival = [f64; 8];
 
+/// Möller's lone-vertex choice including the zero-distance cases (mirrors
+/// the JS `interval()` branch for branch): the lone vertex must have a
+/// non-zero signed distance, otherwise `r = 0/0`. An edge lying exactly in
+/// the other plane picks the off-plane vertex; all three zero is the
+/// coplanar case and returns `None` (policy: no hit).
 #[inline(always)]
-fn interval(v0: [f64; 3], v1: [f64; 3], v2: [f64; 3], dd0: f64, dd1: f64, dd2: f64, axis: usize) -> Ival {
+fn interval(v0: [f64; 3], v1: [f64; 3], v2: [f64; 3], dd0: f64, dd1: f64, dd2: f64, axis: usize) -> Option<Ival> {
     let (i0, i1, i2, di0, di1, di2);
     if dd0 * dd1 > 0.0 {
         i0 = v2; i1 = v0; i2 = v1;
@@ -69,9 +72,17 @@ fn interval(v0: [f64; 3], v1: [f64; 3], v2: [f64; 3], dd0: f64, dd1: f64, dd2: f
     } else if dd0 * dd2 > 0.0 {
         i0 = v1; i1 = v0; i2 = v2;
         di0 = dd1; di1 = dd0; di2 = dd2;
-    } else {
+    } else if dd1 * dd2 > 0.0 || dd0 != 0.0 {
         i0 = v0; i1 = v1; i2 = v2;
         di0 = dd0; di1 = dd1; di2 = dd2;
+    } else if dd1 != 0.0 {
+        i0 = v1; i1 = v0; i2 = v2;
+        di0 = dd1; di1 = dd0; di2 = dd2;
+    } else if dd2 != 0.0 {
+        i0 = v2; i1 = v0; i2 = v1;
+        di0 = dd2; di1 = dd0; di2 = dd1;
+    } else {
+        return None;
     }
     let p0 = i0[axis];
     let p1 = i1[axis];
@@ -91,9 +102,9 @@ fn interval(v0: [f64; 3], v1: [f64; 3], v2: [f64; 3], dd0: f64, dd1: f64, dd2: f
         i0[2] + (i2[2] - i0[2]) * r2,
     ];
     if t1 < t2 {
-        [t1, t2, q1[0], q1[1], q1[2], q2[0], q2[1], q2[2]]
+        Some([t1, t2, q1[0], q1[1], q1[2], q2[0], q2[1], q2[2]])
     } else {
-        [t2, t1, q2[0], q2[1], q2[2], q1[0], q1[1], q1[2]]
+        Some([t2, t1, q2[0], q2[1], q2[2], q1[0], q1[1], q1[2]])
     }
 }
 
@@ -119,14 +130,19 @@ pub fn tri_tri_test(ta: &[f32], oa: usize, tb: &[f32], ob: usize, _eps: f32) -> 
     let e2 = sub(b2, b0);
     let n2 = cross(e1, e2);
     let nl2 = dot(n2, n2);
-    if nl2 < 1e-10 {
+    if nl2 < 1e-24 {
         return None; // degenerate triangle B
     }
     let d2 = -dot(n2, b0);
-    let da0 = dot(n2, a0) + d2;
-    let da1 = dot(n2, a1) + d2;
-    let da2 = dot(n2, a2) + d2;
+    let mut da0 = dot(n2, a0) + d2;
+    let mut da1 = dot(n2, a1) + d2;
+    let mut da2 = dot(n2, a2) + d2;
     let eps2 = 1e-6 * nl2.sqrt();
+    // Möller's epsilon snap (mirrors JS): within 1 µm of the plane IS on it,
+    // otherwise a same-sign near-zero vertex extrapolates the interval.
+    if da0.abs() <= eps2 { da0 = 0.0; }
+    if da1.abs() <= eps2 { da1 = 0.0; }
+    if da2.abs() <= eps2 { da2 = 0.0; }
     if da0 > eps2 && da1 > eps2 && da2 > eps2 {
         return None;
     }
@@ -145,14 +161,17 @@ pub fn tri_tri_test(ta: &[f32], oa: usize, tb: &[f32], ob: usize, _eps: f32) -> 
     let f2 = sub(a2, a0);
     let n1 = cross(f1, f2);
     let nl1 = dot(n1, n1);
-    if nl1 < 1e-10 {
+    if nl1 < 1e-24 {
         return None; // degenerate triangle A
     }
     let d1 = -dot(n1, a0);
-    let db0 = dot(n1, b0) + d1;
-    let db1 = dot(n1, b1) + d1;
-    let db2 = dot(n1, b2) + d1;
+    let mut db0 = dot(n1, b0) + d1;
+    let mut db1 = dot(n1, b1) + d1;
+    let mut db2 = dot(n1, b2) + d1;
     let eps1 = 1e-6 * nl1.sqrt();
+    if db0.abs() <= eps1 { db0 = 0.0; }
+    if db1.abs() <= eps1 { db1 = 0.0; }
+    if db2.abs() <= eps1 { db2 = 0.0; }
     if db0 > eps1 && db1 > eps1 && db2 > eps1 {
         return None;
     }
@@ -177,8 +196,8 @@ pub fn tri_tri_test(ta: &[f32], oa: usize, tb: &[f32], ob: usize, _eps: f32) -> 
         2
     };
 
-    let ia = interval(a0, a1, a2, da0, da1, da2, axis);
-    let ib = interval(b0, b1, b2, db0, db1, db2, axis);
+    let ia = interval(a0, a1, a2, da0, da1, da2, axis)?;
+    let ib = interval(b0, b1, b2, db0, db1, db2, axis)?;
     if ia[0] >= ib[1] || ib[0] >= ia[1] {
         return None; // strict < to exclude edge-only touches
     }
@@ -187,6 +206,9 @@ pub fn tri_tri_test(ta: &[f32], oa: usize, tb: &[f32], ob: usize, _eps: f32) -> 
     let src = if (ia[1] - ia[0]) >= (ib[1] - ib[0]) { ia } else { ib };
     let len = src[1] - src[0];
     if len < 1e-12 {
+        if src[2].is_nan() || src[3].is_nan() || src[4].is_nan() {
+            return None;
+        }
         return Some((src[2], src[3], src[4], 0.0));
     }
     let r_min = (o_min - src[0]) / len;
@@ -202,12 +224,15 @@ pub fn tri_tri_test(ta: &[f32], oa: usize, tb: &[f32], ob: usize, _eps: f32) -> 
         src[4] + (src[7] - src[4]) * r_max,
     ];
     let sd = sub(p_max, p_min);
-    Some((
-        (p_min[0] + p_max[0]) / 2.0,
-        (p_min[1] + p_max[1]) / 2.0,
-        (p_min[2] + p_max[2]) / 2.0,
-        dot(sd, sd).sqrt(),
-    ))
+    let hx = (p_min[0] + p_max[0]) / 2.0;
+    let hy = (p_min[1] + p_max[1]) / 2.0;
+    let hz = (p_min[2] + p_max[2]) / 2.0;
+    let hl = dot(sd, sd).sqrt();
+    // Backstop (mirrors JS): a NaN never counts as a hit.
+    if hx.is_nan() || hy.is_nan() || hz.is_nan() || hl.is_nan() {
+        return None;
+    }
+    Some((hx, hy, hz, hl))
 }
 
 #[cfg(test)]
@@ -280,28 +305,36 @@ mod tests {
         assert_eq!(fwd.is_some(), rev.is_some());
     }
 
-    // Regression: JS's Math.max/Math.min propagate NaN (return NaN if either
-    // operand is NaN), unlike Rust's f64::max/f64::min which IGNORE NaN and
-    // return the other operand. This triangle pair has one edge (a0-a1) lying
-    // EXACTLY in triangle B's plane (da0 == da1 == 0.0), which makes
-    // `interval()`'s r1 = di0/(di0-di1) a literal 0.0/0.0 = NaN — a genuine
-    // quirk of the JS reference (an edge-in-plane degenerate case), not
-    // something to "fix": the contract here is bit-identical output,
-    // including this NaN, not a more correct answer. If o_min/o_max used
-    // Rust's `.max()`/`.min()` instead of JS-semantics `js_max`/`js_min`,
-    // this would silently produce a real number instead of propagating NaN
-    // — exactly the bug this test catches.
+    // Regression (E3): an edge lying EXACTLY in the other triangle's plane
+    // (da0 == da1 == 0) used to pick a zero-distance vertex as the "lone"
+    // one -> r = 0/0 = NaN -> an all-NaN "hit". The fixed lone-vertex choice
+    // returns the real edge segment: here a's edge (0,0,1)-(1,0,1) lies in
+    // b's plane y=0, b's edge (1,0,1)-... meets it at x=1 only -> the two
+    // intervals touch at one end -> no hit (edge-only touch), and never NaN.
     #[test]
-    fn test_edge_in_plane_degenerate_matches_js_nan_propagation() {
+    fn test_edge_in_plane_degenerate_is_finite() {
         let a: [f32; 9] = [0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0];
         let b: [f32; 9] = [1.0, 0.0, 0.0, 2.0, 0.0, 1.0, 1.0, 0.0, 1.0];
-        let r = tri_tri_test(&a, 0, &b, 0, 1e-6);
-        match r {
-            Some((cx, cy, cz, depth)) => {
-                assert!(cx.is_nan() && cy.is_nan() && cz.is_nan() && depth.is_nan(),
-                    "expected all-NaN point (matching the JS reference's 0/0 degenerate case), got {:?}", (cx, cy, cz, depth));
-            }
-            None => panic!("JS reference returns a (NaN-filled) Some(...) here, not None"),
+        if let Some((cx, cy, cz, depth)) = tri_tri_test(&a, 0, &b, 0, 1e-6) {
+            assert!(!(cx.is_nan() || cy.is_nan() || cz.is_nan() || depth.is_nan()), "NaN hit {:?}", (cx, cy, cz, depth));
         }
+        // An edge in the plane that really crosses the other triangle is a
+        // finite hit along that edge.
+        let c: [f32; 9] = [0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 2.0, 0.0, 2.0]; // in plane y=0
+        let d: [f32; 9] = [1.0, 0.0, 1.0, 3.0, 0.0, 1.0, 2.0, 1.0, 1.0]; // edge (1,0,1)-(3,0,1) in y=0
+        let r = tri_tri_test(&c, 0, &d, 0, 1e-6).expect("edge-in-plane crossing must hit");
+        assert!(r.0.is_finite() && r.1.is_finite() && r.2.is_finite() && r.3.is_finite());
+        assert!((r.2 - 1.0).abs() < 1e-12 && r.1.abs() < 1e-12);
+    }
+
+    // Regression: a vertex 1e-13 off the other plane, next to two clearly
+    // positive ones, used to pass the same-side rejection, pick a same-sign
+    // "lone" vertex and extrapolate the interval -> a hit for triangles 4 m
+    // apart (a 25 mm wall/slab gap read as distance 0). Snapped to 0 now.
+    #[test]
+    fn test_near_plane_vertex_is_not_extrapolated() {
+        let a: [f32; 9] = [-63.975, 0.0, -0.12005, -63.975, 3.29, -0.12005, -61.12145, 2.3214, -0.12005];
+        let b: [f32; 9] = [-57.0, 6.938894e-16, -6.3, -57.0, -6.938894e-16, 0.0, -50.5595, -6.938894e-16, 0.0];
+        assert!(tri_tri_test(&a, 0, &b, 0, 1e-6).is_none());
     }
 }
