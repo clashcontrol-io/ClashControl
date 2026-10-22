@@ -237,3 +237,9 @@ test('suggestRoles: stated roles are high confidence; spaces are a group; choice
   assert.equal(core.roleChoice('zone', { roleChoices: { zone: 'exclude' } }), 'exclude');
   assert.equal(core.roleChoice('zone', { roleChoices: { zone: 'bogus' } }), 'classify');
 });
+
+test('a role volume stays owned by its model even when a code reads MEP (compartment marker coded "fire safety")', () => {
+  const z = [1, 2, 3].map(() => el('IfcBuildingElementProxy', { name: 'Brandcompartiment', classification: [REF('Uniformat', '65.10')] }));
+  assert.equal(core.classifyModel(z, 'arch-x').discipline, 'architectural');
+  assert.deepEqual([z[0]._ccCls.d, z[0]._ccCls.role, z[0]._ccCls.dm], ['architectural', 'zone', true]);
+});

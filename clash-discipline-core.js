@@ -470,6 +470,12 @@
     var proxyLike = !!PROXY_LIKE[cls] || !cls;
     var nameText = [p.name, p.objectType, p.typeObject && p.typeObject.name].filter(Boolean).join(' ');
     if (!role && proxyLike && ctx && ctx.modelRole) { role = ctx.modelRole; roleSrc = 'model'; roleEv = ''; }
+    // A provision / zone volume belongs to the model that drew it: a code
+    // like "fire safety" on a compartment marker does not make it MEP.
+    if (role && !TYPE_MAP[cls] && own.d && own.dSrc !== 'entity') {
+      d = (ctx && ctx.modelDisc) || 'other'; dSrc = ctx && ctx.modelDisc ? 'model' : 'default'; sub = null; src = null; ev = '';
+    }
+    var _roleOwned = role && !TYPE_MAP[cls];
     if (d === 'mep') {
       if ((!sub || sub === 'piping') && ctx && ctx.modelSub && (!sub || SUB_FAMILY[ctx.modelSub] === 'pipe')) {
         sub = ctx.modelSub; src = 'model'; ev = '';
@@ -483,7 +489,7 @@
     if (d === 'mep' && !sub && dSrc && src !== dSrc && !STATED_SRC[src]) src = dSrc;
     // dm: the top-level discipline came from the model, so it follows the
     // model's live discipline (a user re-labelling the model wins).
-    return _mk({ d: d, sub: sub, src: src, ev: ev, role: role, roleSrc: roleSrc, roleEv: roleEv, dm: !own.d });
+    return _mk({ d: d, sub: sub, src: src, ev: ev, role: role, roleSrc: roleSrc, roleEv: roleEv, dm: !own.d || !!_roleOwned });
   }
 
   function classifyElement(el, ctx) { return _finalize(el, _ownEvidence(el), ctx || {}); }
