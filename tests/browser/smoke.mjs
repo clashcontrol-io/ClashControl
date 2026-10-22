@@ -117,7 +117,7 @@ try {
   ).catch(() => fail('app did not mount within 60s'));
 
   const gradutedCoresLoaded = await page.evaluate(() => ({
-    discipline: !!(window._ccClashDisciplineCore && window._ccClashDisciplineCore.contractVersion === 1),
+    discipline: !!(window._ccClashDisciplineCore && window._ccClashDisciplineCore.contractVersion === 2),
     assignment: !!(window._ccClashAssignmentCore && window._ccClashAssignmentCore.contractVersion === 1),
     identity: !!(window._ccClashIdentityCore && window._ccClashIdentityCore.contractVersion === 1),
     reconciliation: !!(window._ccClashReconciliationCore && window._ccClashReconciliationCore.contractVersion === 2),

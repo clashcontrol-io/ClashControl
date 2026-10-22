@@ -13,7 +13,21 @@
     var OPENING = {IfcDoor:1, IfcWindow:1};
     var guidSeen = {};
     var acc = {proxy:[],genericName:[],noMaterial:[],noStorey:[],guidCollision:[],zeroLayers:[],unhostedOpenings:[],
-      noGlobalId:[],emptyGeometry:[],duplicateName:[],noDescription:[],noProperties:[]};
+      noGlobalId:[],emptyGeometry:[],duplicateName:[],noDescription:[],noProperties:[],
+      roomNoBoundaries:[],boundaryMissingElement:[]};
+    // Space boundaries (IfcRelSpaceBoundary) — read through the core's
+    // guarded adjacency getter, per model. Only models that carry boundaries
+    // at all are checked: a file without them is not an error here.
+    var _adjByModel = {}, _spaceGid = {};
+    function _adjOf(modelId) {
+      if (modelId == null || typeof window._ccSpaceAdjacency !== 'function') return null;
+      if (_adjByModel[modelId] === undefined) {
+        var a = null;
+        try { a = window._ccSpaceAdjacency(modelId); } catch (e) { a = null; }
+        _adjByModel[modelId] = (a && a.boundaryCount > 0) ? a : null;
+      }
+      return _adjByModel[modelId];
+    }
     var hasHostData = (elements||[]).some(function(el){return el.props&&el.props.hostId;});
     var hasLayerData = (elements||[]).some(function(el){return el.props&&Array.isArray(el.props.layers)&&el.props.layers.length>0;});
     var nameCounts = {};
@@ -39,6 +53,19 @@
       if (!p.description || !p.description.trim()) acc.noDescription.push(it);
       var hasPsets = p.psets && Object.keys(p.psets).some(function(g){var grp=p.psets[g];return grp&&typeof grp==='object'&&Object.keys(grp).length>0;});
       if (!hasPsets && !p.quantities) acc.noProperties.push(it);
+      if (p.ifcType === 'IfcSpace') {
+        _spaceGid[el._modelId + ':' + el.expressId] = p.globalId || '';
+        var adj = _adjOf(el._modelId);
+        if (adj && !(adj.perSpace && adj.perSpace[el.expressId])) acc.roomNoBoundaries.push(it);
+      }
+    });
+    Object.keys(_adjByModel).forEach(function(mid) {
+      var adj = _adjByModel[mid];
+      if (!adj || !adj.missingElements) return;
+      adj.missingElements.forEach(function(mx) {
+        // Reported on the room (its GlobalId drives 3D highlight / +issue).
+        acc.boundaryMissingElement.push({name:'#' + mx.element + ' (room #' + mx.space + ')', gid:_spaceGid[mid + ':' + mx.space] || '', ifcType:'IfcRelSpaceBoundary', el:null, detail:'→ #' + mx.element});
+      });
     });
     var dupNameSeen = {};
     acc.duplicateName = acc.duplicateName.filter(function(it){
@@ -59,6 +86,8 @@
       unhostedOpenings:{label:'Unhosted doors/windows',             sev:'warn', count:acc.unhostedOpenings.length,ex:acc.unhostedOpenings.slice(0,6)},
       noProperties:{label:'No property sets or quantities',         sev:'info', count:acc.noProperties.length,ex:acc.noProperties.slice(0,6)},
       noDescription:{label:'No description',                        sev:'info', count:acc.noDescription.length,ex:acc.noDescription.slice(0,6)},
+      roomNoBoundaries:{label:'Rooms without space boundaries',     sev:'warn', count:acc.roomNoBoundaries.length,ex:acc.roomNoBoundaries.slice(0,6)},
+      boundaryMissingElement:{label:'Space boundary → element not in model', sev:'warn', count:acc.boundaryMissingElement.length,ex:acc.boundaryMissingElement.slice(0,6)},
       _total: (elements||[]).length
     };
   }

@@ -35,7 +35,7 @@ import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { join, dirname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { generateSyntheticIfc } from '../fixtures/generate-synthetic-ifc.js';
+import { generateSyntheticIfc, generateSemanticIfc } from '../fixtures/generate-synthetic-ifc.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const offline = process.env.CC_BROWSER_OFFLINE_DEPS === '1';
@@ -80,6 +80,13 @@ const CASES = [
     generate: { storeyCount: 2, wallsPerStorey: 2, withSpaces: true },
     expectSpaces: 2,
   },
+  // Discipline/role evidence (IfcRelDefinesByType type objects,
+  // IfcRelAssignsToGroup systems, classification references) on an IFC2X3
+  // MEP export, and IfcRelSpaceBoundary records written with a systematic
+  // offset: both paths must extract identical records and reach identical
+  // classifications and boundary placement.
+  { name: 'semantics (IFC2X3 MEP: types, systems, classification)', generateSemantic: { kind: 'vent' }, expectSemantics: true },
+  { name: 'space boundaries (offset frame)', generateSemantic: { kind: 'arch', boundaryOffset: [-13374.845, -13743.122, 0] }, expectBoundaries: 12 },
 ];
 
 const server = createServer(async (req, res) => {
@@ -167,6 +174,14 @@ async function loadAndFingerprint(forceFallback, fixtureUrl) {
       mapConversion: (model.spatialHierarchy && model.spatialHierarchy.mapConversion) || null,
       openings: model.elements.filter((e) => e.props && e.props.openings && e.props.openings.length)
         .map((e) => [e.expressId, e.props.openings]).sort((a, b) => a[0] - b[0]),
+      semantics: model.elements.map((e) => {
+        const p = e.props || {};
+        return [e.expressId, p.predefinedType || null, p.typeObject || null, p.groups || null, p.classification || null, e._ccCls || null];
+      }).filter((r) => r[1] || r[2] || r[3] || r[4]).sort((a, b) => a[0] - b[0]),
+      disciplineInfo: model.disciplineInfo ? Object.assign({}, model.disciplineInfo, { sig: undefined }) : null,
+      boundaries: model._ccBoundaries ? { total: model._ccBoundaries.total, placed: model._ccBoundaries.placed, frame: model._ccBoundaries.frame,
+        offset: model._ccBoundaries.offset, spaceToEls: model._ccBoundaries.spaceToEls,
+        geometry: model._ccBoundaries.geometry ? Array.from(model._ccBoundaries.geometry).map((v) => Math.round(v * 1e4)) : null } : null,
     };
   }, { forceFallbackInner: forceFallback, fixtureUrlInner: fixtureUrl });
   await page.close();
@@ -265,8 +280,9 @@ try {
     if (c.url) { resolvedCases.push({ name: c.name, url: c.url, expectOpenings: c.expectOpenings }); continue; }
     const fileName = c.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '.ifc';
     const filePath = join(generatedDir, fileName);
-    await writeFile(filePath, generateSyntheticIfc(c.generate));
-    resolvedCases.push({ name: c.name, url: '/tests/fixtures/_generated-differential/' + fileName, expectSpaces: c.expectSpaces });
+    await writeFile(filePath, c.generateSemantic ? generateSemanticIfc(c.generateSemantic) : generateSyntheticIfc(c.generate));
+    resolvedCases.push({ name: c.name, url: '/tests/fixtures/_generated-differential/' + fileName, expectSpaces: c.expectSpaces,
+      expectSemantics: c.expectSemantics, expectBoundaries: c.expectBoundaries });
   }
 
   for (const c of resolvedCases) {
@@ -278,8 +294,10 @@ try {
     // silently if only the fingerprint were compared. Extend parity to the
     // full result payload for the fields those extra fixture cases exist
     // to exercise.
-    const workerComparable = { fingerprint: workerResult.fingerprint, unitScale: workerResult.unitScale, georef: workerResult.georef, mapConversion: workerResult.mapConversion, openings: workerResult.openings };
-    const fallbackComparable = { fingerprint: fallbackResult.fingerprint, unitScale: fallbackResult.unitScale, georef: fallbackResult.georef, mapConversion: fallbackResult.mapConversion, openings: fallbackResult.openings };
+    const pickCmp = (r) => ({ fingerprint: r.fingerprint, unitScale: r.unitScale, georef: r.georef, mapConversion: r.mapConversion, openings: r.openings,
+      semantics: r.semantics, disciplineInfo: r.disciplineInfo, boundaries: r.boundaries });
+    const workerComparable = pickCmp(workerResult);
+    const fallbackComparable = pickCmp(fallbackResult);
     const same = JSON.stringify(workerComparable) === JSON.stringify(fallbackComparable);
     if (!same) {
       console.error('Worker result:', JSON.stringify(workerComparable, null, 1));
@@ -295,6 +313,16 @@ try {
     }
     if (c.expectOpenings != null && workerResult.openings.length !== c.expectOpenings) {
       fail('[' + c.name + '] expected ' + c.expectOpenings + ' host elements with openings, got ' + workerResult.openings.length);
+      allOk = false;
+      continue;
+    }
+    if (c.expectSemantics && !(workerResult.semantics.length && workerResult.semantics.every((r) => r[2] && r[3] && r[4] && r[5]))) {
+      fail('[' + c.name + '] expected type objects, systems, classifications and a classification on every MEP element');
+      allOk = false;
+      continue;
+    }
+    if (c.expectBoundaries != null && !(workerResult.boundaries && workerResult.boundaries.placed === c.expectBoundaries)) {
+      fail('[' + c.name + '] expected ' + c.expectBoundaries + ' placed space boundaries, got ' + JSON.stringify(workerResult.boundaries && workerResult.boundaries.placed));
       allOk = false;
       continue;
     }

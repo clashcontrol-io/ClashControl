@@ -192,7 +192,7 @@ test('_ccAnnotateClashes (local-engine results) regenerates the title once roles
 test('wiring: both engines and the row UI use the shared core', () => {
   const idx = read('index.html');
   assert.match(idx, /_ccApplyDefaultTitle\(clashes\[clashes\.length - 1\]\);/);
-  assert.match(idx, /function _ccAnnotateClashes[\s\S]{0,1800}_ccApplyDefaultTitle\(c\);/);
+  assert.match(idx, /function _ccAnnotateClashes[\s\S]{0,3000}_ccApplyDefaultTitle\(c\);/);
   assert.match(idx, /isDefaultTitle:function\(c\)/);
   assert.match(idx, /_pc\.typePairTitle\(it\.elemAType, it\.elemBType/);
   const le = read('addons/local-engine.js');

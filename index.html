@@ -1294,10 +1294,12 @@ function startApp() {
       try {
         if ((result||[]).length === 0 && runRules.excludeSameDiscipline !== false && s.models && s.models.length >= 2) {
           var _dc = {};
-          s.models.forEach(function(m){ if(m && m.visible!==false){ var k=m.discipline||'?'; _dc[k]=(_dc[k]||0)+1; } });
+          // Keyed by sub-discipline for MEP trades (two ventilation models are
+          // "same discipline"; ventilation + plumbing are not — they clash).
+          s.models.forEach(function(m){ if(m && m.visible!==false){ var k=_ccModelDisciplineKey(m); _dc[k]=(_dc[k]||0)+1; } });
           var _shared = Object.keys(_dc).filter(function(k){ return _dc[k]>=2; });
           if (_shared.length && window._ccToast) {
-            window._ccToast('0 clashes — same-discipline pairs are skipped by default (' + _shared.map(function(k){return _dc[k]+'× '+k;}).join(', ') + '). Turn off "Exclude same discipline" in Detection rules to check these models against each other.', 'info');
+            window._ccToast('0 clashes — same-discipline pairs are skipped by default (' + _shared.map(function(k){return _dc[k]+'× '+_ccDisciplineLabel(k);}).join(', ') + '). Turn off "Exclude same discipline" in Detection rules to check these models against each other.', 'info');
           }
         }
       } catch(e){}
@@ -1307,7 +1309,7 @@ function startApp() {
       try {
         var _open = 0; (result||[]).forEach(function(c){ var st=c.status||'open'; if(st!=='resolved'&&st!=='expected'&&st!=='closed') _open++; });
         window.dispatchEvent(new CustomEvent('cc-detection-complete', { detail: {
-          ok: true, total: (result||[]).length, open: _open,
+          ok: true, total: (result||[]).length, open: _open, excluded: (result && result._ccExcluded) || null,
           modelA: (runRules&&runRules.modelA)||'all', modelB: (runRules&&runRules.modelB)||'all',
           ts: Date.now()
         }}));
@@ -1448,6 +1450,8 @@ function startApp() {
     modelPair:null, // {a:modelId, b:modelId} set by clicking a Model clash matrix cell
     showHandled:false, // "Show resolved/denied" toggle — default OFF, see ccUiClashListSummary
     showProvided:false, // "pass through provided openings — show" toggle — default OFF (rules.hideProvidedOpenings)
+    showProvisions:false, // "inside provisions / reservations — show" toggle (hidden while rules.roleChoices.provision is 'classify', the default)
+    showRoleGroups:false, // clashes of 'classify' suggestion groups (zones, duplicates …) — show toggle
     showContacts:false  // "surfaces only touch — show" toggle — default OFF (rules.hideContacts)
   };
   var _ccLoadPref = function(key,fallback){try{var v=localStorage.getItem('cc_'+key);return v!==null?JSON.parse(v):fallback;}catch(e){return fallback;}};
@@ -1513,12 +1517,13 @@ function startApp() {
     aiEnvelope:_ccLoadPref('aiEnvelope',{resolveClashes:'nudge'}),
     // Rooms (IfcSpace volumes) — hidden by default; toggled from the toolbar Style menu.
     showSpaces:_ccLoadPref('showSpaces',false),
+    preRunDontAsk:_ccLoadPref('preRunDontAsk',false), // pre-run suggestions panel: don't ask again
   };
   // Restore section state persisted from previous session
   var _savedSection=(function(){try{return JSON.parse(localStorage.getItem('cc_section')||'null');}catch(e){return null;}})();
   var INIT = {
     models:[], parkedModels:[], clashes:[], issues:[], activeId:null, lastActiveClashId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false, selectionSets:[], searchSets:[], assignmentRules:[],
-    rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, fullRerun:false, hideProvidedOpenings:true, hideContacts:true, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:0, toleranceByTypePair:{}, useSemanticFilter:true, includeSpaces:false, excludeSameDiscipline:true },
+    rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, fullRerun:false, hideProvidedOpenings:true, roleChoices:{}, hideContacts:true, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:0, toleranceByTypePair:{}, useSemanticFilter:true, includeSpaces:false, excludeSameDiscipline:true },
     detectionSettings:null, // Captured at detection run time: {clearance_mm, discipline_filters, scope:{complete, partialModels?}}
     trainingMode:(function(){try{var v=localStorage.getItem('cc_trainingMode');return v===null?true:v==='1';}catch(e){return true;}}()),
     clashGroupBy:(function(){var v=_ccLoadPref('clashGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), clashSortBy:(function(){var v=_ccLoadPref('clashSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
@@ -1624,7 +1629,7 @@ function startApp() {
   // action's `u` payload. Was an inline array literal recreated on every
   // UPD_PREFS dispatch; named here so it can't silently drift from what it
   // actually does.
-  var PERSISTED_PREF_KEYS = ['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView','zoomSens','navInputMode','showSpaces'];
+  var PERSISTED_PREF_KEYS = ['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView','zoomSens','navInputMode','showSpaces','preRunDontAsk'];
   var A = {
     ADD_MODEL:'ADD_MODEL', DEL_MODEL:'DEL_MODEL', REPLACE_MODEL:'REPLACE_MODEL', UPD_MODEL:'UPD_MODEL',
     PARK_MODEL:'PARK_MODEL', UNPARK_MODEL:'UNPARK_MODEL', SET_AUTOPARK:'SET_AUTOPARK',
@@ -1666,7 +1671,7 @@ function startApp() {
     COMMENT_MODE:'COMMENT_MODE', ADD_COMMENT:'ADD_COMMENT', UPD_COMMENT:'UPD_COMMENT',
     DEL_COMMENT:'DEL_COMMENT', SET_ACTIVE_COMMENT:'SET_ACTIVE_COMMENT', MERGE_COMMENTS:'MERGE_COMMENTS',
     /* UI shell — workspace switcher and persisted panel/inspector/ask state */
-    SET_WORKSPACE:'SET_WORKSPACE', DIAGNOSTICS:'DIAGNOSTICS',
+    SET_WORKSPACE:'SET_WORKSPACE', DIAGNOSTICS:'DIAGNOSTICS', PRE_RUN:'PRE_RUN',
     INSPECTOR_OPEN:'INSPECTOR_OPEN',
     AVATAR_MENU:'AVATAR_MENU'
   };
@@ -2188,7 +2193,7 @@ function startApp() {
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
-      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[], a.coverageModelIds); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary}; var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* Default to Grouped (by root-cause element — "one row = one thing to fix", see _ccRootCauseKeyFor) only when the user has nothing chosen AND the result is small enough that thousands of sticky-positioned group headers won't tax the browser. Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0 && _mr.clashes.length<=2000) { _st.clashGroupBy=['element']; }
+      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[], a.coverageModelIds); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary, lastRunExcluded:a.excluded||null}; var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* Default to Grouped (by root-cause element — "one row = one thing to fix", see _ccRootCauseKeyFor) only when the user has nothing chosen AND the result is small enough that thousands of sticky-positioned group headers won't tax the browser. Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0 && _mr.clashes.length<=2000) { _st.clashGroupBy=['element']; }
         return Object.assign({},s,_st);
       case A.ADD_CLASHES: { /* additive, non-destructive append (does NOT auto-resolve existing clashes like MERGE_CLASHES). Used by the accessibility panel. */
         var _addc=(a.v||[]).filter(Boolean); if(!_addc.length) return s;
@@ -2348,6 +2353,7 @@ function startApp() {
           lastActiveClashId:_isClashId?a.id:s.lastActiveClashId});
       case A.MODAL:       return Object.assign({},s,{showModal:a.v, modalElement:a.el||null});
       case A.UPD_RULES:   return Object.assign({},s,{rules:Object.assign({},s.rules,a.u)});
+      case A.PRE_RUN:     return Object.assign({},s,{preRun:a.v||null});
       case A.SHOW_RUN_MODAL: return Object.assign({},s,{runModalOpen:!!a.v});
       case A.TRIAGE_RESULT: {
         var _tr = Object.assign({}, s.triageResults);
@@ -2960,13 +2966,16 @@ function startApp() {
             }
           });
         }
-        var restoredModel = {
+        // Same classification + space-boundary placement as every other load
+        // path; the parked stub's discipline (possibly user-chosen) is kept.
+        _ccClassifyLoadedResult(result, stub.name || '');
+        var restoredModel = Object.assign({
           id: id, name: stub.name, discipline: stub.discipline, color: stub.color,
           tag: stub.tag || '', meshes: result.meshes, elements: result.elements,
           storeys: result.storeys || [], storeyData: result.storeyData || [],
           spatialHierarchy: result.spatialHierarchy || {}, relatedPairs: result.relatedPairs || {},
           stats: result.stats || stub.stats || {}
-        };
+        }, _ccSemanticModelFields(result));
         if (stub._version) restoredModel._version = stub._version;
         // ADD_MODEL merges persisted modelMeta (visibility/discipline/color) and
         // clears the parked stub; UNPARK_MODEL is a belt-and-suspenders cleanup.
@@ -3477,7 +3486,10 @@ function startApp() {
     // it predate that (rooms have no volume, or are missing entirely on the
     // worker path) and are re-parsed once from the stored IFC on restore —
     // see _ccGeoCacheLacksSpaces.
-    return {v:_ccGeoCacheV8Enabled()?8:7, sp:1, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, stats:result.stats};
+    // sem:1 — written by a loader that extracts discipline/role evidence
+    // (props.typeObject/groups/classification/predefinedType) and space
+    // boundaries; older caches are refreshed once like sp:1 ones.
+    return {v:_ccGeoCacheV8Enabled()?8:7, sp:1, sem:1, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, spaceBoundaries:result.spaceBoundaries||null, stats:result.stats};
   }
 
 
@@ -3588,7 +3600,7 @@ function startApp() {
         catch(e){ console.warn('[restore] instancing skipped:', e); }
       }
     }
-    return {meshes:meshes, elements:elements, storeys:cached.storeys, storeyData:cached.storeyData, spatialHierarchy:cached.spatialHierarchy||{}, relatedPairs:cached.relatedPairs||{}, stats:cached.stats};
+    return {meshes:meshes, elements:elements, storeys:cached.storeys, storeyData:cached.storeyData, spatialHierarchy:cached.spatialHierarchy||{}, relatedPairs:cached.relatedPairs||{}, spaceBoundaries:cached.spaceBoundaries||null, stats:cached.stats};
   }
 
   // A geo cache written before IfcSpace geometry was kept (no sp:1 marker)
@@ -3597,7 +3609,7 @@ function startApp() {
   // such a cache as stale so the restore cold-parses once and re-saves a
   // current cache; with no source bytes the old cache is still the best we have.
   function _ccGeoCacheLacksSpaces(cached, entry) {
-    return !!(cached && cached.sp !== 1 && entry && entry.buffer);
+    return !!(cached && (cached.sp !== 1 || cached.sem !== 1) && entry && entry.buffer);
   }
 
   function _ccRestoredGeoMatchesCache(cached, result) {
@@ -3873,7 +3885,10 @@ function startApp() {
     IFCPROJECT:103090709, IFCZONE:1033361043,
     IFCMAPCONVERSION:1709695098, IFCPROJECTEDCRS:3843373140,
     IFCOPENINGELEMENT:3588315303,
-    IFCVIRTUALELEMENT:2769231204, IFCANNOTATION:1674181508, IFCGRID:3009204131
+    IFCVIRTUALELEMENT:2769231204, IFCANNOTATION:1674181508, IFCGRID:3009204131,
+    IFCRELASSIGNSTOGROUP:1307041759, IFCRELASSOCIATESCLASSIFICATION:919958153,
+    IFCRELSPACEBOUNDARY:3451746338, IFCRELSPACEBOUNDARY1STLEVEL:3523091289,
+    IFCRELSPACEBOUNDARY2NDLEVEL:1521410863
   };
 
   function safeStr(v) {
@@ -3968,6 +3983,11 @@ function startApp() {
         props.name = safeStr(line.Name);
         props.description = safeStr(line.Description);
         props.objectType = safeStr(line.ObjectType);
+        // Stated evidence for the discipline/role engine (e.g. an
+        // IfcBuildingElementProxy .PROVISIONFORVOID.). NOTDEFINED/USERDEFINED
+        // carry no meaning and are not stored.
+        var _pdt = safeStr(line.PredefinedType);
+        if (_pdt && _pdt !== 'NOTDEFINED' && _pdt !== 'USERDEFINED') props.predefinedType = _pdt;
         var tid = line.type;
         if (tid === IFC.IFCBEAM || tid === IFC.IFCCOLUMN || tid === IFC.IFCMEMBER ||
             tid === IFC.IFCPIPESEGMENT || tid === IFC.IFCDUCTSEGMENT ||
@@ -4043,6 +4063,340 @@ function startApp() {
       for (var k = 0; k < o.length; k++) flat.push(o[k]);
     }
     return flat.length ? flat : null;
+  }
+
+  // ── Semantic records (discipline / sub-discipline / role evidence) ──────
+  // ONE pass over the relations that STATE what an element is, so the
+  // discipline engine (clash-discipline-core.js) never has to guess when the
+  // file says it: IfcRelDefinesByType (type class + PredefinedType + name —
+  // the only trade signal in IFC2X3 MEP exports, whose products are generic
+  // IfcFlowSegment/IfcFlowFitting/IfcFlowTerminal), IfcRelAssignsToGroup
+  // (IfcSystem / IfcDistributionSystem / IfcZone membership) and
+  // IfcRelAssociatesClassification (IfcClassificationReference codes; type-
+  // level codes are inherited by the type's instances on the main thread).
+  // Compact, de-duplicated tables + per-element index lists. Self-contained:
+  // stringified into the IFC worker like the other extract* helpers, and the
+  // main-thread fallback calls the same function, so both paths are equal.
+  function extractSemanticRecords(api, modelID) {
+    var t0 = Date.now();
+    var out = { types: [], elType: {}, groups: [], elGroups: {}, classes: [], elClass: {}, typeClass: {}, ms: 0 };
+    function rv(x) { return x && typeof x === 'object' && x.value != null ? x.value : x; }
+    function clsOf(line) {
+      var n = '';
+      try { n = api.GetNameFromTypeCode(line.type) || ''; } catch (e) {}
+      if (!n) n = (line && line.constructor && line.constructor.name) || '';
+      return n;
+    }
+    function ids(code) { try { return code ? api.GetLineIDsWithType(modelID, code) : null; } catch (e) { return null; } }
+    // Type objects
+    try {
+      var trels = ids(IFC.IFCRELDEFINESBYTYPE), typeIdx = {};
+      for (var i = 0; trels && i < trels.size(); i++) {
+        try {
+          var tr = api.GetLine(modelID, trels.get(i));
+          var tid = rv(tr.RelatingType);
+          if (tid == null) continue;
+          var ti = typeIdx[tid];
+          if (ti === undefined) {
+            var tl = api.GetLine(modelID, tid);
+            if (!tl) continue;
+            ti = typeIdx[tid] = out.types.length;
+            out.types.push({ id: tid, cls: clsOf(tl), name: safeStr(tl.Name), predef: safeStr(tl.PredefinedType) });
+          }
+          var objs = tr.RelatedObjects || [];
+          for (var j = 0; j < objs.length; j++) out.elType[rv(objs[j])] = ti;
+        } catch (e) {}
+      }
+    } catch (e) {}
+    // Group membership: systems and zones (plain IfcGroup — e.g. Revit model
+    // groups — carries no meaning and is skipped).
+    try {
+      var grels = ids(IFC.IFCRELASSIGNSTOGROUP), groupIdx = {};
+      for (var gi = 0; grels && gi < grels.size(); gi++) {
+        try {
+          var gr = api.GetLine(modelID, grels.get(gi));
+          var gid = rv(gr.RelatingGroup);
+          if (gid == null) continue;
+          var gx = groupIdx[gid];
+          if (gx === undefined) {
+            var gl = api.GetLine(modelID, gid);
+            var gcls = gl ? clsOf(gl) : '';
+            var gu = gcls.toUpperCase();
+            if (gu !== 'IFCSYSTEM' && gu !== 'IFCDISTRIBUTIONSYSTEM' && gu !== 'IFCDISTRIBUTIONCIRCUIT' && gu !== 'IFCBUILDINGSYSTEM' && gu !== 'IFCZONE') { groupIdx[gid] = -1; continue; }
+            gx = groupIdx[gid] = out.groups.length;
+            out.groups.push({ cls: gcls, name: safeStr(gl.Name), objectType: safeStr(gl.ObjectType), predef: safeStr(gl.PredefinedType) });
+          }
+          if (gx < 0) continue;
+          var gobjs = gr.RelatedObjects || [];
+          for (var gj = 0; gj < gobjs.length; gj++) {
+            var geid = rv(gobjs[gj]);
+            var gl2 = out.elGroups[geid] || (out.elGroups[geid] = []);
+            if (gl2.length < 8 && gl2.indexOf(gx) < 0) gl2.push(gx);
+          }
+        } catch (e) {}
+      }
+    } catch (e) {}
+    // Classification references (instance- or type-level)
+    try {
+      var crels = ids(IFC.IFCRELASSOCIATESCLASSIFICATION), refIdx = {}, sysMemo = {};
+      var sysOf = function(refLine) {
+        var cur = refLine, depth = 0, name = '';
+        while (cur && depth++ < 6) {
+          var src = rv(cur.ReferencedSource);
+          if (src == null) break;
+          if (sysMemo[src] !== undefined) return sysMemo[src];
+          var sl = api.GetLine(modelID, src);
+          if (!sl) break;
+          if (sl.ItemReference == null && sl.Identification == null && (sl.Source != null || sl.Edition != null || sl.Name != null)) {
+            name = safeStr(sl.Name) || safeStr(sl.Source);
+            sysMemo[src] = name;
+            return name;
+          }
+          cur = sl;
+        }
+        return name;
+      };
+      for (var ci = 0; crels && ci < crels.size(); ci++) {
+        try {
+          var cr = api.GetLine(modelID, crels.get(ci));
+          var rid = rv(cr.RelatingClassification);
+          if (rid == null) continue;
+          var cx = refIdx[rid];
+          if (cx === undefined) {
+            var rl = api.GetLine(modelID, rid);
+            var code = rl ? (safeStr(rl.ItemReference) || safeStr(rl.Identification)) : '';
+            if (!code) { refIdx[rid] = -1; continue; }
+            cx = refIdx[rid] = out.classes.length;
+            out.classes.push({ sys: sysOf(rl), code: code, name: safeStr(rl.Name) });
+          }
+          if (cx < 0) continue;
+          var cobjs = cr.RelatedObjects || [];
+          for (var cj = 0; cj < cobjs.length; cj++) {
+            var ceid = rv(cobjs[cj]);
+            var cl2 = out.elClass[ceid] || (out.elClass[ceid] = []);
+            if (cl2.length < 8 && cl2.indexOf(cx) < 0) cl2.push(cx);
+          }
+        } catch (e) {}
+      }
+      // Type-level codes keyed by type index (inherited on the main thread).
+      for (var tk = 0; tk < out.types.length; tk++) {
+        var tcl = out.elClass[out.types[tk].id];
+        if (tcl) out.typeClass[tk] = tcl;
+      }
+    } catch (e) {}
+    out.ms = Date.now() - t0;
+    return out;
+  }
+
+  // ── Space boundaries (IfcRelSpaceBoundary + 1st/2nd-level subtypes) ──────
+  // Raw records only: per boundary the relating space, the related element
+  // (0 = none / virtual), flags, and its polygon(s) in the RELATING SPACE'S
+  // object-placement frame, in FILE units, Z up — exactly what IFC specifies
+  // for ConnectionGeometry. Supported surfaces: IfcCurveBoundedPlane
+  // (IfcPolyline / IfcIndexedPolyCurve / IfcCompositeCurve outer boundary),
+  // IfcFaceSurface / IfcFace, and face sets (IfcFacetedBrep, shells,
+  // IfcFaceBasedSurfaceModel, IfcShellBasedSurfaceModel). Placement into
+  // the scene — including detecting the systematic offset some exporters
+  // write — happens on the main thread (_ccPlaceSpaceBoundaries), which
+  // refuses to show anything it cannot verify. Each space's placement chain
+  // is resolved here (16 numbers, column-major, file units). Time-boxed.
+  function extractSpaceBoundaryRecords(api, modelID) {
+    var t0 = Date.now();
+    var out = { b: [], polyB: [], polyOff: [0], pts: [], spaces: {}, spaceRel: {}, truncated: false, ms: 0 };
+    function rv(x) { return x && typeof x === 'object' && x.value != null ? x.value : x; }
+    function num(x) { x = rv(x); return typeof x === 'number' ? x : +x; }
+    function line(id) { try { return id == null ? null : api.GetLine(modelID, id); } catch (e) { return null; } }
+    function coords(p) { var c = p && p.Coordinates; if (!c) return null; return [num(c[0]) || 0, num(c[1]) || 0, c.length > 2 ? (num(c[2]) || 0) : 0]; }
+    function norm(v) { var l = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); return l > 1e-12 ? [v[0] / l, v[1] / l, v[2] / l] : null; }
+    function dirOf(id) { var d = line(rv(id)); var r = d && d.DirectionRatios; return r ? norm([num(r[0]) || 0, num(r[1]) || 0, r.length > 2 ? (num(r[2]) || 0) : 0]) : null; }
+    function axisMatrix(apId) {
+      var a = line(rv(apId));
+      if (!a) return null;
+      var o = coords(line(rv(a.Location))) || [0, 0, 0];
+      var z = (a.Axis ? dirOf(a.Axis) : null) || [0, 0, 1];
+      var x = (a.RefDirection ? dirOf(a.RefDirection) : null) || (Math.abs(z[0]) > 0.9 ? [0, 1, 0] : [1, 0, 0]);
+      if (z === null) z = [0, 0, 1];
+      var d = x[0] * z[0] + x[1] * z[1] + x[2] * z[2];
+      x = norm([x[0] - d * z[0], x[1] - d * z[1], x[2] - d * z[2]]) || [1, 0, 0];
+      var y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
+      return [x[0], x[1], x[2], 0, y[0], y[1], y[2], 0, z[0], z[1], z[2], 0, o[0], o[1], o[2], 1];
+    }
+    function mul(A, B) {
+      var C = new Array(16);
+      for (var c = 0; c < 4; c++) for (var r = 0; r < 4; r++) {
+        C[c * 4 + r] = A[r] * B[c * 4] + A[4 + r] * B[c * 4 + 1] + A[8 + r] * B[c * 4 + 2] + A[12 + r] * B[c * 4 + 3];
+      }
+      return C;
+    }
+    function apply(M, p) { return [M[0] * p[0] + M[4] * p[1] + M[8] * p[2] + M[12], M[1] * p[0] + M[5] * p[1] + M[9] * p[2] + M[13], M[2] * p[0] + M[6] * p[1] + M[10] * p[2] + M[14]]; }
+    var plMemo = {};
+    function placement(plId, depth) {
+      if (plId == null) return null;
+      if (plMemo[plId]) return plMemo[plId];
+      if ((depth || 0) > 32) return null;
+      var pl = line(plId);
+      if (!pl) return null;
+      var local = axisMatrix(pl.RelativePlacement) || [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+      var parent = pl.PlacementRelTo ? placement(rv(pl.PlacementRelTo), (depth || 0) + 1) : null;
+      var M = parent ? mul(parent, local) : local;
+      plMemo[plId] = M;
+      return M;
+    }
+    function curvePoints(cId, depth) {
+      var c = line(rv(cId));
+      if (!c || (depth || 0) > 8) return null;
+      var pts = [];
+      if (c.Points && !c.Segments && Array.isArray(c.Points)) {
+        for (var i = 0; i < c.Points.length; i++) { var p = coords(line(rv(c.Points[i]))); if (p) pts.push(p); }
+      } else if (c.Points && !Array.isArray(c.Points)) {
+        var lst = line(rv(c.Points));
+        var cl = lst && lst.CoordList;
+        if (cl) for (var k = 0; k < cl.length; k++) { var q = cl[k]; pts.push([num(q[0]) || 0, num(q[1]) || 0, q.length > 2 ? (num(q[2]) || 0) : 0]); }
+      } else if (c.Segments && Array.isArray(c.Segments)) {
+        for (var s = 0; s < c.Segments.length; s++) {
+          var sg = line(rv(c.Segments[s]));
+          var sub = sg && sg.ParentCurve ? curvePoints(sg.ParentCurve, (depth || 0) + 1) : null;
+          if (sub) for (var t = 0; t < sub.length; t++) pts.push(sub[t]);
+        }
+      } else if (c.BasisCurve && c.Trim1 && c.Trim2) {
+        [c.Trim1, c.Trim2].forEach(function(tr) {
+          for (var u = 0; u < tr.length; u++) { var tp = coords(line(rv(tr[u]))); if (tp) { pts.push(tp); break; } }
+        });
+      }
+      if (pts.length > 1) {
+        var a = pts[0], b = pts[pts.length - 1];
+        if (Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9 && Math.abs(a[2] - b[2]) < 1e-9) pts.pop();
+      }
+      return pts.length >= 3 ? pts : null;
+    }
+    function loopPoints(loopId) {
+      var lp = line(rv(loopId));
+      if (!lp || !lp.Polygon) return null;
+      var pts = [];
+      for (var i = 0; i < lp.Polygon.length; i++) { var p = coords(line(rv(lp.Polygon[i]))); if (p) pts.push(p); }
+      return pts.length >= 3 ? pts : null;
+    }
+    function facePolys(faceLine, outPolys) {
+      var bounds = faceLine && faceLine.Bounds;
+      if (!bounds) return;
+      var best = null;
+      for (var i = 0; i < bounds.length; i++) {
+        var bd = line(rv(bounds[i]));
+        if (!bd) continue;
+        var pts = loopPoints(bd.Bound);
+        if (!pts) continue;
+        if (!best || clsName(bd).toUpperCase() === 'IFCFACEOUTERBOUND') best = pts;
+      }
+      if (best) outPolys.push(best);
+    }
+    function clsName(l) { try { return api.GetNameFromTypeCode(l.type) || ''; } catch (e) { return ''; } }
+    function surfacePolys(sId, outPolys, depth) {
+      var sf = line(rv(sId));
+      if (!sf || (depth || 0) > 6 || outPolys.length > 64) return;
+      var n = clsName(sf).toUpperCase();
+      if (n === 'IFCCURVEBOUNDEDPLANE') {
+        var plane = line(rv(sf.BasisSurface));
+        var P = plane && axisMatrix(plane.Position);
+        var pts = curvePoints(sf.OuterBoundary);
+        if (P && pts) outPolys.push(pts.map(function(p) { return apply(P, p); }));
+      } else if (n === 'IFCFACESURFACE' || n === 'IFCFACE' || n === 'IFCADVANCEDFACE') {
+        facePolys(sf, outPolys);
+      } else if (n === 'IFCFACETEDBREP' || n === 'IFCMANIFOLDSOLIDBREP') {
+        surfacePolys(sf.Outer, outPolys, (depth || 0) + 1);
+      } else if (n === 'IFCCLOSEDSHELL' || n === 'IFCOPENSHELL' || n === 'IFCCONNECTEDFACESET') {
+        var fs = sf.CfsFaces || [];
+        for (var i = 0; i < fs.length; i++) facePolys(line(rv(fs[i])), outPolys);
+      } else if (n === 'IFCFACEBASEDSURFACEMODEL') {
+        (sf.FbsmFaces || []).forEach(function(x) { surfacePolys(x, outPolys, (depth || 0) + 1); });
+      } else if (n === 'IFCSHELLBASEDSURFACEMODEL') {
+        (sf.SbsmBoundary || []).forEach(function(x) { surfacePolys(x, outPolys, (depth || 0) + 1); });
+      }
+    }
+    var codes = [[IFC.IFCRELSPACEBOUNDARY, 0], [IFC.IFCRELSPACEBOUNDARY1STLEVEL, 1], [IFC.IFCRELSPACEBOUNDARY2NDLEVEL, 2]];
+    try {
+      for (var ci = 0; ci < codes.length; ci++) {
+        var rels = null;
+        try { rels = codes[ci][0] ? api.GetLineIDsWithType(modelID, codes[ci][0]) : null; } catch (e) { rels = null; }
+        for (var i = 0; rels && i < rels.size(); i++) {
+          if ((i & 255) === 0 && Date.now() - t0 > 15000) { out.truncated = true; break; }
+          try {
+            var rel = api.GetLine(modelID, rels.get(i));
+            var sp = rv(rel.RelatingSpace);
+            if (sp == null) continue;
+            if (!out.spaces[sp]) {
+              var spl = line(sp);
+              var M = spl ? placement(rv(spl.ObjectPlacement), 0) : null;
+              out.spaces[sp] = M || [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+              // The space's OWN placement step (world axes, file units): some
+              // exporters scale it into the boundary coordinates by mistake.
+              var spPl = spl ? line(rv(spl.ObjectPlacement)) : null;
+              var P = spPl && spPl.PlacementRelTo ? placement(rv(spPl.PlacementRelTo), 0) : null;
+              out.spaceRel[sp] = M ? [M[12] - (P ? P[12] : 0), M[13] - (P ? P[13] : 0), M[14] - (P ? P[14] : 0)] : [0, 0, 0];
+            }
+            var el = rv(rel.RelatedBuildingElement);
+            var pv = safeStr(rel.PhysicalOrVirtualBoundary).toUpperCase();
+            var ie = safeStr(rel.InternalOrExternalBoundary).toUpperCase();
+            var lvl = codes[ci][1] || (/2nd/i.test(safeStr(rel.Name)) ? 2 : /1st/i.test(safeStr(rel.Name)) ? 1 : 0);
+            var flags = (pv === 'VIRTUAL' ? 1 : 0) | (ie.indexOf('EXTERNAL') === 0 ? 2 : 0) | (lvl << 2);
+            var bi = out.b.length;
+            out.b.push(sp, el != null ? el : 0, flags);
+            var cg = line(rv(rel.ConnectionGeometry));
+            if (!cg) continue;
+            var polys = [];
+            surfacePolys(cg.SurfaceOnRelatingElement, polys, 0);
+            for (var pi = 0; pi < polys.length; pi++) {
+              out.polyB.push(bi / 3);
+              for (var k = 0; k < polys[pi].length; k++) out.pts.push(polys[pi][k][0], polys[pi][k][1], polys[pi][k][2]);
+              out.polyOff.push(out.pts.length / 3);
+            }
+          } catch (e) {}
+        }
+        if (out.truncated) break;
+      }
+    } catch (e) {}
+    out.ms = Date.now() - t0;
+    if (!out.b.length) return null;
+    return { b: new Int32Array(out.b), polyB: new Int32Array(out.polyB), polyOff: new Int32Array(out.polyOff),
+      pts: new Float64Array(out.pts), spaces: out.spaces, spaceRel: out.spaceRel, truncated: out.truncated, ms: out.ms };
+  }
+
+  // Main-thread side of extractSemanticRecords (both load paths): stamps
+  // props.typeObject {cls,name,predef}, props.groups [{cls,name,objectType,
+  // predef}] and props.classification [{sys,code,name}] (instance codes +
+  // the type's codes) on each element. Every object/array is shared
+  // (frozen, interned), so a 100k-element model costs one pointer per field.
+  function _ccApplySemanticRecords(elements, sem) {
+    if (!sem || !elements || !elements.length) return 0;
+    var dc = window._ccClashDisciplineCore;
+    var canon = dc && typeof dc.canonicalIfcName === 'function' ? dc.canonicalIfcName : function(n) { return n; };
+    var types = (sem.types || []).map(function(t) { return Object.freeze({ cls: canon(t.cls), name: t.name || '', predef: t.predef || '' }); });
+    var groups = (sem.groups || []).map(function(g) { return Object.freeze({ cls: canon(g.cls), name: g.name || '', objectType: g.objectType || '', predef: g.predef || '' }); });
+    var classes = (sem.classes || []).map(function(c) { return Object.freeze({ sys: c.sys || '', code: c.code || '', name: c.name || '' }); });
+    var listMemo = {};
+    function shared(idxs, table) {
+      var key = (table === groups ? 'g' : 'c') + idxs.join(',');
+      var hit = listMemo[key];
+      if (!hit) { hit = listMemo[key] = Object.freeze(idxs.map(function(i) { return table[i]; }).filter(Boolean)); }
+      return hit;
+    }
+    var n = 0;
+    for (var i = 0; i < elements.length; i++) {
+      var el = elements[i], eid = el.expressId, p = el.props;
+      if (!p) continue;
+      var ti = sem.elType ? sem.elType[eid] : undefined;
+      if (ti != null && types[ti]) { p.typeObject = types[ti]; n++; }
+      var gl = sem.elGroups && sem.elGroups[eid];
+      if (gl && gl.length) { p.groups = shared(gl, groups); n++; }
+      var cl = (sem.elClass && sem.elClass[eid]) || null;
+      var tcl = ti != null && sem.typeClass ? sem.typeClass[ti] : null;
+      if (cl || tcl) {
+        var all = (cl || []).slice();
+        (tcl || []).forEach(function(x) { if (all.indexOf(x) < 0) all.push(x); });
+        p.classification = shared(all, classes);
+        n++;
+      }
+    }
+    return n;
   }
 
   function extractStoreys(api, modelID) {
@@ -5053,6 +5407,11 @@ function startApp() {
           if (_orec) { var _oflat = _ccOpeningsFlat(_orec); if (_oflat) rawElements[_ori].props.openings = _oflat; }
         }
       } catch (_opE) { console.warn('[IFC] opening extraction failed:', _opE); }
+      // Discipline/role evidence + space boundaries (same helpers as the worker).
+      var _semRecs = null, _sbRecs = null, _tSemF = performance.now();
+      try { _semRecs = extractSemanticRecords(api, modelID); } catch (_smE) { console.warn('[IFC] semantic extraction failed:', _smE); }
+      try { _sbRecs = extractSpaceBoundaryRecords(api, modelID); } catch (_sbE) { console.warn('[IFC] space boundary extraction failed:', _sbE); }
+      _lp.semanticsMs = Math.round(performance.now() - _tSemF);
 
       var _reAddTypes = [IFC.IFCSPACE, IFC.IFCVIRTUALELEMENT, IFC.IFCANNOTATION, IFC.IFCGRID];
       var _reAddNames = ['IFCSPACE','IFCVIRTUALELEMENT','IFCANNOTATION','IFCGRID'];
@@ -5096,6 +5455,7 @@ function startApp() {
           } else {
             _lmark('Element processing');
             var _sm = _ccStripSurveyMarkers(elements, meshes); elements = _sm.elements; meshes = _sm.meshes;
+            _ccApplySemanticRecords(elements, _semRecs);
             // Chunk-merge auto-enable removed — it was hiding the real
             // dedup/instancing regression. Diagnostic prints below give the
             // clean signal on what's failing post-r180.
@@ -5105,7 +5465,7 @@ function startApp() {
             var _batchRes = _ccBatchPathological(elements, meshes, _geoUnique);
             meshes = _batchRes.meshes;
             var loadTime = Math.round(performance.now() - loadStart);
-            var stats = {loadTime:loadTime, fileSize:buffer.byteLength, elementCount:elements.length, meshCount:meshes.length, geoUnique:_geoUnique, geoReused:_geoReused, instancedGroups:_instResult.groups, instancedElements:_instResult.instanced, phases:_lp.phases, loadType:'IFC', loadedScope:(_scopeSet ? scope.storeys : null), scopedOutCount:_scopedOut};
+            var stats = {loadTime:loadTime, fileSize:buffer.byteLength, elementCount:elements.length, meshCount:meshes.length, geoUnique:_geoUnique, geoReused:_geoReused, instancedGroups:_instResult.groups, instancedElements:_instResult.instanced, phases:_lp.phases, loadType:'IFC', loadedScope:(_scopeSet ? scope.storeys : null), scopedOutCount:_scopedOut, semanticsMs:_lp.semanticsMs};
             (function() {
               var ph = _lp.phases, prev = 0;
               var rows = [];
@@ -5125,7 +5485,7 @@ function startApp() {
               console.groupEnd();
             })();
             geoCache = null; // allow GC after load
-            resolve({ meshes:meshes, elements:elements, storeys:Object.keys(allStoreys).sort(), storeyData:storeyData, spatialHierarchy:spatialHierarchy, relatedPairs:relatedPairs, stats:stats });
+            resolve({ meshes:meshes, elements:elements, storeys:Object.keys(allStoreys).sort(), storeyData:storeyData, spatialHierarchy:spatialHierarchy, relatedPairs:relatedPairs, spaceBoundaries:_sbRecs, stats:stats });
           }
         }
         processChunk(0);
@@ -5474,6 +5834,7 @@ function startApp() {
         var pkGlobalIds = [], pkNames = [], pkDescriptions = [], pkObjectTypes = [];
         var pkIfcTypeIdx = [], pkStoreyIdx = [], pkMaterialIdx = [];
         var pkTypeId = [];
+        var pkPredefIdx = []; // props.predefinedType (interned, -1 = absent)
         var pkHasAxis = [], pkAxisX = [], pkAxisY = [], pkAxisZ = [];
         var pkPlacementGeoIds = [], pkPlacementHasColor = [], pkPlacementColors = [], pkPlacementTransforms = [];
         var pkStringTable = [];
@@ -5549,6 +5910,7 @@ function startApp() {
             pkStoreyIdx.push(_pkIntern(storeyMap[eid] || ''));
             pkMaterialIdx.push(_pkIntern(matMap[eid] || ''));
             pkTypeId.push(elProps.typeId != null ? elProps.typeId : -1);
+            pkPredefIdx.push(elProps.predefinedType ? _pkIntern(elProps.predefinedType) : -1);
             var _hasAxis = Object.prototype.hasOwnProperty.call(elProps, 'axis') ? 1 : 0;
             pkHasAxis.push(_hasAxis);
             if (_hasAxis && elProps.axis) {
@@ -5567,12 +5929,20 @@ function startApp() {
         // Provision for void: opening boxes per host, converted on the main thread.
         var openingRecs = {};
         try { openingRecs = extractOpeningRecords(api, modelID); } catch (_opE) { openingRecs = {}; }
+        // Discipline/role evidence + space boundaries (applied on the main
+        // thread by the same helpers the fallback uses).
+        var _tSem = performance.now();
+        var semRecs = null, sbRecs = null;
+        try { semRecs = extractSemanticRecords(api, modelID); } catch (_smE) { semRecs = null; }
+        try { sbRecs = extractSpaceBoundaryRecords(api, modelID); } catch (_sbE) { sbRecs = null; }
+        var _semMs = performance.now() - _tSem;
         // below, because that function also calls api.GetLine and needs the
         mark('Geometry stream');
         var streamSub = {
           getGeometry:   Math.round(_tGetGeo),
           deinterleave:  Math.round(_tDeinterleave),
-          extractProps:  Math.round(_tProps)
+          extractProps:  Math.round(_tProps),
+          semantics:     Math.round(_semMs)
         };
 
         var packedEls = {
@@ -5583,6 +5953,7 @@ function startApp() {
           storeyIdx: new Int32Array(pkStoreyIdx),
           materialIdx: new Int32Array(pkMaterialIdx),
           typeId: new Int32Array(pkTypeId),
+          predefIdx: new Int32Array(pkPredefIdx),
           hasAxis: new Uint8Array(pkHasAxis),
           axisX: new Float32Array(pkAxisX), axisY: new Float32Array(pkAxisY), axisZ: new Float32Array(pkAxisZ),
           placementGeoIds: new Uint32Array(pkPlacementGeoIds),
@@ -5593,13 +5964,15 @@ function startApp() {
         };
         xfer.push(packedEls.expressIds.buffer, packedEls.geoCounts.buffer,
           packedEls.ifcTypeIdx.buffer, packedEls.storeyIdx.buffer, packedEls.materialIdx.buffer,
-          packedEls.typeId.buffer, packedEls.hasAxis.buffer,
+          packedEls.typeId.buffer, packedEls.predefIdx.buffer, packedEls.hasAxis.buffer,
           packedEls.axisX.buffer, packedEls.axisY.buffer, packedEls.axisZ.buffer,
           packedEls.placementGeoIds.buffer, packedEls.placementHasColor.buffer,
           packedEls.placementColors.buffer, packedEls.placementTransforms.buffer);
 
         var _geoUnique = Object.keys(_geoTable).length;
+        if (sbRecs) xfer.push(sbRecs.b.buffer, sbRecs.polyB.buffer, sbRecs.polyOff.buffer, sbRecs.pts.buffer);
         _emit({type:'result', packedEls:packedEls, geoTable:_geoTable, openingRecs:openingRecs,
+          semantics:semRecs, spaceBoundaries:sbRecs,
           loadedScope:(_scopeSet ? _scope.storeys : null), scopedOutCount:_scopedOut,
           geoUnique:_geoUnique, geoReused:_geoReused,
           storeys:Object.keys(allStoreys).sort(), storeyData:storeyData,
@@ -5643,6 +6016,8 @@ function startApp() {
       + 'var _extractAxis=' + _extractAxis.toString() + ';\n'
       + 'var extractProperties=' + extractProperties.toString() + ';\n'
       + 'var extractOpeningRecords=' + extractOpeningRecords.toString() + ';\n'
+      + 'var extractSemanticRecords=' + extractSemanticRecords.toString() + ';\n'
+      + 'var extractSpaceBoundaryRecords=' + extractSpaceBoundaryRecords.toString() + ';\n'
       + 'var extractStoreys=' + extractStoreys.toString() + ';\n'
       + 'var extractSpatialHierarchy=' + extractSpatialHierarchy.toString() + ';\n'
       + 'var resolveMaterialName=' + resolveMaterialName.toString() + ';\n'
@@ -5833,6 +6208,7 @@ function startApp() {
                 quantities: _ccCanonQuantities({}), psets: _ccCanonPsets({})
               };
               if (pk.typeId[i] !== -1) props.typeId = pk.typeId[i];
+              if (pk.predefIdx && pk.predefIdx[i] !== -1) props.predefinedType = _pkStr(pk.predefIdx[i]);
               if (msg.openingRecs && msg.openingRecs[eid]) { var _wOpen = _ccOpeningsFlat(msg.openingRecs[eid]); if (_wOpen) props.openings = _wOpen; }
               if (pk.hasAxis[i]) {
                 var ax = pk.axisX[i], ay = pk.axisY[i], az = pk.axisZ[i];
@@ -5845,6 +6221,7 @@ function startApp() {
           var _loopEnd = performance.now();
           var _tStrip = performance.now();
           var _sm = _ccStripSurveyMarkers(elements, meshes); elements = _sm.elements; meshes = _sm.meshes;
+          _ccApplySemanticRecords(elements, msg.semantics);
           _tStrip = performance.now() - _tStrip;
           var _tInstance = performance.now();
           var _instResult = _buildInstancedMeshes(elements, meshes);
@@ -5879,7 +6256,7 @@ function startApp() {
           };
           var streamSub = msg.streamSub || null;
           var _gu = msg.geoUnique || Object.keys(geoCache).length, _gr = msg.geoReused || 0;
-          var stats = {loadTime:loadTime, fileSize:msg.fileSize, elementCount:elements.length, meshCount:meshes.length, geoUnique:_gu, geoReused:_gr, instancedGroups:_instResult.groups, instancedElements:_instResult.instanced, phases:phases, streamSub:streamSub, sceneSub:sceneSub, loadType:'IFC', loadedScope:msg.loadedScope||null, scopedOutCount:msg.scopedOutCount||0};
+          var stats = {loadTime:loadTime, fileSize:msg.fileSize, elementCount:elements.length, meshCount:meshes.length, geoUnique:_gu, geoReused:_gr, instancedGroups:_instResult.groups, instancedElements:_instResult.instanced, phases:phases, streamSub:streamSub, sceneSub:sceneSub, loadType:'IFC', loadedScope:msg.loadedScope||null, scopedOutCount:msg.scopedOutCount||0, semanticsMs:streamSub ? streamSub.semantics : null};
 
           (function() {
             var ph = phases, prev = 0;
@@ -5925,7 +6302,7 @@ function startApp() {
             try { if (onProps) onProps({}, 'props-timeout'); } catch(_) {}
             try { worker.terminate(); } catch(_) {}
           }, 120000);
-          resolve({meshes:meshes, elements:elements, storeys:msg.storeys, storeyData:msg.storeyData, spatialHierarchy:msg.spatialHierarchy||{}, relatedPairs:msg.relatedPairs, stats:stats});
+          resolve({meshes:meshes, elements:elements, storeys:msg.storeys, storeyData:msg.storeyData, spatialHierarchy:msg.spatialHierarchy||{}, relatedPairs:msg.relatedPairs, spaceBoundaries:msg.spaceBoundaries||null, stats:stats});
         }
       };
       worker.onerror = function(err) {
@@ -6025,12 +6402,12 @@ function startApp() {
     try {
       var r = {};
       Object.keys(rules || {}).sort().forEach(function(k) {
-        if (k === 'fullRerun' || k === 'changeAware' || k === 'hideProvidedOpenings' || k === 'hideContacts') return;
+        if (k === 'fullRerun' || k === 'changeAware' || k === 'hideProvidedOpenings' || k === 'hideContacts' || k === 'roleChoicesRemembered') return;
         r[k] = rules[k];
       });
       var ms = (models || []).map(function(m) {
         return [m.id, m.name || '', m.discipline || '', (m.elements || []).length,
-          m.relatedPairs ? Object.keys(m.relatedPairs).length : 0].join(':');
+          m.relatedPairs ? Object.keys(m.relatedPairs).length : 0, (m.disciplineInfo && m.disciplineInfo.sig) || ''].join(':');
       }).sort();
       var eng = [typeof window._ccWasmIntersect === 'function' ? 'wasm' : 'js',
         typeof window._ccWasmMinDist === 'function' ? 'md' : '',
@@ -6348,6 +6725,8 @@ function startApp() {
   // annotations after the fact.
   function _ccAnnotateClashes(clashes, models) {
     if (!clashes || !clashes.length) return;
+    var _pIdx = null, _rIdx = typeof _ccRoleIndex === 'function' ? _ccRoleIndex(models) : null;
+    try { _pIdx = _ccBuildProvisionIndex(models, _rIdx); } catch (e) { _pIdx = null; }
     var byModel = {};
     (models || []).forEach(function(m) {
       var map = {};
@@ -6373,6 +6752,12 @@ function startApp() {
         try { st = _ccOpeningStatusForPair(eA, eB, c.type); } catch (e) { st = null; }
         if (st) c.opening = st;
       }
+      if ((c.type === 'hard' || c.type === 'soft') && c.provision === undefined) {
+        var pst = null;
+        try { pst = _ccProvisionStatusForPair(eA, a.m, eB, b.m, c.type, _pIdx, _rIdx); } catch (e) { pst = null; }
+        if (pst) c.provision = pst;
+      }
+      if (c.roleGroup === undefined && _rIdx && typeof _ccClashRoleGroup === 'function') { var _rg = _ccClashRoleGroup(eA, eB, _rIdx); if (_rg) c.roleGroup = _rg; }
       // Roles + opening are now known: regenerate the default title so a
       // local-engine clash is titled exactly like the browser engine's.
       _ccApplyDefaultTitle(c);
@@ -6430,6 +6815,98 @@ function startApp() {
     if (a === 'provided' || b === 'provided') return 'provided';
     if (a === 'partial' || b === 'partial') return 'partial';
     return null;
+  }
+
+
+  // ── Provisions / reservations (element role 'provision') ─────────────────
+  // Classification on top of a clash the engine produced — never decides
+  // whether a clash exists. Provision volumes (IfcBuildingElementProxy
+  // .PROVISIONFORVOID., or named/classified as reservations — see
+  // clash-discipline-core.js roles) from EVERY model in the run are indexed
+  // as oriented boxes. provision:
+  //   'inside'    — an MEP element in / through a provision volume (the pair
+  //                 with the provision itself, or MEP × structure/architecture
+  //                 where the whole clash region lies inside a provision):
+  //                 coordinated, hidden by default behind a count
+  //                 (rules.roleChoices.provision 'classify'), never dropped
+  //   'partial'   — hard MEP × host clash that overlaps a provision but pokes
+  //                 outside it ("provision too small"), stays visible
+  //   'obstructs' — a non-MEP element (beam, wall …) intersects a provision:
+  //                 a real conflict with the reservation, stays visible
+  var _PROVISION_TOL_M = 0.02;
+  function _ccBuildProvisionIndex(models, roleIdx) {
+    var core = window._ccClashClassificationCore, list = [], h1 = 2166136261, n = 0;
+    if (!core || typeof core.obbFromLocalBox !== 'function') return { list: list, sig: '' };
+    var idx = roleIdx || (typeof _ccRoleIndex === 'function' ? _ccRoleIndex(models) : null);
+    if (!idx) return { list: list, sig: '' };
+    (models || []).forEach(function(m) {
+      (m.elements || []).forEach(function(el) {
+        var re = idx.byEl.get(el);
+        if (!re || re.role !== 'provision' || !el.box || el.box.isEmpty() || !el.meshes) return;
+        el.meshes.forEach(function(mesh) {
+          var g = mesh.geometry;
+          if (!g || !g.attributes || !g.attributes.position) return;
+          if (!g.boundingBox) g.computeBoundingBox();
+          var bb = g.boundingBox;
+          if (!bb || bb.isEmpty()) return;
+          var o = core.obbFromLocalBox([bb.min.x, bb.min.y, bb.min.z], [bb.max.x, bb.max.y, bb.max.z], mesh.matrix.elements);
+          list.push({ o: o, el: el });
+          for (var k = 0; k < o.length; k++) { h1 = Math.imul(h1 ^ (Math.round(o[k] * 10000) | 0), 16777619); }
+          n++;
+        });
+      });
+    });
+    return { list: list, sig: n ? n + ':' + (h1 >>> 0).toString(36) : '' };
+  }
+  function _ccProvisionStatusForPair(eA, mA, eB, mB, type, idx, roleIdx) {
+    if (!idx || !idx.list.length) return null;
+    var _rA = roleIdx && roleIdx.byEl.get(eA), _rB = roleIdx && roleIdx.byEl.get(eB);
+    var rA = _rA ? _rA.role : (eA._ccCls && eA._ccCls.role), rB = _rB ? _rB.role : (eB._ccCls && eB._ccCls.role);
+    var dA = _ccElementDiscipline(eA, mA && mA.discipline), dB = _ccElementDiscipline(eB, mB && mB.discipline);
+    if (rA === 'provision' || rB === 'provision') {
+      if (rA === 'provision' && rB === 'provision') return null;
+      return (rA === 'provision' ? dB : dA) === 'mep' ? 'inside' : 'obstructs';
+    }
+    if ((dA === 'mep') === (dB === 'mep')) return null;
+    var mep = dA === 'mep' ? eA : eB, host = dA === 'mep' ? eB : eA;
+    if (!mep.box || !host.box) return null;
+    var core = window._ccClashClassificationCore;
+    var lo = [Math.max(mep.box.min.x, host.box.min.x), Math.max(mep.box.min.y, host.box.min.y), Math.max(mep.box.min.z, host.box.min.z)];
+    var hi = [Math.min(mep.box.max.x, host.box.max.x), Math.min(mep.box.max.y, host.box.max.y), Math.min(mep.box.max.z, host.box.max.z)];
+    var near = [];
+    for (var i = 0; i < idx.list.length; i++) {
+      var o = idx.list[i].o;
+      var rr = Math.sqrt(o[12] * o[12] + o[13] * o[13] + o[14] * o[14]) + _PROVISION_TOL_M;
+      if (o[0] >= lo[0] - rr && o[0] <= hi[0] + rr && o[1] >= lo[1] - rr && o[1] <= hi[1] + rr && o[2] >= lo[2] - rr && o[2] <= hi[2] + rr) near.push(o);
+    }
+    if (!near.length) return null;
+    var tris = _getWorldTris(mep);
+    if (!tris || !tris.length) return null;
+    var hb = _ccFrameBox(host), pad = 0.001;
+    var pts = core.clipTrianglesToBox(tris, [hb.min.x - pad, hb.min.y - pad, hb.min.z - pad], [hb.max.x + pad, hb.max.y + pad, hb.max.z + pad], _OPENING_MAX_TRIS);
+    if (!pts || !pts.length) return null;
+    for (var pi = 0; pi + 2 < pts.length; pi += 3) { pts[pi] += _ccOrigin[0]; pts[pi + 1] += _ccOrigin[1]; pts[pi + 2] += _ccOrigin[2]; }
+    var st = core.classifyOpening(near, pts, _PROVISION_TOL_M, type);
+    return st === 'provided' ? 'inside' : st === 'partial' ? 'partial' : null;
+  }
+  function _ccProvisionVisibility(st) { return st === 'inside' ? 1 : 2; }
+  // Suggestion group a clash belongs to (zone > space > duplicate > proxy);
+  // provisions have their own, finer field (c.provision).
+  var _CC_GROUP_RANK = { zone: 4, space: 3, duplicate: 2, proxy: 1 };
+  function _ccClashRoleGroup(eA, eB, roleIdx) {
+    if (!roleIdx) return null;
+    var a = roleIdx.byEl.get(eA), b = roleIdx.byEl.get(eB);
+    var ga = a && _CC_GROUP_RANK[a.group] ? a.group : null, gb = b && _CC_GROUP_RANK[b.group] ? b.group : null;
+    if (!ga) return gb; if (!gb) return ga;
+    return _CC_GROUP_RANK[ga] >= _CC_GROUP_RANK[gb] ? ga : gb;
+  }
+  // Hidden-by-default test for a clash under the current rules: MEP inside a
+  // provision, or a clash of a 'classify' suggestion group. Returns the group.
+  function _ccClashClassifiedHidden(c, rules) {
+    if (!c) return false;
+    if (c.provision === 'inside' && _ccDisciplineCore.roleChoice('provision', rules) === 'classify') return 'provision';
+    if (c.roleGroup && _ccDisciplineCore.roleChoice(c.roleGroup, rules) === 'classify') return c.roleGroup;
+    return false;
   }
 
   // ── Möller triangle-triangle intersection test ──────────────────
@@ -8073,6 +8550,9 @@ function startApp() {
         // in a room as a "clash". Opt in with rules.includeSpaces (set when the
         // user explicitly asks to clash against rooms/spaces, e.g. space-intrusion).
         if (!rules.includeSpaces && el.props && el.props.ifcType === 'IfcSpace') return;
+        // Suggestion groups the user (or a remembered project choice) left
+        // out — rules.roleChoices[group] === 'exclude' (counted, reported).
+        if (typeof _ccRoleExcluded === 'function' && _ccRoleExcluded(el, rules)) return;
         items.push({el:el, m:m});
       });
     });
@@ -8212,6 +8692,7 @@ function startApp() {
         if (!el.box) return;
         if (exTypes && el.props && exTypes.indexOf(el.props.ifcType)!==-1) return;
         if (!rules.includeSpaces && el.props && el.props.ifcType === 'IfcSpace') return;
+        if (typeof _ccRoleExcluded === 'function' && _ccRoleExcluded(el, rules)) return;
         if (modelIndexOf[m.id] === undefined) { modelIndexOf[m.id] = modelOrder.length; modelOrder.push(m); }
         items.push({el:el, m:m});
       });
@@ -8823,6 +9304,7 @@ function startApp() {
     classifyClashes(result);
     if (dispatch) {
       var action = {t:A.MERGE_CLASHES, v:result};
+      action.excluded = result._ccExcluded || null;
       if (detectionSettings !== undefined) action.detectionSettings = detectionSettings;
       // Run-scope coverage (CLAUDE.md Item 2) — threaded through whichever
       // of the two existing params the caller used to carry it, so no call
@@ -8863,6 +9345,12 @@ function startApp() {
       if (_userCb) _userCb(done, total);
     };
     var state = window._ccLatestState;
+    // Role suggestions for this run (both engines): which elements the
+    // rules.roleChoices leave out, reported with the result — never silent.
+    var _runExcluded = typeof _ccRoleExclusions !== 'function' ? null : _ccRoleExclusions(_ccRoleIndex(models), rules, (function(){
+      var ids = {}; _ccResolveModelScope(models, rules.modelA).concat(_ccResolveModelScope(models, rules.modelB)).forEach(function(m){ ids[m.id] = m; });
+      return Object.keys(ids).map(function(k){ return ids[k]; });
+    })());
     var useLocal = state && state.localEngine && state.localEngine.active && state.localEngine.available && window._detectOnLocalEngine;
     // Capability gate: the local engine silently ignores several rule
     // fields (see addons/local-engine.js wire-contract note). Refuse the
@@ -8912,6 +9400,7 @@ function startApp() {
       // stamped (e.g. 'failed' from a thrown exception, or 'cancelled' from
       // a mid-run stop) instead of overwriting it with 'complete'.
       var outcome = (result && result._ccOutcome && result._ccOutcome !== 'complete') ? result._ccOutcome : 'complete';
+      if (result && _runExcluded) { try { result._ccExcluded = _runExcluded; } catch (e) {} }
       return _ccTagDetectionResult(result, gen, outcome);
     }
     if (coordinated) {
@@ -9258,7 +9747,13 @@ function startApp() {
     // stays a miss — so the result set equals a full run's exactly.
     // rules.fullRerun forces a full recompute. The memo is committed only by a
     // COMPLETED run (see _finalize); cancelled/failed runs leave it untouched.
+    // Provision volumes of the whole run: classification input for every
+    // pair, so they are part of the signature (a moved provision re-runs).
+    var _roleIdx = typeof _ccRoleIndex === 'function' ? _ccRoleIndex(models) : null;
+    var _provIdx = _roleIdx ? _ccBuildProvisionIndex(models, _roleIdx) : { list: [], sig: '' };
     var _sigNow = _ccRunSignature(models, rules, _protectedPairs);
+    if (_sigNow && _provIdx.sig) _sigNow += '#p' + _provIdx.sig;
+    if (_sigNow && _roleIdx && _roleIdx.sig) _sigNow += '#r' + _roleIdx.sig;
     var _memo = (!rules.fullRerun && _sigNow && _ccRunMemo && _ccRunMemo.sig === _sigNow) ? _ccRunMemo : null;
     var newHashes = {}, changedElements = {};
     var _nChangedEls = 0, _nTotalEls = 0;
@@ -9671,6 +10166,16 @@ function startApp() {
         var _openStatus = null;
         if (kind !== 'contact') { try { _openStatus = _ccOpeningStatusForPair(eA, eB, hardPt ? 'hard' : 'soft'); } catch (_opErr) { _openStatus = null; } }
         if (_openStatus) b.obj.opening = _openStatus;
+        if (kind !== 'contact') {
+          var _provStatus = null;
+          try { _provStatus = _ccProvisionStatusForPair(eA, mA, eB, mB, hardPt ? 'hard' : 'soft', _provIdx, _roleIdx); } catch (_pvErr) { _provStatus = null; }
+          if (_provStatus) b.obj.provision = _provStatus;
+        }
+        // Suggestion group (zone, space, duplicate, unclassified proxy): a
+        // label; 'classify' groups are hidden behind a count in the list.
+        var _rGroup = null;
+        try { _rGroup = _roleIdx ? _ccClashRoleGroup(eA, eB, _roleIdx) : null; } catch (_rgErr) { _rGroup = null; }
+        if (_rGroup) b.obj.roleGroup = _rGroup;
         if (isSoft) b.obj.requiredClearanceMm = Math.round(pairGapM*1000);
         clashes.push(Object.assign(b.obj, {
           type:kind, distance:dist,
@@ -9803,6 +10308,9 @@ function startApp() {
         // A merged row is only "provided" when EVERY member is (most visible wins).
         if (_clsCore && _clsCore.openingVisibility(c.opening) > _clsCore.openingVisibility(exist.opening)) {
           if (c.opening) exist.opening = c.opening; else delete exist.opening;
+        }
+        if (_ccProvisionVisibility(c.provision) > _ccProvisionVisibility(exist.provision)) {
+          if (c.provision) exist.provision = c.provision; else delete exist.provision;
         }
         if (c.distance < exist.distance) {
           exist.distance = c.distance;
@@ -17799,7 +18307,7 @@ function startApp() {
       Object.keys(S.map).forEach(function(id){
         if(ids.indexOf(id)===-1){
           if(S._pruneGhostCache) S._pruneGhostCache(S.map[id]);
-          S.map[id].traverse(function(obj){if(obj.isMesh){_ccDisposeStyleResources(obj);obj.geometry&&obj.geometry.dispose();if(obj.material){(Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();});}}});
+          S.map[id].traverse(function(obj){if(obj.isMesh){_ccDisposeStyleResources(obj);obj.geometry&&obj.geometry.dispose();if(obj.material){(Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();});}}else if(obj.userData&&obj.userData._ccBoundary&&obj.geometry){obj.geometry.dispose();}});
           S.mg.remove(S.map[id]);delete S.map[id];
           if(S._elMapCache) delete S._elMapCache[id];
           if(S._hsCache) delete S._hsCache[id];
@@ -17812,7 +18320,7 @@ function startApp() {
           if (needsSwap) {
             if(S._unghostAll) S._unghostAll(); // clear stale ghost refs before dispose
             if(S._pruneGhostCache) S._pruneGhostCache(existingGrp);
-            existingGrp.traverse(function(obj){if(obj.isMesh){_ccDisposeStyleResources(obj);obj.geometry&&obj.geometry.dispose();if(obj.material){(Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();});}}});
+            existingGrp.traverse(function(obj){if(obj.isMesh){_ccDisposeStyleResources(obj);obj.geometry&&obj.geometry.dispose();if(obj.material){(Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();});}}else if(obj.userData&&obj.userData._ccBoundary&&obj.geometry){obj.geometry.dispose();}});
             S.mg.remove(existingGrp); delete S.map[model.id];
             if(S._elMapCache) delete S._elMapCache[model.id];
             if(S._hsCache) delete S._hsCache[model.id];
@@ -17823,6 +18331,10 @@ function startApp() {
             var grp = new THREE.Group();
             grp.userData.modelId = model.id;
             model.meshes.forEach(function(m){grp.add(m)});
+            // Placed space boundaries ride with the rooms (layer 3, "Show
+            // spaces"); not a model mesh, so never in bounds/clash/batching.
+            var _bObj = _ccBoundaryObject(model);
+            if (_bObj) grp.add(_bObj);
             S.mg.add(grp); S.map[model.id] = grp;
             if(!needsSwap && window._ccUpdateShadowFrustum) window._ccUpdateShadowFrustum();
             if(!needsSwap && Object.keys(S.map).length===1 && _resetView) _resetView();
@@ -20526,7 +21038,7 @@ function startApp() {
             return _restoreCacheOrColdParse(entry, cached);
           }).then(function(result){
             if (!result) return; // load was cancelled
-            var disc = detectDiscipline(result.elements, entry.name);
+            var disc = _ccClassifyLoadedResult(result, entry.name);
             var dObj = DISC.find(function(x){return x.id===disc;});
             var col = dObj ? dObj.c : DISC[0].c;
             var fSize = result.stats ? result.stats.fileSize : entry.buffer.byteLength;
@@ -20550,7 +21062,7 @@ function startApp() {
                 });
               }
             }
-            var _restoredModel = {id:entry.id, name:entry.name.replace(/\.ifc$/i,''), discipline:disc, color:col, meshes:result.meshes, elements:result.elements, storeys:result.storeys||[], storeyData:result.storeyData||[], spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, stats:result.stats||{fileSize:fSize}};
+            var _restoredModel = Object.assign({id:entry.id, name:entry.name.replace(/\.ifc$/i,''), discipline:disc, color:col, meshes:result.meshes, elements:result.elements, storeys:result.storeys||[], storeyData:result.storeyData||[], spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, stats:result.stats||{fileSize:fSize}}, _ccSemanticModelFields(result));
             if (entry.meta) {
               if (entry.meta._version) _restoredModel._version = entry.meta._version;
               if (entry.meta._versionDiff) _restoredModel._versionDiff = entry.meta._versionDiff;
@@ -21588,6 +22100,401 @@ function startApp() {
   window._ccDisciplinePairEnabled = _ccDisciplinePairEnabled;
   window._ccDetectDiscipline = detectDiscipline;
 
+  // ── Model semantics: discipline / sub-discipline / role + space boundaries ──
+  // Runs once per loaded IFC result (every load/restore path calls
+  // _ccClassifyLoadedResult): classifies every element with provenance
+  // (clash-discipline-core.js classifyModel → el._ccCls) and places the
+  // file's IfcRelSpaceBoundary records. Pack data (locale name hints,
+  // country classification tables) can arrive after a model loaded —
+  // window._ccReclassifyModels re-runs it for every loaded model then.
+  function _ccClassifyLoadedResult(result, name) {
+    var _t0 = performance.now();
+    var info = null;
+    try { info = _ccDisciplineCore.classifyModel(result.elements || [], name || ''); }
+    catch (e) { console.warn('[Discipline] classification failed:', e); }
+    result.disciplineInfo = info;
+    try { result._ccBoundaries = _ccPlaceSpaceBoundaries(result); }
+    catch (e) { console.warn('[Space boundaries] placement failed:', e); result._ccBoundaries = null; }
+    var w = [];
+    if (result._ccBoundaries && result._ccBoundaries.warning) w.push(result._ccBoundaries.warning);
+    result.loaderWarnings = w;
+    if (result.stats) result.stats.classifyMs = Math.round(performance.now() - _t0); // main-thread share (worker share: stats.semanticsMs)
+    return info ? info.discipline : detectDiscipline(result.elements || [], name);
+  }
+  // Model fields produced by _ccClassifyLoadedResult (spread into ADD/REPLACE_MODEL).
+  function _ccSemanticModelFields(result) {
+    return { disciplineInfo: result.disciplineInfo || null, spaceBoundaries: result.spaceBoundaries || null,
+      _ccBoundaries: result._ccBoundaries || null, loaderWarnings: result.loaderWarnings || [] };
+  }
+  // Matrix / toast key of a whole model: 'mep.ventilation' when the model is
+  // dominantly one MEP trade, else its (possibly user-chosen) discipline.
+  function _ccModelDisciplineKey(m) {
+    if (!m) return '?';
+    var di = m.disciplineInfo;
+    if (di && di.sub && m.discipline === 'mep' && di.discipline === 'mep') return 'mep.' + di.sub;
+    return m.discipline || '?';
+  }
+  function _ccDisciplineLabel(key) {
+    var parts = String(key || '').split('.');
+    var top = DISC.find(function(x){ return x.id === parts[0]; });
+    var topL = top ? _cc_t('disc.' + top.id, top.label) : parts[0];
+    if (parts.length < 2) return topL;
+    return topL + ' · ' + _ccSubDisciplineLabel(parts[1]);
+  }
+  function _ccSubDisciplineLabel(sub) {
+    var L = { ventilation: 'Ventilation', heating: 'Heating & cooling', plumbing: 'Plumbing & drainage', fire: 'Fire protection', electrical: 'Electrical', piping: 'Piping (trade unknown)' };
+    return _cc_t('disc.sub.' + sub, L[sub] || sub);
+  }
+  function _ccEvidenceLabel(src) {
+    var L = { system: 'stated · system', classification: 'stated · classification', 'predefined-type': 'stated · predefined type',
+      'type-object': 'inferred · type object', entity: 'inferred · IFC class', model: 'inferred · model majority',
+      name: 'inferred · name hint', 'default': 'default', stated: 'stated evidence', 'file-name': 'file name', geometry: 'inferred · geometry' };
+    return _cc_t('disc.src.' + src, L[src] || src);
+  }
+  function _ccRoleLabel(role) {
+    return role === 'provision' ? _cc_t('role.provision', 'Provision / reservation') : role === 'zone' ? _cc_t('role.zone', 'Zone / compartment') : '';
+  }
+
+  // Re-classify every loaded model (pack data arrived, or a caller asks).
+  // A discipline the user picked by hand (model.discipline differs from the
+  // last automatic result) is kept; only automatic ones follow new evidence.
+  window._ccReclassifyModels = function(reason) {
+    var st = window._ccLatestState, d = window._ccDispatch;
+    if (!st || !st.models || typeof d !== 'function') return 0;
+    var n = 0;
+    st.models.forEach(function(m) {
+      if (!m || !m.elements || !m.elements.length || (m.stats && m.stats.loadType && m.stats.loadType !== 'IFC')) return;
+      var prev = m.disciplineInfo;
+      var info;
+      try { info = _ccDisciplineCore.classifyModel(m.elements, m.name || ''); } catch (e) { return; }
+      var u = { disciplineInfo: info };
+      var auto = !prev || prev.discipline === m.discipline;
+      if (auto && info.discipline !== m.discipline) {
+        u.discipline = info.discipline;
+        var oldD = DISC.find(function(x){ return x.id === m.discipline; });
+        var newD = DISC.find(function(x){ return x.id === info.discipline; });
+        if (newD && (!oldD || m.color === oldD.c)) u.color = newD.c;
+      }
+      if (!prev || prev.sig !== info.sig || u.discipline) { d({t:A.UPD_MODEL, id:m.id, u:u}); n++; }
+    });
+    if (n) console.log('[Discipline] re-classified ' + n + ' model(s) (' + (reason || 'request') + ')');
+    return n;
+  };
+
+  // Federation role index of a run (clash-discipline-core.js suggestRoles):
+  // stated / name / geometric roles, duplicates, spaces, unclassified
+  // proxies — each with a group, confidence and provenance. Drives the
+  // pre-run suggestions panel, rules.roleChoices exclusion in the sweeps,
+  // clash labels and the provision index. Set for the duration of a run.
+  var _ccRunRoleIdx = null; // memo of the last index (same models array + pack data version)
+  function _ccRoleIndex(models) {
+    if (_ccRunRoleIdx && _ccRunRoleIdx._models === models && _ccRunRoleIdx._v === _ccDisciplineCore.dataVersion()) return _ccRunRoleIdx;
+    var idx;
+    try { idx = _ccDisciplineCore.suggestRoles(models || []); }
+    catch (e) { console.warn('[Roles] suggestion failed:', e); idx = { byEl: new Map(), groups: {}, sig: '' }; }
+    idx._models = models; idx._v = _ccDisciplineCore.dataVersion();
+    _ccRunRoleIdx = idx;
+    return idx;
+  }
+  // An element whose suggestion group is set to 'exclude' is not a clash
+  // source (spaces keep their own rules.includeSpaces switch).
+  function _ccRoleExcluded(el, rules) {
+    var e = _ccRunRoleIdx && _ccRunRoleIdx.byEl.get(el);
+    return !!(e && e.group !== 'space' && _ccDisciplineCore.roleChoice(e.group, rules) === 'exclude');
+  }
+  window._ccRoleExcluded = _ccRoleExcluded; // local-engine payload filter (same rule as the sweeps)
+  // Excluded element counts per group (reported with the result; never silent).
+  function _ccRoleExclusions(idx, rules, models) {
+    var out = {}, any = false;
+    if (!idx) return null;
+    var inRun = {};
+    (models || []).forEach(function(m){ inRun[m.id] = true; });
+    idx.byEl.forEach(function(e) {
+      if (!inRun[e.modelId]) return;
+      var ch = e.group === 'space' ? (rules.includeSpaces ? 'include' : 'exclude') : _ccDisciplineCore.roleChoice(e.group, rules);
+      if (ch !== 'exclude') return;
+      out[e.group] = (out[e.group] || 0) + 1; any = true;
+    });
+    return any ? out : null;
+  }
+  // ── Space boundaries: placement ────────────────────────────────────────
+  // IFC puts a boundary's ConnectionGeometry in its RELATING SPACE's object
+  // placement frame (file units, Z up). Some exporters write a large,
+  // systematic offset instead (seen: plane origins ~-13.4 km from rooms at
+  // ~45 m). We place the polygons with the spec frame first, then — if they
+  // do not lie on their rooms — look for ONE rigid translation for the whole
+  // file (or per group of >= 3 spaces sharing it) by matching each space's
+  // boundary extents to the space solid. A frame or correction is accepted
+  // only when afterwards >= _CC_SB_MIN_SHARE of the polygons lie within
+  // _CC_SB_TOL_M of the space solid or of the related element's surface.
+  // Besides one constant offset, a second systematic pattern is recognised:
+  // an offset proportional to each space's own placement step (t = A + k·L).
+  // Anything not verified is never drawn; a structured loader warning says so.
+  var _CC_SB_MIN_SHARE = 0.8;
+  // 0.25 m: authoring tools put second-level boundaries on the wall face the
+  // room calculation uses, which differs from the exported room solid by up
+  // to a finish/core layer (measured on a real export: 82 % of polygons within
+  // 0.2 m, 92 % within 0.3 m once placed, 11 % within 5 cm). A wrong frame or
+  // offset is metres to kilometres off, so this still refuses wrong geometry.
+  var _CC_SB_TOL_M = 0.25;
+  function _ccPlaceSpaceBoundaries(result) {
+    var sb = result && result.spaceBoundaries;
+    if (!sb || !sb.b || !sb.b.length) return null;
+    var els = result.elements || [];
+    var byId = {};
+    for (var i = 0; i < els.length; i++) byId[els[i].expressId] = els[i];
+    var nB = sb.b.length / 3, nP = sb.polyB.length;
+    // Adjacency comes straight from the relations (geometry not needed).
+    var spaceToEls = {}, elToSpaces = {}, missing = [], perSpace = {};
+    for (var bi = 0; bi < nB; bi++) {
+      var sid = sb.b[bi * 3], eid = sb.b[bi * 3 + 1];
+      perSpace[sid] = (perSpace[sid] || 0) + 1;
+      if (!eid) continue;
+      if (!byId[eid]) { if (missing.length < 500) missing.push({ space: sid, element: eid }); continue; }
+      var se = spaceToEls[sid] || (spaceToEls[sid] = []);
+      if (se.indexOf(eid) < 0) se.push(eid);
+      var es = elToSpaces[eid] || (elToSpaces[eid] = []);
+      if (es.indexOf(sid) < 0) es.push(sid);
+    }
+    var out = { total: nP, placed: 0, share: 0, frame: null, offset: null, scale: null, geometry: null,
+      spaceToEls: spaceToEls, elToSpaces: elToSpaces, missingElements: missing, boundaryCount: nB, perSpace: perSpace, warning: null };
+    if (!nP) return out;
+    // Polygon vertices in IFC world, file units: M_space · p.
+    var W = new Float64Array(sb.pts.length);
+    for (var pi = 0; pi < nP; pi++) {
+      var M = sb.spaces[sb.b[sb.polyB[pi] * 3]];
+      for (var vi = sb.polyOff[pi]; vi < sb.polyOff[pi + 1]; vi++) {
+        var x = sb.pts[vi * 3], y = sb.pts[vi * 3 + 1], z = sb.pts[vi * 3 + 2];
+        W[vi * 3] = M[0] * x + M[4] * y + M[8] * z + M[12];
+        W[vi * 3 + 1] = M[1] * x + M[5] * y + M[9] * z + M[13];
+        W[vi * 3 + 2] = M[2] * x + M[6] * y + M[10] * z + M[14];
+      }
+    }
+    // Per space: boundary bbox (IFC axes) vs space solid box (scene: x, y=IFC z, z=-IFC y).
+    var spaceIds = Object.keys(perSpace);
+    var sBox = {}, bBox = {};
+    spaceIds.forEach(function(k) {
+      var el = byId[k];
+      if (el && el.box && !el.box.isEmpty() && el.meshes && el.meshes.length) sBox[k] = el.box;
+    });
+    for (var pj = 0; pj < nP; pj++) {
+      var sk = sb.b[sb.polyB[pj] * 3];
+      var bb = bBox[sk] || (bBox[sk] = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity]);
+      for (var vj = sb.polyOff[pj]; vj < sb.polyOff[pj + 1]; vj++) {
+        for (var a = 0; a < 3; a++) { var c = W[vj * 3 + a]; if (c < bb[a]) bb[a] = c; if (c > bb[a + 3]) bb[a + 3] = c; }
+      }
+    }
+    function sceneExt(box) { return [box.max.x - box.min.x, box.max.z - box.min.z, box.max.y - box.min.y]; } // IFC x, y, z extents
+    // Unit scale: the candidate that best matches boundary extents to rooms.
+    var cands = [1, 0.001, 0.01, 0.0254, 0.3048];
+    var us = result.stats && result.stats.unitScale;
+    if (us && cands.indexOf(us) < 0) cands.unshift(us);
+    var best = null, bestErr = Infinity;
+    cands.forEach(function(s) {
+      var errs = [];
+      Object.keys(sBox).forEach(function(k) {
+        if (!bBox[k]) return;
+        var e = sceneExt(sBox[k]), b = bBox[k];
+        errs.push((Math.abs((b[3] - b[0]) * s - e[0]) + Math.abs((b[4] - b[1]) * s - e[1]) + Math.abs((b[5] - b[2]) * s - e[2])) / (e[0] + e[1] + e[2] + 1e-9));
+      });
+      if (!errs.length) return;
+      errs.sort(function(p, q) { return p - q; });
+      var med = errs[Math.floor(errs.length / 2)];
+      if (med < bestErr) { bestErr = med; best = s; }
+    });
+    if (best == null) {
+      out.warning = { code: 'space-boundaries-unplaced', severity: 'warning', reason: 'no-space-geometry',
+        message: _cc_t('boundary.noSpaces', 'Space boundaries could not be placed: their rooms have no geometry.'), total: nP, placed: 0 };
+      return out;
+    }
+    var S = best;
+    out.scale = S;
+    // Scene position of vertex v with translation t (IFC axes, metres).
+    function scenePt(v, t, o) { o[0] = W[v * 3] * S + t[0]; o[1] = W[v * 3 + 2] * S + t[2]; o[2] = -(W[v * 3 + 1] * S + t[1]); return o; }
+    // Triangles (scene coords) of an element, cached.
+    var triCache = {};
+    function trisOf(eid) {
+      if (triCache[eid] !== undefined) return triCache[eid];
+      var el = byId[eid], arr = [];
+      (el && el.meshes || []).forEach(function(m) {
+        var g = m.geometry, pos = g && g.attributes && g.attributes.position;
+        if (!pos) return;
+        var me = m.matrix.elements, idx = g.index ? g.index.array : null, n = idx ? idx.length : pos.count;
+        if (n > 60000) return;
+        for (var k = 0; k < n; k++) {
+          var vi2 = idx ? idx[k] : k, px = pos.getX(vi2), py = pos.getY(vi2), pz = pos.getZ(vi2);
+          arr.push(me[0] * px + me[4] * py + me[8] * pz + me[12], me[1] * px + me[5] * py + me[9] * pz + me[13], me[2] * px + me[6] * py + me[10] * pz + me[14]);
+        }
+      });
+      triCache[eid] = arr.length ? arr : null;
+      return triCache[eid];
+    }
+    var _tri = new THREE.Triangle(), _pt = new THREE.Vector3(), _cl = new THREE.Vector3();
+    var _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3();
+    function nearSurface(p, tris, tol) {
+      if (!tris) return false;
+      _pt.set(p[0], p[1], p[2]);
+      for (var k = 0; k + 8 < tris.length; k += 9) {
+        _a.set(tris[k], tris[k + 1], tris[k + 2]); _b.set(tris[k + 3], tris[k + 4], tris[k + 5]); _c.set(tris[k + 6], tris[k + 7], tris[k + 8]);
+        _tri.set(_a, _b, _c);
+        _tri.closestPointToPoint(_pt, _cl);
+        if (_cl.distanceToSquared(_pt) <= tol * tol) return true;
+      }
+      return false;
+    }
+    var _p3 = [0, 0, 0];
+    function polyOnSurface(pIdx, t) {
+      var bIdx = sb.polyB[pIdx], sid2 = sb.b[bIdx * 3], eid2 = sb.b[bIdx * 3 + 1];
+      var sT = sBox[sid2] ? trisOf(sid2) : null, eT = eid2 ? trisOf(eid2) : null;
+      if (!sT && !eT) return false;
+      for (var v = sb.polyOff[pIdx]; v < sb.polyOff[pIdx + 1]; v++) {
+        scenePt(v, t, _p3);
+        if (!nearSurface(_p3, sT, _CC_SB_TOL_M) && !nearSurface(_p3, eT, _CC_SB_TOL_M)) return false;
+      }
+      return true;
+    }
+    // Polygons per space (only spaces with geometry can be verified).
+    var polysOf = {};
+    for (var pk = 0; pk < nP; pk++) { var s3 = sb.b[sb.polyB[pk] * 3]; (polysOf[s3] || (polysOf[s3] = [])).push(pk); }
+    function verify(sids, t) {
+      var ok = 0, tot = 0;
+      sids.forEach(function(k) { (polysOf[k] || []).forEach(function(p) { tot++; if (polyOnSurface(p, t)) ok++; }); });
+      return { ok: ok, tot: tot, share: tot ? ok / tot : 0 };
+    }
+    var placeable = Object.keys(sBox).filter(function(k) { return polysOf[k]; });
+    var accepted = []; // [{sids, t}]
+    var t0 = [0, 0, 0];
+    var v0 = verify(placeable, t0);
+    if (v0.tot && v0.share >= _CC_SB_MIN_SHARE) { accepted.push({ sids: placeable, t: t0 }); out.frame = 'spec'; }
+    else {
+      // Per-space translation from matching extents (IFC axes, metres).
+      var ts = {};
+      placeable.forEach(function(k) {
+        var e = sceneExt(sBox[k]), b = bBox[k], bx = sBox[k];
+        var ok = Math.abs((b[3] - b[0]) * S - e[0]) <= Math.max(_CC_SB_TOL_M * 2, 0.05 * e[0]) &&
+          Math.abs((b[4] - b[1]) * S - e[1]) <= Math.max(_CC_SB_TOL_M * 2, 0.05 * e[1]) &&
+          Math.abs((b[5] - b[2]) * S - e[2]) <= Math.max(_CC_SB_TOL_M * 2, 0.05 * e[2]);
+        if (!ok) return;
+        var cS = [(bx.min.x + bx.max.x) / 2, -(bx.min.z + bx.max.z) / 2, (bx.min.y + bx.max.y) / 2];
+        ts[k] = [cS[0] - (b[0] + b[3]) / 2 * S, cS[1] - (b[1] + b[4]) / 2 * S, cS[2] - (b[2] + b[5]) / 2 * S];
+      });
+      var tk = Object.keys(ts);
+      function median(list, a) { var v = list.map(function(k) { return ts[k][a]; }).sort(function(p, q) { return p - q; }); return v[Math.floor(v.length / 2)]; }
+      if (tk.length) {
+        var T = [median(tk, 0), median(tk, 1), median(tk, 2)];
+        var vT = verify(placeable, T);
+        // Second systematic pattern: the offset grows with each space's own
+        // placement step (an exporter scaled that step into the boundary
+        // coordinates — seen as k ≈ 303.8, i.e. a mm↔ft factor), so
+        // t_s = A + k·L_s with one file-wide k and A.
+        var lin = (!vT.tot || vT.share < _CC_SB_MIN_SHARE) && sb.spaceRel ? (function() {
+          var ks = [];
+          tk.forEach(function(k) {
+            var L = sb.spaceRel[k]; if (!L) return;
+            var lx = L[0] * S, ly = L[1] * S, lz = L[2] * S, ll = lx * lx + ly * ly + lz * lz;
+            if (ll < 1) return;
+            ks.push((ts[k][0] * lx + ts[k][1] * ly + ts[k][2] * lz) / ll);
+          });
+          if (ks.length < 3) return null;
+          ks.sort(function(p, q) { return p - q; });
+          var kk = ks[Math.floor(ks.length / 2)];
+          var res = tk.map(function(k) { var L = sb.spaceRel[k] || [0, 0, 0]; return [ts[k][0] - kk * L[0] * S, ts[k][1] - kk * L[1] * S, ts[k][2] - kk * L[2] * S]; });
+          function med(a) { var v = res.map(function(r) { return r[a]; }).sort(function(p, q) { return p - q; }); return v[Math.floor(v.length / 2)]; }
+          return { k: kk, A: [med(0), med(1), med(2)] };
+        })() : null;
+        var linT = null;
+        if (lin) {
+          linT = {};
+          placeable.forEach(function(k) { var L = sb.spaceRel[k] || [0, 0, 0]; linT[k] = [lin.A[0] + lin.k * L[0] * S, lin.A[1] + lin.k * L[1] * S, lin.A[2] + lin.k * L[2] * S]; });
+          var okL = 0, totL = 0;
+          placeable.forEach(function(k) { var vv = verify([k], linT[k]); okL += vv.ok; totL += vv.tot; });
+          if (!(totL && okL / totL >= _CC_SB_MIN_SHARE)) linT = null;
+        }
+        if (vT.tot && vT.share >= _CC_SB_MIN_SHARE) { accepted.push({ sids: placeable, t: T }); out.frame = 'offset'; out.offset = T; }
+        else if (linT) {
+          placeable.forEach(function(k) { accepted.push({ sids: [k], t: linT[k] }); });
+          out.frame = 'placement-scaled'; out.offset = lin.A; out.placementFactor = lin.k;
+        }
+        else {
+          // Spaces sharing one offset (0.1 m grid), each group verified alone.
+          var groups = {};
+          tk.forEach(function(k) { var g = ts[k].map(function(x) { return Math.round(x * 10); }).join(','); (groups[g] || (groups[g] = [])).push(k); });
+          var minGroup = placeable.length >= 3 ? 3 : placeable.length;
+          Object.keys(groups).forEach(function(g) {
+            var ids = groups[g];
+            if (ids.length < minGroup) return;
+            var Tg = [median(ids, 0), median(ids, 1), median(ids, 2)];
+            var vg = verify(ids, Tg);
+            if (vg.tot && vg.share >= _CC_SB_MIN_SHARE) accepted.push({ sids: ids, t: Tg });
+          });
+          if (accepted.length) { out.frame = 'groups'; out.offset = accepted[0].t; }
+        }
+      }
+    }
+    // Geometry for accepted spaces (polygon outlines as line segments).
+    var segs = [], placedPolys = 0;
+    var q0 = [0, 0, 0], q1 = [0, 0, 0];
+    accepted.forEach(function(acc) {
+      acc.sids.forEach(function(k) {
+        (polysOf[k] || []).forEach(function(p) {
+          // Within an accepted frame, each polygon is still drawn only if it
+          // individually lies on its room / element (never show a stray one).
+          if (!polyOnSurface(p, acc.t)) return;
+          placedPolys++;
+          var s0 = sb.polyOff[p], s1 = sb.polyOff[p + 1];
+          for (var v = s0; v < s1; v++) {
+            scenePt(v, acc.t, q0); scenePt(v + 1 < s1 ? v + 1 : s0, acc.t, q1);
+            segs.push(q0[0], q0[1], q0[2], q1[0], q1[1], q1[2]);
+          }
+        });
+      });
+    });
+    out.placed = placedPolys;
+    out.share = nP ? placedPolys / nP : 0;
+    if (segs.length) out.geometry = new Float32Array(segs);
+    if (placedPolys < nP) {
+      out.warning = { code: 'space-boundaries-unplaced', severity: placedPolys ? 'info' : 'warning',
+        reason: placedPolys ? 'partial' : 'no-consistent-frame', total: nP, placed: placedPolys,
+        message: placedPolys
+          ? _cc_t('boundary.partial', '{n} of {total} space boundaries could not be placed and are not shown.', { n: nP - placedPolys, total: nP })
+          : _cc_t('boundary.unplaced', 'Space boundaries could not be placed: they do not lie on their rooms in the IFC frame or with one consistent offset, so they are not shown.') };
+    }
+    return out;
+  }
+  // Scene object for a model's placed boundaries: lines on the rooms layer
+  // (shown with "Show spaces"), never raycast, never in bounds/clash/batching
+  // (not in model.meshes, no expressId).
+  var _ccBoundaryMat = null;
+  function _ccBoundaryObject(model) {
+    var bd = model && model._ccBoundaries;
+    if (!bd || !bd.geometry) return null;
+    if (bd._obj) return bd._obj;
+    if (!_ccBoundaryMat) _ccBoundaryMat = new THREE.LineBasicMaterial({ color: new THREE.Color(0.20, 0.52, 0.86), transparent: true, opacity: 0.85, depthWrite: false });
+    var g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(bd.geometry, 3));
+    var obj = new THREE.LineSegments(g, _ccBoundaryMat);
+    obj.layers.set(_CC_SPACE_LAYER);
+    obj.raycast = function() {};
+    obj.frustumCulled = false;
+    obj.renderOrder = 2;
+    obj.userData._ccBoundary = true;
+    obj.userData._ccSpace = true;
+    bd._obj = obj;
+    return obj;
+  }
+  // Room ↔ element adjacency from IfcRelSpaceBoundary, for the inspector,
+  // navigator, data-quality and the accessibility/visibility integrations.
+  // Returns {spaces:[expressId], elements:[expressId]} for one element, or the
+  // whole map ({spaceToEls, elToSpaces, missingElements}) without expressId.
+  window._ccSpaceAdjacency = function(modelId, expressId) {
+    var st = window._ccLatestState;
+    var m = st && st.models && st.models.find(function(x) { return x.id === modelId; });
+    var bd = m && m._ccBoundaries;
+    if (!bd) return null;
+    if (expressId == null) return { spaceToEls: bd.spaceToEls, elToSpaces: bd.elToSpaces, missingElements: bd.missingElements, perSpace: bd.perSpace, boundaryCount: bd.boundaryCount };
+    return { elements: (bd.spaceToEls[expressId] || []).slice(), spaces: (bd.elToSpaces[expressId] || []).slice() };
+  };
+
 
   function ModelSidebar(props) {
     var s=props.s, d=props.d;
@@ -21847,14 +22754,14 @@ function startApp() {
                   } else if (_overlapWarn) {
                     setErr(_overlapWarn);
                   }
-                  var disc = detectDiscipline(result.elements, base);
+                  var disc = _ccClassifyLoadedResult(result, base);
                   var dObj = DISC.find(function(x){return x.id===disc;});
                   var col = dObj ? dObj.c : DISC[0].c;
                   var modelId = uid();
-                  d({t:A.ADD_MODEL, v:{id:modelId, name:base, discipline:disc, color:col, visible:true, _version:1,
+                  d({t:A.ADD_MODEL, v:Object.assign({id:modelId, name:base, discipline:disc, color:col, visible:true, _version:1,
                     meshes:result.meshes, elements:result.elements, storeys:result.storeys||[],
                     storeyData:result.storeyData||[], spatialHierarchy:result.spatialHierarchy||{},
-                    relatedPairs:result.relatedPairs||{}, stats:result.stats}});
+                    relatedPairs:result.relatedPairs||{}, stats:result.stats}, _ccSemanticModelFields(result))});
                   _gcEvent('glb-ifc-paired', base);
                   _onProg('Model ready (' + result.stats.loadTime + 'ms)');
                 });
@@ -21950,10 +22857,10 @@ function startApp() {
                 result = joinGLBWithSidecar(syntheticGlb, parsed, function(msg){ setLoadMsg(base + ': ' + msg); });
               }
               if (result.warnings && result.warnings.length) result.warnings.forEach(function(w){ errors.push(w); });
-              var disc = detectDiscipline(result.elements, base);
+              var disc = _ccClassifyLoadedResult(result, base);
               var dObj = DISC.find(function(x){return x.id===disc;});
               var col = dObj ? dObj.c : _existingModel.color;
-              d({t:A.REPLACE_MODEL, id:_existingModel.id, v:{
+              d({t:A.REPLACE_MODEL, id:_existingModel.id, v:Object.assign(_ccSemanticModelFields(result), {
                 id:_existingModel.id, name:base,
                 discipline:_existingModel.discipline||disc, color:_existingModel.color||col,
                 visible:_existingModel.visible!==false, tag:_existingModel.tag||'',
@@ -21963,7 +22870,7 @@ function startApp() {
                 spatialHierarchy:result.spatialHierarchy||{},
                 relatedPairs:result.relatedPairs||{},
                 stats:Object.assign({}, _existingModel.stats||{}, result.stats, {loadType:(_existingModel.stats&&_existingModel.stats.loadType?_existingModel.stats.loadType:'GLB')+'+'+ext})
-              }});
+              })});
               console.log('%c[Sidecar Attach] ' + f.name + ' attached to model "' + base + '"', 'color:#22c55e;font-weight:bold');
               // Persist sidecar in IndexedDB alongside the model's file record
               _openIDB().then(function(db) {
@@ -22099,7 +23006,7 @@ function startApp() {
             return _loadP.then(function(result) {
               if (!result) return; // load was cancelled by a newer load
               if (_declUnit != null) { result.stats = result.stats || {}; result.stats.unitScale = _declUnit; }
-              disc = detectDiscipline(result.elements, f.name);
+              disc = _ccClassifyLoadedResult(result, f.name);
               var dObj = DISC.find(function(x){return x.id===disc;});
               col = dObj ? dObj.c : col;
               // `buf` is detached (transferred to the worker) on every path
@@ -22121,7 +23028,7 @@ function startApp() {
                 modelId = existing.id;
                 var versionDiff = computeModelDiff(existing.elements, result.elements);
                 console.log('%c[Model Diff] ' + baseName + ' v' + ((existing._version||1)+1) + ': +' + versionDiff.summary.added + ' added, -' + versionDiff.summary.removed + ' removed, ~' + versionDiff.summary.modified + ' modified, =' + versionDiff.summary.unchanged + ' unchanged', 'color:#60a5fa;font-weight:bold');
-                d({t:A.REPLACE_MODEL, id:modelId, v:{id:modelId, name:baseName,
+                d({t:A.REPLACE_MODEL, id:modelId, v:Object.assign(_ccSemanticModelFields(result), {id:modelId, name:baseName,
                   discipline:existing.discipline||disc, color:existing.color||col,
                   visible:existing.visible!==false, tag:existing.tag||'',
                   _version:(existing._version||1)+1,
@@ -22130,10 +23037,10 @@ function startApp() {
                   storeys:result.storeys||[], storeyData:result.storeyData||[],
                   spatialHierarchy:result.spatialHierarchy||{},
                   relatedPairs:result.relatedPairs||{},
-                  stats:result.stats||{fileSize:fSize}}});
+                  stats:result.stats||{fileSize:fSize}})});
               } else {
                 modelId = uid();
-                d({t:A.ADD_MODEL, v:{id:modelId, name:baseName, discipline:disc, color:col, visible:true, _version:1, meshes:result.meshes, elements:result.elements, storeys:result.storeys||[], storeyData:result.storeyData||[], spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, stats:result.stats||{fileSize:fSize}}});
+                d({t:A.ADD_MODEL, v:Object.assign({id:modelId, name:baseName, discipline:disc, color:col, visible:true, _version:1, meshes:result.meshes, elements:result.elements, storeys:result.storeys||[], storeyData:result.storeyData||[], spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, stats:result.stats||{fileSize:fSize}}, _ccSemanticModelFields(result))});
               }
               _lazyPropsTarget.modelId = modelId;
               consoleElementProfile(baseName, (result.stats&&result.stats.loadType)||'IFC', result.elements);
@@ -22991,8 +23898,10 @@ function startApp() {
           return html`<button onClick=${function(e){e.stopPropagation();setOpen(true);}}
             title=${_cc_t('modelCard.disciplineChipTip','Discipline: {d} — click to change',{d:discObj.label})}
             style=${{display:'inline-flex',alignItems:'center',gap:'.3rem',fontSize:'var(--text-xs)',padding:'.05rem .4rem',borderRadius:99,border:'1px solid '+discObj.c+'55',background:'var(--bg-tertiary)',color:'var(--text-secondary)',fontWeight:600,flexShrink:0,cursor:'pointer',whiteSpace:'nowrap'}}>
-            <span aria-hidden="true" style=${{width:6,height:6,borderRadius:'50%',background:discObj.c,flexShrink:0}}></span>${discObj.label}</button>`;
+            <span aria-hidden="true" style=${{width:6,height:6,borderRadius:'50%',background:discObj.c,flexShrink:0}}></span>${_ccDisciplineLabel(_ccModelDisciplineKey(m))}</button>`;
         }()}
+        ${m.loaderWarnings && m.loaderWarnings.length > 0 && html`<span title=${m.loaderWarnings.map(function(w){return w.message;}).join('\n')}
+          style=${{fontSize:'0.6rem',padding:'0 .3rem',borderRadius:99,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',flexShrink:0}}>${_cc_t('modelCard.warnings','{n} warning(s)',{n:m.loaderWarnings.length})}</span>`}
         ${m._version>1 && html`<span style=${{fontSize:'0.57rem',color:'var(--accent)',background:'var(--accent-bg)',padding:'.05rem .25rem',borderRadius:3,flexShrink:0,fontWeight:600}}>v${m._version}</span>`}
         ${m._stub && html`<span style=${{fontSize:'0.63rem',color:'var(--color-warning-fg)',background:'var(--pill-amber-bg)',padding:'.05rem .3rem',borderRadius:4,flexShrink:0}}>${_cc_t('modelCard.stub','stub')}</span>`}
         ${m.stats && m.stats.loadType && html`<span style=${{fontSize:'0.57rem',padding:'1px 4px',borderRadius:3,background:'var(--accent-bg)',color:'var(--accent)',fontWeight:600,flexShrink:0}}>${m.stats.loadType}</span>`}
@@ -23050,6 +23959,29 @@ function startApp() {
             <span style=${{width:8,height:8,borderRadius:'50%',background:'var(--border)',marginLeft:'.2rem'}}></span> ${_cc_t('modelCard.unchanged','Unchanged')}
           </div>
         </div>`}
+        ${m.disciplineInfo && function(){
+          // What import detected, and how sure it is: discipline (with its
+          // source), the (sub-)discipline mix, the evidence shares
+          // (stated in the file vs inferred), roles and space boundaries.
+          var di = m.disciplineInfo, tot = 0;
+          Object.keys(di.keys||{}).forEach(function(k){ tot += di.keys[k]; });
+          var mix = Object.keys(di.keys||{}).sort(function(a,b){ return di.keys[b]-di.keys[a]; }).slice(0,5)
+            .map(function(k){ return _ccDisciplineLabel(k) + ' ' + Math.round(di.keys[k]/Math.max(1,tot)*100) + '%'; }).join(' · ');
+          var sh = di.shares || {};
+          var shareTxt = ['stated','inferred','model','name'].filter(function(k){ return sh[k] > 0; })
+            .map(function(k){ return _cc_t('modelCard.share.'+k, k) + ' ' + Math.round(sh[k]*100) + '%'; }).join(' · ');
+          var bd = m._ccBoundaries;
+          var LS2 = {fontSize:'0.63rem',color:'var(--text-faint)'}, VS2 = {fontSize:'0.63rem',color:'var(--text-secondary)'};
+          return html`<div style=${{borderTop:'1px solid var(--border)',paddingTop:'.3rem',marginTop:'.1rem',display:'flex',flexDirection:'column',gap:'.15rem'}}>
+            <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.03em'}}>${_cc_t('modelCard.detected','Detected on import')}</span>
+            <div style=${VS2}>${_ccDisciplineLabel(di.key)} <span style=${LS2}>(${_ccEvidenceLabel(di.src)}${di.ev ? ': ' + di.ev : ''})</span></div>
+            ${mix && html`<div style=${LS2}>${mix}</div>`}
+            ${shareTxt && html`<div style=${LS2}>${_cc_t('modelCard.evidence','Evidence')}: ${shareTxt}</div>`}
+            ${di.roles && Object.keys(di.roles).length > 0 && html`<div style=${LS2}>${Object.keys(di.roles).map(function(r){ return di.roles[r] + '× ' + _ccRoleLabel(r); }).join(' · ')}${di.role ? ' — ' + _cc_t('modelCard.roleModel','model is a {role} model',{role:_ccRoleLabel(di.role)}) : ''}</div>`}
+            ${bd && html`<div style=${LS2}>${_cc_t('modelCard.boundaries','{n} space boundaries',{n:bd.boundaryCount})}${bd.placed ? ' · ' + _cc_t('modelCard.boundariesShown','{p} shown with rooms ({frame})',{p:bd.placed,frame:bd.frame==='spec'?_cc_t('modelCard.frameSpec','IFC frame'):_cc_t('modelCard.frameOffset','offset corrected')}) : ''}</div>`}
+            ${(m.loaderWarnings||[]).map(function(w,wi){ return html`<div key=${'w'+wi} style=${{fontSize:'0.63rem',color:'var(--color-warning-fg)'}}>${w.message}</div>`; })}
+          </div>`;
+        }()}
         ${m.storeys&&m.storeys.length>0 && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',borderTop:'1px solid var(--border)',paddingTop:'.25rem',marginTop:'.1rem'}}>
           ${_cc_t('modelCard.levelsManage','{n} level{s} — manage in Levels panel below',{n:m.storeys.length,s:m.storeys.length===1?'':'s'})}
         </div>`}
@@ -24285,19 +25217,27 @@ function startApp() {
     var hasOverrides = rules.disciplineMatrix && Object.keys(rules.disciplineMatrix).length > 0;
     var cell = {width:20,height:20,borderRadius:4,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'};
     var dot = {width:8,height:8,borderRadius:2};
+    // Rows: the top-level disciplines, then the MEP trades (sub-disciplines
+    // detected on import). A trade cell overrides the MEP cell for that pair.
+    var mepC = (DISC.find(function(x){return x.id==='mep';})||DISC[0]).c;
+    var ROWS = DISC.map(function(x){ return {id:x.id, label:_cc_t('disc.'+x.id, x.label), short:_cc_t('disc.'+x.id, x.label).slice(0,3), c:x.c}; })
+      .concat(['ventilation','heating','plumbing','fire','electrical'].map(function(sub){
+        var l = _ccSubDisciplineLabel(sub);
+        return {id:'mep.'+sub, label:l, short:l.slice(0,3), c:mepC, sub:true};
+      }));
     return html`<div>
       <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'.2rem'}}>
         <span style=${{fontSize:'0.72rem',fontWeight:600,color:'var(--text-primary)'}}>Discipline matrix</span>
         ${hasOverrides && html`<button onClick=${function(){d({t:A.UPD_RULES,u:{disciplineMatrix:{}}})}}
           style=${{...S_BTN,fontSize:'0.57rem',padding:'0 4px',background:'none',color:'var(--text-faint)'}}>Reset overrides</button>`}
       </div>
-      <div style=${{fontSize:'0.62rem',color:'var(--text-faint)',marginBottom:'.3rem'}}>Which discipline pairs get tested. Same-discipline pairs (the diagonal) are off by default — the single biggest source of clash noise.</div>
+      <div style=${{fontSize:'0.62rem',color:'var(--text-faint)',marginBottom:'.3rem'}}>${_cc_t('matrix.help','Which discipline pairs get tested. Same-discipline pairs (the diagonal) are off by default — the single biggest source of clash noise. MEP trades detected on import (ventilation, heating, plumbing, fire, electrical) are tested against each other automatically.')}</div>
       <table style=${{borderCollapse:'collapse'}}>
         <tbody>
-          ${DISC.map(function(rowDisc, i){
+          ${ROWS.map(function(rowDisc, i){
             return html`<tr key=${rowDisc.id}>
-              <td style=${{padding:'1px 5px 1px 0',fontSize:'0.63rem',color:rowDisc.c,fontWeight:600,whiteSpace:'nowrap',textAlign:'right'}}>${rowDisc.label}</td>
-              ${DISC.map(function(colDisc, j){
+              <td style=${{padding:'1px 5px 1px 0',fontSize:'0.63rem',color:rowDisc.c,fontWeight:rowDisc.sub?500:600,whiteSpace:'nowrap',textAlign:'right'}}>${rowDisc.sub ? '↳ ' : ''}${rowDisc.label}</td>
+              ${ROWS.map(function(colDisc, j){
                 if (j > i) return html`<td key=${colDisc.id}></td>`; // upper triangle: same cell as [j][i], shown once
                 var on = _ccDisciplinePairEnabled(rowDisc.id, colDisc.id, rules);
                 var same = rowDisc.id === colDisc.id;
@@ -24314,14 +25254,167 @@ function startApp() {
           })}
           <tr>
             <td></td>
-            ${DISC.map(function(colDisc){
+            ${ROWS.map(function(colDisc){
               return html`<td key=${'lbl-'+colDisc.id} style=${{padding:'2px 1px 0',textAlign:'center'}}>
-                <div style=${{fontSize:'0.6rem',color:colDisc.c,fontWeight:600}}>${colDisc.label.slice(0,3)}</div>
+                <div style=${{fontSize:'0.6rem',color:colDisc.c,fontWeight:600}} title=${colDisc.label}>${colDisc.short}</div>
               </td>`;
             })}
           </tr>
         </tbody>
       </table>
+    </div>`;
+  }
+
+
+  // ── Suggestion groups (role choices) ──────────────────────────────────────
+  // Element groups detected on import / at run start (clash-discipline-core.js
+  // suggestRoles): provisions, zones, spaces, duplicates across models,
+  // unclassified proxies. Per group the user picks: leave out ('exclude' —
+  // not a clash source, reported as a count), include, or classify only
+  // (run, label, hide behind a count). rules.roleChoices holds the choice;
+  // spaces map onto the existing rules.includeSpaces.
+  function _ccRoleGroupLabel(g, plural) {
+    var L = {
+      provision: ['provision / reservation', 'provisions / reservations'],
+      zone: ['zone / compartment', 'zones / compartments'],
+      space: ['room (IfcSpace)', 'rooms (IfcSpace)'],
+      duplicate: ['duplicate across models', 'duplicates across models'],
+      proxy: ['unclassified proxy', 'unclassified proxies']
+    };
+    var v = L[g] || [g, g];
+    return _cc_t('roles.group.' + g + (plural ? '.n' : ''), plural ? v[1] : v[0]);
+  }
+  function _ccRoleChoiceOf(g, rules) {
+    if (g === 'space') {
+      var rc = rules && rules.roleChoices && rules.roleChoices.space;
+      if (rules && rules.includeSpaces) return rc === 'classify' ? 'classify' : 'include';
+      return 'exclude';
+    }
+    return _ccDisciplineCore.roleChoice(g, rules);
+  }
+  // Rule fields for a set of choices {group: choice}.
+  function _ccRoleChoiceRules(rules, choices) {
+    var rc = Object.assign({}, (rules && rules.roleChoices) || {});
+    var u = {};
+    Object.keys(choices).forEach(function(g) {
+      rc[g] = choices[g];
+      if (g === 'space') u.includeSpaces = choices[g] !== 'exclude';
+    });
+    u.roleChoices = rc;
+    return u;
+  }
+  function RoleChoicesEditor(props) {
+    var rules = props.rules || {}, groups = props.groups, onChange = props.onChange;
+    var list = groups ? groups.map(function(g){ return g.id; }) : _ccDisciplineCore.roleGroups;
+    var S_SEL = {fontSize:'0.72rem',padding:'.1rem .25rem',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)'};
+    return html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
+      ${list.map(function(g) {
+        var choice = props.choices ? props.choices[g] : _ccRoleChoiceOf(g, rules);
+        return html`<div key=${g} style=${{display:'flex',alignItems:'center',gap:'var(--space-2)'}}>
+          <span style=${{flex:1,fontSize:'0.72rem',color:'var(--text-secondary)'}}>${_ccRoleGroupLabel(g, true)}</span>
+          <select value=${choice} aria-label=${_cc_t('roles.choiceFor','Choice for {group}',{group:_ccRoleGroupLabel(g, true)})}
+            onChange=${function(e){ var c = {}; c[g] = e.target.value; onChange(props.choices ? c : _ccRoleChoiceRules(rules, c)); }} style=${S_SEL}>
+            <option value="classify">${_cc_t('roles.classify','Classify only')}</option>
+            <option value="exclude">${_cc_t('roles.exclude','Leave out')}</option>
+            <option value="include">${_cc_t('roles.include','Include')}</option>
+          </select>
+        </div>`;
+      })}
+    </div>`;
+  }
+
+  // Interactive runs only (Run button / modal / palette): when the models
+  // contain suggestion groups, ask once before running — unless the project
+  // remembered its choices (rules.roleChoicesRemembered) or the user said
+  // "don't ask again" (prefs.preRunDontAsk). Non-interactive runs (API, MCP,
+  // NL, auto) never come here: they use the saved choices or the defaults
+  // and report what was left out (result._ccExcluded / state.lastRunExcluded).
+  var _ccPreRunProceed = null;
+  function _ccPreRunGroups(models) {
+    var idx = _ccRoleIndex(models), out = [];
+    _ccDisciplineCore.roleGroups.forEach(function(g) {
+      var st = idx.groups && idx.groups[g];
+      if (!st || !st.n) return;
+      var srcs = {}, refs = [];
+      idx.byEl.forEach(function(e, el) {
+        if (e.group !== g) return;
+        srcs[e.src] = (srcs[e.src] || 0) + 1;
+        if (refs.length < 5000) refs.push({modelId: e.modelId, expressId: el.expressId});
+      });
+      out.push({id: g, n: st.n, high: st.high, medium: st.medium, low: st.low, srcs: srcs, refs: refs});
+    });
+    return out;
+  }
+  function _ccMaybePreRun(runRules, proceed) {
+    var s = window._ccLatestState, d = window._ccDispatch;
+    if (!s || !d || !s.models || !s.models.length || (s.prefs && s.prefs.preRunDontAsk) || (runRules && runRules.roleChoicesRemembered)) { proceed(runRules); return; }
+    var groups;
+    try { groups = _ccPreRunGroups(s.models); } catch (e) { groups = []; }
+    if (!groups.length) { proceed(runRules); return; }
+    _ccPreRunProceed = proceed;
+    d({t:A.PRE_RUN, v:{groups: groups, rules: runRules}});
+  }
+  window._ccRunDetectionInteractive = function(rulesOverride) {
+    var s = window._ccLatestState;
+    if (!s || s.detecting) return false;
+    var runRules = Object.assign({}, s.rules, rulesOverride || {});
+    _ccMaybePreRun(runRules, function(r) { if (window._ccRunDetection) window._ccRunDetection(r); });
+    return true;
+  };
+  function PreRunPanel(props) {
+    var s = props.s, d = props.d, pr = s.preRun;
+    var cardRef = useRef(null);
+    _ccUseFocusTrap(cardRef, true);
+    var init = {};
+    pr.groups.forEach(function(g){ init[g.id] = _ccRoleChoiceOf(g.id, pr.rules); });
+    var ch = useState(init), choices = ch[0], setChoices = ch[1];
+    var rm = useState(false), remember = rm[0], setRemember = rm[1];
+    var da = useState(false), dontAsk = da[0], setDontAsk = da[1];
+    function close() { _ccPreRunProceed = null; d({t:A.PRE_RUN, v:null}); }
+    function run() {
+      var u = _ccRoleChoiceRules(pr.rules, choices);
+      u.roleChoicesRemembered = !!remember;
+      d({t:A.UPD_RULES, u:u});
+      if (dontAsk) d({t:A.UPD_PREFS, u:{preRunDontAsk:true}});
+      var go = _ccPreRunProceed;
+      _ccPreRunProceed = null;
+      d({t:A.PRE_RUN, v:null});
+      if (go) go(Object.assign({}, pr.rules, u));
+    }
+    var SRC_L = function(src){ return _ccEvidenceLabel(src === 'geometry' ? 'geometry' : src); };
+    return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-prerun-title"
+      onClick=${close} onKeyDown=${function(e){ if (e.key === 'Escape') { e.stopPropagation(); close(); } }}>
+      <div ref=${cardRef} tabindex="-1" class="cc-modal-card" data-cc-prerun="1" style=${{...S_MODAL_CARD,width:560,maxWidth:'calc(100vw - 32px)',padding:'var(--space-4)',display:'flex',flexDirection:'column',gap:'var(--space-3)',outline:'none'}} onClick=${function(e){e.stopPropagation();}}>
+        <div id="cc-prerun-title" style=${{fontSize:'var(--text-md)',fontWeight:'var(--weight-bold)',color:'var(--text-primary)'}}>${_cc_t('roles.title','Before running: leave anything out?')}</div>
+        <div style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:1.45}}>${_cc_t('roles.intro','These element groups were recognised in your models. Clashes with them are usually not coordination issues. Nothing is dropped silently: left-out and classified groups are counted in the results.')}</div>
+        ${pr.groups.map(function(g) {
+          var srcTxt = Object.keys(g.srcs).sort(function(a,b){ return g.srcs[b]-g.srcs[a]; }).slice(0,3).map(function(k){ return SRC_L(k) + ' ' + g.srcs[k]; }).join(' · ');
+          var conf = ['high','medium','low'].filter(function(c){ return g[c]; }).map(function(c){ return _cc_t('roles.conf.' + c, c) + ' ' + g[c]; }).join(' · ');
+          return html`<div key=${g.id} data-cc-group=${g.id} style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-2)',border:'1px solid var(--border-subtle)',borderRadius:'var(--radius-sm)'}}>
+            <div style=${{flex:1,minWidth:0}}>
+              <div style=${{fontSize:'var(--text-sm)',color:'var(--text-primary)',fontWeight:'var(--weight-medium)'}}>${g.n} ${_ccRoleGroupLabel(g.id, g.n !== 1)}</div>
+              <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${_cc_t('roles.confidence','confidence')}: ${conf}${srcTxt ? ' — ' + srcTxt : ''}</div>
+            </div>
+            <button onClick=${function(){ if (window._ccIsolate) window._ccIsolate(g.refs); }} title=${_cc_t('roles.previewTip','Isolate these elements in 3D')}
+              style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'.15rem .4rem',background:'var(--bg-tertiary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>${_cc_t('roles.preview','Preview')}</button>
+            <select value=${choices[g.id]} aria-label=${_cc_t('roles.choiceFor','Choice for {group}',{group:_ccRoleGroupLabel(g.id, true)})}
+              onChange=${function(e){ var n = Object.assign({}, choices); n[g.id] = e.target.value; setChoices(n); }}
+              style=${{fontSize:'var(--text-xs)',padding:'.15rem .3rem',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)'}}>
+              <option value="classify">${_cc_t('roles.classify','Classify only')}</option>
+              <option value="exclude">${_cc_t('roles.exclude','Leave out')}</option>
+              <option value="include">${_cc_t('roles.include','Include')}</option>
+            </select>
+          </div>`;
+        })}
+        <label style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
+          <input type="checkbox" checked=${remember} onChange=${function(e){ setRemember(e.target.checked); }} />${_cc_t('roles.remember','Remember for this project')}</label>
+        <label style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
+          <input type="checkbox" checked=${dontAsk} onChange=${function(e){ setDontAsk(e.target.checked); }} />${_cc_t('roles.dontAsk','Don’t ask again (change later in Detection rules)')}</label>
+        <div style=${{display:'flex',justifyContent:'flex-end',gap:'var(--space-2)'}}>
+          <button onClick=${close} style=${{...S_BTN,padding:'.35rem .8rem',background:'var(--bg-tertiary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>${_cc_t('roles.cancel','Cancel')}</button>
+          <button data-cc-prerun-run="1" onClick=${run} style=${{...S_BTN,padding:'.35rem .8rem',background:'var(--accent)',color:'var(--accent-contrast)',fontWeight:600}}>${_cc_t('roles.run','Run with these settings')}</button>
+        </div>
+      </div>
     </div>`;
   }
 
@@ -24500,9 +25593,11 @@ function startApp() {
       if (mA && typeof mA==='string' && mA.indexOf('disc:')===0) discs.push(mA.slice(5));
       if (mB && typeof mB==='string' && mB.indexOf('disc:')===0 && discs.indexOf(mB.slice(5))===-1) discs.push(mB.slice(5));
       if (discs.length===0) discs = ['all'];
-      var ds = { clearance_mm: rules.maxGap > 0 ? rules.maxGap : null, discipline_filters: discs, scope: _ccSummarizeModelScope(s.models), coverageModelIds: _ccCoverageModelIds(rules, s.models) };
-      d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
-      detectClashesAsync(s.models, rules).then(function(result){ _ccCommitDetectionResult(result, d, ds); });
+      _ccMaybePreRun(rules, function(r) {
+        var ds = { clearance_mm: r.maxGap > 0 ? r.maxGap : null, discipline_filters: discs, scope: _ccSummarizeModelScope(s.models), coverageModelIds: _ccCoverageModelIds(r, s.models) };
+        d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
+        detectClashesAsync(s.models, r).then(function(result){ _ccCommitDetectionResult(result, d, ds); });
+      });
     }
     return html`<div class="cc-modal-backdrop" style=${S_BACKDROP} role="dialog" aria-modal="true" aria-labelledby="cc-run-detection-title"
       onClick=${close}>
@@ -24613,20 +25708,22 @@ function startApp() {
     }
     function runDetection() {
       if (!canRun) return;
-      _confirmIfClashes(function(){
-        var ds = _captureDetectionSettings(s.rules, s.models);
+      _confirmIfClashes(function(){ _ccMaybePreRun(s.rules, function(r){
+        var ds = _captureDetectionSettings(r, s.models);
         d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
-        detectClashesAsync(s.models, s.rules).then(function(result){ _ccCommitDetectionResult(result, d, ds); });
-      });
+        detectClashesAsync(s.models, r).then(function(result){ _ccCommitDetectionResult(result, d, ds); });
+      }); });
     }
     function applyAndRun(preset) {
       if (!canRun) return;
       _confirmIfClashes(function(){
-        var merged = Object.assign({}, s.rules, preset.r);
-        var ds = _captureDetectionSettings(merged, s.models);
+        var merged0 = Object.assign({}, s.rules, preset.r);
         d({t:A.UPD_RULES, u:preset.r});
-        d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
-        detectClashesAsync(s.models, merged).then(function(result){ _ccCommitDetectionResult(result, d, ds); });
+        _ccMaybePreRun(merged0, function(merged){
+          var ds = _captureDetectionSettings(merged, s.models);
+          d({t:A.DETECTING}); d({t:A.TAB,v:'clashes'});
+          detectClashesAsync(s.models, merged).then(function(result){ _ccCommitDetectionResult(result, d, ds); });
+        });
       });
     }
 
@@ -24698,10 +25795,13 @@ function startApp() {
                 </button>
                 <button onClick=${function(){
                   if(!canRun)return;
-                  var merged=Object.assign({},s.rules,sp.rules);
-                  var presetDs={coverageModelIds:_ccCoverageModelIds(merged,s.models)};
-                  d({t:A.UPD_RULES,u:sp.rules});d({t:A.DETECTING});d({t:A.TAB,v:'clashes'});
-                  detectClashesAsync(s.models,merged).then(function(result){_ccCommitDetectionResult(result,d,presetDs);});
+                  var merged0=Object.assign({},s.rules,sp.rules);
+                  d({t:A.UPD_RULES,u:sp.rules});
+                  _ccMaybePreRun(merged0, function(merged){
+                    var presetDs={coverageModelIds:_ccCoverageModelIds(merged,s.models)};
+                    d({t:A.DETECTING});d({t:A.TAB,v:'clashes'});
+                    detectClashesAsync(s.models,merged).then(function(result){_ccCommitDetectionResult(result,d,presetDs);});
+                  });
                 }} disabled=${!canRun} title=${_cc_t('run.loadAndRun','Load & Run')}
                   style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .25rem',background:'var(--accent-bg)',color:'var(--accent-subtle)',borderRadius:'0',borderLeft:'1px solid var(--border-subtle)'}}>▶</button>
                 <button onClick=${function(){
@@ -24817,6 +25917,21 @@ function startApp() {
                   <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('run.hideProvidedDesc','Elements passing through an IFC opening made for them stay out of the list (still counted, one click to show)')}</div>
                 </div>
                 <${MiniToggle} on=${rules.hideProvidedOpenings!==false} onToggle=${function(){d({t:A.UPD_RULES,u:{hideProvidedOpenings:rules.hideProvidedOpenings===false}})}} />
+              </div>
+              <div style=${{padding:'.3rem 0'}}>
+                <div style=${{fontSize:'0.72rem',color:'var(--text-primary)',marginBottom:'.2rem'}}>${_cc_t('run.roleGroups','Suggestion groups (detected on import)')}</div>
+                <${RoleChoicesEditor} rules=${rules} groups=${null} onChange=${function(u){ d({t:A.UPD_RULES,u:u}); }} />
+              </div>
+              <div style=${TOGROW}>
+                <div>
+                  <div style=${{fontSize:'0.72rem',color:'var(--text-primary)'}}>${_cc_t('run.askBeforeRun','Ask before each run')}</div>
+                  <div style=${{fontSize:'0.63rem',color:'var(--text-faint)'}}>${_cc_t('run.askBeforeRunDesc','Show the suggestion groups found in the models before an interactive run (automation never asks)')}</div>
+                </div>
+                <${MiniToggle} on=${!(s.prefs && s.prefs.preRunDontAsk) && !rules.roleChoicesRemembered} onToggle=${function(){
+                  var on = !(s.prefs && s.prefs.preRunDontAsk) && !rules.roleChoicesRemembered;
+                  if (on) d({t:A.UPD_PREFS,u:{preRunDontAsk:true}});
+                  else { d({t:A.UPD_PREFS,u:{preRunDontAsk:false}}); d({t:A.UPD_RULES,u:{roleChoicesRemembered:false}}); }
+                }} />
               </div>
             </div>
           </div>
@@ -25071,6 +26186,13 @@ function startApp() {
       // Clashes passing through an IFC opening made for them are hidden by
       // default (rules.hideProvidedOpenings) — counted + one click to show.
       if (isClashTab && s.rules.hideProvidedOpenings !== false && !f.showProvided) base = base.filter(function(c){ return c.opening !== 'provided'; });
+      // Same for MEP inside a provision volume and for clashes of the
+      // suggestion groups set to 'classify' (zones, duplicates …):
+      // counted, one click to show (rules.roleChoices).
+      if (isClashTab) base = base.filter(function(c){
+        var hg = _ccClashClassifiedHidden(c, s.rules);
+        return !hg || (hg === 'provision' ? f.showProvisions : f.showRoleGroups);
+      });
       // Touching surfaces (type 'contact': flush faces, a pipe resting on a
       // beam) are not clashes: hidden by default, counted, one click to show.
       if (isClashTab && s.rules.hideContacts !== false && !f.showContacts) base = base.filter(function(c){ return c.type !== 'contact'; });
@@ -25095,7 +26217,7 @@ function startApp() {
         };
       });
       return base.concat(idsItems);
-    }, [isClashTab, s.clashes, s.issues, s.idsValidation, f.status, f.showHandled, f.showProvided, f.showContacts, s.rules.hideProvidedOpenings, s.rules.hideContacts]);
+    }, [isClashTab, s.clashes, s.issues, s.idsValidation, f.status, f.showHandled, f.showProvided, f.showProvisions, f.showRoleGroups, f.showContacts, s.rules]);
 
 
     var visibleModelIds = useMemo(function(){
@@ -25205,6 +26327,24 @@ function startApp() {
       return n;
     }, [s.clashes, isClashTab, visibleModelIds, s.rules.hideProvidedOpenings]);
 
+    // Clashes inside provision volumes — same "counted, never dropped" rule.
+    // ... and per 'classify' suggestion group (zones, duplicates, proxies, spaces).
+    var classifiedCounts = useMemo(function(){
+      var out = {provision:0, groups:{}, groupTotal:0};
+      if (!isClashTab) return out;
+      for (var i=0;i<s.clashes.length;i++) {
+        var c = s.clashes[i];
+        var hg = _ccClashClassifiedHidden(c, s.rules);
+        if (!hg) continue;
+        if (c.modelAId && !visibleModelIds[c.modelAId]) continue;
+        if (c.modelBId && !visibleModelIds[c.modelBId]) continue;
+        if (hg === 'provision') out.provision++;
+        else { out.groups[hg] = (out.groups[hg]||0) + 1; out.groupTotal++; }
+      }
+      return out;
+    }, [s.clashes, isClashTab, visibleModelIds, s.rules]);
+    var provisionCount = classifiedCounts.provision;
+
     var contactCount = useMemo(function(){
       if (!isClashTab || s.rules.hideContacts === false) return 0;
       var n = 0;
@@ -25272,10 +26412,10 @@ function startApp() {
 
     var counts = useMemo(function(){
       return {
-        oC: s.clashes.filter(function(c){return c.status==='open' && !(c.opening==='provided' && s.rules.hideProvidedOpenings!==false) && !(c.type==='contact' && s.rules.hideContacts!==false)}).length,
+        oC: s.clashes.filter(function(c){return c.status==='open' && !(c.opening==='provided' && s.rules.hideProvidedOpenings!==false) && !_ccClashClassifiedHidden(c, s.rules) && !(c.type==='contact' && s.rules.hideContacts!==false)}).length,
         oI: s.issues.filter(function(i){return i.status!=='resolved'&&i.status!=='closed';}).length
       };
-    }, [s.clashes, s.issues, s.rules.hideProvidedOpenings, s.rules.hideContacts]);
+    }, [s.clashes, s.issues, s.rules]);
     var oC=counts.oC, oI=counts.oI;
     var FL={fontSize:'0.69rem',color:'var(--text-muted)',marginBottom:'.15rem',display:'block'};
     var PILL=function(active){return Object.assign({},S_BTN,{fontSize:'0.69rem',padding:'.15rem .35rem',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'var(--accent-contrast)':'var(--text-faint)'});};
@@ -25299,6 +26439,27 @@ function startApp() {
         <span style=${{flex:1}}>${providedCount} ${_cc_t('opening.passThrough','pass through provided openings')} —</span>
         <button onClick=${function(){d({t:A.UPD_FILTERS,u:{showProvided:!f.showProvided}})}}
           style=${{...S_BTN,padding:'.1rem .4rem',fontSize:'0.68rem',color:'var(--accent-hover)',background:'none',border:'none',textDecoration:'underline',cursor:'pointer'}}>${f.showProvided ? _cc_t('opening.hide','hide') : _cc_t('opening.show','show')}</button>
+      </div>`}
+      ${isClashTab && provisionCount > 0 && html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-tertiary)',fontSize:'0.68rem',color:'var(--text-muted)'}}>
+        <span style=${{flex:1}} title=${_cc_t('provision.insideTitle','The element sits in or passes through a provision / reservation volume made for it')}>${provisionCount} ${_cc_t('provision.passThrough','inside provisions / reservations')} —</span>
+        <button onClick=${function(){d({t:A.UPD_FILTERS,u:{showProvisions:!f.showProvisions}})}}
+          style=${{...S_BTN,padding:'.1rem .4rem',fontSize:'0.68rem',color:'var(--accent-hover)',background:'none',border:'none',textDecoration:'underline',cursor:'pointer'}}>${f.showProvisions ? _cc_t('opening.hide','hide') : _cc_t('opening.show','show')}</button>
+      </div>`}
+      ${isClashTab && classifiedCounts.groupTotal > 0 && html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-tertiary)',fontSize:'0.68rem',color:'var(--text-muted)'}}>
+        <span style=${{flex:1}} title=${_cc_t('roles.classifiedTitle','Clashes with elements whose suggestion group is set to "classify only" (Detection rules → Suggestion groups)')}>${_cc_t('roles.classifiedPrefix','Clashes with')} ${Object.keys(classifiedCounts.groups).map(function(g){ return classifiedCounts.groups[g] + '× ' + _ccRoleGroupLabel(g, true); }).join(' · ')} —</span>
+        <button onClick=${function(){d({t:A.UPD_FILTERS,u:{showRoleGroups:!f.showRoleGroups}})}}
+          style=${{...S_BTN,padding:'.1rem .4rem',fontSize:'0.68rem',color:'var(--accent-hover)',background:'none',border:'none',textDecoration:'underline',cursor:'pointer'}}>${f.showRoleGroups ? _cc_t('opening.hide','hide') : _cc_t('opening.show','show')}</button>
+      </div>`}
+      ${isClashTab && s.lastRunExcluded && Object.keys(s.lastRunExcluded).length > 0 && html`<div data-cc-excluded="1" style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--color-warning-bg)',fontSize:'0.68rem',color:'var(--color-warning-fg)'}}>
+        <span style=${{flex:1}}>${_cc_t('roles.leftOut','Left out of this run:')} ${Object.keys(s.lastRunExcluded).map(function(g){ return s.lastRunExcluded[g] + ' ' + _ccRoleGroupLabel(g, s.lastRunExcluded[g] !== 1); }).join(' · ')}</span>
+        <button onClick=${function(){
+            var rc = Object.assign({}, s.rules.roleChoices || {}), u = {};
+            Object.keys(s.lastRunExcluded).forEach(function(g){ if (g === 'space') u.includeSpaces = true; else rc[g] = 'include'; });
+            u.roleChoices = rc;
+            d({t:A.UPD_RULES, u:u});
+            if (window._ccRunDetection) window._ccRunDetection(u);
+          }}
+          style=${{...S_BTN,padding:'.1rem .4rem',fontSize:'0.68rem',color:'var(--color-warning-fg)',background:'none',border:'none',textDecoration:'underline',cursor:'pointer'}}>${_cc_t('roles.includeRerun','include and re-run')}</button>
       </div>`}
       ${isClashTab && contactCount > 0 && html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-tertiary)',fontSize:'0.68rem',color:'var(--text-muted)'}}>
         <span style=${{flex:1}} title=${_cc_t('contact.title','Surfaces meet but nothing interpenetrates (flush faces, an element resting on another) — not a clash')}>${contactCount} ${_cc_t('contact.only','only touch (contact)')} —</span>
@@ -29067,13 +30228,13 @@ function startApp() {
           var _exclOn = !_es.rules || _es.rules.excludeSameDiscipline !== false;
           if (_ranAlready && _exclOn && (_es.models||[]).length >= 2) {
             var _dcnt = {};
-            (_es.models||[]).forEach(function(m){ if(m && m.visible!==false){ var k=m.discipline||'?'; _dcnt[k]=(_dcnt[k]||0)+1; } });
+            (_es.models||[]).forEach(function(m){ if(m && m.visible!==false){ var k=_ccModelDisciplineKey(m); _dcnt[k]=(_dcnt[k]||0)+1; } });
             var _sh = Object.keys(_dcnt).filter(function(k){ return _dcnt[k]>=2; });
             if (_sh.length) {
               _emptyNudge = html`<div style=${{margin:'0 1rem',padding:'.65rem .75rem',background:'var(--accent-bg)',border:'1px solid var(--accent-subtle)',borderRadius:8,textAlign:'left',fontSize:'0.75rem',color:'var(--text-secondary)',lineHeight:1.5}}>
                 <strong style=${{color:'var(--text-primary)'}}>${_cc_t('vlist.sameDisciplineSkipped','Same-discipline pairs were skipped.')}</strong>
-                ${' '+_cc_t('vlist.sameDisciplineDetail','You have {models} models. By default ClashControl only checks different disciplines against each other, so models of the same discipline are not compared.',{models:_sh.map(function(k){return _dcnt[k]+' '+k;}).join(', ')})}
-                <button onClick=${function(){ if(window._ccDispatch) window._ccDispatch({t:A.UPD_RULES,u:{excludeSameDiscipline:false}}); if(window._ccRunDetection) window._ccRunDetection({excludeSameDiscipline:false}); }}
+                ${' '+_cc_t('vlist.sameDisciplineDetail','You have {models} models. By default ClashControl only checks different disciplines against each other, so models of the same discipline are not compared.',{models:_sh.map(function(k){return _dcnt[k]+' '+_ccDisciplineLabel(k);}).join(', ')})}
+                <button onClick=${function(){ if(window._ccDispatch) window._ccDispatch({t:A.UPD_RULES,u:{excludeSameDiscipline:false}}); if(window._ccRunDetectionInteractive) window._ccRunDetectionInteractive({excludeSameDiscipline:false}); }}
                   style=${{display:'block',marginTop:'.55rem',fontSize:'0.72rem',padding:'.35rem .6rem',borderRadius:6,background:'var(--accent)',color:'var(--accent-contrast)',border:'none',cursor:'pointer',fontWeight:600}}>
                   ${_cc_t('vlist.checkSameDisciplineRerun','Check same-discipline pairs & re-run')}
                 </button>
@@ -29090,7 +30251,7 @@ function startApp() {
         var st = _ccConflictEmptyState(ectx);
         var actionBtn = null;
         if (st.action === 'run') {
-          actionBtn = html`<button onClick=${function(){ try{ if(window._ccRunDetection) window._ccRunDetection(); }catch(e){} }}
+          actionBtn = html`<button onClick=${function(){ try{ if(window._ccRunDetectionInteractive) window._ccRunDetectionInteractive(); }catch(e){} }}
             style=${{marginTop:'.6rem',fontSize:'0.75rem',padding:'.4rem .8rem',borderRadius:6,background:'var(--accent)',color:'var(--accent-contrast)',border:'none',cursor:'pointer',fontWeight:600}}>${_cc_t('run.runDetection','Run detection')}</button>`;
         } else if (st.action === 'clear-filters') {
           actionBtn = html`<button onClick=${function(){ if(window._ccDispatch) window._ccDispatch({t:A.RESET_FILTERS}); }}
@@ -29714,6 +30875,10 @@ function startApp() {
               ${it.expectedClash && html`<span class="cc-status-pill" style=${{color:'var(--color-warning-fg)',background:'var(--color-warning-bg)'}}>${_cc_t('issueRow.expected','expected')}</span>`}
               ${it.opening==='partial' && html`<span class="cc-status-pill" title=${_cc_t('opening.tooSmallTitle','The element overlaps an IFC opening in the host but is larger than it')} style=${{color:'var(--color-warning-fg)',background:'var(--color-warning-bg)'}}>${_cc_t('opening.tooSmall','Opening too small')}</span>`}
               ${it.opening==='provided' && html`<span class="cc-status-pill" title=${_cc_t('opening.providedTitle','The element passes through an IFC opening made for it')} style=${{color:'var(--color-info-fg)',background:'var(--color-info-bg)'}}>${_cc_t('opening.provided','provided opening')}</span>`}
+              ${it.provision==='inside' && html`<span class="cc-status-pill" title=${_cc_t('provision.insideTitle','The element sits in or passes through a provision / reservation volume made for it')} style=${{color:'var(--color-info-fg)',background:'var(--color-info-bg)'}}>${_cc_t('provision.inside','in provision')}</span>`}
+              ${it.provision==='partial' && html`<span class="cc-status-pill" title=${_cc_t('provision.partialTitle','The element overlaps a provision / reservation volume but pokes outside it')} style=${{color:'var(--color-warning-fg)',background:'var(--color-warning-bg)'}}>${_cc_t('provision.partial','provision too small')}</span>`}
+              ${it.provision==='obstructs' && html`<span class="cc-status-pill" title=${_cc_t('provision.obstructsTitle','A non-MEP element intersects a provision / reservation volume')} style=${{color:'var(--color-warning-fg)',background:'var(--color-warning-bg)'}}>${_cc_t('provision.obstructs','blocks a provision')}</span>`}
+              ${it.roleGroup && it.roleGroup !== 'proxy' && html`<span class="cc-status-pill" title=${_cc_t('roles.pillTitle','One of the elements belongs to a suggestion group (see Detection rules)')} style=${{color:'var(--color-info-fg)',background:'var(--color-info-bg)'}}>${_ccRoleGroupLabel(it.roleGroup, false)}</span>`}
               ${it.status==='accepted_needs_check' && html`<span class="cc-status-pill" style=${{color:'var(--color-info-fg)',background:'var(--color-info-bg)'}}>${_cc_t('issueRow.needsCheck','needs check')}</span>`}
             </div>
           </div>`}
@@ -32263,7 +33428,7 @@ function startApp() {
     // Modals & global
     push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('run.runDetection','Run detection'),
       keywords:'detect run clashes coordination check find', r:'coordinate',
-      onSelect:function(){ try{ if(window._ccRunDetection) window._ccRunDetection(); }catch(e){} }});
+      onSelect:function(){ try{ if(window._ccRunDetectionInteractive) window._ccRunDetectionInteractive(); }catch(e){} }});
     push({group:_cc_t('cmdk.group.project','Project'), label:_cc_t('cmdk.shareProject','Share project'),
       keywords:'share collaboration team url link invite send',
       onSelect:function(){ d({t:A.SHARE,v:true}); }});
@@ -32683,7 +33848,7 @@ function startApp() {
             }}
             style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,padding:'.25rem .5rem',fontSize:'0.8rem'}}>
             <option value="">NL Bbl/NEN (default)</option>
-            ${regionPacks.map(function(pk){return html`<option key=${pk.region} value=${pk.region}>${pk.name}${pk.verified===false?' (unverified)':''}</option>`;})}
+            ${regionPacks.filter(function(pk){return pk.thresholds!==false;}).map(function(pk){return html`<option key=${pk.region} value=${pk.region}>${pk.name}${pk.verified===false?' (unverified)':''}</option>`;})}
           </select>
         </div>
         </${React.Fragment}>`}
@@ -40120,6 +41285,8 @@ function startApp() {
         for (var _mi=0; _mi<latestState.models.length && !_latestEl; _mi++) {
           var _mdl=latestState.models[_mi];
           if (!_mdl||!_mdl.elements) continue;
+          // expressIds repeat across IFC files: honour the selection's model.
+          if (el.modelId && _mdl.id !== el.modelId) continue;
           for (var _ei=0; _ei<_mdl.elements.length; _ei++) {
             if (_mdl.elements[_ei].expressId===el.expressId){_latestEl=_mdl.elements[_ei];break;}
           }
@@ -40154,6 +41321,43 @@ function startApp() {
           }
         }
       }
+
+      // Discipline / sub-discipline / role with provenance (clash-discipline-
+      // core.js classifyModel at import) and room adjacency (IfcRelSpaceBoundary).
+      var _cls = _latestEl && _latestEl._ccCls;
+      var _clsKey = _cls ? _ccDisciplineCore.elementMatrixKey(_latestEl, _mdl && _mdl.discipline) : null;
+      var _adjIds = [], _adjIsSpace = !!(ep && ep.ifcType === 'IfcSpace');
+      if (_latestEl && _mdl && _mdl._ccBoundaries) {
+        var _bdA = _mdl._ccBoundaries;
+        _adjIds = (_adjIsSpace ? _bdA.spaceToEls[_latestEl.expressId] : _bdA.elToSpaces[_latestEl.expressId]) || [];
+      }
+      var _adjEls = [];
+      if (_adjIds.length) {
+        var _want = {}; _adjIds.forEach(function(x){ _want[x] = true; });
+        _mdl.elements.forEach(function(e2){ if (_want[e2.expressId]) _adjEls.push(e2); });
+      }
+      var _clsCard = (_cls || _adjEls.length) ? html`<div style=${CARD}>
+        <div style=${HDR}>${_cc_t('inspector.disciplineCard','Discipline & role')}</div>
+        ${_cls && html`<div style=${ROW}><span style=${LBL}>${_cc_t('inspector.discipline','Discipline')}</span><span style=${VAL}>${_ccDisciplineLabel(_clsKey)}</span></div>`}
+        ${_cls && html`<div style=${ROW}><span style=${LBL}>${_cc_t('inspector.evidence','Evidence')}</span><span style=${VAL} title=${_cls.ev||''}>${_ccEvidenceLabel(_cls.src)}${_cls.ev ? ' — ' + _cls.ev : ''}</span></div>`}
+        ${_cls && _cls.role && html`<div style=${ROW}><span style=${LBL}>${_cc_t('inspector.role','Role')}</span><span style=${VAL}>${_ccRoleLabel(_cls.role)} (${_ccEvidenceLabel(_cls.roleSrc)}${_cls.roleEv ? ' — ' + _cls.roleEv : ''})</span></div>`}
+        ${ep && ep.typeObject && html`<div style=${ROW}><span style=${LBL}>${_cc_t('inspector.typeObject','Type object')}</span><span style=${VAL}>${ep.typeObject.cls}${ep.typeObject.name ? ' “' + ep.typeObject.name + '”' : ''}${ep.typeObject.predef && ep.typeObject.predef !== 'NOTDEFINED' ? ' · ' + ep.typeObject.predef : ''}</span></div>`}
+        ${ep && ep.groups && ep.groups.length > 0 && html`<div style=${ROW}><span style=${LBL}>${_cc_t('inspector.systems','Systems / zones')}</span><span style=${VAL}>${ep.groups.map(function(g){ return (g.name || g.cls) + (g.predef && g.predef !== 'NOTDEFINED' ? ' · ' + g.predef : ''); }).join(', ')}</span></div>`}
+        ${ep && ep.classification && ep.classification.length > 0 && html`<div style=${ROW}><span style=${LBL}>${_cc_t('inspector.classification','Classification')}</span><span style=${VAL}>${ep.classification.map(function(c){ return (c.sys ? c.sys + ' ' : '') + c.code; }).join(', ')}</span></div>`}
+        ${ep && ep.predefinedType && html`<div style=${ROW}><span style=${LBL}>${_cc_t('inspector.predefinedType','Predefined type')}</span><span style=${VAL}>${ep.predefinedType}</span></div>`}
+        ${_adjEls.length > 0 && html`<div style=${{fontSize:'var(--text-2xs)',fontWeight:'var(--weight-bold)',color:'var(--text-muted)',marginTop:'var(--space-2)'}}>${_adjIsSpace ? _cc_t('inspector.boundedBy','Bounded by ({n})', {n:_adjEls.length}) : _cc_t('inspector.separatesRooms','Bounds rooms ({n})', {n:_adjEls.length})}</div>`}
+        ${_adjEls.slice(0,20).map(function(ae){
+          var ap = ae.props||{};
+          return html`<div key=${'adj'+ae.expressId} onClick=${function(){if(_highlightById)_highlightById(ae.expressId);}}
+            onDblClick=${function(){if(_fitToElement)_fitToElement(ae.expressId);}}
+            title=${_cc_t('navigator.clickHighlightDblFrame','Click to highlight, double-click to frame')}
+            style=${{...ROW,cursor:'pointer'}}>
+            <span style=${{...LBL,minWidth:0,flex:1,color:'var(--text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${ap.name||('#'+ae.expressId)}</span>
+            <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',flexShrink:0}}>${(ap.ifcType||'').replace(/^Ifc/,'')}</span>
+          </div>`;
+        })}
+        ${_adjEls.length>20 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontStyle:'italic',paddingTop:'.2rem'}}>+${_adjEls.length-20}</div>`}
+      </div>` : '';
 
       // Helper: format dimension values — show raw IFC value with correct unit suffix
       var _qtyUs = (typeof _ccDetectUnitScale === 'function') ? _ccDetectUnitScale(latestState && latestState.models) : 1;
@@ -40494,6 +41698,7 @@ function startApp() {
             })}
             ${hostedEls.length>20 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontStyle:'italic',paddingTop:'.2rem'}}>+${hostedEls.length-20} more</div>`}
           </div>`}
+          ${_clsCard}
           <!-- Dimensions & Constraints -->
           ${hasConstraints && html`<div style=${CARD}>
             <div style=${HDR}>Dimensions & Constraints</div>
@@ -40614,6 +41819,7 @@ function startApp() {
           ${allDims.map(function(d){return html`<div style=${ROW}><span style=${LBL}>${d.l}</span><span style=${{...VAL,...MONO}}>${d.f(d.v)}</span></div>`;})}
         </div>`}
         ${bboxCard}
+        ${_clsCard}
         <!-- Switch to Data Quality for full checks -->
         <div style=${{textAlign:'center',padding:'.4rem 0'}}>
           <button onClick=${function(){d({t:A.SET_WORKSPACE,v:'review'});}}
@@ -43940,6 +45146,7 @@ function startApp() {
       ${s.showShare && html`<${ShareModal} d=${d} s=${s} />`}
       ${s.showSmartViews && html`<${SmartViewsModal} d=${d} s=${s} />`}
       ${s.runModalOpen && html`<${RunDetectionModal} d=${d} s=${s} />`}
+      ${s.preRun && html`<${PreRunPanel} key="prerun" d=${d} s=${s} />`}
       ${s.commentMode && html`<div style=${{position:'fixed',top:'1rem',left:'50%',transform:'translateX(-50%)',zIndex:'var(--z-toast)',
         background:'var(--accent)',color:'var(--accent-contrast)',padding:'.5rem .9rem',borderRadius:'var(--radius-md)',
         boxShadow:'var(--shadow-md)',display:'flex',alignItems:'center',gap:'.6rem',

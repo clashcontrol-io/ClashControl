@@ -180,4 +180,210 @@ function generateSyntheticIfc(opts) {
   return lines.join('\n') + '\n';
 }
 
-module.exports = { generateSyntheticIfc };
+// ── Semantic federation fixtures (opt-in, separate entry point) ──────────
+// generateSemanticIfc(opts) writes ONE model of a small federation built to
+// exercise discipline / sub-discipline / role detection and space
+// boundaries. It never changes generateSyntheticIfc's output.
+//   opts.kind: 'struct' | 'vent' | 'plumb' | 'elec' | 'firecomp' | 'arch'
+//   opts.names: false -> every Name/ObjectType/system name is $ (evidence
+//     must come from stated data: systems' PredefinedType is not available in
+//     IFC2X3, so unnamed MEP models rely on type objects + classification)
+//   opts.nameLang: 'en' (default) | 'nl' | 'de' — language of element/system
+//     names, to prove name hints come from whichever pack carries them
+//   opts.boundaryOffset: [dx,dy,dz] metres added to every space-boundary
+//     plane origin (the systematic offset some exporters write)
+//   opts.boundaryNoise: true -> boundaries are scattered (no consistent
+//     offset), so placement must be refused
+//   opts.geoProvision (struct): + an UNNAMED, untyped proxy (NOTDEFINED, no
+//     material) that the vent duct, the drain pipe and the cable tray all
+//     pass through — a provision recognisable only from geometry
+//   opts.geoZoneMarker (firecomp): + an unnamed thin plate inside arch wall S —
+//     a compartment-boundary marker recognisable only from geometry
+//   opts.equipmentProxy (vent): + a proxy that is real equipment (a fan unit
+//     in the supply-air system, crossed by the duct) — must never be
+//     suggested as a provision / zone
+// MEP kinds are IFC2X3 with generic IfcFlowSegment products typed via
+// IfcRelDefinesByType (IfcDuctSegmentType / IfcPipeSegmentType /
+// IfcCableCarrierSegmentType), IfcSystem membership (IfcRelAssignsToGroup +
+// IfcRelServicesBuildings) and NL-SfB IfcClassificationReference codes.
+// Layout (metres, Z up): a slab at z 3.0–3.3 over x 0–20, y 0–10 with a
+// provision box (x,y 4–6, z 2.9–3.4); vent: a riser through the provision
+// and a duct along x at y 7.5–8.0, z 2.0–2.4; plumb: a drain pipe crossing
+// that duct at x 10 plus a stray duct crossing it at x 8 (same trade); elec:
+// a cable tray crossing it at x 12; firecomp: a fire-compartment volume over
+// x 14–18 crossing it; arch: two rooms (x 32–38, y 0–5) with walls, a floor
+// slab and second-level space boundaries.
+const SEM_NAMES = {
+  en: { riser: 'Supply air riser', duct: 'Supply air duct', drain: 'Waste water pipe', strayDuct: 'Extract air duct', tray: 'Cable tray',
+    sysVent: 'Supply air', sysDrain: 'Sewage', sysElec: 'Power', provision: 'Provision for shaft', zone: 'Fire compartment 60 min',
+    slab: 'Floor slab', room: 'Office', wall: 'Wall' },
+  nl: { riser: 'Luchtkanaal stijg', duct: 'Luchtkanaal toevoer', drain: 'Afvoerleiding', strayDuct: 'Afzuigkanaal', tray: 'Kabelgoot',
+    sysVent: 'Toevoer lucht', sysDrain: 'Riolering', sysElec: 'Kabelgoten', provision: 'Sparing schacht', zone: 'Brandcompartiment 60 min',
+    slab: 'Vloer', room: 'Kantoor', wall: 'Wand' },
+  de: { riser: 'Zuluftsteigleitung', duct: 'Zuluftkanal', drain: 'Abwasserleitung', strayDuct: 'Abluftkanal', tray: 'Kabeltrasse',
+    sysVent: 'Zuluft', sysDrain: 'Schmutzwasser', sysElec: 'Kabeltrasse', provision: 'Aussparung Schacht', zone: 'Brandabschnitt 60 min',
+    slab: 'Decke', room: 'Buero', wall: 'Wand' },
+};
+
+function generateSemanticIfc(opts) {
+  opts = opts || {};
+  const kind = opts.kind || 'vent';
+  const mep = ['vent', 'plumb', 'elec'].includes(kind);
+  const schema = mep ? 'IFC2X3' : 'IFC4';
+  const N = SEM_NAMES[opts.nameLang || 'en'];
+  const named = opts.names !== false;
+  const q = (s) => (named && s ? `'${s}'` : '$');
+  const f = (v) => { const t = (Math.round(v * 1e6) / 1e6).toString(); return t.indexOf('.') >= 0 || t.indexOf('e') >= 0 ? t : t + '.'; };
+  let id = 0;
+  const L = [];
+  const add = (s) => { const i = ++id; L.push(`#${i}=${s};`); return i; };
+  let g = 0;
+  const guid = () => ('3Sem' + kind + String(++g)).padEnd(22, 'x').slice(0, 22);
+  const pt = (x, y, z) => add(`IFCCARTESIANPOINT((${f(x)},${f(y)},${f(z)}))`);
+  const pt2 = (x, y) => add(`IFCCARTESIANPOINT((${f(x)},${f(y)}))`);
+  const dir = (x, y, z) => add(`IFCDIRECTION((${f(x)},${f(y)},${f(z)}))`);
+  const ax = (o, z, x) => add(`IFCAXIS2PLACEMENT3D(#${pt(...o)},${z ? '#' + dir(...z) : '$'},${x ? '#' + dir(...x) : '$'})`);
+
+  const units = add(`IFCUNITASSIGNMENT((#${add('IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.)')}))`);
+  const ctx = add(`IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.0E-05,#${ax([0, 0, 0])},$)`);
+  const project = add(`IFCPROJECT('${guid()}',$,'Semantic ${kind}',$,$,$,$,(#${ctx}),#${units})`);
+  const sitePl = add(`IFCLOCALPLACEMENT($,#${ax([0, 0, 0])})`);
+  const site = add(`IFCSITE('${guid()}',$,'Site',$,$,#${sitePl},$,$,.ELEMENT.,$,$,$,$,$)`);
+  const bldPl = add(`IFCLOCALPLACEMENT(#${sitePl},#${ax([0, 0, 0])})`);
+  const bld = add(`IFCBUILDING('${guid()}',$,'Building',$,$,#${bldPl},$,$,.ELEMENT.,$,$,$)`);
+  const stPl = add(`IFCLOCALPLACEMENT(#${bldPl},#${ax([0, 0, 0])})`);
+  const storey = add(`IFCBUILDINGSTOREY('${guid()}',$,'Level 0',$,$,#${stPl},$,$,.ELEMENT.,0.)`);
+  add(`IFCRELAGGREGATES('${guid()}',$,$,$,#${project},(#${site}))`);
+  add(`IFCRELAGGREGATES('${guid()}',$,$,$,#${site},(#${bld}))`);
+  add(`IFCRELAGGREGATES('${guid()}',$,$,$,#${bld},(#${storey}))`);
+  const zUp = dir(0, 0, 1);
+  // Axis-aligned box as an extruded rectangle, placed in the storey.
+  function boxShape(min, max) {
+    const cx = (min[0] + max[0]) / 2, cy = (min[1] + max[1]) / 2;
+    const prof = add(`IFCRECTANGLEPROFILEDEF(.AREA.,$,#${add(`IFCAXIS2PLACEMENT2D(#${pt2(0, 0)},$)`)},${f(max[0] - min[0])},${f(max[1] - min[1])})`);
+    const solid = add(`IFCEXTRUDEDAREASOLID(#${prof},#${ax([0, 0, 0])},#${zUp},${f(max[2] - min[2])})`);
+    const rep = add(`IFCSHAPEREPRESENTATION(#${ctx},'Body','SweptSolid',(#${solid}))`);
+    const shape = add(`IFCPRODUCTDEFINITIONSHAPE($,$,(#${rep}))`);
+    const pl = add(`IFCLOCALPLACEMENT(#${stPl},#${ax([cx, cy, min[2]])})`);
+    return { pl, shape };
+  }
+  const contained = [];
+  function product(entity, name, min, max, tail) {
+    const b = boxShape(min, max);
+    const i = add(`${entity}('${guid()}',$,${q(name)},$,${q(name)},#${b.pl},#${b.shape}${tail})`);
+    contained.push(i);
+    return i;
+  }
+  const typeOf = {};
+  function typed(typeEntity, typeName, predef, objs) {
+    const key = typeEntity + typeName;
+    if (!typeOf[key]) typeOf[key] = add(`${typeEntity}('${guid()}',$,${q(typeName)},$,$,$,$,$,$,.${predef}.)`);
+    add(`IFCRELDEFINESBYTYPE('${guid()}',$,$,$,(${objs.map((o) => '#' + o).join(',')}),#${typeOf[key]})`);
+  }
+  let nlsfb = null;
+  function classify(code, objs) {
+    if (!nlsfb) nlsfb = schema === 'IFC2X3' ? add(`IFCCLASSIFICATION('BIM Loket','4',$,'NL-SfB')`) : add(`IFCCLASSIFICATION('BIM Loket','4',$,'NL-SfB',$,$,$)`);
+    const ref = schema === 'IFC2X3' ? add(`IFCCLASSIFICATIONREFERENCE($,'${code}',$,#${nlsfb})`) : add(`IFCCLASSIFICATIONREFERENCE($,'${code}',$,#${nlsfb},$,$)`);
+    add(`IFCRELASSOCIATESCLASSIFICATION('${guid()}',$,$,$,(${objs.map((o) => '#' + o).join(',')}),#${ref})`);
+  }
+  function system(name, objs) {
+    const sys = add(`IFCSYSTEM('${guid()}',$,${q(name)},$,$)`);
+    add(`IFCRELASSIGNSTOGROUP('${guid()}',$,$,$,(${objs.map((o) => '#' + o).join(',')}),$,#${sys})`);
+    add(`IFCRELSERVICESBUILDINGS('${guid()}',$,$,$,#${sys},(#${bld}))`);
+  }
+  const seg = (name, min, max) => product('IFCFLOWSEGMENT', name, min, max, ',$');
+
+  if (kind === 'struct') {
+    product('IFCSLAB', N.slab, [0, 0, 3.0], [20, 10, 3.3], ',$,.FLOOR.');
+    product('IFCBUILDINGELEMENTPROXY', N.provision, [4, 4, 2.9], [6, 6, 3.4], ',$,.PROVISIONFORVOID.');
+    if (opts.geoProvision) {
+      const b = boxShape([9, 6.5, 1.9], [13, 8.5, 2.5]);
+      contained.push(add(`IFCBUILDINGELEMENTPROXY('${guid()}',$,$,$,$,#${b.pl},#${b.shape},$,.NOTDEFINED.)`));
+    }
+  } else if (kind === 'vent') {
+    const riser = seg(N.riser, [4.5, 4.5, 0.5], [5.5, 5.5, 6.0]);
+    const duct = seg(N.duct, [1, 7.5, 2.0], [19, 8.0, 2.4]);
+    typed('IFCDUCTSEGMENTTYPE', 'Rectangular duct', 'RIGIDSEGMENT', [riser, duct]);
+    const ventSys = [riser, duct];
+    if (opts.equipmentProxy) ventSys.push(product('IFCBUILDINGELEMENTPROXY', 'Fan unit FU-01', [15, 7.3, 1.8], [16, 8.2, 2.6], ',$,$'));
+    system(N.sysVent, ventSys);
+    classify('57.51', [riser, duct]);
+  } else if (kind === 'plumb') {
+    const drain = seg(N.drain, [9.95, 6.0, 2.15], [10.05, 9.0, 2.25]);
+    const stray = seg(N.strayDuct, [7.9, 6.0, 2.1], [8.1, 9.0, 2.3]);
+    typed('IFCPIPESEGMENTTYPE', 'PVC pipe', 'RIGIDSEGMENT', [drain]);
+    typed('IFCDUCTSEGMENTTYPE', 'Round duct', 'RIGIDSEGMENT', [stray]);
+    system(N.sysDrain, [drain]);
+    classify('52.20', [drain]);
+  } else if (kind === 'elec') {
+    const tray = seg(N.tray, [12.0, 6.0, 2.1], [12.3, 9.0, 2.2]);
+    typed('IFCCABLECARRIERSEGMENTTYPE', 'Cable tray 300', 'CABLETRAYSEGMENT', [tray]);
+    system(N.sysElec, [tray]);
+    classify('61.30', [tray]);
+  } else if (kind === 'firecomp') {
+    product('IFCBUILDINGELEMENTPROXY', N.zone, [14, 0, 0], [18, 10, 3.0], ',$,.NOTDEFINED.');
+    product('IFCBUILDINGELEMENTPROXY', N.zone, [0, 0, 0], [14, 10, 3.0], ',$,.NOTDEFINED.');
+    if (opts.geoZoneMarker) {
+      // Inside the arch model's wall S (x 32–38, y 0–0.25, z 0–3).
+      const b = boxShape([33, 0.0625, 0.25], [36, 0.125, 2.75]);
+      contained.push(add(`IFCBUILDINGELEMENTPROXY('${guid()}',$,$,$,$,#${b.pl},#${b.shape},$,.NOTDEFINED.)`));
+    }
+  } else if (kind === 'arch') {
+    // Dyadic coordinates: exact in Float32, so the worker's Float32
+    // transform transfer and the fallback's f64 path agree to the bit.
+    const wallsSpec = [['S', [32, 0, 0], [38, 0.25, 3]], ['N', [32, 4.75, 0], [38, 5, 3]], ['W', [32, 0.25, 0], [32.25, 4.75, 3]],
+      ['E', [37.75, 0.25, 0], [38, 4.75, 3]], ['M', [34.875, 0.25, 0], [35.125, 4.75, 3]]];
+    const walls = {};
+    wallsSpec.forEach(([k, a, b]) => { walls[k] = product('IFCWALL', N.wall + ' ' + k, a, b, ',$,.STANDARD.'); });
+    const floor = product('IFCSLAB', N.slab, [32, 0, -0.25], [38, 5, 0], ',$,.FLOOR.');
+
+    const off = opts.boundaryOffset || [0, 0, 0];
+    const rooms = [{ n: '1', min: [32.25, 0.25, 0], max: [34.875, 4.75, 2.75], west: 'W', east: 'M' },
+      { n: '2', min: [35.125, 0.25, 0], max: [37.75, 4.75, 2.75], west: 'M', east: 'E' }];
+    const spaceIds = [];
+    rooms.forEach((r, ri) => {
+      const sx = r.max[0] - r.min[0], sy = r.max[1] - r.min[1], sz = r.max[2] - r.min[2];
+      const prof = add(`IFCRECTANGLEPROFILEDEF(.AREA.,$,#${add(`IFCAXIS2PLACEMENT2D(#${pt2(sx / 2, sy / 2)},$)`)},${f(sx)},${f(sy)})`);
+      const solid = add(`IFCEXTRUDEDAREASOLID(#${prof},#${ax([0, 0, 0])},#${zUp},${f(sz)})`);
+      const rep = add(`IFCSHAPEREPRESENTATION(#${ctx},'Body','SweptSolid',(#${solid}))`);
+      const shape = add(`IFCPRODUCTDEFINITIONSHAPE($,$,(#${rep}))`);
+      // Space placement origin = the room's min corner (boundaries are in this frame).
+      const pl = add(`IFCLOCALPLACEMENT(#${stPl},#${ax(r.min)})`);
+      const sp = add(`IFCSPACE('${guid()}',$,${q(N.room + ' ' + r.n)},$,$,#${pl},#${shape},${q(N.room + ' ' + r.n)},.ELEMENT.,.INTERNAL.,$)`);
+      spaceIds.push(sp);
+      // Faces in the space frame: [origin, zAxis, xAxis, w, h, elementId]
+      const faces = [
+        [[0, 0, 0], [0, 0, -1], [1, 0, 0], sx, sy, floor],
+        [[0, 0, sz], [0, 0, 1], [1, 0, 0], sx, sy, null],
+        [[0, 0, 0], [0, 1, 0], [1, 0, 0], sx, sz, walls.S],
+        [[0, sy, 0], [0, -1, 0], [1, 0, 0], sx, sz, walls.N],
+        [[0, 0, 0], [1, 0, 0], [0, 1, 0], sy, sz, walls[r.west]],
+        [[sx, 0, 0], [-1, 0, 0], [0, 1, 0], sy, sz, walls[r.east]],
+      ];
+      faces.forEach(([o, z, x, w, h, el], fi) => {
+        // y-axis of the plane frame = z × x (right-handed); every face here
+        // has z ⟂ x, so the 2D rectangle (0..w, 0..h) spans x and z×x.
+        const zx = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
+        let origin = o.slice();
+        // If z × x points opposite to the face's extent, shift the origin so
+        // the rectangle still covers the face.
+        if (zx[0] + zx[1] + zx[2] < 0) origin = [o[0] - zx[0] * h, o[1] - zx[1] * h, o[2] - zx[2] * h];
+        const noise = opts.boundaryNoise ? [(ri * 7 + fi * 13) % 11, (ri * 5 + fi * 3) % 9, 0] : [0, 0, 0];
+        const pos = ax([origin[0] + off[0] + noise[0], origin[1] + off[1] + noise[1], origin[2] + off[2] + noise[2]], z, x);
+        const plane = add(`IFCPLANE(#${pos})`);
+        const p0 = pt2(0, 0);
+        const poly = add(`IFCPOLYLINE((#${p0},#${pt2(w, 0)},#${pt2(w, h)},#${pt2(0, h)},#${p0}))`);
+        const cbp = add(`IFCCURVEBOUNDEDPLANE(#${plane},#${poly},())`);
+        const csg = add(`IFCCONNECTIONSURFACEGEOMETRY(#${cbp},$)`);
+        add(`IFCRELSPACEBOUNDARY('${guid()}',$,'2ndLevel',$,#${sp},${el ? '#' + el : '$'},#${csg},${el ? '.PHYSICAL.' : '.VIRTUAL.'},.INTERNAL.)`);
+      });
+    });
+    add(`IFCRELAGGREGATES('${guid()}',$,$,$,#${storey},(${spaceIds.map((i) => '#' + i).join(',')}))`);
+  }
+  add(`IFCRELCONTAINEDINSPATIALSTRUCTURE('${guid()}',$,$,$,(${contained.map((i) => '#' + i).join(',')}),#${storey})`);
+  return ['ISO-10303-21;', 'HEADER;', `FILE_DESCRIPTION(('ClashControl semantic fixture: ${kind}'),'2;1');`,
+    `FILE_NAME('${kind}.ifc','2026-01-01T00:00:00',('ClashControl'),('ClashControl'),'','','');`,
+    `FILE_SCHEMA(('${schema}'));`, 'ENDSEC;', 'DATA;'].concat(L, ['ENDSEC;', 'END-ISO-10303-21;']).join('\n') + '\n';
+}
+
+module.exports = { generateSyntheticIfc, generateSemanticIfc };

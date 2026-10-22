@@ -482,6 +482,9 @@
     var a = _titleSide(c, 'A'), b = _titleSide(c, 'B');
     var verb;
     var opening = (c.type === 'hard' || c.type === 'soft') ? c.opening : null;
+    // Provision volumes (role 'provision', see clash-discipline-core.js) read
+    // like openings; an IFC opening, when present, is the stronger statement.
+    var provision = (c.type === 'hard' || c.type === 'soft') && !opening ? c.provision : null;
     // The MEP element is the passing one; otherwise order alphabetically so
     // the title does not depend on which engine called a given side "A".
     var first = a, second = b;
@@ -492,11 +495,15 @@
     else if (c.type === 'contact') verb = 'touches';
     else if (opening === 'partial') verb = directed ? 'through' : 'in';
     else if (opening === 'provided') verb = directed ? 'through' : 'in';
+    else if (provision === 'inside' || provision === 'partial') verb = directed ? 'through' : 'in';
     else if (c.type === 'soft') verb = 'too close to';
     else verb = directed ? 'crosses' : 'clashes with';
     var title = first.text + ' ' + verb + ' ' + second.text;
     if (opening === 'partial') title += ' — opening too small';
     else if (opening === 'provided') title += ' — provided opening';
+    else if (provision === 'inside') title += ' — inside provision';
+    else if (provision === 'partial') title += ' — provision too small';
+    else if (provision === 'obstructs') title += ' — blocks a provision';
     // Storey: only when it adds information — i.e. neither name already carries
     // a level ("Supply duct L0"). One label when both share it, "L0 / L1" when
     // the two elements sit on different storeys.
