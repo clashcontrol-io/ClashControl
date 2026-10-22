@@ -22356,9 +22356,16 @@ function startApp() {
     // Polygons per space (only spaces with geometry can be verified).
     var polysOf = {};
     for (var pk = 0; pk < nP; pk++) { var s3 = sb.b[sb.polyB[pk] * 3]; (polysOf[s3] || (polysOf[s3] = [])).push(pk); }
-    function verify(sids, t) {
+    // Hypotheses are judged on an evenly spread sample (<= ~1500 polygons):
+    // the share is what matters, and every DRAWN polygon is checked again
+    // individually below, so sampling can only refuse, never show, a stray.
+    var _sampleEvery = Math.max(1, Math.ceil(nP / 1500)), _sampleTick = 0;
+    function verify(sids, t, all) {
       var ok = 0, tot = 0;
-      sids.forEach(function(k) { (polysOf[k] || []).forEach(function(p) { tot++; if (polyOnSurface(p, t)) ok++; }); });
+      sids.forEach(function(k) { (polysOf[k] || []).forEach(function(p) {
+        if (!all && (_sampleTick++ % _sampleEvery) !== 0) return;
+        tot++; if (polyOnSurface(p, t)) ok++;
+      }); });
       return { ok: ok, tot: tot, share: tot ? ok / tot : 0 };
     }
     var placeable = Object.keys(sBox).filter(function(k) { return polysOf[k]; });
@@ -22424,7 +22431,7 @@ function startApp() {
             var ids = groups[g];
             if (ids.length < minGroup) return;
             var Tg = [median(ids, 0), median(ids, 1), median(ids, 2)];
-            var vg = verify(ids, Tg);
+            var vg = verify(ids, Tg, true);
             if (vg.tot && vg.share >= _CC_SB_MIN_SHARE) accepted.push({ sids: ids, t: Tg });
           });
           if (accepted.length) { out.frame = 'groups'; out.offset = accepted[0].t; }
