@@ -244,6 +244,8 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 Update at the start and end of every session; strike (~~…~~ + date) when done and delete struck items after ~30 days.
 
+- 2026-10-22: full sweep on `claude/focused-curie-9x5esd` — audit (quality/bugs/security), IfcSpace geometry load + "Show spaces" toggle, clash-engine speed/accuracy (baseline: 1-pair detection ≈970 ms fixed overhead; nlev=40 clearance js 5.4 s / wasm 3.0 s / pool 1.5 s), IFC-load improvements; finish + merge PR #717 (build the occlusion culling it only investigated).
+
 - ~~2026-10-15: localhost-bridge hardening across ClashControl, ClashControlEngine, ClashControlConnector and the legacy ClashControlSmartBridge (branch `claude/nifty-bell-orposc` in each): exact Origin allow-list enforced server-side, loopback Host, PNA preflight, pairing tokens, browser `createBridgePairing`.~~ (2026-10-15)
 
 - 2026-09-30: pivot dot removed; view cube arrows replaced by one-click square side views (`tests/browser/viewcube-click.mjs`). Section plane "not over all elements" (user's SFW furniture IFC): the outline covered every element in plan; furniture 2.6–4.7 m below the cut drifted outside it in perspective. Outline size is now `_ccSectionClipping.outlineHalfExtents` (one margin fraction for both axes = 2x cut-to-geometry gap over the short side, clamped 4–25%): proportional, keeps the model's aspect ratio, covers in perspective up to ~63°.
