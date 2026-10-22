@@ -36,3 +36,39 @@ result. We'd rather have zero regional presets than a wrong one.
 4. Open a PR. If you'd rather not use git directly, see the repo's
    "Contribute a regulation pack" issue template instead — attach your file
    and a maintainer will open the PR for you.
+
+## Classification tables (optional `classifications` section)
+
+A country pack can also ship classification-code tables (a national element
+table, Uniclass, OmniClass …) that tell ClashControl which MEP trade or role
+an element belongs to from its `IfcClassificationReference` codes — and from
+codes written in parentheses inside system names, e.g. `(57.51) Toevoer`.
+They are registered from **every** pack that declares them (a model's codes
+say which table they come from, not the user's region setting). A pack may
+carry tables without any building-code thresholds: leave `engines` empty and
+it is kept out of the Settings region picker.
+
+```json
+"classifications": [{
+  "id": "nl-sfb",
+  "name": "NL-SfB",
+  "aliases": ["NLSfB"],
+  "codePattern": "^([0-9]{1,2}(\\.[0-9]{1,3})?|[0-9]-)$",
+  "source": "Citation of the published table (required)",
+  "map": { "57": "mep.ventilation", "65.1": "mep.fire", "52": "mep.plumbing" }
+}]
+```
+
+- `map` keys are code **prefixes** (the longest matching prefix wins); values
+  are `"<discipline>"`, `"mep.<ventilation|heating|plumbing|fire|electrical|piping>"`
+  or `"role:<provision|zone>"`.
+- A reference is matched to a table by its classification name (`name` or
+  an alias). Many exporters write the wrong source name (e.g. NL-SfB codes
+  labelled "Uniformat"), so when no table matches by name, a table whose
+  `codePattern` matches the code is used — the provenance shown in the app
+  says so ("code format; source says …").
+- `codePattern` must be a simple regular expression (max 200 characters, no
+  nested quantifiers). `source` is required for every table.
+- List the table names in the pack's `manifest.json` entry
+  (`"classifications": ["NL-SfB"]`) and set `"thresholds": false` when
+  `engines` is empty — the issue-upload flow writes both for you.

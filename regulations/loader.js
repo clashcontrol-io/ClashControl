@@ -33,6 +33,35 @@
     return loadManifest();
   };
 
+  // Classification-code tables (a pack's `classifications` section: NL-SfB,
+  // Uniclass, OmniClass …) are registered from EVERY pack that declares them
+  // in the manifest, independent of the active region: a model's codes say
+  // which table they come from, not the user's settings. Only the tables
+  // are registered here — no thresholds, no region activation.
+  function registerPackTables(pack) {
+    var core = window._ccClashDisciplineCore;
+    if (!core || typeof core.registerClassificationTable !== 'function' || !pack || !Array.isArray(pack.classifications)) return 0;
+    var n = 0;
+    pack.classifications.forEach(function (t) { if (core.registerClassificationTable(t)) n++; });
+    return n;
+  }
+  loadManifest().then(function (list) {
+    var withTables = (list || []).filter(function (p) { return p && p.file && Array.isArray(p.classifications) && p.classifications.length; });
+    return Promise.all(withTables.map(function (entry) {
+      return fetch('regulations/' + entry.file).then(function (r) {
+        if (!r.ok) throw new Error('regulation pack fetch failed: ' + r.status);
+        return r.json();
+      }).then(function (pack) {
+        if (!pack || pack.region !== entry.region) throw new Error('Malformed regulation pack: ' + entry.region);
+        return registerPackTables(pack);
+      }).catch(function (e) { console.warn('[Regulations] classification tables not loaded for ' + entry.region, e); return 0; });
+    }));
+  }).then(function (counts) {
+    var n = (counts || []).reduce(function (a, b) { return a + b; }, 0);
+    if (n && typeof window._ccReclassifyModels === 'function') window._ccReclassifyModels('classification-tables');
+    return n;
+  });
+
   // Fetches + registers every engine's thresholds from a region's pack.
   // Does NOT activate the region (callers call window._ccSetRegulationRegion
   // once the user picks it, or once model geolocation suggests it).
@@ -48,6 +77,7 @@
       if (!pack || typeof pack !== 'object' || !pack.region || typeof pack.engines !== 'object') {
         throw new Error('Malformed regulation pack: ' + region);
       }
+      registerPackTables(pack);
       if (typeof window._ccRegisterRegulationPreset === 'function') {
         Object.keys(pack.engines).forEach(function (engine) {
           window._ccRegisterRegulationPreset({
