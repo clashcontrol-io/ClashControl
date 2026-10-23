@@ -4901,7 +4901,9 @@ function startApp() {
         "('" + ('0000000000000000000000' + i).slice(-22) + "',$,$,$,$,#7,#14,$,$);");
     }
     L.push('ENDSEC;', 'END-ISO-10303-21;');
-    var pm = api.OpenModel(new TextEncoder().encode(L.join('\n')));
+    // Small tape: OpenModel reserves TAPE_SIZE (64 MB by default) per model,
+    // and the WASM heap never shrinks — the probe must not grow it.
+    var pm = api.OpenModel(new TextEncoder().encode(L.join('\n')), { TAPE_SIZE: 65536 });
     var types = [], yielded = {};
     try {
       api.StreamAllMeshes(pm, function(m) { var t = api.GetLineType(pm, m.expressID); if (!yielded[t]) { yielded[t] = 1; types.push(t); } });
@@ -7311,7 +7313,9 @@ function startApp() {
           decoded = _ccDecodeIfcWorkerResult(merged.msg, merged.gt, fallbackColor, loadStart);
           decoded.stats.shards = { n: n, mergeMs: mergeMs, perShard: results.map(function(r) {
             var ph = r.phases || {};
-            return { open: Math.round((ph['Model open'] || 0) - (ph['WASM ready'] || 0)), streamed: Math.round(ph['Meshes streamed'] || 0), elements: r.packedEls.expressIds.length };
+            var wasm = 0; // peak web-ifc heap of this worker (MB) — every shard holds its own model copy
+            for (var mk in (r.mem || {})) if (r.mem[mk] && r.mem[mk].wasm > wasm) wasm = r.mem[mk].wasm;
+            return { open: Math.round((ph['Model open'] || 0) - (ph['WASM ready'] || 0)), streamed: Math.round(ph['Meshes streamed'] || 0), elements: r.packedEls.expressIds.length, wasmMB: wasm || null };
           }) };
         } catch (mergeErr) { fail(mergeErr); return; }
         settled = true; unreg();

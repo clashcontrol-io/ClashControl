@@ -109,6 +109,7 @@ async function loadOne(page, url, name, noLazyProps) {
     return { firstLoadMs: Math.round(committedAt - t0), batches, shards: (m.stats && m.stats.shards) || null, elements: m.elements.length,
       notDrawn: m.stats.notDrawn || null, spaces: m.elements.filter((e) => e.props.ifcType === 'IfcSpace' && e.meshes.length).length,
       fingerprint: window._ccSafetyMigrations.modelFingerprint([Object.assign({}, m, { id: 'fixed' })]),
+      wasmMB: (() => { let w = 0; const wm = (m.stats.mem && m.stats.mem.worker) || {}; for (const k in wm) if (wm[k] && wm[k].wasm > w) w = wm[k].wasm; return w || null; })(),
       workers: window.__workers ? window.__workers.length : 0, preview: window._ccLoadPreview.info() };
   }, { url, name, noLazyProps: !!noLazyProps });
 }
@@ -131,8 +132,9 @@ try {
   fx.push({ name: 'semantics (IFC2X3 MEP)', url: await put('semantic-vent.ifc', generateSemanticIfc({ kind: 'vent' })) });
   fx.push({ name: 'space boundaries (offset frame)', url: await put('semantic-arch.ifc', generateSemanticIfc({ kind: 'arch', boundaryOffset: [-13374.845, -13743.122, 0] })) });
 
-  // ── 1. identity ──
-  for (const f of fx) {
+  // ── 1. identity ──  (SHARD_TIMING_ONLY=1 skips 1-3)
+  const only = process.env.SHARD_TIMING_ONLY === '1';
+  for (const f of only ? [] : fx) {
     const ref = await digestOf(OFF, f.url, 'shardcase.ifc', {});
     const runs = [['2 shards', await digestOf(ON, f.url, 'shardcase.ifc', { shards: 2 })]];
     if (f.main) runs.push(['3 shards', await digestOf(ON, f.url, 'shardcase.ifc', { shards: 3 })]);
@@ -159,7 +161,7 @@ try {
   }
 
   // ── 2. a failing shard → one worker, same model ──
-  {
+  if (!only) {
     const main = fx[0];
     const ref = await digestOf(OFF, main.url, 'shardcase.ifc', {});
     const r = await digestOf(ON, main.url, 'shardcase.ifc', { shards: 2, failShard: 1 });
@@ -171,7 +173,7 @@ try {
   }
 
   // ── 3. cancel mid-load stops every shard ──
-  {
+  if (!only) {
     const big = await put('shard-cancel.ifc', generateShardIfc({ storeys: 10, perStorey: 1500, seed: 5 }));
     const page = await openPage(ON, { shards: 2 });
     const res = await page.evaluate(async (url) => {
@@ -207,8 +209,11 @@ try {
   }
 
   // ── 4. timing report (not an assertion) ──
-  {
-    const big = await put('shard-timing.ifc', generateShardIfc({ storeys: 20, perStorey: 2500, seed: 9 }));
+  // Two sizes: the gate's threshold (_ccIfcShard.minBytes) sits between
+  // "sharding costs more than it saves" and "clearly faster".
+  const hc = await (async () => { const p = await browser.newPage(); const h = await p.evaluate(() => navigator.hardwareConcurrency); await p.close(); return h; })();
+  for (const [storeys, perStorey] of [[5, 2500], [20, 2500]]) {
+    const big = await put('shard-timing.ifc', generateShardIfc({ storeys, perStorey, seed: 9 }));
     const size = (await readFile(join(genDir, 'shard-timing.ifc'))).length;
     const rows = [];
     for (const [label, q, o] of [['one worker', OFF, {}], ['2 shards', ON, { shards: 2 }], ['3 shards', ON, { shards: 3 }]]) {
@@ -216,10 +221,10 @@ try {
       const r = await loadOne(page, big, 'timing.ifc');
       await page.close();
       rows.push(label.padEnd(11) + ' first load ' + String(r.firstLoadMs).padStart(6) + ' ms' + (r.shards ? '  (merge ' + r.shards.mergeMs + ' ms; per shard open/streamed ' +
-        r.shards.perShard.map((p) => p.open + '/' + p.streamed + ' ms').join(', ') + ')' : ''));
+        r.shards.perShard.map((p) => p.open + '/' + p.streamed + ' ms').join(', ') + '; web-ifc heap per shard ' +
+        r.shards.perShard.map((p) => p.wasmMB + ' MB').join(', ') + ')' : '  (web-ifc heap ' + r.wasmMB + ' MB)'));
     }
-    console.log('SHARD-LOAD TIMING — synthetic shard fixture, ' + (size / 1048576).toFixed(1) + ' MB, 50000 placed elements; navigator.hardwareConcurrency=' +
-      await (async () => { const p = await browser.newPage(); const h = await p.evaluate(() => navigator.hardwareConcurrency); await p.close(); return h; })());
+    console.log('SHARD-LOAD TIMING — synthetic shard fixture, ' + (size / 1048576).toFixed(1) + ' MB, ' + storeys * perStorey + ' placed elements; navigator.hardwareConcurrency=' + hc);
     rows.forEach((r) => console.log('  ' + r));
   }
 
