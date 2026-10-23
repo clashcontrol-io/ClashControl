@@ -35,7 +35,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
 
 const SIZES = [{ n: 2000, groups: 60 }, { n: 4000, groups: 120 }];
 const REPS = 7;
-const LIMITS = { domNodes: 3000, domGrowth: 1.15, noopMs: 40, statusRows: 3, statusMs: 60, selectRows: 3, selectMs: 50, keyMs: 50 };
+const LIMITS = { domNodes: 3000, domGrowth: 1.15, noopMs: 40, statusRows: 3, statusMs: 60, selectRows: 3, selectMs: 50, keyMs: 50, saveTaskMs: 100 };
 
 let failures = 0;
 function fail(msg) { console.error('ACTION COST FAIL: ' + msg); failures++; }
@@ -67,6 +67,8 @@ async function newPage() {
     try { localStorage.setItem('cc_consent_banner_seen', '1'); localStorage.setItem('cc_data_consent', 'denied'); localStorage.setItem('cc_data_consent_explicit', '1'); } catch (e) {}
     // count IndexedDB writes per object store
     window.__idbWrites = {};
+    window.__longTasks = [];
+    try { new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__longTasks.push({ t: e.startTime, ms: e.duration }); }).observe({ entryTypes: ['longtask'] }); } catch (e) {}
     const wrap = (name) => {
       const orig = IDBObjectStore.prototype[name];
       IDBObjectStore.prototype[name] = function () { window.__idbWrites[this.name] = (window.__idbWrites[this.name] || 0) + 1; return orig.apply(this, arguments); };
@@ -75,6 +77,11 @@ async function newPage() {
     // settle: run MessageChannel ticks until the main thread has been quiet
     // for several ticks in a row (React's scheduler and effects run as
     // MessageChannel tasks), then force style + layout so DOM cost counts.
+    // ids of the clash rows fully inside the list's viewport (not overscan)
+    window.__onScreenIds = function () {
+      const sc = document.querySelector('.cc-issue-panel .cc-issue-scroll'); const b = sc.getBoundingClientRect();
+      return [...sc.querySelectorAll('[data-item-id]')].filter((e) => { const r = e.getBoundingClientRect(); return r.top >= b.top && r.bottom <= b.bottom; }).map((e) => e.getAttribute('data-item-id'));
+    };
     window.__settle = async function (t0) {
       const tick = () => new Promise((r) => { const c = new MessageChannel(); c.port1.onmessage = () => r(); c.port2.postMessage(0); });
       let end = performance.now(), quiet = 0;
@@ -189,16 +196,25 @@ try {
 
   // ── one clash's status (a row on screen, a different one each time) ──
   const status = await measure(page, 'UPD_CLASH status', `
-    const ids = [...document.querySelectorAll('.cc-issue-panel [data-item-id]')].map((e) => e.getAttribute('data-item-id'));
+    const ids = window.__onScreenIds();
     const id = ids[(i * 3 + 1) % ids.length];
     return () => window._ccDispatch({ t: 'UPD_CLASH', id, u: { status: i % 2 ? 'open' : 'in_progress' } });`);
   if (!(status.rows <= LIMITS.statusRows)) fail(`one status change rendered ${status.rows} rows (limit ${LIMITS.statusRows})`);
   else ok(`one status change renders ${status.rows} row(s), ${status.headers} group header(s)`);
   if (status.ms > LIMITS.statusMs) fail(`status change settles in ${status.ms.toFixed(1)} ms (limit ${LIMITS.statusMs})`);
 
+  // ── the autosave of those edits: it happens, and costs what changed ──
+  const saveWin = await page.evaluate(() => ({ t: performance.now(), writes: window.__idbWrites.projects || 0 }));
+  await page.waitForTimeout(6000);
+  const save = await page.evaluate((w) => ({ writes: (window.__idbWrites.projects || 0) - w.writes, maxTask: Math.max(0, ...window.__longTasks.filter((x) => x.t >= w.t).map((x) => x.ms)) }), saveWin);
+  console.log(`  autosave after the status edits: ${save.writes} project write(s), longest main-thread task ${save.maxTask.toFixed(0)} ms`);
+  if (save.writes < 1) fail('status edits were not saved to the project store');
+  if (save.maxTask > LIMITS.saveTaskMs) fail(`autosave blocked the main thread for ${save.maxTask.toFixed(0)} ms (limit ${LIMITS.saveTaskMs})`);
+  else ok('autosave of a status edit stays a short task');
+
   // ── select a clash ──
   const select = await measure(page, 'ACTIVE (select)', `
-    const ids = [...document.querySelectorAll('.cc-issue-panel [data-item-id]')].map((e) => e.getAttribute('data-item-id'));
+    const ids = window.__onScreenIds();
     const id = ids[(i * 2 + 2) % ids.length];
     return () => window._ccDispatch({ t: 'ACTIVE', id });`);
   if (!(select.rows <= LIMITS.selectRows)) fail(`selecting a clash rendered ${select.rows} rows (limit ${LIMITS.selectRows})`);
@@ -225,7 +241,7 @@ try {
   await page.waitForTimeout(300);
 
   // ── windowed list still behaves: J/K, scroll-to-active, collapse ──
-  const firstId = await page.evaluate(() => document.querySelector('.cc-issue-panel [data-item-id]').getAttribute('data-item-id'));
+  const firstId = await page.evaluate(() => window.ClashControl.review.summary().items[0].ids[0]);
   await page.evaluate(() => { document.activeElement && document.activeElement.blur && document.activeElement.blur(); });
   await page.keyboard.press('j');
   await page.waitForTimeout(200);
@@ -274,7 +290,7 @@ try {
   if (coll.stillShown !== 0 || coll.back === 0) fail('collapse/expand a group: ' + JSON.stringify(coll));
   else ok(`collapsing a group unmounts its rows, expanding brings ${coll.back} back`);
 
-  console.log('SUMMARY ' + JSON.stringify({ dom: doms, noop, status, select, key, projWrites }));
+  console.log('SUMMARY ' + JSON.stringify({ dom: doms, noop, status, save, select, key, projWrites }));
 } catch (e) {
   fail('exception: ' + (e && e.stack || e));
 } finally {

@@ -76,7 +76,8 @@ function generateConflicts(n, opts) {
 // set: `groupCount` MEP runs (model-1) each crossing many distinct structural
 // / architectural elements (model-0), so the clash list's root-cause
 // grouping ('element') yields exactly `groupCount` groups. Every clash is an
-// open hard crossing without sizes, so it stays in the 'review' bucket.
+// open hard crossing without sizes, so it stays in the 'review' bucket; each
+// carries a severity like a real run's output.
 const RUN_TYPES = ['IfcDuctSegment', 'IfcPipeSegment', 'IfcCableCarrierSegment'];
 const HOST_TYPES = ['IfcWall', 'IfcBeam', 'IfcSlab', 'IfcColumn'];
 function generateGroupedClashes(n, groupCount, opts) {
@@ -102,6 +103,8 @@ function generateGroupedClashes(n, groupCount, opts) {
       modelAId: 'model-1', modelBId: 'model-0',
       elemAStorey: storey, elemBStorey: storey,
       disciplines: ['mep', 'structural'],
+      // detection stamps a severity on every clash (classification core)
+      aiSeverity: ['critical', 'major', 'major', 'minor', 'minor'][Math.floor(rand() * 5)],
       point: [g * 3 + rand(), 1 + rand(), (i % 40) * 0.5],
     });
   }

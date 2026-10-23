@@ -94,9 +94,32 @@
   // Cheap structural estimate, not exact serialized size: strings are
   // UTF-16 in memory (×2) but usually ASCII-ish in JSON (×1) — we use ×1
   // to approximate the at-rest cost that quota actually charges for.
-  function estimateRecordBytes(v) {
+  //
+  // sizeCache (optional WeakMap): per-object sizes remembered across calls,
+  // for records rebuilt from mostly the same immutable objects (a project
+  // autosave reuses the clone of every unchanged clash) — the walk then costs
+  // what changed, not the whole record. Only objects below the root are
+  // cached; never pass a cache for records whose objects are mutated.
+  /**
+   * @param {any} v
+   * @param {WeakMap<object, number>} [sizeCache]
+   * @returns {number}
+   */
+  function estimateRecordBytes(v, sizeCache) {
     var seen = typeof WeakSet !== 'undefined' ? new WeakSet() : null;
+    var cache = sizeCache || null;
     function walk(x, depth) {
+      if (cache && depth > 0 && x !== null && typeof x === 'object') {
+        if (seen && seen.has(x)) return 0;          // a shared object counts once
+        var hit = cache.get(x);
+        if (hit !== undefined) { if (seen) seen.add(x); return hit; }
+        var n = walk1(x, depth);
+        cache.set(x, n);
+        return n;
+      }
+      return walk1(x, depth);
+    }
+    function walk1(x, depth) {
       if (x == null) return 4;
       var t = typeof x;
       if (t === 'string') return x.length + 2;

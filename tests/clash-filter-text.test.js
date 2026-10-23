@@ -22,7 +22,7 @@ function extractFn(name) {
 const fillerStart = html.indexOf('var _CC_FILTER_FILLER = ');
 const fillerEnd = html.indexOf(';', fillerStart) + 1;
 const fillerDecl = html.slice(fillerStart, fillerEnd);
-const bundle = fillerDecl + '\n' + extractFn('_ccFilterTextMatches');
+const bundle = fillerDecl + '\nvar _ccFilterTokLast = { q: null, tokens: [] };\n' + extractFn('_ccFilterTokens') + '\n' + extractFn('_ccFilterTextMatches');
 const { _ccFilterTextMatches } = (function () {
   return new Function(bundle + '; return { _ccFilterTextMatches };')();
 })();

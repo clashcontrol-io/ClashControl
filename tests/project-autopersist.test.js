@@ -32,7 +32,7 @@ function extractGateDecls() {
 }
 
 function makeRunner(windowStub) {
-  const bundle = extractGateDecls() + '\n' + extractFn('_cloneSafe') + '\n' + extractFn('_saveCurrentProjectData');
+  const bundle = extractGateDecls() + '\n' + extractFn('_cloneSafe') + '\nvar _ccSaveCloneCache = new WeakMap();\n' + extractFn('_ccCloneListCached') + '\n' + extractFn('_saveCurrentProjectData');
   const calls = [];
   const idbSaveProjectData = (pid, data) => { calls.push({ pid, data }); return Promise.resolve(); };
   const save = new Function('idbSaveProjectData', 'window', bundle + '; return _saveCurrentProjectData;')(
@@ -136,4 +136,17 @@ test('gate OFF (default) and no window: every save writes, as before', async () 
   await r.save(s);
   await r.save(s);
   assert.equal(r.calls.length, 2);
+});
+
+test('autosave clones each unchanged clash once and reuses it on the next save', () => {
+  const r = makeRunner(undefined);
+  const clashes = [{ id: 'a', status: 'open', point: [1, 2, 3] }, { id: 'b', status: 'open' }];
+  r.save(baseState({ clashes }));
+  const edited = [clashes[0], Object.assign({}, clashes[1], { status: 'resolved' })];
+  r.save(baseState({ clashes: edited }));
+  const [first, second] = r.calls.map((c) => c.data.clashes);
+  assert.deepStrictEqual(second, [{ id: 'a', status: 'open', point: [1, 2, 3] }, { id: 'b', status: 'resolved' }]);
+  assert.strictEqual(second[0], first[0], 'the unchanged clash reuses its clone');
+  assert.notStrictEqual(second[1], first[1], 'the edited clash is cloned again');
+  assert.notStrictEqual(second[0], clashes[0], 'a clone, never the state object itself');
 });
