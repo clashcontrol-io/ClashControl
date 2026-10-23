@@ -297,6 +297,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- 2026-10-23: sharded first load of ONE large IFC file across parallel web-ifc workers (branch `shard-load`), merged result identical to the single-worker load (order, geometry, instancing, colours, not-drawn, spaces, semantics); flag-gated, any shard failure → single worker.
 - ~~2026-10-23: re-run cost proportional to the change (branch `rerun-cost`): cached vertex-sample/props hashes, pool + chunk loop sized by pairs to test (unchanged / tiny edits = one synchronous pass, no workers), classification reused when nothing was recomputed, one history write per run; `tests/browser/rerun-cost.mjs`.~~ (2026-10-23)
 - ~~2026-10-23: action cost — clash list windowed when grouped, memoised rows/headers/cards, incremental triage/grouping on edits, autosave off the interaction path (branch `action-cost`, `tests/browser/action-cost.mjs`).~~ (2026-10-23)
 
