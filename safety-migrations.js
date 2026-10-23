@@ -102,7 +102,23 @@
     // under a memory budget (_ccIfcLoadPlan in index.html); models still
     // commit in the user's file order. Fallback = one file after another.
     // Promoted with progressivePreview (same gates); ?ccSafety=-parallelLoad.
-    parallelLoad: Object.freeze({ fallback: 'sequential', defaultEnabled: true })
+    parallelLoad: Object.freeze({ fallback: 'sequential', defaultEnabled: true }),
+    // IFC loading: ONE large file parsed by several web-ifc workers at once
+    // (loadIFCWorkerSharded / _ccMergeIfcShards in index.html). Each shard
+    // streams a block-cyclic slice of StreamAllMeshes' element order (read
+    // from the running web-ifc, _ccIfcStreamOrder); the main thread merges
+    // them back and decodes with the single-worker decoder, so the model is
+    // identical. Only for files >= _ccIfcShard.minBytes, >= 4 cores, within
+    // the memory budget (every shard holds its own copy of the model), never
+    // while other files of the batch parse; any shard failure → one worker.
+    // Fallback = one worker per file. Promoted (defaultEnabled:true)
+    // 2026-10-23: tests/browser/shard-load.mjs (2/3 shards deep-digest
+    // identical to one worker on every synthetic fixture, fingerprint ==
+    // fallback, failing shard, cancel), the differential harness's sharded
+    // case and tests/ifc-shard-order.test.js green; every other loader gate
+    // green with it on (small fixtures stay below the size threshold).
+    // Kill switch ?ccSafety=-shardedLoad.
+    shardedLoad: Object.freeze({ fallback: 'one-worker', defaultEnabled: true })
   });
   var diagnostics = [];
 

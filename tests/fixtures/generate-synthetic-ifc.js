@@ -417,4 +417,142 @@ function generateSemanticIfc(opts) {
     `FILE_SCHEMA(('${schema}'));`, 'ENDSEC;', 'DATA;'].concat(L, ['ENDSEC;', 'END-ISO-10303-21;']).join('\n') + '\n';
 }
 
-module.exports = { generateSyntheticIfc, generateSemanticIfc };
+
+// Sharded-load fixture (tests/ifc-shard-order.test.js, the differential
+// harness's sharded case, tests/browser/shard-load.mjs). One IFC4 file that
+// exercises everything a merged multi-worker load must reproduce exactly:
+// many element types written INTERLEAVED in the file (ids are not grouped by
+// type, so the stream order is not file order), shared representations
+// (geometry dedup + instancing), styled colours (incl. one ~transparent
+// style and unstyled elements), elements without a representation (not-drawn
+// 'noRepresentation'), zero-depth extrusions, an element assembly, openings
+// voiding walls, rooms (IfcSpace) per storey and a few property sets.
+// Deterministic for a given {storeys, perStorey, seed}. No IfcVirtualElement:
+// the worker draws its geometry while the main-thread fallback keeps it as a
+// stub (a known worker/fallback difference), which would mask the fallback
+// fingerprint comparison.
+const SHARD_TYPES = [
+  ['IFCWALL', 9], ['IFCWALLSTANDARDCASE', 9], ['IFCCOLUMN', 9], ['IFCBEAM', 9], ['IFCSLAB', 9], ['IFCMEMBER', 9],
+  ['IFCPLATE', 9], ['IFCCOVERING', 9], ['IFCFOOTING', 9], ['IFCRAILING', 9], ['IFCBUILDINGELEMENTPROXY', 9],
+  ['IFCFURNITURE', 9], ['IFCDOOR', 13], ['IFCWINDOW', 13], ['IFCPIPESEGMENT', 9], ['IFCDUCTSEGMENT', 9],
+  ['IFCCABLECARRIERSEGMENT', 9], ['IFCPIPEFITTING', 9], ['IFCDUCTFITTING', 9], ['IFCAIRTERMINAL', 9],
+  ['IFCVALVE', 9], ['IFCPUMP', 9], ['IFCLIGHTFIXTURE', 9], ['IFCSANITARYTERMINAL', 9], ['IFCSTAIR', 9],
+  ['IFCRAMP', 9], ['IFCROOF', 9], ['IFCCURTAINWALL', 9], ['IFCFLOWTERMINAL', 8],
+];
+function generateShardIfc(opts) {
+  opts = opts || {};
+  const storeyCount = opts.storeys || 3;
+  const perStorey = opts.perStorey || 120;
+  let seed = (opts.seed != null ? opts.seed : 7) | 0;
+  const rnd = () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const f = (v) => { const s = (Math.round(v * 1000) / 1000).toString(); return s.indexOf('.') === -1 && s.indexOf('e') === -1 ? s + '.' : s; };
+  let id = 0;
+  const next = () => ++id;
+  let g = 0;
+  const guid = () => { g++; return ('3Shard' + g.toString(36)).padEnd(22, '0').slice(0, 22); };
+  const L = ['ISO-10303-21;', 'HEADER;',
+    `FILE_DESCRIPTION(('ClashControl synthetic sharded-load fixture'),'2;1');`,
+    `FILE_NAME('shard.ifc','2026-01-01T00:00:00',('ClashControl'),('ClashControl'),'','','');`,
+    "FILE_SCHEMA(('IFC4'));", 'ENDSEC;', 'DATA;'];
+  const proj = next(), ua = next(), si = next(), ctx = next(), ax = next(), org = next(), zDir = next(), xDir = next();
+  L.push(`#${proj}=IFCPROJECT('${guid()}',$,'Shard Project',$,$,$,$,(#${ctx}),#${ua});`);
+  L.push(`#${ua}=IFCUNITASSIGNMENT((#${si}));`, `#${si}=IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);`);
+  L.push(`#${ctx}=IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.0E-05,#${ax},$);`);
+  L.push(`#${ax}=IFCAXIS2PLACEMENT3D(#${org},$,$);`, `#${org}=IFCCARTESIANPOINT((0.,0.,0.));`);
+  L.push(`#${zDir}=IFCDIRECTION((0.,0.,1.));`, `#${xDir}=IFCDIRECTION((1.,0.,0.));`);
+  const site = next(), sitePl = next(), bld = next(), bldPl = next();
+  L.push(`#${site}=IFCSITE('${guid()}',$,'Site',$,$,#${sitePl},$,$,.ELEMENT.,$,$,$,$,$);`, `#${sitePl}=IFCLOCALPLACEMENT($,#${ax});`);
+  L.push(`#${bld}=IFCBUILDING('${guid()}',$,'Building',$,$,#${bldPl},$,$,.ELEMENT.,$,$,$);`, `#${bldPl}=IFCLOCALPLACEMENT(#${sitePl},#${ax});`);
+  L.push(`#${next()}=IFCRELAGGREGATES('${guid()}',$,$,$,#${proj},(#${site}));`);
+  L.push(`#${next()}=IFCRELAGGREGATES('${guid()}',$,$,$,#${site},(#${bld}));`);
+  // Styles: four opaque colours and one ~fully transparent one.
+  const styles = [];
+  const cols = [[0.8, 0.2, 0.2, 0], [0.2, 0.6, 0.3, 0], [0.25, 0.4, 0.85, 0], [0.9, 0.75, 0.2, 0.4], [0.5, 0.5, 0.5, 0.98]];
+  for (const c of cols) {
+    const rgb = next(), sh = next(), st = next();
+    L.push(`#${rgb}=IFCCOLOURRGB($,${f(c[0])},${f(c[1])},${f(c[2])});`);
+    L.push(`#${sh}=IFCSURFACESTYLERENDERING(#${rgb},${f(c[3])},$,$,$,$,$,$,.NOTDEFINED.);`);
+    L.push(`#${st}=IFCSURFACESTYLE($,.BOTH.,(#${sh}));`);
+    styles.push(st);
+  }
+  const prof2d = (w, d) => {
+    const pp = next(), po = next(), pr = next();
+    L.push(`#${po}=IFCCARTESIANPOINT((0.,0.));`, `#${pp}=IFCAXIS2PLACEMENT2D(#${po},$);`);
+    L.push(`#${pr}=IFCRECTANGLEPROFILEDEF(.AREA.,$,#${pp},${f(w)},${f(d)});`);
+    return pr;
+  };
+  // A body representation (extruded rectangle), optionally styled.
+  const shape = (w, d, h, style) => {
+    const pr = prof2d(w, d), sol = next(), rep = next(), pds = next();
+    L.push(`#${sol}=IFCEXTRUDEDAREASOLID(#${pr},#${ax},#${zDir},${f(h)});`);
+    if (style != null) L.push(`#${next()}=IFCSTYLEDITEM(#${sol},(#${style}),$);`);
+    L.push(`#${rep}=IFCSHAPEREPRESENTATION(#${ctx},'Body','SweptSolid',(#${sol}));`, `#${pds}=IFCPRODUCTDEFINITIONSHAPE($,$,(#${rep}));`);
+    return pds;
+  };
+  // Shared shapes: every element using one shares its geometry id.
+  const shared = [shape(0.3, 0.3, 2.8, styles[0]), shape(0.6, 0.2, 0.5, styles[2]), shape(1.2, 0.05, 0.05, null), shape(0.4, 0.4, 0.4, styles[3])];
+  const place = (parentPl, x, y, z, rot) => {
+    const p = next(), a = next(), pl = next();
+    L.push(`#${p}=IFCCARTESIANPOINT((${f(x)},${f(y)},${f(z)}));`);
+    if (rot) { const d = next(); L.push(`#${d}=IFCDIRECTION((${f(Math.cos(rot))},${f(Math.sin(rot))},0.));`); L.push(`#${a}=IFCAXIS2PLACEMENT3D(#${p},#${zDir},#${d});`); }
+    else L.push(`#${a}=IFCAXIS2PLACEMENT3D(#${p},$,$);`);
+    L.push(`#${pl}=IFCLOCALPLACEMENT(#${parentPl},#${a});`);
+    return pl;
+  };
+  const side = Math.ceil(Math.sqrt(perStorey));
+  let psets = 0;
+  for (let s = 0; s < storeyCount; s++) {
+    const st = next(), stPl = place(bldPl, 0, 0, s * 3, 0);
+    L.push(`#${st}=IFCBUILDINGSTOREY('${guid()}',$,'Level ${s}',$,$,#${stPl},$,$,.ELEMENT.,${f(s * 3)});`);
+    L.push(`#${next()}=IFCRELAGGREGATES('${guid()}',$,$,$,#${bld},(#${st}));`);
+    const contained = [];
+    const walls = [];
+    for (let i = 0; i < perStorey; i++) {
+      const [type, nArgs] = SHARD_TYPES[Math.floor(rnd() * SHARD_TYPES.length)];
+      const x = (i % side) * 1.5, y = Math.floor(i / side) * 1.5;
+      const pl = place(stPl, x, y, 0, rnd() < 0.25 ? rnd() * Math.PI : 0);
+      const r = rnd();
+      let rep;
+      if (r < 0.03) rep = '$'; // no representation
+      else if (r < 0.04) rep = '#' + shape(0.5, 0.5, 0, styles[1]); // zero-depth extrusion
+      else if (r < 0.05) rep = '#' + shape(0.5, 0.5, 1, styles[4]); // ~transparent style
+      else if (r < 0.45) rep = '#' + shared[Math.floor(rnd() * shared.length)];
+      else rep = '#' + shape(0.2 + rnd(), 0.1 + rnd() * 0.5, 0.2 + rnd() * 2.5, rnd() < 0.2 ? null : styles[Math.floor(rnd() * 4)]);
+      const e = next();
+      const tail = Array(nArgs - 7).fill('$').join(',');
+      L.push(`#${e}=${type}('${guid()}',$,'${type.slice(3).toLowerCase()} ${s}-${i}',$,$,#${pl},${rep},${tail});`);
+      contained.push(e);
+      if (type === 'IFCWALL' && rep !== '$') walls.push({ e, pl });
+      if (rnd() < 0.05) {
+        const pv = next(), ps = next();
+        L.push(`#${pv}=IFCPROPERTYSINGLEVALUE('Reference',$,IFCIDENTIFIER('R-${e}'),$);`);
+        L.push(`#${ps}=IFCPROPERTYSET('${guid()}',$,'Pset_Synthetic',$,(#${pv}));`);
+        L.push(`#${next()}=IFCRELDEFINESBYPROPERTIES('${guid()}',$,$,$,(#${e}),#${ps});`);
+        psets++;
+      }
+    }
+    // Openings voiding the first few walls.
+    for (const w of walls.slice(0, 3)) {
+      const op = next();
+      L.push(`#${op}=IFCOPENINGELEMENT('${guid()}',$,'Opening',$,$,#${place(w.pl, 0, 0, 0.5, 0)},#${shape(0.1, 0.1, 0.5, null)},$,.OPENING.);`);
+      L.push(`#${next()}=IFCRELVOIDSELEMENT('${guid()}',$,$,$,#${w.e},#${op});`);
+    }
+    // An element assembly (no geometry of its own) aggregating two members.
+    const asm = next();
+    L.push(`#${asm}=IFCELEMENTASSEMBLY('${guid()}',$,'Assembly ${s}',$,$,#${place(stPl, 0, -3, 0, 0)},$,$,$,$);`);
+    const m1 = next(), m2 = next();
+    L.push(`#${m1}=IFCMEMBER('${guid()}',$,'asm member a',$,$,#${place(stPl, 0, -3, 0, 0)},#${shared[2]},$,$);`);
+    L.push(`#${m2}=IFCMEMBER('${guid()}',$,'asm member b',$,$,#${place(stPl, 1.5, -3, 0, 0)},#${shared[2]},$,$);`);
+    L.push(`#${next()}=IFCRELAGGREGATES('${guid()}',$,$,$,#${asm},(#${m1},#${m2}));`);
+    contained.push(asm);
+    // One room per storey enclosing the grid.
+    const sp = next();
+    L.push(`#${sp}=IFCSPACE('${guid()}',$,'Room ${s}',$,$,#${place(stPl, -1, -1, 0, 0)},#${shape(side * 1.5 + 2, side * 1.5 + 2, 2.6, null)},$,.ELEMENT.,.INTERNAL.,$);`);
+    L.push(`#${next()}=IFCRELAGGREGATES('${guid()}',$,$,$,#${st},(#${sp}));`);
+    L.push(`#${next()}=IFCRELCONTAINEDINSPATIALSTRUCTURE('${guid()}',$,$,$,(${contained.map((c) => '#' + c).join(',')}),#${st});`);
+  }
+  L.push('ENDSEC;', 'END-ISO-10303-21;');
+  return L.join('\n');
+}
+
+module.exports = { generateSyntheticIfc, generateSemanticIfc, generateShardIfc, SHARD_TYPES };
