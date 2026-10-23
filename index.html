@@ -663,6 +663,13 @@
       }
       button, a[href], [role=switch], [role=tab], [role=menuitem] { min-width:44px!important; }
       summary, a[href], label:has(> input[type=checkbox]), label:has(> input[type=radio]) { display:flex; align-items:center; }
+      /* Clash / issue panel on a phone: the header stack (buckets, run
+         details, search, filters) can be taller than the screen — the whole
+         panel scrolls and the list keeps a usable height instead of the
+         header being cut off. */
+      .cc-issue-panel{overflow-y:auto!important}
+      .cc-issue-panel>*{flex-shrink:0!important}
+      .cc-issue-panel .cc-issue-scroll{min-height:60vh}
       .cc-side-panel input[type=checkbox], .cc-left-panel input[type=checkbox] {
         width:20px!important; height:20px!important;
       }
@@ -28951,7 +28958,7 @@ function startApp() {
     var PILL=function(active){return Object.assign({},S_BTN,{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-1)',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'var(--accent-contrast)':'var(--text-faint)'});};
     var SELSTYLE={fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-1)',borderRadius:'var(--radius-xs)',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',width:'100%'};
 
-    return html`<div style=${{display:'flex',flexDirection:'column',flex:1,overflow:'hidden',minHeight:0}}>
+    return html`<div class="cc-issue-panel" style=${{display:'flex',flexDirection:'column',flex:1,overflow:'hidden',minHeight:0}}>
       ${!hideTabBar && html`<div style=${{display:'flex',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-primary)'}} role="tablist">
         ${[{id:'clashes',label:_cc_t('panel.clashes.title','Clashes'),n:oC},{id:'issues',label:_cc_t('panel.issues.title','Issues'),n:oI},{id:'navigator',label:_cc_t('panel.navigator.title','Navigator'),n:0}].map(function(t){return html`
           <button key=${t.id} onClick=${function(){d({t:A.TAB,v:t.id})}} role="tab" aria-selected=${s.tab===t.id}
@@ -33145,7 +33152,7 @@ function startApp() {
     if (windowedOn) {
       var wWin = _ccComputeVisibleRowWindow(wRows, wOff.offsets, winScrollTop, winViewportH, 600);
       var wVisibleRows = wRows.slice(wWin.startIdx, wWin.endIdx);
-      return html`<div ref=${scrollRef} onScroll=${onWindowedScroll} style=${{flex:1,overflowY:'auto',position:'relative'}}>
+      return html`<div ref=${scrollRef} class="cc-issue-scroll" onScroll=${onWindowedScroll} style=${{flex:1,overflowY:'auto',position:'relative'}}>
         <div style=${{height:wOff.totalHeight,position:'relative'}}>
           ${wVisibleRows.map(function(r, ri) {
             var idx = wWin.startIdx + ri;
@@ -33183,7 +33190,7 @@ function startApp() {
     var startIdx = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - overscan);
     var endIdx = Math.min(items.length, Math.ceil((scrollTop + containerH) / ROW_HEIGHT) + overscan);
     var visible = items.slice(startIdx, endIdx);
-    return html`<div ref=${scrollRef} onScroll=${function(e){setScrollTop(e.target.scrollTop);}} style=${{flex:1,overflowY:'auto'}}>
+    return html`<div ref=${scrollRef} class="cc-issue-scroll" onScroll=${function(e){setScrollTop(e.target.scrollTop);}} style=${{flex:1,overflowY:'auto'}}>
       <div style=${{height:totalHeight,position:'relative'}}>
         <div style=${{position:'absolute',top:startIdx*ROW_HEIGHT,left:0,right:0}}>
           ${visible.map(renderItemRow)}
@@ -37127,7 +37134,7 @@ function startApp() {
       if(this.state.hasError){
         var self=this;
         return h('div',{style:{padding:'var(--space-8)',textAlign:'center',color:'var(--text-primary)',background:'var(--bg-primary)',height:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}},
-          h('div',{style:{width:56,height:56,background:'var(--logo-gradient)',borderRadius:'var(--radius-lg)',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'var(--space-4)',boxShadow:'0 4px 12px rgba(124,58,237,.3)'}},
+          h('div',{style:{width:56,height:56,background:'var(--accent)',borderRadius:'var(--radius-lg)',display:'flex',alignItems:'center',justifyContent:'center',marginBottom:'var(--space-4)',boxShadow:'var(--shadow-md)'}},
             h('span',{style:{color:'#fff',fontFamily:'var(--font-display),Syne,system-ui,sans-serif',fontWeight:800,fontSize:'var(--text-xl)',letterSpacing:'-.02em',lineHeight:1}},'CC')),
           h('h2',{style:{fontFamily:'var(--font-display),Syne,system-ui,sans-serif',fontSize:'var(--text-xl)',fontWeight:'var(--weight-bold)',marginBottom:'var(--space-2)',lineHeight:'var(--leading-tight)'}},'Something went wrong'),
           h('p',{style:{color:'var(--text-secondary)',fontSize:'var(--text-md)',marginBottom:'var(--space-4)',maxWidth:400}},String(this.state.error&&this.state.error.message||this.state.error||'Unknown error')),
