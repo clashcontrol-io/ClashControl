@@ -7127,31 +7127,21 @@ function startApp() {
   // role) and the opening boxes (provision-for-void). Two independent 32-bit
   // FNV/DJB2 hashes -> 64 bits; numbers quantised to 0.1 mm.
   function _hashElement(el) {
-    var h1 = 2166136261, h2 = 5381;
-    function num(v) {
-      v = Math.round(v * 10000) | 0;
-      h1 = Math.imul(h1 ^ v, 16777619);
-      h2 = (Math.imul(h2, 33) + v) | 0;
-    }
-    function str(t) {
-      t = String(t == null ? '' : t);
-      for (var i = 0; i < t.length; i++) {
-        var c = t.charCodeAt(i);
-        h1 = Math.imul(h1 ^ c, 16777619);
-        h2 = (Math.imul(h2, 33) + c) | 0;
-      }
-      h1 = Math.imul(h1 ^ 31, 16777619); h2 = (Math.imul(h2, 33) + 31) | 0; // field separator
-    }
+    // (no closures: h1/h2 stay in registers — this runs for every element on every run)
+    var h1 = 2166136261, h2 = 5381, v, i, k;
+    var id = String(el.expressId == null ? '' : el.expressId);
+    for (i = 0; i < id.length; i++) { v = id.charCodeAt(i); h1 = Math.imul(h1 ^ v, 16777619); h2 = (Math.imul(h2, 33) + v) | 0; }
+    h1 = Math.imul(h1 ^ 31, 16777619); h2 = (Math.imul(h2, 33) + 31) | 0; // field separator
     var b = el.box;
-    str(el.expressId);
-    num(b.min.x); num(b.min.y); num(b.min.z); num(b.max.x); num(b.max.y); num(b.max.z);
+    var bx = [b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z];
+    for (i = 0; i < 6; i++) { v = Math.round(bx[i] * 10000) | 0; h1 = Math.imul(h1 ^ v, 16777619); h2 = (Math.imul(h2, 33) + v) | 0; }
     var ms = el.meshes || [];
-    num(ms.length);
+    v = Math.round(ms.length * 10000) | 0; h1 = Math.imul(h1 ^ v, 16777619); h2 = (Math.imul(h2, 33) + v) | 0;
     for (var mi = 0; mi < ms.length; mi++) {
       var m = ms[mi], g = m.geometry;
       var pos = g && g.attributes && g.attributes.position;
-      num(pos ? pos.count : 0);
-      num(g && g.index ? g.index.count : 0);
+      v = Math.round((pos ? pos.count : 0) * 10000) | 0; h1 = Math.imul(h1 ^ v, 16777619); h2 = (Math.imul(h2, 33) + v) | 0;
+      v = Math.round((g && g.index ? g.index.count : 0) * 10000) | 0; h1 = Math.imul(h1 ^ v, 16777619); h2 = (Math.imul(h2, 33) + v) | 0;
       // Cheap strided vertex sample (<= 64 vertices + the last one): an edit
       // that keeps the counts, the matrix and the box (e.g. a sloped top face
       // reshaped inside the same bounds) must not be carried over unseen.
@@ -7163,15 +7153,43 @@ function startApp() {
       }
       try { m.updateWorldMatrix(true, false); } catch (e) {}
       var me = m.matrixWorld && m.matrixWorld.elements;
-      if (me) for (var k = 0; k < 16; k++) num(me[k]);
+      if (me) for (k = 0; k < 16; k++) { v = Math.round(me[k] * 10000) | 0; h1 = Math.imul(h1 ^ v, 16777619); h2 = (Math.imul(h2, 33) + v) | 0; }
     }
     var p = el.props || {};
-    str(p.ifcType); str(p.name); str(p.globalId); str(p.storey); str(p.material); str(p.objectType);
-    var core = window._ccClashClassificationCore;
-    if (core && /Wall|Slab/.test(p.ifcType || '')) str(core.loadBearingOf(p));
+    var ph = _ccPropsHash(p);
+    h1 = Math.imul(h1 ^ ph[0], 16777619); h2 = (Math.imul(h2, 33) + ph[0]) | 0;
+    h1 = Math.imul(h1 ^ ph[1], 16777619); h2 = (Math.imul(h2, 33) + ph[1]) | 0;
     var ops = p.openings;
-    if (ops) for (var oi = 0; oi < ops.length; oi++) num(ops[oi]);
+    if (ops) for (i = 0; i < ops.length; i++) { v = Math.round(ops[i] * 10000) | 0; h1 = Math.imul(h1 ^ v, 16777619); h2 = (Math.imul(h2, 33) + v) | 0; }
     return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36);
+  }
+  // The clash-relevant props (type, name, GlobalId, storey, material, object
+  // type, and for walls/slabs the LoadBearing flag) as two 32-bit hashes.
+  // Cached per props object; reused only while every one of those values is
+  // still the identical value (===), so any edit is seen — only the string
+  // walk is saved.
+  var _ccPropsHashCache = new WeakMap();
+  function _ccPropsHash(p) {
+    var core = window._ccClashClassificationCore;
+    var t = p.ifcType;
+    var lb = (core && /Wall|Slab/.test(t || '')) ? core.loadBearingOf(p) : undefined;
+    var e = _ccPropsHashCache.get(p);
+    if (e && e.t === t && e.n === p.name && e.g === p.globalId && e.s === p.storey && e.m === p.material && e.o === p.objectType && e.lb === lb) return e.h;
+    var s1 = 2166136261, s2 = 5381;
+    function str(v) {
+      v = String(v == null ? '' : v);
+      for (var i = 0; i < v.length; i++) {
+        var c = v.charCodeAt(i);
+        s1 = Math.imul(s1 ^ c, 16777619);
+        s2 = (Math.imul(s2, 33) + c) | 0;
+      }
+      s1 = Math.imul(s1 ^ 31, 16777619); s2 = (Math.imul(s2, 33) + 31) | 0; // field separator
+    }
+    str(t); str(p.name); str(p.globalId); str(p.storey); str(p.material); str(p.objectType);
+    if (lb !== undefined) str(lb);
+    var h = [s1 | 0, s2 | 0];
+    _ccPropsHashCache.set(p, { t: t, n: p.name, g: p.globalId, s: p.storey, m: p.material, o: p.objectType, lb: lb, h: h });
+    return h;
   }
   // The strided vertex sample of one position attribute as two 32-bit hashes
   // (numbers quantised to 0.1 mm like _hashElement). Cached per attribute
@@ -10658,7 +10676,7 @@ function startApp() {
     if (_sigNow && _provIdx.sig) _sigNow += '#p' + _provIdx.sig;
     if (_sigNow && _roleIdx && _roleIdx.sig) _sigNow += '#r' + _roleIdx.sig;
     var _memo = (!rules.fullRerun && _sigNow && _ccRunMemo && _ccRunMemo.sig === _sigNow) ? _ccRunMemo : null;
-    var newHashes = {}, changedElements = {};
+    var newHashes = {}, _changedEls = new Set(); // changed elements (objects): a pair touching one is recomputed
     var _nChangedEls = 0, _nTotalEls = 0;
     // Per-element engine caches (triangles / BVH / topology, see _getWorldTris)
     // survive between runs (a re-run with changed rules no longer re-extracts
@@ -10668,6 +10686,7 @@ function startApp() {
     // caches (fresh this run: GLB pre-extraction, or built outside detection)
     // are used as they always were.
     var _dropAllCaches = !!rules.fullRerun;
+    _mark('hash_start');
     models.forEach(function(m) {
       (m.elements||[]).forEach(function(el) {
         var h = _hashElement(el);
@@ -10678,13 +10697,15 @@ function startApp() {
         el._ccGeoHash = h;
         newHashes[key] = h;
         _nTotalEls++;
-        if (_memo && _memo.hashes[key] !== h) { changedElements[key] = true; _nChangedEls++; }
+        if (_memo && _memo.hashes[key] !== h) { _changedEls.add(el); _nChangedEls++; }
       });
     });
+    _mark('hash_end');
     var _nextSnaps = new Map(), _memoOverflow = false, _runOK = true;
     var _lastCarried = false;
+    var _nRecomputed = 0; // candidate pairs that went past the carry-over (profile pairs_recomputed)
     function _pairUnchanged(mA, eA, mB, eB) {
-      return !!_memo && !changedElements[mA.id+':'+eA.expressId] && !changedElements[mB.id+':'+eB.expressId];
+      return !!_memo && (_nChangedEls === 0 || (!_changedEls.has(eA) && !_changedEls.has(eB)));
     }
     function _recordSnap(pair, clash) {
       if (_nextSnaps.size >= _CC_RUNMEMO_MAX) { _memoOverflow = true; return; }
@@ -10900,6 +10921,7 @@ function startApp() {
         }
         return;
       }
+      _nRecomputed++;
 
       if (_exPairSet && eA.props && eB.props && eA.props.ifcType && eB.props.ifcType) {
         var _epKey = eA.props.ifcType < eB.props.ifcType ? eA.props.ifcType+':'+eB.props.ifcType : eB.props.ifcType+':'+eA.props.ifcType;
@@ -11245,6 +11267,7 @@ function startApp() {
     // by heap-pressure relief and by the periodic idle cleanup.)
 
     // ── Store detection run summary for AI training ──────────────
+    var _runSummary = null;
     try {
       var runHard = merged.filter(function(c){return c.type==='hard';}).length;
       var runSoft = merged.filter(function(c){return c.type==='soft';}).length;
@@ -11287,13 +11310,8 @@ function startApp() {
         suppressedPairs: _suppressedFVs,
         suppressedCount: _suppressedFVs.length
       };
-      var runs = [];
-      try { runs = JSON.parse(localStorage.getItem('cc_detection_runs')||'[]'); } catch(e){}
-      runs.push(runSummary);
-      while (runs.length > 20) runs.shift(); // keep last 20 runs
-      _ccLsSet('cc_detection_runs', runs);
-      window.dispatchEvent(new Event('cc-training-data-change'));
-    } catch(e) { console.warn('[Detect] Failed to save detection run summary:', e); }
+      _runSummary = runSummary; // saved together with the profile below (one read + one write of the history)
+    } catch(e) { console.warn('[Detect] Failed to build detection run summary:', e); }
 
     // ── Profiling summary ──────────────────────────────────────────
     _mark('done');
@@ -11324,22 +11342,28 @@ function startApp() {
       matrix_skipped: _nMatrixSkipped,
       pair_cache_reemits: _nPairCacheReemit,
       pair_cache_size: _nextSnaps.size,
+      pairs_recomputed: _nRecomputed,
+      change_detect_ms: Math.round(_ph.hash_end - _ph.hash_start),
       smart_rerun: !!_memo,
       provided_openings: merged.filter(function(c){ return c.opening === 'provided'; }).length,
       changed_elements: _memo ? _nChangedEls : _nTotalEls,
       bvh_cache_max: _BVH_CACHE_MAX_FN(),
       clashes_found: merged.length
     };
-    // Attach the just-computed profile to the most-recent run entry in the
-    // detection-runs history (already saved above). Purely additive: if the
-    // history wasn't written or is malformed, this no-ops.
-    try {
-      var _runsForProf = JSON.parse(localStorage.getItem('cc_detection_runs')||'[]');
-      if (_runsForProf.length > 0) {
-        _runsForProf[_runsForProf.length - 1].profile = profile;
-        _ccLsSet('cc_detection_runs', _runsForProf);
-      }
-    } catch(e) {}
+    // Save the run summary with the just-computed profile attached to the
+    // detection-runs history (last 20 runs) — one parse + one write per run.
+    if (_runSummary) {
+      try {
+        var runs = [];
+        try { runs = JSON.parse(localStorage.getItem('cc_detection_runs')||'[]'); } catch(e){}
+        if (!Array.isArray(runs)) runs = [];
+        _runSummary.profile = profile;
+        runs.push(_runSummary);
+        while (runs.length > 20) runs.shift(); // keep last 20 runs
+        _ccLsSet('cc_detection_runs', runs);
+        window.dispatchEvent(new Event('cc-training-data-change'));
+      } catch(e) { console.warn('[Detect] Failed to save detection run summary:', e); }
+    }
     var _pcts = {};
     ['sweep_and_prune_ms','bvh_build_ms','hard_clash_ms','soft_clash_ms','merge_and_post_ms'].forEach(function(k){
       _pcts[k.replace('_ms','')] = _totalMs>0 ? Math.round(profile[k]/_totalMs*100)+'%' : '0%';
@@ -11364,17 +11388,41 @@ function startApp() {
 
     // ── Chunked execution: process candidates in batches ──────────
     var totalCandidates = candidates.length;
-    if (totalCandidates <= _DETECT_CHUNK_SIZE || !resolveAsync) {
+    // Pairs that need narrow-phase work this run (smart re-run: only the ones
+    // touching a changed element; carried pairs cost a snapshot lookup). The
+    // worker pool and the yielding chunk loop are sized by THIS, not by the
+    // candidate count — an unchanged re-run spawns no workers and runs in one
+    // synchronous pass.
+    var _nWork = totalCandidates;
+    if (_memo) {
+      _nWork = 0;
+      if (_nChangedEls) for (var wi = 0; wi < totalCandidates; wi++) {
+        var _wc = _candidateAt(candidates, wi);
+        if (_changedEls.has(_wc.eA) || _changedEls.has(_wc.eB)) _nWork++;
+      }
+    }
+    // (an all-carried run beyond 200k candidates still goes through the yielding loop, just without workers)
+    if (totalCandidates <= _DETECT_CHUNK_SIZE || !resolveAsync || (_nWork === 0 && totalCandidates <= 200000)) {
       _chunkBatchCache = new Map();
       _warmChunkBatch(0, totalCandidates);
       for (var si=0; si<totalCandidates; si++) {
         var _sc=_candidateAt(candidates, si);
-        if (!_wasmNarrowActive()) { _getBVH(_sc.eA); _getBVH(_sc.eB); }
+        if (!_wasmNarrowActive() && !_pairUnchanged(_sc.mA, _sc.eA, _sc.mB, _sc.eB)) { _getBVH(_sc.eA); _getBVH(_sc.eB); }
         var _cBefore = clashes.length;
         _processCandidate(_sc);
         if (clashes.length > _cBefore && !_lastCarried) _recordSnap(_sc, clashes[clashes.length - 1]);
       }
       _chunkBatchCache = null;
+      // same per-chunk element count the chunk loop reports (profile 'elements')
+      for (var ci0 = 0; ci0 < totalCandidates; ci0 += _DETECT_CHUNK_SIZE) {
+        var _ce = {};
+        for (var ci1 = ci0; ci1 < Math.min(ci0 + _DETECT_CHUNK_SIZE, totalCandidates); ci1++) {
+          var _cc = _candidateAt(candidates, ci1);
+          _ce[_cc.mA.id+':'+_cc.eA.expressId] = 1; _ce[_cc.mB.id+':'+_cc.eB.expressId] = 1;
+        }
+        _prof._nElements += Object.keys(_ce).length;
+      }
+      if (resolveAsync && onProgress && totalCandidates > 0) onProgress(totalCandidates, totalCandidates);
       return _finalize();
     }
     _phase('Testing intersections');
@@ -11384,7 +11432,7 @@ function startApp() {
     // ── Optional narrow-phase worker pool (see _ccNarrowPoolCreate) ──
     var _NP_W = _NP_WINDOW_CHUNKS * _DETECT_CHUNK_SIZE; // candidates per prefetch window (chunk-aligned)
     var _npSoft = runGapM > 0;
-    var _npBlocker = _ccNarrowPoolBlocker(totalCandidates, _npSoft);
+    var _npBlocker = _ccNarrowPoolBlocker(_nWork, _npSoft);
     if (!_npBlocker && !(rules.hard || _npSoft)) _npBlocker = 'no-narrow-phase-work';
     if (!_npBlocker) {
       try { _np = _ccNarrowPoolCreate(_ccNarrowPoolWorkerCount(), { seedSq: _ccMinDistSeedSq(runGapM) }); } catch (e) { _np = null; _npBlocker = 'create-failed'; }
@@ -11455,8 +11503,9 @@ function startApp() {
       for (var bi=chunkIdx; bi<end; bi++) {
         var _cp=_candidateAt(candidates, bi);
         var _kA=_cp.mA.id+':'+_cp.eA.expressId, _kB=_cp.mB.id+':'+_cp.eB.expressId;
-        if (!_chunkEls[_kA]) { _chunkEls[_kA]=_cp.eA; if (!_wasmNarrowActive()) _getBVH(_cp.eA); }
-        if (!_chunkEls[_kB]) { _chunkEls[_kB]=_cp.eB; if (!_wasmNarrowActive()) _getBVH(_cp.eB); }
+        _chunkEls[_kA]=1; _chunkEls[_kB]=1;
+        // JS BVH pre-build only for pairs that are actually tested (carried pairs never touch geometry)
+        if (!_wasmNarrowActive() && !_pairUnchanged(_cp.mA, _cp.eA, _cp.mB, _cp.eB)) { _getBVH(_cp.eA); _getBVH(_cp.eB); }
       }
       _prof._nElements += Object.keys(_chunkEls).length;
       _chunkBatchCache = new Map();

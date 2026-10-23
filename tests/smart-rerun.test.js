@@ -120,7 +120,7 @@ function threeElement(attr, matrix) {
   };
 }
 
-test('_hashElement caches the vertex sample per position attribute and stays exactly as strict', () => {
+test('_hashElement caches the vertex sample per position attribute (and the props hash per props object) and stays exactly as strict', () => {
   const h = fns._hashElement;
   const coords = [];
   for (let i = 0; i < 300; i++) coords.push(i * 0.01, (i % 7) * 0.1, (i % 3) * 0.2);
@@ -156,6 +156,21 @@ test('_hashElement caches the vertex sample per position attribute and stays exa
   assert.notEqual(h(elBox), h0, 'box');
   const elProps = threeElement(attr); elProps.props.name = 'B2';
   assert.notEqual(h(elProps), h0, 'props');
+  // props edited IN PLACE on the same object (cached props hash must not hide it)
+  const elP = threeElement(attr);
+  const hp0 = h(elP);
+  elP.props.name = 'B9';
+  assert.notEqual(h(elP), hp0, 'in-place rename');
+  elP.props.name = 'B1';
+  assert.equal(h(elP), hp0);
+  const wall = threeElement(attr); wall.props.ifcType = 'IfcWall'; wall.props.psets = { Pset_WallCommon: { LoadBearing: false } };
+  const hw0 = h(wall);
+  wall.props.psets.Pset_WallCommon.LoadBearing = true;
+  assert.notEqual(h(wall), hw0, 'in-place LoadBearing flip');
+  wall.props.psets.Pset_WallCommon.LoadBearing = false;
+  assert.equal(h(wall), hw0);
+  wall.props.storey = 'L2';
+  assert.notEqual(h(wall), hw0, 'in-place storey');
   // the attribute is shared by two meshes (instanced geometry): both are hashed, one sample computation
   const before = attr.reads;
   const two = threeElement(attr); two.meshes.push(two.meshes[0]);
