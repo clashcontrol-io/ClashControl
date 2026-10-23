@@ -83,7 +83,26 @@
     // centre) large model geometry produced a few differing edge pixels.
     // Kill switch ?ccSafety=-occlusionCulling; fallback = draw everything that
     // passes the frustum/LOD cull, as before.
-    occlusionCulling: Object.freeze({ fallback: 'draw-all', defaultEnabled: true })
+    occlusionCulling: Object.freeze({ fallback: 'draw-all', defaultEnabled: true }),
+    // IFC loading: display-only progressive preview. The worker transfers its
+    // geometry buffers in ordered batches while it streams and the main
+    // thread draws them into a separate, non-model preview group (never in
+    // state, not pickable/clashable/cached/exported), torn down when the
+    // real model commits — decoded from the very same typed arrays, so the
+    // model is identical (tests/browser/progressive-load.mjs and the
+    // differential harness compare triangles, matrices, props, volumes).
+    // Fallback = the model appears only when fully parsed.
+    // Promoted (defaultEnabled:true) 2026-10-23: every loader gate green with
+    // it on (differential incl. the parallel+preview digest case, progressive-
+    // load, office-clash-parity, accuracy-federation, spaces, smart-import,
+    // park/restore, cancel loops, storey scope); kill switch
+    // ?ccSafety=-progressivePreview.
+    progressivePreview: Object.freeze({ fallback: 'whole-model', defaultEnabled: true }),
+    // IFC loading: parse several dropped files at once in separate workers
+    // under a memory budget (_ccIfcLoadPlan in index.html); models still
+    // commit in the user's file order. Fallback = one file after another.
+    // Promoted with progressivePreview (same gates); ?ccSafety=-parallelLoad.
+    parallelLoad: Object.freeze({ fallback: 'sequential', defaultEnabled: true })
   });
   var diagnostics = [];
 

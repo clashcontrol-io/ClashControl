@@ -4476,6 +4476,58 @@ function startApp() {
     return n;
   }
 
+  // Structured "not drawn" loader report, shared by the worker and the
+  // main-thread fallback (serialized into the worker by _getIFCWorkerUrl, so
+  // no outer closures). Counts elements the loader saw but could not draw —
+  // by reason and IFC type, plus a few sample ids. REPORT ONLY: it never
+  // changes what is loaded. Reasons: 'failed' (every geometry extraction
+  // threw), 'empty' (no placements, or only zero-triangle geometry),
+  // 'transparent' (every placement styled ~fully transparent; decided where
+  // the colour filter runs), 'nonRenderable' (fallback loader's pre-decode
+  // skip list), 'noRepresentation' (contained in a storey but never yielded a
+  // mesh — assemblies whose parts are drawn are excluded).
+  function createNotDrawnReport(api, modelID) {
+    var rep = { total: 0, byReason: {}, byType: {}, samples: [] };
+    var noted = {};
+    function typeName(eid) {
+      try { var t = api.GetLineType(modelID, eid); return IFC_TYPE_NAMES[t] || ('#' + t); } catch (e) { return '?'; }
+    }
+    function note(eid, reason) {
+      if (noted[eid]) return;
+      noted[eid] = 1;
+      var tn = typeName(eid);
+      rep.total++;
+      rep.byReason[reason] = (rep.byReason[reason] || 0) + 1;
+      rep.byType[tn] = (rep.byType[tn] || 0) + 1;
+      if (rep.samples.length < 25) rep.samples.push([eid, reason, tn]);
+    }
+    // Elements contained in the spatial structure that never reached the
+    // mesh stream. `streamed` = ids the stream callback saw; `skip` = ids
+    // deliberately not streamed (openings); `scopeSet` = storey scope.
+    function unseen(storeyMap, streamed, skip, scopeSet) {
+      var assemblies = {};
+      try {
+        var aggIds = api.GetLineIDsWithType(modelID, IFC.IFCRELAGGREGATES);
+        for (var ai = 0; ai < aggIds.size(); ai++) {
+          try {
+            var agg = api.GetLine(modelID, aggIds.get(ai));
+            var ro = agg.RelatingObject ? (agg.RelatingObject.value != null ? agg.RelatingObject.value : agg.RelatingObject) : null;
+            if (ro != null) assemblies[ro] = 1;
+          } catch (e) {}
+        }
+      } catch (e) {}
+      var ids = Object.keys(storeyMap);
+      for (var i = 0; i < ids.length; i++) {
+        var id = +ids[i];
+        if (streamed[id] || skip[id] || assemblies[id]) continue;
+        if (scopeSet && !scopeSet[storeyMap[id] || '']) continue;
+        note(id, 'noRepresentation');
+      }
+    }
+    function result() { return rep.total ? rep : null; }
+    return { note: note, unseen: unseen, result: result };
+  }
+
   function extractStoreys(api, modelID) {
     var storeyMap = {};
     var storeyData = []; // [{name, elevation}]
@@ -5370,7 +5422,10 @@ function startApp() {
         if (!_stid) continue;
         try {
           var _stids = api.GetLineIDsWithType(modelID, _stid);
-          for (var _stj = 0; _stj < _stids.size(); _stj++) _skipGeoEids[_stids.get(_stj)] = true;
+          // 2 = drawable type this loader skips (virtual/annotation/grid) —
+          // reported as 'nonRenderable'; openings and rooms are deliberate.
+          var _skipMark = (_stid === IFC.IFCOPENINGELEMENT || _stid === IFC.IFCSPACE) ? true : 2;
+          for (var _stj = 0; _stj < _stids.size(); _stj++) _skipGeoEids[_stids.get(_stj)] = _skipMark;
         } catch(e) {}
       }
       var _skippedPredecode = 0;
@@ -5392,6 +5447,7 @@ function startApp() {
       var _estTotal = Math.max(500, Math.round(buffer.byteLength / 500));
       var _streamCount = 0;
       var _spaceGeoEids = {}; // IfcSpace elements that got geometry (see the space pass below)
+      var _streamed = {}, _notDrawn = createNotDrawnReport(api, modelID); // not-drawn report (same helper as the worker)
       // isSpace: called from the separate IfcSpace pass — web-ifc's
       // StreamAllMeshes never yields IfcSpace, so rooms are streamed by id
       // afterwards (mirrored exactly in _ifcWorkerMain).
@@ -5399,13 +5455,15 @@ function startApp() {
         var expressID = ifcMesh.expressID;
         if (_scopeSet && !_scopeSet[storeyMap[expressID] || '']) { _scopedOut++; return; }
         _streamCount++;
-        if (!isSpace && _skipGeoEids[expressID]) { _skippedPredecode++; return; }
+        _streamed[expressID] = 1;
+        if (!isSpace && _skipGeoEids[expressID]) { _skippedPredecode++; if (_skipGeoEids[expressID] === 2) _notDrawn.note(expressID, 'nonRenderable'); return; }
         if (onProgress && (_streamCount & 255) === 0) {
           var _spct = 45 + Math.min(33, Math.round(_streamCount / _estTotal * 33));
           onProgress('Building the 3D model ' + _spct + '%');
         }
         var elMeshes = [], elBox = new THREE.Box3();
-        for (var i = 0; i < ifcMesh.geometries.size(); i++) {
+        var _nGeo = ifcMesh.geometries.size(), _nOk = 0, _nTris = 0, _alphaSkip = 0;
+        for (var i = 0; i < _nGeo; i++) {
           var placed = ifcMesh.geometries.get(i);
           var gd = null;
           try {
@@ -5428,8 +5486,9 @@ function startApp() {
               _ccQuantizeNormalAttr(geo);
               geoCache[geoExpId] = geo;
             } else { _geoReused++; }
+            _nOk++; _nTris += geo.index ? geo.index.count : 0;
             var c = placed.color;
-            if (!isSpace && c && c.w < 0.05) continue; // rooms are often styled fully transparent
+            if (!isSpace && c && c.w < 0.05) { _alphaSkip++; continue; } // rooms are often styled fully transparent
             var col;
             if (c) col = { r:c.x, g:c.y, b:c.z };
             else { var _fb = new THREE.Color(fallbackColor); col = { r:_fb.r, g:_fb.g, b:_fb.b }; }
@@ -5451,6 +5510,9 @@ function startApp() {
           } catch(e) { console.warn('Skipped element geometry #'+expressID+': '+(e.message||e)); }
           finally { if (gd) try { gd.delete(); } catch(e2) {} }
         }
+        if (_nOk === 0) _notDrawn.note(expressID, _nGeo ? 'failed' : 'empty');
+        else if (_nTris === 0) _notDrawn.note(expressID, 'empty');
+        else if (elMeshes.length === 0) _notDrawn.note(expressID, _alphaSkip ? 'transparent' : 'failed');
         if (elMeshes.length > 0) {
           var elProps = extractProperties(api, modelID, expressID);
           elProps.storey = storeyMap[expressID] || '';
@@ -5472,6 +5534,7 @@ function startApp() {
         catch(e) { console.warn('[IFC] IfcSpace geometry pass failed:', e); }
       }
 
+      try { _notDrawn.unseen(storeyMap, _streamed, _skipGeoEids, _scopeSet); } catch (_ndE) {}
       if (_skippedPredecode > 0) {
         console.log('%c[IFC] Skipped ' + _skippedPredecode + ' non-renderable elements before geometry decode (IfcOpeningElement / IfcVirtualElement / IfcAnnotation / IfcGrid)', 'color:#94a3b8');
       }
@@ -5542,7 +5605,7 @@ function startApp() {
             var _batchRes = _ccBatchPathological(elements, meshes, _geoUnique);
             meshes = _batchRes.meshes;
             var loadTime = Math.round(performance.now() - loadStart);
-            var stats = {loadTime:loadTime, fileSize:buffer.byteLength, elementCount:elements.length, meshCount:meshes.length, geoUnique:_geoUnique, geoReused:_geoReused, instancedGroups:_instResult.groups, instancedElements:_instResult.instanced, phases:_lp.phases, loadType:'IFC', loadedScope:(_scopeSet ? scope.storeys : null), scopedOutCount:_scopedOut, semanticsMs:_lp.semanticsMs};
+            var stats = {loadTime:loadTime, fileSize:buffer.byteLength, elementCount:elements.length, meshCount:meshes.length, geoUnique:_geoUnique, geoReused:_geoReused, instancedGroups:_instResult.groups, instancedElements:_instResult.instanced, phases:_lp.phases, loadType:'IFC', loadedScope:(_scopeSet ? scope.storeys : null), scopedOutCount:_scopedOut, semanticsMs:_lp.semanticsMs, notDrawn:_notDrawn.result(), mem:_ccLoadMemStats(null)};
             (function() {
               var ph = _lp.phases, prev = 0;
               var rows = [];
@@ -5572,7 +5635,11 @@ function startApp() {
 
   // ── Lazy-props merge helper ──────────────────────────────────── docs/INTERNALS.md §8
   // Direct mutation is safe here because nothing in the state tree uses
-  function _mergeLazyProps(modelId, propMap) {
+  // elementsHint: the just-committed result's elements (the same objects the
+  // model holds). Props can land before that commit is rendered into
+  // _ccLatestState — small files, parallel loads, or a REPLACE where the
+  // state still shows the old version under the same id.
+  function _mergeLazyProps(modelId, propMap, elementsHint) {
     var s = window._ccLatestState;
     var model = null;
     if (s && s.models) {
@@ -5580,6 +5647,9 @@ function startApp() {
         if (s.models[mi].id === modelId) { model = s.models[mi]; break; }
       }
     }
+    // The hint wins: on a same-id REPLACE the state can still hold the
+    // previous version's elements when the props land.
+    if (elementsHint) model = { name: (model && model.name) || modelId, elements: elementsHint };
     var byEid = null;
     if (model && model.elements) {
       byEid = {};
@@ -5772,9 +5842,27 @@ function startApp() {
       }
       var buf = e.data.buffer;
       var _scope = e.data.scope || null;
+      // Progressive preview (flag progressivePreview, set by the caller):
+      // geometry buffers are TRANSFERRED to the main thread in ordered
+      // 'geo' batches while the stream runs, instead of all at once in the
+      // final 'result'. The final result references the same geometry ids;
+      // the main thread decodes from the very same typed arrays, so the
+      // committed model is identical by construction.
+      var _stream = !!e.data.stream;
       var phases = {};
+      // Per-phase memory (MB): web-ifc's WASM heap (grows, never shrinks —
+      // so it is the running peak) and this worker's JS heap where exposed.
+      var mem = {};
       var t0 = performance.now();
-      function mark(n) { phases[n] = performance.now() - t0; }
+      function mark(n) {
+        phases[n] = performance.now() - t0;
+        try {
+          var m = {};
+          if (_api && _api.wasmModule && _api.wasmModule.HEAPU8) m.wasm = Math.round(_api.wasmModule.HEAPU8.length / 1048576);
+          if (self.performance && self.performance.memory) m.js = Math.round(self.performance.memory.usedJSHeapSize / 1048576);
+          mem[n] = m;
+        } catch (_me) {}
+      }
       function progress(msg) { _emit({type:'progress', msg:msg}); }
 
       progress('Starting up 16%');
@@ -5853,11 +5941,39 @@ function startApp() {
         var xfer = [];
         var _geoTable = {}; // geometryExpressID → {pos, nrm, idx} (dedup)
         var _geoReused = 0;
+        var _geoNV = {};    // geometryExpressID → vertex count (survives transfer)
+        var _streamed = {}; // expressIDs the stream callback saw (not-drawn report)
+        var _notDrawn = createNotDrawnReport(api, modelID);
 
         var _tGetGeo = 0, _tDeinterleave = 0, _tProps = 0;
 
         var _estTotal = Math.max(500, Math.round(buf.byteLength / 500));
         var _streamCount = 0;
+
+        // ── Streaming batches (only when _stream) ──
+        // A batch carries (a) geometry entries first seen since the last
+        // batch — their buffers are transferred, so they are NOT in the
+        // final result's geoTable/xfer — and (b) the placements of the
+        // elements streamed since then (geo id, transform, colour), for the
+        // display-only preview. Flushed by time: the first after ~40 ms so
+        // the first pixel comes early, then every ~200 ms.
+        var _bGeo = null, _bXfer = null, _bPlGeo = null, _bPlTf = null, _bPlCol = null, _bCount = 0, _bSent = 0;
+        var _sentGeo = {};
+        var _tLastFlush = performance.now(), _flushEvery = 40;
+        function _bReset() { _bGeo = {}; _bXfer = []; _bPlGeo = []; _bPlTf = []; _bPlCol = []; _bCount = 0; }
+        if (_stream) _bReset();
+        function _flushBatch(force) {
+          if (!_stream || (!_bCount && !Object.keys(_bGeo).length)) return;
+          var now = performance.now();
+          if (!force && now - _tLastFlush < _flushEvery) return;
+          _tLastFlush = now; _flushEvery = 200;
+          var b = { type: 'geo', seq: _bSent++, geoTable: _bGeo,
+            plGeo: new Uint32Array(_bPlGeo), plTf: new Float32Array(_bPlTf), plCol: new Float32Array(_bPlCol),
+            done: _streamCount, est: _estTotal };
+          _bXfer.push(b.plGeo.buffer, b.plTf.buffer, b.plCol.buffer);
+          _emit(b, _bXfer);
+          _bReset();
+        }
 
         // Protocol v2 packed element encoding (browser-first large-model
         // plan review, 2026-07-17) — replaces the v1 `rawEls` array (one JS
@@ -5930,13 +6046,14 @@ function startApp() {
           var eid = ifcMesh.expressID;
           if (_scopeSet && !_scopeSet[storeyMap[eid] || '']) { _scopedOut++; return; }
           _streamCount++;
+          _streamed[eid] = 1;
           if (!isSpace && _skipGeoEids[eid]) { _skippedPredecode++; return; }
           if ((_streamCount & 255) === 0) {
             var _spct = 45 + Math.min(33, Math.round(_streamCount / _estTotal * 33));
             progress('Building the 3D model ' + _spct + '%');
           }
-          var geoCount = 0;
-          for (var i = 0; i < ifcMesh.geometries.size(); i++) {
+          var geoCount = 0, _nGeo = ifcMesh.geometries.size(), _nTris = 0, _alphaSkip = 0;
+          for (var i = 0; i < _nGeo; i++) {
             var placed = ifcMesh.geometries.get(i);
             var gd = null;
             try {
@@ -5956,10 +6073,29 @@ function startApp() {
                 }
                 _tDeinterleave += performance.now() - _tDI;
                 _geoTable[geoExpId] = {pos:pos, nrm:nrm, idx:new Uint32Array(indices)};
-                xfer.push(pos.buffer, nrm.buffer, _geoTable[geoExpId].idx.buffer);
+                _geoNV[geoExpId] = _geoTable[geoExpId].idx.length;
+                if (_stream) {
+                  // Ownership moves with the next batch; the final result
+                  // only carries entries that were never batched.
+                  _bGeo[geoExpId] = _geoTable[geoExpId]; _sentGeo[geoExpId] = 1;
+                  _bXfer.push(pos.buffer, nrm.buffer, _geoTable[geoExpId].idx.buffer);
+                } else {
+                  xfer.push(pos.buffer, nrm.buffer, _geoTable[geoExpId].idx.buffer);
+                }
               } else { _geoReused++; }
+              _nTris += _geoNV[geoExpId] || 0;
               var c = placed.color;
               var tf = placed.flatTransformation;
+              if (!isSpace && c && c.w < 0.05) _alphaSkip++; // the decode drops these (see its colour filter)
+              // Preview placement (display only): same filters the decode
+              // applies — rooms (hidden by default) and ~transparent styles
+              // never show.
+              if (_stream && !isSpace && !(c && c.w < 0.05) && (_geoNV[geoExpId] || 0) > 0) {
+                _bPlGeo.push(geoExpId);
+                for (var _btf = 0; _btf < 16; _btf++) _bPlTf.push(tf[_btf]);
+                if (c) _bPlCol.push(c.x, c.y, c.z, c.w); else _bPlCol.push(-1, -1, -1, 1);
+                _bCount++;
+              }
               pkPlacementGeoIds.push(geoExpId);
               if (c) {
                 pkPlacementHasColor.push(1);
@@ -5973,6 +6109,10 @@ function startApp() {
             } catch(ex) { console.warn('[IFC Worker] Geometry extraction failed for expressID=' + eid + ', geoExpId=' + (geoExpId||'?'), ex); }
             finally { if (gd) try { gd.delete(); } catch(e2) {} }
           }
+          if (geoCount === 0) _notDrawn.note(eid, _nGeo ? 'failed' : 'empty');
+          else if (_nTris === 0) _notDrawn.note(eid, 'empty');
+          else if (_alphaSkip === geoCount) _notDrawn.note(eid, 'transparent');
+          if (_stream) _flushBatch(false);
           if (geoCount > 0) {
             var _tP = performance.now();
             var elProps = extractProperties(api, modelID, eid);
@@ -6002,6 +6142,9 @@ function startApp() {
           try { api.StreamMeshes(modelID, _spaceIds, function(ifcMesh) { _onIfcMesh(ifcMesh, true); }); }
           catch(e) { console.warn('[IFC Worker] IfcSpace geometry pass failed:', e); }
         }
+        _flushBatch(true);
+        mark('Meshes streamed');
+        try { _notDrawn.unseen(storeyMap, _streamed, _skipGeoEids, _scopeSet); } catch (_ndE) {}
 
         // Provision for void: opening boxes per host, converted on the main thread.
         var openingRecs = {};
@@ -6048,7 +6191,11 @@ function startApp() {
 
         var _geoUnique = Object.keys(_geoTable).length;
         if (sbRecs) xfer.push(sbRecs.b.buffer, sbRecs.polyB.buffer, sbRecs.polyOff.buffer, sbRecs.pts.buffer);
-        _emit({type:'result', packedEls:packedEls, geoTable:_geoTable, openingRecs:openingRecs,
+        mark('Packed');
+        // Streaming: every geometry entry already went out in a 'geo' batch
+        // (its buffers are detached here), so the result carries none.
+        _emit({type:'result', packedEls:packedEls, geoTable:(_stream ? {} : _geoTable), streamed:_stream ? _bSent : 0,
+          openingRecs:openingRecs, notDrawn:_notDrawn.result(), mem:mem,
           semantics:semRecs, spaceBoundaries:sbRecs,
           loadedScope:(_scopeSet ? _scope.storeys : null), scopedOutCount:_scopedOut,
           geoUnique:_geoUnique, geoReused:_geoReused,
@@ -6095,6 +6242,7 @@ function startApp() {
       + 'var extractOpeningRecords=' + extractOpeningRecords.toString() + ';\n'
       + 'var extractSemanticRecords=' + extractSemanticRecords.toString() + ';\n'
       + 'var extractSpaceBoundaryRecords=' + extractSpaceBoundaryRecords.toString() + ';\n'
+      + 'var createNotDrawnReport=' + createNotDrawnReport.toString() + ';\n'
       + 'var extractStoreys=' + extractStoreys.toString() + ';\n'
       + 'var extractSpatialHierarchy=' + extractSpatialHierarchy.toString() + ';\n'
       + 'var resolveMaterialName=' + resolveMaterialName.toString() + ';\n'
@@ -6114,6 +6262,7 @@ function startApp() {
   var _ccActiveLoads = [];
   window._ccAbortLoading = function() {
     _ccLoadGeneration++; // invalidates main-thread fallback loads at their gen checkpoints
+    try { _ccLoadPreview.endSession(); } catch (_) {} // display-only previews go with the loads
     _ccActiveLoads.splice(0).forEach(function(l) {
       try { l.worker.terminate(); } catch(_) {}
       try { l.settle(null); } catch(_) {}
@@ -6128,9 +6277,45 @@ function startApp() {
     if (window._ccToast) window._ccToast(_cc_t('toast.loadingCancelled','Loading cancelled.'));
   };
 
-  function loadIFCWorker(buffer, fallbackColor, onProgress, onProps, scope) {
+  // Parallel IFC loading (flag parallelLoad): how many files may parse at
+  // once, and the memory budget their workers share. A worker's peak is the
+  // WASM heap web-ifc grows to (stats.mem: ~2x the file size on real models,
+  // about 2x the file size) plus its JS-side arrays and the file bytes;
+  // _CC_IFC_JOB_COST_FACTOR is a deliberately conservative estimate. Never more than 3 at once, 2 on <=4 GB devices,
+  // 1 on <=2 GB devices or when the main heap is already over 60 %. A job
+  // that alone exceeds the budget still runs — just on its own.
+  var _CC_IFC_JOB_COST_FACTOR = 8;
+  function _ccIfcLoadPlan() {
+    var dm = (typeof navigator !== 'undefined' && navigator.deviceMemory) || 4; // GB (Chrome caps the report at 8)
+    var hc = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 2;
+    var k = Math.max(1, Math.min(3, hc - 1));
+    if (dm <= 4) k = Math.min(k, 2);
+    if (dm <= 2) k = 1;
+    try {
+      var pm = performance.memory;
+      if (pm && pm.jsHeapSizeLimit && pm.usedJSHeapSize > pm.jsHeapSizeLimit * 0.6) k = 1;
+    } catch (_) {}
+    return { k: k, budget: dm * 1073741824 * 0.5 };
+  }
+
+  // Per-phase memory for stats.mem: the worker's per-phase samples (WASM
+  // heap = running peak, worker JS heap where exposed) plus this thread's
+  // JS heap when the result is decoded. Chrome-only APIs; null elsewhere.
+  function _ccLoadMemStats(workerMem) {
+    var out = { worker: workerMem || null, mainHeapMB: null };
+    try { if (performance.memory) out.mainHeapMB = Math.round(performance.memory.usedJSHeapSize / 1048576); } catch (_) {}
+    return out;
+  }
+
+  // opts.stream: ask the worker for ordered 'geo' batches while it streams
+  // (progressive preview); opts.onBatch(msg) sees each batch after its
+  // geometry entries were recorded. Display-only: the result is decoded from
+  // the same typed arrays either way.
+  function loadIFCWorker(buffer, fallbackColor, onProgress, onProps, scope, opts) {
+    opts = opts || {};
     var loadStart = performance.now();
     var _myGen = _ccLoadGeneration;
+    var _streamGt = opts.stream ? {} : null; // geoId → {pos,nrm,idx} received in 'geo' batches
     return new Promise(function(resolve, reject) {
       var worker;
       try { worker = new Worker(_getIFCWorkerUrl()); }
@@ -6174,6 +6359,17 @@ function startApp() {
           if (onProgress) onProgress(msg.msg);
           return;
         }
+        if (msg.type === 'geo') {
+          _armWatchdog(20000, _watchdogFire);
+          if (_streamGt) {
+            var _bg = msg.geoTable || {};
+            for (var _bk in _bg) _streamGt[_bk] = _bg[_bk];
+          }
+          if (opts.onBatch && _myGen === _ccLoadGeneration) {
+            try { opts.onBatch(msg); } catch (_pbE) { console.warn('[IFC] preview batch failed:', _pbE); }
+          }
+          return;
+        }
         _clearWatchdog();
         if (msg.type === 'error') {
           _unreg();
@@ -6212,6 +6408,7 @@ function startApp() {
           var pkStrTable = pk.stringTable;
           function _pkStr(idx) { return idx === -1 ? '' : pkStrTable[idx]; }
           var gt = msg.geoTable || {};
+          if (_streamGt) { for (var _rk in gt) _streamGt[_rk] = gt[_rk]; gt = _streamGt; _streamGt = null; }
           var meshes = [];
           var elements = [];
           var matCache = {};
@@ -6333,7 +6530,8 @@ function startApp() {
           };
           var streamSub = msg.streamSub || null;
           var _gu = msg.geoUnique || Object.keys(geoCache).length, _gr = msg.geoReused || 0;
-          var stats = {loadTime:loadTime, fileSize:msg.fileSize, elementCount:elements.length, meshCount:meshes.length, geoUnique:_gu, geoReused:_gr, instancedGroups:_instResult.groups, instancedElements:_instResult.instanced, phases:phases, streamSub:streamSub, sceneSub:sceneSub, loadType:'IFC', loadedScope:msg.loadedScope||null, scopedOutCount:msg.scopedOutCount||0, semanticsMs:streamSub ? streamSub.semantics : null};
+          var stats = {loadTime:loadTime, fileSize:msg.fileSize, elementCount:elements.length, meshCount:meshes.length, geoUnique:_gu, geoReused:_gr, instancedGroups:_instResult.groups, instancedElements:_instResult.instanced, phases:phases, streamSub:streamSub, sceneSub:sceneSub, loadType:'IFC', loadedScope:msg.loadedScope||null, scopedOutCount:msg.scopedOutCount||0, semanticsMs:streamSub ? streamSub.semantics : null,
+            notDrawn:msg.notDrawn||null, mem:_ccLoadMemStats(msg.mem), streamedBatches:msg.streamed||0};
 
           (function() {
             var ph = phases, prev = 0;
@@ -6396,7 +6594,7 @@ function startApp() {
         // must reacquire fresh bytes from its own File/source for anything
         // it still needs done with the bytes afterward (fallback re-parse,
         // IndexedDB persistence) — see the loadIFCWorker call site.
-        worker.postMessage({buffer:buffer, scope:scope||null, v:IFC_WORKER_PROTOCOL_VERSION}, [buffer]);
+        worker.postMessage({buffer:buffer, scope:scope||null, stream:!!opts.stream, v:IFC_WORKER_PROTOCOL_VERSION}, [buffer]);
       } catch(postErr) {
         _clearWatchdog();
         _unreg();
@@ -6405,6 +6603,207 @@ function startApp() {
       }
     });
   }
+
+  // ── Progressive load preview (flag progressivePreview) ──────────
+  // DISPLAY ONLY. While the IFC worker streams, its 'geo' batches are drawn
+  // into a separate group directly under the scene: never in model state
+  // (model.elements/meshes), not in S.mg (so no bounds, culling, batching,
+  // render styles, sections, ghosting or detection see it), not pickable
+  // (raycast is a no-op), never cached or exported. Each batch becomes one
+  // merged world-space chunk (positions baked from the placement transform,
+  // vertex colours from the IFC style, flat shading — no normals copied),
+  // drawn with a light translucent material that firms up as the stream
+  // progresses. CPU copies are dropped as soon as the GPU has them. When the
+  // real model commits (exactly as without the flag) the preview is torn
+  // down once its group is in the scene; cancel/failure/fallback tear it
+  // down immediately. Camera: fitted to the growing preview only during the
+  // first ~1.5 s (and only while nothing is committed and the user has not
+  // moved the camera), then left alone; the commit does not re-fit when the
+  // user moved or the bounds already match.
+  var _ccLoadPreview = (function() {
+    var live = [];
+    var grp = null;
+    var fit = null;  // {box, at, n, camKey} of the last preview fit in this load session
+    var stats = { batches: 0, tris: 0, firstAt: 0, capped: false };
+    var _box = null;
+    function _S() { return window._ccState3d || null; }
+    function _enabled() {
+      return !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('progressivePreview'));
+    }
+    function _maxTris() {
+      var dm = (typeof navigator !== 'undefined' && navigator.deviceMemory) || 4;
+      return Math.max(2e6, Math.min(16e6, dm * 2e6));
+    }
+    function _group() {
+      var S = _S(); if (!S || !S.scene) return null;
+      if (!grp) {
+        grp = new THREE.Group();
+        grp.name = 'cc-load-preview';
+        grp.userData._ccLoadPreview = true;
+        grp.raycast = function() {};
+        S.scene.add(grp);
+      }
+      return grp;
+    }
+    function _camKey(S) {
+      var p = S.camera.position, t = S.orbit && S.orbit.target;
+      return [p.x, p.y, p.z, t ? t.x : 0, t ? t.y : 0, t ? t.z : 0].map(function(v) { return Math.round(v * 1000); }).join(',');
+    }
+    function _maybeFit() {
+      var S = _S(); if (!S || !S.camera || !S.orbit || !_box || _box.isEmpty()) return;
+      if (S.mg && S.mg.children.length) return; // something real is on screen: never move it
+      var now = performance.now();
+      if (fit) {
+        if (fit.camKey !== _camKey(S)) { fit.frozen = true; return; } // user moved the camera
+        if (fit.frozen || now - fit.at0 > 1500 || fit.n >= 3) { fit.frozen = true; return; }
+        var d0 = fit.box.getSize(new THREE.Vector3()).length(), d1 = _box.getSize(new THREE.Vector3()).length();
+        if (!(d1 > d0 * 1.25)) return;
+      }
+      var sz = _box.getSize(new THREE.Vector3()), ctr = _box.getCenter(new THREE.Vector3());
+      var aspect = S.camera.aspect || 1;
+      var d = Math.max(sz.x, sz.y, sz.z) * (aspect < 1 ? 1 / Math.max(aspect, 0.35) : 1);
+      S.orbit.target.copy(ctr);
+      S.camera.position.set(ctr.x + d, ctr.y + d * 0.6, ctr.z + d);
+      S.camera.lookAt(ctr);
+      S.orbit.sync(); S.orbit.apply();
+      fit = { box: _box.clone(), at0: fit ? fit.at0 : now, n: fit ? fit.n + 1 : 1, camKey: _camKey(S), frozen: false };
+    }
+    function _dropArray() { this.array = null; }
+    // Paced on the measured frame time: at most ~4 preview frames a second,
+    // and never more than ~25 % of the time spent drawing (a software
+    // rasteriser can need hundreds of ms for a big preview; frames queued
+    // behind it would delay the commit and steal CPU from the workers).
+    // The first preview frames include shader compilation, so the frame
+    // time only counts from the third preview frame on.
+    var _lastInv = 0, _invTimer = null, _nInv = 0;
+    function _frameMs() { var S = _S(); return _nInv >= 3 && S ? (S._lastRenderMs || 0) : 0; }
+    function _inv() { _lastInv = performance.now(); _nInv++; invalidate(1); }
+    function _invalidateSoon() {
+      var now = performance.now(), gap = Math.min(2000, Math.max(250, _frameMs() * 4));
+      if (now - _lastInv >= gap) { _inv(); return; }
+      if (_invTimer) return;
+      _invTimer = setTimeout(function() { _invTimer = null; _inv(); }, gap - (now - _lastInv));
+    }
+    function create(label) {
+      if (!_enabled()) return null;
+      var h = { label: label, geo: {}, meshes: [], mat: null, tris: 0, done: false, modelId: null };
+      // Opaque on purpose (early-z keeps a software rasteriser cheap): the
+      // "ghost" look is a light emissive wash over the IFC colours that
+      // fades out as the stream completes.
+      h.mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide });
+      h.mat.emissive.setRGB(0.45, 0.45, 0.45);
+      h.mat.userData._ccLoadPreview = true;
+      h.addBatch = function(msg) {
+        if (h.done) return;
+        var bg = msg.geoTable || {};
+        for (var k in bg) h.geo[k] = bg[k]; // references only — the decode owns these arrays
+        var plGeo = msg.plGeo, plTf = msg.plTf, plCol = msg.plCol;
+        var n = plGeo ? plGeo.length : 0;
+        var wash = 0.45 * (1 - Math.min(1, (msg.done || 0) / Math.max(1, msg.est || 1)));
+        h.mat.emissive.setRGB(wash, wash, wash);
+        if (!n) return;
+        // Budget: a triangle cap by device memory, and no growth once a
+        // frame already costs > 400 ms — what is shown is enough of a
+        // picture; more would only slow the load down.
+        if (stats.tris >= _maxTris() || _frameMs() > 400) { stats.capped = true; return; }
+        var nV = 0, nI = 0, i;
+        for (i = 0; i < n; i++) { var e = h.geo[plGeo[i]]; if (e && e.pos && e.idx) { nV += e.pos.length / 3; nI += e.idx.length; } }
+        if (!nV || !nI) return;
+        var P = new Float32Array(nV * 3), C = new Uint8Array(nV * 3), I = new Uint32Array(nI);
+        var vo = 0, io = 0;
+        for (i = 0; i < n; i++) {
+          var ge = h.geo[plGeo[i]]; if (!ge || !ge.pos || !ge.idx) continue;
+          var m = plTf.subarray(i * 16, i * 16 + 16), pos = ge.pos, idx = ge.idx, cnt = pos.length / 3;
+          var r = plCol[i * 4], g = plCol[i * 4 + 1], b = plCol[i * 4 + 2];
+          if (r < 0) { r = 0.72; g = 0.72; b = 0.72; }
+          var cr = Math.round(Math.min(1, r) * 255), cg = Math.round(Math.min(1, g) * 255), cb = Math.round(Math.min(1, b) * 255);
+          for (var v = 0, s3 = 0, d3 = vo * 3; v < cnt; v++, s3 += 3, d3 += 3) {
+            var x = pos[s3], y = pos[s3 + 1], z = pos[s3 + 2];
+            P[d3]     = m[0] * x + m[4] * y + m[8]  * z + m[12];
+            P[d3 + 1] = m[1] * x + m[5] * y + m[9]  * z + m[13];
+            P[d3 + 2] = m[2] * x + m[6] * y + m[10] * z + m[14];
+            C[d3] = cr; C[d3 + 1] = cg; C[d3 + 2] = cb;
+          }
+          for (var t = 0; t < idx.length; t++) I[io + t] = idx[t] + vo;
+          vo += cnt; io += idx.length;
+        }
+        var gg = new THREE.BufferGeometry();
+        var pa = new THREE.BufferAttribute(P, 3), ca = new THREE.BufferAttribute(C, 3, true), ia = new THREE.BufferAttribute(I, 1);
+        gg.setAttribute('position', pa); gg.setAttribute('color', ca); gg.setIndex(ia);
+        gg.computeBoundingSphere(); gg.computeBoundingBox();
+        pa.onUpload(_dropArray); ca.onUpload(_dropArray); ia.onUpload(_dropArray);
+        var mesh = new THREE.Mesh(gg, h.mat);
+        mesh.raycast = function() {};
+        mesh.castShadow = false; mesh.receiveShadow = false;
+        mesh.matrixAutoUpdate = false;
+        mesh.userData._ccLoadPreview = true;
+        var G = _group(); if (!G) { gg.dispose(); return; }
+        G.add(mesh); h.meshes.push(mesh);
+        h.tris += nI / 3; stats.tris += nI / 3; stats.batches++;
+        if (!stats.firstAt) stats.firstAt = performance.now();
+        if (!_box) _box = new THREE.Box3();
+        _box.union(gg.boundingBox);
+        _maybeFit();
+        _invalidateSoon();
+      };
+      h.progress = function() {};
+      // Tear down now (cancel, failure, fallback, or once the committed
+      // model is in the scene).
+      h.dispose = function() {
+        if (h.done) return;
+        h.done = true;
+        h.meshes.forEach(function(m) { if (m.parent) m.parent.remove(m); m.geometry.dispose(); });
+        h.meshes = []; h.geo = null;
+        try { h.mat.dispose(); } catch (_) {}
+        var ix = live.indexOf(h); if (ix !== -1) live.splice(ix, 1);
+        stats.tris = 0; live.forEach(function(o) { stats.tris += o.tris; });
+        if (!live.length) { _box = null; if (grp && grp.parent) grp.parent.remove(grp); grp = null; }
+        invalidate();
+      };
+      // The model was dispatched: tear down when its group shows up (the
+      // [s.models] scene effect calls modelShown), or after a short grace
+      // period whatever happens (model without meshes, declined overlap).
+      h.commit = function(modelId) {
+        if (h.done) return;
+        h.modelId = modelId;
+        setTimeout(function() { h.dispose(); }, 2000);
+      };
+      live.push(h);
+      return h;
+    }
+    // Called by the scene effect after a model's group was added.
+    function modelShown(modelId) {
+      live.slice().forEach(function(h) { if (h.modelId === modelId) h.dispose(); });
+    }
+    // Commit-time camera decision for the first committed model: keep the
+    // camera when the preview already framed it and the user then moved it,
+    // or when the final bounds match what the preview framed.
+    function keepCamera(boxFn) {
+      var S = _S(); if (!fit || !S || !S.camera) return false;
+      if (fit.camKey !== _camKey(S)) return true;
+      var finalBox = boxFn();
+      if (!finalBox || finalBox.isEmpty()) return true;
+      var a = fit.box, ds = a.getSize(new THREE.Vector3()).length(), df = finalBox.getSize(new THREE.Vector3()).length();
+      var dc = a.getCenter(new THREE.Vector3()).distanceTo(finalBox.getCenter(new THREE.Vector3()));
+      return Math.abs(df - ds) <= 0.1 * df && dc <= 0.05 * df;
+    }
+    // End of a load batch / abort: drop everything still alive and reset
+    // the per-session camera state.
+    function endSession() {
+      live.slice().forEach(function(h) { h.dispose(); });
+    }
+    // A new load batch starts: forget the previous batch's framing.
+    function beginSession() {
+      if (live.length) return; // a concurrent batch is still previewing; keep its state
+      fit = null; _box = null; _nInv = 0;
+      stats = { batches: 0, tris: 0, firstAt: 0, capped: false };
+    }
+    function info() { return { live: live.length, batches: stats.batches, tris: stats.tris, capped: stats.capped, inScene: !!(grp && grp.parent), fitted: !!fit }; }
+    return { create: create, modelShown: modelShown, keepCamera: keepCamera, beginSession: beginSession, endSession: endSession, info: info, enabled: _enabled };
+  })();
+  // Internal (tests/diagnostics): preview state, and the most IFC parses that ran at once.
+  var _ccIfcParallelPeak = 0;
+  window._ccLoadPreview = { info: _ccLoadPreview.info, parallelPeak: function() { return _ccIfcParallelPeak; } };
 
   // ── Clash Detection ──────────────────────────────────────────── docs/INTERNALS.md §9
 
@@ -19338,7 +19737,7 @@ function startApp() {
             } else {
               renderer.render(scene,S.camera);
             }
-            _occl.lastRenderMs = performance.now() - _rt0;
+            _occl.lastRenderMs = S._lastRenderMs = performance.now() - _rt0; // S._lastRenderMs: the load preview paces itself on it
           } finally {
             if (_occlRan) _occlEnd();
           }
@@ -19534,8 +19933,12 @@ function startApp() {
             if (_bObj) grp.add(_bObj);
             S.mg.add(grp); S.map[model.id] = grp;
             if(!needsSwap && window._ccUpdateShadowFrustum) window._ccUpdateShadowFrustum();
-            if(!needsSwap && Object.keys(S.map).length===1 && _resetView) _resetView();
+            // A progressive preview may already have framed this model (and
+            // the user may have moved since): don't jump at commit then.
+            if(!needsSwap && Object.keys(S.map).length===1 && _resetView && !_ccLoadPreview.keepCamera(_elemsBBox)) _resetView();
           }
+          // The committed model is in the scene now: drop its preview.
+          _ccLoadPreview.modelShown(model.id);
         }
         if(S.map[model.id]) {
           var _prevVis = S.map[model.id].visible;
@@ -24028,6 +24431,127 @@ function startApp() {
         }
       });
 
+      // ── IFC jobs ──
+      // One job per .ifc file. A job = read + pre-parse check + worker parse
+      // (+ optional display-only preview); the COMMIT (classification,
+      // overlap check, ADD/REPLACE_MODEL, persistence) always runs in the
+      // chain, in the user's file order, so model order, ids and colours are
+      // the same whether the parses ran one after another or side by side.
+      // parallelLoad: up to _ccIfcLoadPlan().k parses run at once in
+      // separate workers under a memory budget; jobs start strictly in file
+      // order (never skipping ahead), and a cancel stops the whole batch.
+      var _parallel = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('parallelLoad'));
+      var _batchGen = _ccLoadGeneration;
+      var _ifcJobs = [], _plan = _ccIfcLoadPlan(), _schedParsing = 0, _schedAlive = 0, _schedAliveCost = 0;
+      var _batchPreviews = [];
+      _ccLoadPreview.beginSession();
+      function _schedPump() {
+        for (var ji = 0; ji < _ifcJobs.length; ji++) {
+          var j = _ifcJobs[ji];
+          if (j.started) continue;
+          if (_schedParsing >= _plan.k) return;
+          if (_schedAlive > 0 && _schedAliveCost + j.cost > _plan.budget) return;
+          j.start();
+        }
+      }
+      function _mkIfcJob(f) {
+        var job = { f: f, started: false, preError: null, preview: null,
+          cost: f.size * _CC_IFC_JOB_COST_FACTOR + 64 * 1048576 };
+        var _resolveParsed, _parseCounted = false, _aliveCounted = false, _gone = false;
+        job.parsed = new Promise(function(res) { _resolveParsed = res; });
+        job.onProg = function(msg){ setLoadMsg(f.name + ': ' + msg); window._ccModelLoadMsg=f.name+': '+msg; window.dispatchEvent(new CustomEvent('cc-model-loading',{detail:{loading:true,msg:f.name+': '+msg}})); };
+        function parseSettled() { if (_parseCounted) { _parseCounted = false; _schedParsing--; if (_parallel) _schedPump(); } }
+        // The worker is gone (props done/failed/aborted, rejected, or never
+        // started): its memory no longer counts against the budget.
+        job.gone = function() {
+          if (_gone) return; _gone = true;
+          parseSettled();
+          if (_aliveCounted) { _aliveCounted = false; _schedAlive--; _schedAliveCost -= job.cost; if (_parallel) _schedPump(); }
+        };
+        // Lazy-props gate: released exactly once, whichever comes last of
+        // "props arrived" and "model committed" (or the job ended without a
+        // model). In parallel mode the props of a later file can arrive
+        // before its in-order commit — they are held and merged then.
+        var lazy = { modelId: null, elements: null, pending: null, closed: false, released: false, release: function() {} };
+        job.releaseGate = function() { if (!lazy.released) { lazy.released = true; lazy.release(); } };
+        job.onProps = function(propMap, propErr) {
+          job.gone();
+          // elements hint: the model may not be rendered into _ccLatestState
+          // yet (small files' props land within a frame of the commit);
+          // without it those psets were silently never merged.
+          if (lazy.modelId) { if (!propErr) _mergeLazyProps(lazy.modelId, propMap, lazy.elements); job.releaseGate(); }
+          else if (lazy.closed) job.releaseGate();
+          else lazy.pending = { propMap: propMap, err: propErr };
+        };
+        job.committed = function(modelId, elements) {
+          lazy.modelId = modelId; lazy.elements = elements;
+          if (job.preview) job.preview.commit(modelId);
+          if (lazy.pending) {
+            var pd = lazy.pending; lazy.pending = null;
+            if (!pd.err) _mergeLazyProps(modelId, pd.propMap, elements);
+            job.releaseGate();
+          }
+        };
+        job.dropPreview = function() { if (job.preview) { job.preview.dispose(); } };
+        // Ended without a committed model (cancel, declined duplicate, error).
+        job.close = function() {
+          job.dropPreview();
+          if (lazy.modelId) return;
+          lazy.closed = true;
+          if (lazy.pending) { lazy.pending = null; job.releaseGate(); }
+        };
+        job.finish = function() { if (!lazy.modelId) job.close(); };
+        job.start = function() {
+          if (job.started) return;
+          job.started = true;
+          if (_parallel && _ccLoadGeneration !== _batchGen) { job.gone(); _resolveParsed(null); return; }
+          _schedParsing++; _parseCounted = true; if (_schedParsing > _ccIfcParallelPeak) _ccIfcParallelPeak = _schedParsing;
+          _schedAlive++; _schedAliveCost += job.cost; _aliveCounted = true;
+          var p = _readFileWithProgress(f, function(loaded, total){
+            var _rpct = total > 0 ? Math.round(loaded / total * 15) : 0;
+            job.onProg('Reading file ' + _rpct + '%');
+          }).then(function(buf) {
+            var _preCheck = _ccValidateIfcPreParse(buf, f.name);
+            if (!_preCheck.ok) { job.preError = _preCheck.error; job.gone(); return null; }
+            if (_parallel && _ccLoadGeneration !== _batchGen) { job.gone(); return null; }
+            job.onProg('Starting IFC parser 16%');
+            var col = DISC[0].c;
+            // The old 500ms cosmetic dwell dominated small-model completion.
+            // Keep a short finish transition without holding the ready state
+            // for half a second after properties have already arrived.
+            _batchMeta.delayMs = 120;
+            lazy.release = _loadBatch ? _loadBatch.hold('ifc-properties:'+f.name) : function(){};
+            // Every loadIFCWorker rejection path (Worker ctor throw, 20s
+            // watchdog, worker 'error') rejects *without* calling onProps;
+            // the fallback releases the gate when loadIFC settles, otherwise
+            // the loading strip / progress modal sticks forever.
+            // Declared IFC unit — read once from the raw bytes; attached to
+            // result.stats so it persists via the geo-cache and the unit
+            // pipeline stops guessing for well-formed files.
+            var declUnit = _ccExtractIfcLengthUnit(buf);
+            // Storey-scoped loading: set via ClashControl.loadFiles(files,
+            // {storeys:[...]}) — applies to this batch, then clears.
+            var scope = window._ccNextLoadScope || null;
+            job.preview = _ccLoadPreview.create(f.name);
+            if (job.preview) _batchPreviews.push(job.preview);
+            var wOpts = job.preview ? { stream: true, onBatch: job.preview.addBatch } : null;
+            var loadP = loadIFCWorker(buf, col, job.onProg, job.onProps, scope, wOpts);
+            var workerGen = _ccLoadGeneration; // capture generation assigned by loadIFCWorker
+            var outcome = loadP.then(function(result) {
+              parseSettled();
+              if (!result) job.dropPreview();
+              return { result: result };
+            }, function(err) {
+              job.gone();
+              return { err: err };
+            });
+            return { buf: buf, col: col, declUnit: declUnit, scope: scope, workerGen: workerGen, outcome: outcome };
+          });
+          p.then(null, function() { job.gone(); });
+          _resolveParsed(p);
+        };
+        return job;
+      }
       files.forEach(function(f) {
         var ext = f.name.split('.').pop().toLowerCase();
         if (ext === 'ifc') totalIfc++;
@@ -24154,51 +24678,25 @@ function startApp() {
             return;
           }
         }
+        var job = _mkIfcJob(f);
+        if (_parallel) _ifcJobs.push(job);
         chain = chain.then(function() {
           setLoading(true);
           setLoadMsg(totalIfc > 1 ? f.name + ' (' + (doneIfc + 1) + '/' + totalIfc + ')…' : 'Loading ' + f.name + '…');
-          var _onProg = function(msg){ setLoadMsg(f.name + ': ' + msg); window._ccModelLoadMsg=f.name+': '+msg; window.dispatchEvent(new CustomEvent('cc-model-loading',{detail:{loading:true,msg:f.name+': '+msg}})); };
-          return _readFileWithProgress(f, function(loaded, total){
-            var _rpct = total > 0 ? Math.round(loaded / total * 15) : 0;
-            _onProg('Reading file ' + _rpct + '%');
-          }).then(function(buf) {
-            var _preCheck = _ccValidateIfcPreParse(buf, f.name);
-            if (!_preCheck.ok) {
-              errors.push(_preCheck.error);
-              return;
-            }
-            _onProg('Starting IFC parser 16%');
-            var disc='structural', col=DISC[0].c;
-            var _lazyPropsTarget = {modelId: null};
-            // The old 500ms cosmetic dwell dominated small-model completion.
-            // Keep a short finish transition without holding the ready state
-            // for half a second after properties have already arrived.
-            _batchMeta.delayMs = 120;
-            var _releaseLazyGate = _loadBatch ? _loadBatch.hold('ifc-properties:'+f.name) : function(){};
-            // Release the lazy-props gate exactly once. The worker path
-            // releases it from onProps; the sync fallback (below) releases it
-            // when loadIFC settles. Every loadIFCWorker rejection path (Worker
-            // ctor throw, 20s watchdog, worker 'error') rejects *without*
-            // calling onProps, so without this the counter never returns to 0
-            // and the loading strip / progress modal sticks forever after an
-            // otherwise-successful fallback — most likely on big files that
-            // trip the watchdog.
-            // Declared IFC unit — read once from the raw bytes; attached to
-            // result.stats below so it persists via the geo-cache and the
-            // unit pipeline stops guessing for well-formed files.
-            var _declUnit = _ccExtractIfcLengthUnit(buf);
-            // Storey-scoped loading: set via ClashControl.loadFiles(files,
-            // {storeys:[...]}) — applies to this batch, then clears.
-            var _loadScope = window._ccNextLoadScope || null;
-            var _loadP = loadIFCWorker(buf, col, _onProg, function(propMap, propErr) {
-              if (!propErr && _lazyPropsTarget.modelId) {
-                _mergeLazyProps(_lazyPropsTarget.modelId, propMap);
-              }
-              _releaseLazyGate();
-            }, _loadScope);
-            var _workerGen = _ccLoadGeneration; // capture generation assigned by loadIFCWorker
-            _loadP = _loadP.catch(function(workerErr) {
+          // Sequential mode starts the parse here, exactly as before; in
+          // parallel mode the scheduler normally started it already (a job
+          // still held back by the memory budget is started now so the
+          // in-order commit always makes progress).
+          if (!job.started) job.start();
+          return job.parsed.then(function(p) {
+            if (job.preError) { errors.push(job.preError); return; }
+            if (!p) { job.close(); return; } // batch cancelled before this file started
+            var _onProg = job.onProg, col = p.col, disc = 'structural', _declUnit = p.declUnit, _loadScope = p.scope, buf = p.buf;
+            var _loadP = p.outcome.then(function(o) {
+              if (!o.err) return o.result;
+              var workerErr = o.err;
               console.warn('[IFC Worker fallback]', workerErr.message || workerErr);
+              job.dropPreview(); // the main-thread fallback has no preview
               // `buf` was transferred (zero-copy) into the worker's
               // postMessage and is now a detached ArrayBuffer (byteLength 0)
               // regardless of why the worker failed — reacquire fresh bytes
@@ -24207,11 +24705,11 @@ function startApp() {
               return f.arrayBuffer().then(function(freshBuf) {
                 // Release the gate once the sync fallback settles (not before —
                 // the strip should stay up until geometry is actually placed).
-                return loadIFC(freshBuf, col, _onProg, _workerGen, _loadScope).finally(_releaseLazyGate);
+                return loadIFC(freshBuf, col, _onProg, p.workerGen, _loadScope).finally(job.releaseGate);
               });
             });
             return _loadP.then(function(result) {
-              if (!result) return; // load was cancelled by a newer load
+              if (!result) { job.close(); return; } // load was cancelled
               if (_declUnit != null) { result.stats = result.stats || {}; result.stats.unitScale = _declUnit; }
               disc = _ccClassifyLoadedResult(result, f.name);
               var dObj = DISC.find(function(x){return x.id===disc;});
@@ -24223,7 +24721,7 @@ function startApp() {
               var baseName = f.name.replace(/\.ifc$/i,'');
               var _ifcOverlapWarn = _checkModelOverlap(result.elements, s.models.filter(function(m){return m.name!==baseName;}));
               if (_ifcOverlapWarn && typeof _ifcOverlapWarn === 'object') {
-                if (!confirm(_ifcOverlapWarn.confirm)) { setErr('Duplicate model load cancelled.'); return; }
+                if (!confirm(_ifcOverlapWarn.confirm)) { setErr('Duplicate model load cancelled.'); job.close(); return; }
                 setErr(_ifcOverlapWarn.warn);
               } else if (_ifcOverlapWarn) {
                 setErr(_ifcOverlapWarn);
@@ -24249,7 +24747,7 @@ function startApp() {
                 modelId = uid();
                 d({t:A.ADD_MODEL, v:Object.assign({id:modelId, name:baseName, discipline:disc, color:col, visible:true, _version:1, meshes:result.meshes, elements:result.elements, storeys:result.storeys||[], storeyData:result.storeyData||[], spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, stats:result.stats||{fileSize:fSize}}, _ccSemanticModelFields(result))});
               }
-              _lazyPropsTarget.modelId = modelId;
+              job.committed(modelId, result.elements);
               consoleElementProfile(baseName, (result.stats&&result.stats.loadType)||'IFC', result.elements);
               var _verMeta = existing ? {_version:(existing._version||1)+1, _versionDiff:versionDiff} : {_version:1};
               // `buf` is detached (transferred to the worker) by this point —
@@ -24284,10 +24782,12 @@ function startApp() {
             });
           }).catch(function(er) {
             console.error(er);
+            job.close();
             errors.push(f.name + ': ' + (er.message || 'Load failed'));
-          }).then(function(){ doneIfc++; });
+          }).then(function(){ doneIfc++; job.finish(); });
         });
       });
+      if (_parallel) _schedPump();
       chain.then(function() {
         if (errors.length) setErr(errors.join('\n'));
         window._ccNextLoadScope = null; // one-shot: scope applies to a single batch
@@ -24303,9 +24803,11 @@ function startApp() {
             _gcEvent('memory-guardrail');
           }
         } catch(_) {}
+        _batchPreviews.forEach(function(pv) { pv.commit(pv.modelId); }); // any preview not yet torn down goes after its grace period
         if (_loadBatch) _loadBatch.markChainDone();
         else _finishLoadingStrip(0);
       }, function(error) {
+        _batchPreviews.forEach(function(pv) { pv.dispose(); });
         console.error(error);
         errors.push(error && error.message || 'File batch failed');
         setErr(errors.join('\n'));
@@ -25073,6 +25575,25 @@ function startApp() {
   }
   /* eslint-enable react-hooks/rules-of-hooks */
 
+  // "Not drawn" loader report (stats.notDrawn, see createNotDrawnReport):
+  // human-readable reason / type lines for the model card.
+  var _CC_ND_REASONS = {
+    failed: 'geometry could not be built',
+    empty: 'no geometry (empty shape)',
+    transparent: 'styled fully transparent',
+    nonRenderable: 'non-renderable type skipped',
+    noRepresentation: 'no 3D representation'
+  };
+  function _ccNotDrawnLines(nd) {
+    if (!nd || !nd.total) return [];
+    var lines = Object.keys(nd.byReason || {}).sort(function(a, b) { return nd.byReason[b] - nd.byReason[a]; }).map(function(r) {
+      return _cc_t('modelCard.notDrawn.reason.' + r, _CC_ND_REASONS[r] || r) + ': ' + nd.byReason[r];
+    });
+    var types = Object.keys(nd.byType || {}).sort(function(a, b) { return nd.byType[b] - nd.byType[a]; });
+    if (types.length) lines.push(_cc_t('modelCard.notDrawn.types', 'Types') + ': ' + types.slice(0, 6).map(function(t) { return t + ' ' + nd.byType[t]; }).join(', ') + (types.length > 6 ? ' …' : ''));
+    return lines;
+  }
+
   function ModelCard(props) {
     var m=props.m, d=props.d, s=props.s;
     var op=useState(false), open=op[0], setOpen=op[1];
@@ -25109,6 +25630,9 @@ function startApp() {
         }()}
         ${m.loaderWarnings && m.loaderWarnings.length > 0 && html`<span title=${m.loaderWarnings.map(function(w){return w.message;}).join('\n')}
           style=${{fontSize:'0.6rem',padding:'0 .3rem',borderRadius:99,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',flexShrink:0}}>${_cc_t('modelCard.warnings','{n} warning(s)',{n:m.loaderWarnings.length})}</span>`}
+        ${m.stats && m.stats.notDrawn && m.stats.notDrawn.total > 0 && html`<button onClick=${function(e){e.stopPropagation();setOpen(true);}}
+          title=${_cc_t('modelCard.notDrawnTip','{n} element(s) in this file could not be drawn — the loaded geometry is unchanged. Open the card for details.',{n:m.stats.notDrawn.total}) + '\n' + _ccNotDrawnLines(m.stats.notDrawn).join('\n')}
+          style=${{fontSize:'var(--text-2xs)',padding:'0 var(--space-1)',borderRadius:'var(--radius-pill)',background:'var(--color-info-bg)',color:'var(--color-info-fg)',border:'none',cursor:'pointer',flexShrink:0,fontFamily:'var(--font-body)'}}>${_cc_t('modelCard.notDrawn','{n} not drawn',{n:m.stats.notDrawn.total})}</button>`}
         ${m._version>1 && html`<span style=${{fontSize:'0.57rem',color:'var(--accent)',background:'var(--accent-bg)',padding:'.05rem .25rem',borderRadius:3,flexShrink:0,fontWeight:600}}>v${m._version}</span>`}
         ${m._stub && html`<span style=${{fontSize:'0.63rem',color:'var(--color-warning-fg)',background:'var(--pill-amber-bg)',padding:'.05rem .3rem',borderRadius:4,flexShrink:0}}>${_cc_t('modelCard.stub','stub')}</span>`}
         ${m.stats && m.stats.loadType && html`<span style=${{fontSize:'0.57rem',padding:'1px 4px',borderRadius:3,background:'var(--accent-bg)',color:'var(--accent)',fontWeight:600,flexShrink:0}}>${m.stats.loadType}</span>`}
@@ -25189,6 +25713,10 @@ function startApp() {
             ${(m.loaderWarnings||[]).map(function(w,wi){ return html`<div key=${'w'+wi} style=${{fontSize:'0.63rem',color:'var(--color-warning-fg)'}}>${w.message}</div>`; })}
           </div>`;
         }()}
+        ${m.stats && m.stats.notDrawn && m.stats.notDrawn.total > 0 && html`<div data-cc-not-drawn="1" style=${{borderTop:'1px solid var(--border)',paddingTop:'var(--space-1)',display:'flex',flexDirection:'column',gap:'2px'}}>
+          <span style=${{fontSize:'var(--text-2xs)',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.03em'}}>${_cc_t('modelCard.notDrawnTitle','Not drawn ({n})',{n:m.stats.notDrawn.total})}</span>
+          ${_ccNotDrawnLines(m.stats.notDrawn).map(function(l, li){ return html`<div key=${'nd'+li} style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>${l}</div>`; })}
+        </div>`}
         ${m.storeys&&m.storeys.length>0 && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',borderTop:'1px solid var(--border)',paddingTop:'.25rem',marginTop:'.1rem'}}>
           ${_cc_t('modelCard.levelsManage','{n} level{s} — manage in Levels panel below',{n:m.storeys.length,s:m.storeys.length===1?'':'s'})}
         </div>`}

@@ -27,9 +27,9 @@ const ALL_FLAGS = [
   'ccUiWindowedConflicts', 'ccUiEmptyStates', 'ccUiOperationCenter',
   'ccUiToolbarV2', 'ccUiModalV2', 'ccUiStoreyChooser',
   'storageAutosaveGate', 'storageDetectCaches', 'memorySafeLoad', 'detectWorkerPool',
-  'occlusionCulling',
+  'occlusionCulling', 'progressivePreview', 'parallelLoad',
 ];
-const PROMOTED_FLAGS = ['ccUiEmptyStates', 'detectWorkerPool', 'occlusionCulling'];
+const PROMOTED_FLAGS = ['ccUiEmptyStates', 'detectWorkerPool', 'occlusionCulling', 'progressivePreview', 'parallelLoad'];
 
 test('manifest is exactly the known set, nothing added or removed silently', () => {
   assert.deepEqual(Object.keys(safety.manifest), ALL_FLAGS);
@@ -55,7 +55,7 @@ test('only known explicit query or storage flags can opt a migration in', () => 
   const flags = safety.readFlags({
     search: '?ccSafety=concurrencyV2,unknownMigration', storage
   });
-  assert.deepEqual(flags, { concurrencyV2: true, geoCacheV8: true, ccUiEmptyStates: true, detectWorkerPool: true, occlusionCulling: true });
+  assert.deepEqual(flags, { concurrencyV2: true, geoCacheV8: true, ccUiEmptyStates: true, detectWorkerPool: true, occlusionCulling: true, progressivePreview: true, parallelLoad: true });
 });
 
 test('a leading "-" token explicitly cancels an earlier bare opt-in token in the same query string', () => {

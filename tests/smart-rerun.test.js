@@ -238,7 +238,7 @@ test('extractOpeningRecords is defensive: a broken opening or a missing constant
 
 test('the IFC worker source carries the extraction helper and returns the records in its result message', () => {
   assert.match(src, /'var extractOpeningRecords=' \+ extractOpeningRecords\.toString\(\)/);
-  assert.match(src, /_emit\(\{type:'result', packedEls:packedEls, geoTable:_geoTable, openingRecs:openingRecs,/);
+  assert.match(src, /_emit\(\{type:'result', packedEls:packedEls, geoTable:\(_stream \? \{\} : _geoTable\), streamed:_stream \? _bSent : 0,\n\s+openingRecs:openingRecs,/);
   assert.match(src, /msg\.openingRecs && msg\.openingRecs\[eid\]/);
 });
 

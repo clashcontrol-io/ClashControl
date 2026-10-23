@@ -36,6 +36,7 @@ import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { join, dirname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateSyntheticIfc, generateSemanticIfc } from '../fixtures/generate-synthetic-ifc.js';
+import { deepModelDigest, diffDigests } from './model-digest.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const offline = process.env.CC_BROWSER_OFFLINE_DEPS === '1';
@@ -272,6 +273,67 @@ async function loadCancelReloadAndFingerprint(fixtureUrl) {
   return result;
 }
 
+// Parallel / progressive-preview equivalence: the SAME set of files dropped
+// in ONE loadFiles call, once with the default loader (files one after
+// another, no preview) and once with ?ccSafety=progressivePreview,parallelLoad
+// (several workers at once, geometry streamed to the main thread in batches
+// and drawn as a display-only preview). Every model must be identical
+// element-for-element: order, triangle/index/normal bytes, mesh matrices,
+// props (after the lazy psets merge) and float64 volume/area.
+async function loadSetDeep(query, urls) {
+  const page = await browser.newPage();
+  page.on('dialog', (d) => d.accept()); // duplicate-model overlap prompts between fixtures
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  if (offline) {
+    const local = async (route, file, ct) => route.fulfill({
+      status: 200, body: await readFile(join(root, 'node_modules', file)),
+      headers: { 'content-type': ct || 'text/javascript', 'access-control-allow-origin': '*' },
+    });
+    await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js', (r) => local(r, 'react/umd/react.production.min.js'));
+    await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js', (r) => local(r, 'react-dom/umd/react-dom.production.min.js'));
+    await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js', (r) => local(r, 'jszip/dist/jszip.min.js'));
+    await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', (r) => local(r, 'pdfjs-dist/build/pdf.min.js'));
+    await page.context().route('https://cdn.jsdelivr.net/npm/three@0.180.0/**', async (route) => {
+      const suffix = new URL(route.request().url()).pathname.split('/three@0.180.0/')[1];
+      await local(route, 'three/' + suffix);
+    });
+    await page.context().route('https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/**', async (route) => {
+      const suffix = new URL(route.request().url()).pathname.split('/web-ifc@0.0.77/')[1];
+      await local(route, 'web-ifc/' + suffix, suffix.endsWith('.wasm') ? 'application/wasm' : 'text/javascript');
+    });
+    await page.context().route('https://fonts.googleapis.com/**', (route) => route.fulfill({ status: 200, body: '', contentType: 'text/css' }));
+    await page.context().route('https://fonts.gstatic.com/**', (route) => route.abort());
+    await page.context().route('https://gc.zgo.at/**', (route) => route.fulfill({ status: 200, body: '', contentType: 'text/javascript' }));
+  }
+  await page.goto(`http://127.0.0.1:${port}/${query}`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 60_000 });
+  const meta = await page.evaluate(async (list) => {
+    const files = [];
+    for (let i = 0; i < list.length; i++) files.push(new File([await (await fetch(list[i])).arrayBuffer()], 'set' + i + '-' + list[i].split('/').pop()));
+    let previewBatches = 0;
+    const iv = setInterval(() => { const pi = window._ccLoadPreview && window._ccLoadPreview.info(); if (pi && pi.batches > previewBatches) previewBatches = pi.batches; }, 5);
+    window.ClashControl.loadFiles(files);
+    await new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const w = setInterval(() => {
+        const s = window._ccLatestState;
+        const ms = s ? s.models.filter((m) => m.name.indexOf('set') === 0) : [];
+        if (ms.length === list.length && window._ccModelLoading === false && ms.every((m) => m._propsVersion)) { clearInterval(w); resolve(); }
+        if (Date.now() - t0 > 120000) { clearInterval(w); reject(new Error('timed out waiting for the file set: ' + JSON.stringify(ms.map((m) => [m.name, !!m._propsVersion])) + ' loading=' + window._ccModelLoading)); }
+      }, 50);
+    });
+    clearInterval(iv);
+    const pi = window._ccLoadPreview.info();
+    return { order: window._ccLatestState.models.map((m) => m.name), previewBatches, parallelPeak: window._ccLoadPreview.parallelPeak(),
+      previewLeft: pi.live, previewInScene: pi.inScene,
+      previewInState: window._ccLatestState.models.some((m) => (m.meshes || []).some((x) => x.userData && x.userData._ccLoadPreview)) };
+  }, urls);
+  const digest = await page.evaluate(deepModelDigest, 'set');
+  await page.close();
+  return { meta, digest };
+}
+
 let allOk = true;
 try {
   await mkdir(generatedDir, { recursive: true });
@@ -341,6 +403,31 @@ try {
       (workerResult.georef ? ', georef=' + JSON.stringify(workerResult.georef) : '') +
       (workerResult.mapConversion ? ', mapConversion=' + JSON.stringify(workerResult.mapConversion) : '') +
       ')');
+  }
+
+  // Parallel + progressive preview == default sequential load.
+  {
+    const setUrls = ['/tests/fixtures/office-architecture.ifc', '/tests/fixtures/office-mep.ifc', '/tests/fixtures/multi-storey-smoke.ifc']
+      .concat(resolvedCases.filter((c) => /spaces|semantics|space boundaries|unit conversion/.test(c.name)).map((c) => c.url));
+    const seq = await loadSetDeep('?ccSafety=-progressivePreview,-parallelLoad', setUrls);
+    const par = await loadSetDeep('?ccSafety=progressivePreview,parallelLoad', setUrls);
+    const diffs = diffDigests(seq.digest, par.digest);
+    const orderSame = JSON.stringify(seq.meta.order) === JSON.stringify(par.meta.order);
+    if (diffs.length || !orderSame) {
+      console.error('order', seq.meta.order, par.meta.order); console.error(diffs.join('\n'));
+      fail('[parallel+preview] a parallel, progressively previewed load differs from the sequential load');
+      allOk = false;
+    } else if (!(par.meta.previewBatches > 0) || !(par.meta.parallelPeak > 1)) {
+      fail('[parallel+preview] the flagged path did not actually run (preview batches ' + par.meta.previewBatches + ', parallel peak ' + par.meta.parallelPeak + ')');
+      allOk = false;
+    } else if (par.meta.previewLeft || par.meta.previewInScene || par.meta.previewInState || seq.meta.previewBatches) {
+      fail('[parallel+preview] preview not torn down / leaked into state: ' + JSON.stringify(par.meta) + ' / sequential batches ' + seq.meta.previewBatches);
+      allOk = false;
+    } else {
+      const n = Object.values(seq.digest).reduce((t, m) => t + m.elements, 0);
+      console.log('DIFFERENTIAL OK — [parallel+preview] ' + setUrls.length + ' files, ' + n + ' elements identical (triangles, matrices, props, volume/area; ' +
+        par.meta.previewBatches + ' preview batches, ' + par.meta.parallelPeak + ' parses at once)');
+    }
   }
 
   // Cancellation case, run against the baseline fixture: a cancel-then-
