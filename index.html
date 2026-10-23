@@ -20153,6 +20153,7 @@ function startApp() {
       S.renderer.localClippingEnabled = true;
       _ccApplySectionMaterialPlanes(S, planes, 'section');
       if(!planes.length && !(s.sectionBox&&s.sectionBox.enabled)) S.renderer.localClippingEnabled=false;
+      S._sectionPlanes = planes;
       if(!(s.sectionBox&&s.sectionBox.enabled)) window._ccActivePlanes = planes; // expose for click filter
       // Debounced section cut highlight lines
       clearTimeout(S._sectionCutLinesTimer);
@@ -20207,7 +20208,9 @@ function startApp() {
             S.renderer.localClippingEnabled=false;
           }
           S._sectionBoxActive=false;
-          window._ccActivePlanes = [];
+          // The plane effect (declared first) may already have published its
+          // planes in this same commit — don't wipe them.
+          window._ccActivePlanes = (s.sectionAxis || s.sectionCustom) && S._sectionPlanes ? S._sectionPlanes : [];
         }
         cleanupSbox();
         window._ccCurrentSbox=null;

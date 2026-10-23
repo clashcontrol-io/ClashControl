@@ -170,7 +170,15 @@ async function installHelpers(page) {
       })));
       return out;
     };
-    window.__gz = { frames, settle, pxLen, tabPx, zoomTo, cutPoints };
+    // Dispatch and wait until the section effects have consumed it (React
+    // commits passive effects after a paint, which can take a while).
+    const dispatch = async (...actions) => {
+      const p0 = S._sectionPlanes, g0 = S._sboxGeom, h0 = S._sboxHelper, t0 = performance.now();
+      actions.forEach((a) => window._ccDispatch(a));
+      while (S._sectionPlanes === p0 && S._sboxGeom === g0 && S._sboxHelper === h0 && performance.now() - t0 < 8000) await new Promise((r) => setTimeout(r, 10));
+      await settle();
+    };
+    window.__gz = { frames, settle, pxLen, tabPx, zoomTo, cutPoints, dispatch };
   });
 }
 
@@ -178,7 +186,7 @@ async function installHelpers(page) {
 async function checkPlane(page, label) {
   return page.evaluate(async (label) => {
     const T = window.THREE, S = window._ccState3d, H = window.__gz;
-    await new Promise((r) => setTimeout(r, 350)); await H.settle();
+    await H.settle();
     const probs = [];
     const gizmos = S.scene.children.filter((o) => o.userData && o.userData._sectionPlane);
     let tc = 0; S.scene.traverse((o) => { if (/TransformControls/.test(o.type || '') || (o.userData && o.userData._isSectionTC)) tc++; });
@@ -217,7 +225,7 @@ try {
     // Axis planes at three positions each.
     for (const axis of ['x', 'y', 'z']) {
       for (const pos of [0.3, 0.55, 0.8]) {
-        await page.evaluate(([axis, pos]) => window._ccDispatch({ t: 'SECTION', axis, pos }), [axis, pos]);
+        await page.evaluate(([axis, pos]) => window.__gz.dispatch({ t: 'SECTION', axis, pos }), [axis, pos]);
         const r = await checkPlane(page, `${fx} ${axis}@${pos}`);
         r.probs.forEach((p) => fail(`${r.label}: ${p}`));
         if (!r.probs.length && pos === 0.55) console.log(`GIZMO OK — ${r.label}: one gizmo at the cut, ${r.pts} cut points inside, outline/cut ${r.ratio.map((x) => x.toFixed(3)).join(' / ')}`);
@@ -227,7 +235,7 @@ try {
     await page.evaluate(() => {
       const b = window._ccElemsBBox(), a = Math.PI / 6;
       const p = [b.min.x + (b.max.x - b.min.x) * 0.33, b.min.y + (b.max.y - b.min.y) * 0.7, b.min.z + (b.max.z - b.min.z) * 0.3];
-      window._ccDispatch({ t: 'SECTION_CUSTOM', v: { normal: [Math.cos(a), 0, Math.sin(a)], point: p }, pos: 0.5 });
+      return window.__gz.dispatch({ t: 'SECTION_CUSTOM', v: { normal: [Math.cos(a), 0, Math.sin(a)], point: p }, pos: 0.5 });
     });
     {
       const r = await checkPlane(page, `${fx} picked plane`);
@@ -235,8 +243,7 @@ try {
       if (!r.probs.length) console.log(`GIZMO OK — ${r.label}: centred on the cut, ${r.pts} cut points inside, outline/cut ${r.ratio.map((x) => x.toFixed(3)).join(' / ')}`);
     }
     // Live drag keeps plane, outline and gizmo together (imperative path).
-    await page.evaluate(() => window._ccDispatch({ t: 'SECTION', axis: 'x', pos: 0.5 }));
-    await page.waitForTimeout(300);
+    await page.evaluate(() => window.__gz.dispatch({ t: 'SECTION', axis: 'x', pos: 0.5 }));
     const sizes = [];
     for (const k of [0.6, 1.5, 4]) {
       await page.evaluate((k) => window.__gz.zoomTo(k), k);
@@ -246,8 +253,7 @@ try {
       }));
     }
     // Section box: whole model.
-    await page.evaluate(() => window._ccDispatch({ t: 'SECTION_BOX', v: window._ccModelSectionBoxSpec() }));
-    await page.waitForTimeout(300);
+    await page.evaluate(() => window.__gz.dispatch({ t: 'SECTION_BOX', v: window._ccModelSectionBoxSpec() }));
     const boxSizes = [];
     for (const k of [0.6, 1.5, 4]) {
       await page.evaluate((k) => window.__gz.zoomTo(k), k);
@@ -269,14 +275,79 @@ try {
     }
     handlePx[fx] = sizes.map((a, i) => [a, boxSizes[i].tabs[0], boxSizes[i].arcPx]);
 
+    // Real pointer interaction: hover paints --accent, drag moves a box face /
+    // the plane, release returns to idle; rotating keeps the gizmo on the plane.
+    if (fx === 'small') {
+      await page.evaluate(() => window.__gz.zoomTo(1.5));
+      const screenOf = (expr) => page.evaluate((expr) => {
+        const S = window._ccState3d, o = eval(expr), r = S.renderer.domElement.getBoundingClientRect();
+        const p = o.getWorldPosition(new window.THREE.Vector3()).project(S.camera);
+        return { x: r.left + (p.x + 1) / 2 * r.width, y: r.top + (1 - p.y) / 2 * r.height };
+      }, expr);
+      const colorOf = (expr) => page.evaluate((expr) => { const o = eval(expr); return '#' + o.material.color.getHexString(); }, expr);
+      const accent = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim().toLowerCase());
+      const TAB = 'window._ccState3d._sboxFaceHandles[2]'; // +Y (top) tab
+      const t = await screenOf(TAB);
+      await page.mouse.move(t.x, t.y); await page.waitForTimeout(50);
+      if (await colorOf(TAB + '.children[0]') !== accent) fail('hovered box tab stroke is not --accent');
+      const maxY0 = await page.evaluate(() => window._ccLatestState.sectionBox.max[1]);
+      await page.mouse.down(); await page.mouse.move(t.x, t.y + 40, { steps: 4 });
+      if (await colorOf(TAB) !== accent) fail('dragged box tab is not solid --accent');
+      await page.mouse.up();
+      const maxY1 = await page.evaluate(() => window._ccLatestState.sectionBox.max[1]);
+      if (!(maxY1 < maxY0 - 0.05)) fail(`dragging the top tab down did not lower the box top (${maxY0} -> ${maxY1})`);
+      else console.log(`GIZMO OK — box tab hover/active = --accent, drag lowered the top ${(maxY0 - maxY1).toFixed(2)} m`);
+      await page.evaluate(() => window.__gz.dispatch({ t: 'SECTION_BOX', v: { enabled: false } }, { t: 'SECTION', axis: 'x', pos: 0.5 }));
+      const ARROW = 'window._ccState3d._sectionPlaneVis._secDragHandles[0]';
+      const a = await page.evaluate(() => {
+        const S = window._ccState3d, g = S._sectionPlaneVis, T = window.THREE, r = S.renderer.domElement.getBoundingClientRect();
+        const p = new T.Vector3(0, 0, 30).applyMatrix4(g.children[1].matrixWorld).project(S.camera); // along the shaft
+        return { x: r.left + (p.x + 1) / 2 * r.width, y: r.top + (1 - p.y) / 2 * r.height };
+      });
+      await page.mouse.move(a.x, a.y); await page.waitForTimeout(50);
+      if (await colorOf(ARROW + '.children[0]') !== accent) fail('hovered plane arrow is not --accent');
+      const pos0 = await page.evaluate(() => window._ccLatestState.sectionPos);
+      await page.mouse.down(); await page.mouse.move(a.x + 60, a.y, { steps: 5 });
+      const mid = await page.evaluate(() => { const S = window._ccState3d, pl = window._ccActivePlanes[0]; return Math.abs(pl.distanceToPoint(S._sectionPlaneVis.position)); });
+      await page.mouse.up(); await page.waitForTimeout(300);
+      const pos1 = await page.evaluate(() => window._ccLatestState.sectionPos);
+      if (mid > 1e-4) fail(`during the drag the gizmo left the plane by ${mid}`);
+      if (Math.abs(pos1 - pos0) < 0.01) fail(`dragging the plane arrow did not move the cut (${pos0} -> ${pos1})`);
+      else console.log(`GIZMO OK — plane arrow drag moved the cut ${pos0.toFixed(2)} -> ${pos1.toFixed(2)}, gizmo stayed on the plane`);
+      await page.evaluate(() => window.__gz.settle());
+      const before = await page.evaluate(() => window._ccState3d._sectionPlaneVis.position.toArray());
+      // grab the ring on its rim: try a few points around it
+      let grabbed = false;
+      for (const ang of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+        const px = await page.evaluate(([ang]) => {
+          const S = window._ccState3d, g = S._sectionPlaneVis._secRotRing, T = window.THREE, r = S.renderer.domElement.getBoundingClientRect();
+          const p = new T.Vector3(Math.cos(ang) * 11, Math.sin(ang) * 11, 0).applyMatrix4(g.matrixWorld).project(S.camera);
+          return { x: r.left + (p.x + 1) / 2 * r.width, y: r.top + (1 - p.y) / 2 * r.height };
+        }, [ang]);
+        await page.mouse.move(px.x, px.y); await page.waitForTimeout(30);
+        if (await page.evaluate(() => window._ccState3d.renderer.domElement.style.cursor) === 'crosshair') {
+          await page.mouse.down(); await page.mouse.move(px.x + 80, px.y, { steps: 5 }); await page.mouse.up(); grabbed = true; break;
+        }
+      }
+      await page.waitForTimeout(300);
+      const rot = await page.evaluate(() => {
+        const s = window._ccLatestState, S = window._ccState3d, pl = window._ccActivePlanes[0];
+        return { custom: !!s.sectionCustom, onPlane: Math.abs(pl.distanceToPoint(S._sectionPlaneVis.position)), pos: S._sectionPlaneVis.position.toArray() };
+      });
+      const moved = Math.hypot(...rot.pos.map((v, i) => v - before[i]));
+      if (!grabbed) fail('could not grab the rotate ring');
+      else if (!rot.custom || rot.onPlane > 1e-4 || moved > 0.5) fail(`rotating: custom=${rot.custom}, gizmo ${rot.onPlane} off the plane, moved ${moved.toFixed(3)} m`);
+      else console.log(`GIZMO OK — ring rotation keeps the gizmo on the plane (moved ${moved.toFixed(3)} m)`);
+    }
+
     // Screenshots: plane + box, light and dark.
     for (const theme of ['light', 'dark']) {
       await page.evaluate((theme) => window._ccDispatch({ t: 'UPD_PREFS', u: { theme } }), theme);
-      await page.evaluate(() => { window._ccDispatch({ t: 'SECTION_BOX', v: { enabled: false } }); window._ccDispatch({ t: 'SECTION', axis: 'x', pos: 0.45 }); });
+      await page.evaluate(() => window.__gz.dispatch({ t: 'SECTION_BOX', v: { enabled: false } }, { t: 'SECTION', axis: 'x', pos: 0.45 }));
       await page.evaluate(() => window.__gz.zoomTo(1.3));
       await page.waitForTimeout(500);
       await page.screenshot({ path: join(SHOTS, `${fx}-plane-${theme}.png`) });
-      await page.evaluate(() => window._ccDispatch({ t: 'SECTION_BOX', v: window._ccModelSectionBoxSpec() }));
+      await page.evaluate(() => window.__gz.dispatch({ t: 'SECTION_BOX', v: window._ccModelSectionBoxSpec() }));
       await page.evaluate(() => window.__gz.zoomTo(1.3));
       await page.waitForTimeout(500);
       await page.screenshot({ path: join(SHOTS, `${fx}-box-${theme}.png`) });

@@ -255,7 +255,7 @@
       if (opts.onChange) opts.onChange();
     }
     if (opts.observeTheme && doc && typeof MutationObserver === 'function') {
-      new MutationObserver(refreshTheme).observe(doc.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style', 'class'] });
+      new MutationObserver(refreshTheme).observe(doc.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     }
     return {
       track: track, update: update, setState: setState, refreshTheme: refreshTheme,
