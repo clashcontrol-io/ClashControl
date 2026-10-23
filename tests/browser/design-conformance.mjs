@@ -363,6 +363,13 @@ async function runVariant(variant, viewport, theme, mobile) {
     await page.evaluate((w) => { window._ccDispatch({ t: 'SET_WORKSPACE', v: w }); window._ccDispatch({ t: 'TAB', v: null }); }, ws);
     await surface(page, variant, 'workspace-' + ws, mobile ? ['.cc-header', '.cc-mobile-nav'] : ['.cc-desktop-topbar', '.cc-top-toolbar', '.cc-left-rail', '.cc-overlay-top'], o);
   }
+  // project switcher (where the header shows it)
+  const projBtn = await page.$('.cc-header-project > button');
+  if (projBtn && await projBtn.isVisible()) {
+    await projBtn.click();
+    await surface(page, variant, 'project-menu', ['.cc-header-project'], o);
+    await projBtn.click();
+  }
   // models panel: cards (one expanded) + geo placement
   await page.evaluate(() => window._ccDispatch({ t: 'SET_WORKSPACE', v: 'coordinate' }));
   await page.evaluate((m) => { if (!m && window._ccOpenModelsPanel) { window._ccDispatch({ t: 'TAB', v: null }); window._ccOpenModelsPanel(); } else window._ccDispatch({ t: 'TAB', v: 'models' }); }, mobile);

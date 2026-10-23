@@ -663,6 +663,9 @@
       }
       button, a[href], [role=switch], [role=tab], [role=menuitem] { min-width:44px!important; }
       summary, a[href], label:has(> input[type=checkbox]), label:has(> input[type=radio]) { display:flex; align-items:center; }
+      /* display:flex drops the native disclosure triangle — draw it back */
+      summary::before { content:'\25B8'; margin-right:var(--space-2); color:var(--text-muted); }
+      details[open] > summary::before { content:'\25BE'; }
       .cc-side-panel input[type=checkbox], .cc-left-panel input[type=checkbox] {
         width:20px!important; height:20px!important;
       }
@@ -22276,6 +22279,11 @@ function startApp() {
 
   // ── Navigation Cube (Revit-style 3D cube with compass) ────────
   // Supports face, edge, and corner clicks for 26 snap directions.
+  // The built-in project is stored as "Default Project"; show it in the UI language.
+  function _ccProjectName(p) {
+    if (!p) return '';
+    return (p.id === 'default' && p.name === 'Default Project') ? _cc_t('projects.defaultName', 'Default project') : p.name;
+  }
   function ViewCube(props) {
     var state3d = props.state3d;
     var theme = props.theme || 'dark';
@@ -23213,15 +23221,15 @@ function startApp() {
         <div class="cc-header-project" style=${{position:'relative'}}>
           <button onClick=${function(){setProjOpen(!projOpen)}}
             style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'var(--space-1)',fontSize:'var(--text-sm)',padding:'var(--space-1) var(--space-2)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-            ${activeProj.name} <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${projOpen?'▲':'▼'}</span>
+            ${_ccProjectName(activeProj)} <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${projOpen?'▲':'▼'}</span>
           </button>
-          ${projOpen && html`<div style=${{position:'absolute',top:'100%',left:0,marginTop:'var(--space-1)',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-md)',boxShadow:'0 8px 24px rgba(0,0,0,.4)',minWidth:220,zIndex:'var(--z-dropdown)',overflowY:'auto',maxHeight:'60vh'}}>
+          ${projOpen && html`<div style=${{position:'absolute',top:'100%',left:0,marginTop:'var(--space-1)',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-md)',boxShadow:'var(--shadow-lg)',minWidth:220,zIndex:'var(--z-dropdown)',overflowY:'auto',maxHeight:'60vh'}}>
             ${projects.map(function(p){
               var isActive = p.id===s.activeProject;
               var isConfirming = confirmDelete===p.id;
-              var rowBg = isActive ? 'var(--accent)' : 'transparent';
-              var txtCol = isActive ? '#fff' : 'var(--text-primary)';
-              var mutedCol = isActive ? 'rgba(255,255,255,.6)' : 'var(--text-faint)';
+              var rowBg = isActive ? 'var(--accent-bg)' : 'transparent';
+              var txtCol = 'var(--text-primary)';
+              var mutedCol = 'var(--text-muted)';
               return html`<div key=${p.id} style=${{borderBottom:'1px solid var(--border-subtle)',background:rowBg}}>
                 <div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',padding:'var(--space-2) var(--space-2)'}}>
                   ${renaming===p.id ? html`<input type="text" value=${renameVal} autofocus
@@ -23229,18 +23237,18 @@ function startApp() {
                     onKeyDown=${function(e){if(e.key==='Enter')finishRename(p.id);if(e.key==='Escape')setRenaming(false);}}
                     onBlur=${function(){finishRename(p.id)}}
                     style=${{...S_INPUT,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-1)',flex:1}} />` :
-                  html`<span onClick=${function(){switchTo(p.id)}} style=${{flex:1,fontSize:'var(--text-sm)',color:txtCol,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer',display:'flex',alignItems:'center',gap:'var(--space-1)'}}>${p.name}</span>`}
-                  <button onClick=${function(e){e.stopPropagation();startRename(p)}} style=${{...S_BTN,padding:'2px var(--space-1)',background:'none',color:mutedCol,fontSize:'var(--text-2xs)',lineHeight:1}} title=${_cc_t('common.rename','Rename')}>✎</button>
+                  html`<span onClick=${function(){switchTo(p.id)}} style=${{flex:1,fontSize:'var(--text-sm)',color:txtCol,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer',display:'flex',alignItems:'center',gap:'var(--space-1)',fontWeight:isActive?'var(--weight-semibold)':'var(--weight-regular)'}}>${_ccProjectName(p)}</span>`}
+                  <button onClick=${function(e){e.stopPropagation();startRename(p)}} style=${{...S_BTN,padding:'2px var(--space-1)',background:'none',color:mutedCol,fontSize:'var(--text-2xs)',lineHeight:1}} title=${_cc_t('common.rename','Rename')} aria-label=${_cc_t('common.rename','Rename')}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
                   <button onClick=${function(e){e.stopPropagation();setConfirmDelete(isConfirming?null:p.id);setRenaming(false);}}
-                    style=${{...S_BTN,padding:'2px var(--space-1)',background:isConfirming?(isActive?'rgba(255,255,255,.2)':'rgba(239,68,68,.15)'):'none',color:isConfirming?'#ef4444':mutedCol,fontSize:'var(--text-xs)',lineHeight:1,borderRadius:'var(--radius-xs)',border:isConfirming?'1px solid rgba(239,68,68,.4)':'1px solid transparent'}}
-                    title=${_cc_t('projects.deleteProject','Delete project')}>🗑</button>
+                    style=${{...S_BTN,padding:'2px var(--space-1)',background:isConfirming?'var(--color-danger-bg)':'none',color:isConfirming?'var(--color-danger-fg)':mutedCol,fontSize:'var(--text-xs)',lineHeight:1,borderRadius:'var(--radius-xs)',border:isConfirming?'1px solid var(--color-danger-border)':'1px solid transparent'}}
+                    title=${_cc_t('projects.deleteProject','Delete project')} aria-label=${_cc_t('projects.deleteProject','Delete project')}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg></button>
                 </div>
-                ${isConfirming && html`<div style=${{padding:'var(--space-1) var(--space-2) var(--space-2)',borderTop:'1px solid '+(isActive?'rgba(255,255,255,.2)':'var(--border-subtle)'),display:'flex',alignItems:'center',gap:'var(--space-2)',background:isActive?'rgba(0,0,0,.15)':'rgba(239,68,68,.06)'}}>
-                  <span style=${{flex:1,fontSize:'var(--text-2xs)',color:isActive?'rgba(255,255,255,.85)':'var(--text-secondary)'}}>${_cc_t('projects.deleteNamedConfirm','Delete "{name}"?',{name:p.name})}</span>
+                ${isConfirming && html`<div style=${{padding:'var(--space-1) var(--space-2) var(--space-2)',borderTop:'1px solid var(--border-subtle)',display:'flex',alignItems:'center',gap:'var(--space-2)',background:'var(--bg-secondary)'}}>
+                  <span style=${{flex:1,fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>${_cc_t('projects.deleteNamedConfirm','Delete "{name}"?',{name:_ccProjectName(p)})}</span>
                   <button onClick=${function(e){e.stopPropagation();deleteProject(p.id)}}
                     style=${{...S_BTN,padding:'2px var(--space-2)',background:'var(--color-danger)',color:'#fff',fontSize:'var(--text-2xs)',fontWeight:600}}>${_cc_t('common.delete','Delete')}</button>
                   <button onClick=${function(e){e.stopPropagation();setConfirmDelete(null)}}
-                    style=${{...S_BTN,padding:'2px var(--space-2)',background:'none',color:isActive?'rgba(255,255,255,.7)':'var(--text-muted)',fontSize:'var(--text-2xs)',border:'1px solid '+(isActive?'rgba(255,255,255,.3)':'var(--border)')}}>${_cc_t('common.cancel','Cancel')}</button>
+                    style=${{...S_BTN,padding:'2px var(--space-2)',background:'none',color:'var(--text-muted)',fontSize:'var(--text-2xs)',border:'1px solid var(--border)'}}>${_cc_t('common.cancel','Cancel')}</button>
                 </div>`}
               </div>`;
             })}
@@ -28054,14 +28062,13 @@ function startApp() {
         aria-expanded=${open} title=${_cc_t('matrix.tooltip','Which models clash with which — coloured by worst severity')}>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
           style=${{transform:open?'rotate(90deg)':'none',transition:'transform .15s'}}><path d="M9 6l6 6-6 6"/></svg>
-        <span>${_cc_t('matrix.title','Model clash matrix')}</span>
-        <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${models.length}×${models.length}</span>
-        <span style=${{marginLeft:'auto',display:'inline-flex',gap:'var(--space-2)',alignItems:'center',fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>
-          <span style=${{display:'inline-flex',alignItems:'center',gap:'var(--space-1)'}}><span data-cc-status="1" style=${{width:9,height:9,borderRadius:'var(--radius-xs)',background:'var(--color-warning-bg)',border:'1px solid var(--color-warning-border)'}}></span>${_cc_t('matrix.minor','Minor')}</span>
-          <span style=${{display:'inline-flex',alignItems:'center',gap:'var(--space-1)'}}><span data-cc-status="1" style=${{width:9,height:9,borderRadius:'var(--radius-xs)',background:'var(--color-danger-bg)',border:'1px solid var(--color-danger-border)'}}></span>${_cc_t('matrix.critical','Critical')}</span>
-        </span>
+        <span style=${{textAlign:'left'}}>${_cc_t('matrix.title','Model clash matrix')}</span>
       </button>
       ${open && html`<div style=${{overflowX:'auto',padding:'0 var(--space-2) var(--space-2)'}}>
+        <div style=${{display:'flex',gap:'var(--space-2)',alignItems:'center',fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>
+          <span style=${{display:'inline-flex',alignItems:'center',gap:'var(--space-1)'}}><span data-cc-status="1" style=${{width:9,height:9,borderRadius:'var(--radius-xs)',background:'var(--color-warning-bg)',border:'1px solid var(--color-warning-border)'}}></span>${_cc_t('matrix.minor','Minor')}</span>
+          <span style=${{display:'inline-flex',alignItems:'center',gap:'var(--space-1)'}}><span data-cc-status="1" style=${{width:9,height:9,borderRadius:'var(--radius-xs)',background:'var(--color-danger-bg)',border:'1px solid var(--color-danger-border)'}}></span>${_cc_t('matrix.critical','Critical')}</span>
+        </div>
         <table style=${{borderCollapse:'separate',borderSpacing:'3px',fontSize:'var(--text-2xs)'}}>
           <thead><tr>
             <th style=${{...TH,color:'var(--text-faint)'}}>${total===1?_cc_t('matrix.clashCountOne','1 clash'):_cc_t('matrix.clashCountMany','{n} clashes',{n:total})}</th>
@@ -43674,7 +43681,7 @@ function startApp() {
               <select value=${window._ccRevitTargetProject||s.activeProject||'default'}
                 onChange=${function(e){window._ccRevitTargetProject=e.target.value;}}
                 style=${{flex:1,padding:'var(--space-1) var(--space-1)',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontSize:'var(--text-xs)',fontFamily:'inherit'}}>
-                ${(s.projectList||[]).map(function(p){return html`<option key=${p.id} value=${p.id}>${p.name}</option>`})}
+                ${(s.projectList||[]).map(function(p){return html`<option key=${p.id} value=${p.id}>${_ccProjectName(p)}</option>`})}
               </select>
               ${addonBtn(_cc_t('addons.connect','Connect'), function(){
                 var port = window._loadDirectPort ? window._loadDirectPort() : 19780;
@@ -43752,7 +43759,7 @@ function startApp() {
           flex:1,color:'var(--text-primary)',letterSpacing:'-.01em',lineHeight:1}}>${TITLES[tab]||''}</span>
         ${tab==='models' && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',
           fontFamily:'var(--font-mono)',overflow:'hidden',textOverflow:'ellipsis',
-          whiteSpace:'nowrap',maxWidth:140}} title=${activeProj.name}>${activeProj.name}</span>`}
+          whiteSpace:'nowrap',maxWidth:140}} title=${_ccProjectName(activeProj)}>${_ccProjectName(activeProj)}</span>`}
         <button onClick=${function(){d({t:A.TAB,v:null});}}
           style=${{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',
             display:'inline-flex',alignItems:'center',justifyContent:'center',
@@ -44145,8 +44152,8 @@ function startApp() {
       // quantities) carry no dimensional quantities at all, leaving the
       // Dimensions panel empty. When there are no authored length quantities,
       // derive Width/Depth/Height from the element's world bounding box so
-      // the panel still says something. Labelled "(bbox)" so it's never
-      // mistaken for authored data. web-ifc loads IFC (Z-up) into the
+      // the panel still says something. Its own "Size (bounding box)" card,
+      // so it's never mistaken for authored data. web-ifc loads IFC (Z-up) into the
       // Three.js scene as Y-up (see below) → height is the Y span, not Z.
       var bboxDims = [];
       if (dims.length === 0 && _latestEl && _latestEl.box && _latestEl.box.min && _latestEl.box.max) {
@@ -44158,9 +44165,9 @@ function startApp() {
           if (_bw + _bh + _bd > 1e-6) {
             var fmtBbox = function(v){ return (v < 1 ? v.toFixed(3) : v.toFixed(2)) + ' m'; };
             bboxDims = [
-              { l:'Width (bbox)',  v:_bw, f:fmtBbox },
-              { l:'Depth (bbox)',  v:_bd, f:fmtBbox },
-              { l:'Height (bbox)', v:_bh, f:fmtBbox },
+              { l:_cc_t('aiChat.bboxWidth','Width'),  v:_bw, f:fmtBbox },
+              { l:_cc_t('aiChat.bboxDepth','Depth'),  v:_bd, f:fmtBbox },
+              { l:_cc_t('aiChat.bboxHeight','Height'), v:_bh, f:fmtBbox },
             ];
           }
         }
@@ -44168,7 +44175,6 @@ function startApp() {
       var bboxCard = bboxDims.length > 0 ? html`<div style=${CARD}>
         <div style=${HDR}>${_cc_t('aiChat.sizeBoundingBox','Size (bounding box)')}</div>
         ${bboxDims.map(function(d){return html`<div style=${ROW}><span style=${LBL}>${d.l}</span><span style=${{...VAL,...MONO}}>${d.f(d.v)}</span></div>`;})}
-        <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontStyle:'italic',paddingTop:'var(--space-1)'}}>${_cc_t('aiChat.derivedFromGeometry','Derived from geometry — this element has no authored quantities.')}</div>
       </div>` : '';
 
       // Collect all psets
@@ -44249,7 +44255,6 @@ function startApp() {
           });
         });
       }
-      var hasConstraints = constraintProps.length>0 || structProps.length>0;
 
       // Linked clashes and issues
       var linkedClashes = (latestState.clashes||[]).filter(function(c){return (c.elemA===el.expressId)||(c.elemB===el.expressId)||(c.a&&c.a.expressId===el.expressId)||(c.b&&c.b.expressId===el.expressId);});
@@ -44456,21 +44461,12 @@ function startApp() {
           </div>`}
           ${_clsCard}
           <!-- Dimensions & Constraints -->
-          ${hasConstraints && html`<div style=${CARD}>
+          ${constraintProps.length>0 && html`<div style=${CARD}>
             <div style=${HDR}>${_cc_t('aiChat.dimensionsConstraints','Dimensions & Constraints')}</div>
             ${constraintProps.map(function(p){return html`<div style=${ROW}>
               <span style=${LBL}>${p.label}</span>
               <span style=${{...VAL,...(/\d/.test(p.value.charAt(0))||p.value.charAt(0)==='-'?MONO:{})}}>${p.value}</span>
             </div>`;})}
-            ${constraintProps.length>0&&structProps.length>0 && html`<div style=${{borderTop:'1px dashed var(--border-subtle)',margin:'var(--space-2) 0'}}></div>`}
-            ${structProps.map(function(p){
-              var isTrue=p.value==='true'||p.value==='1'||p.value.toLowerCase()==='yes';
-              var isFalse=p.value==='false'||p.value==='0'||p.value.toLowerCase()==='no';
-              return html`<div style=${ROW}>
-                <span style=${LBL}>${p.label}</span>
-                <span style=${{...VAL,color:isFalse?'var(--text-muted)':'var(--text-primary)'}}>${p.value}</span>
-              </div>`;
-            })}
           </div>`}
           <!-- Quantities -->
           ${allDims.length>0 && html`<div style=${CARD}>
@@ -44545,21 +44541,12 @@ function startApp() {
           </details>`;})}
         </div>`}
         <!-- Dimensions & Constraints -->
-        ${hasConstraints && html`<div style=${CARD}>
+        ${constraintProps.length>0 && html`<div style=${CARD}>
           <div style=${HDR}>${_cc_t('aiChat.dimensionsConstraints','Dimensions & Constraints')}</div>
           ${constraintProps.map(function(p){return html`<div style=${ROW}>
             <span style=${LBL}>${p.label}</span>
             <span style=${{...VAL,...(/^\s*-?[\d.]/.test(p.value)?MONO:{})}}>${p.value}</span>
           </div>`;})}
-          ${constraintProps.length>0&&structProps.length>0 && html`<div style=${{borderTop:'1px dashed var(--border-subtle)',margin:'var(--space-2) 0'}}></div>`}
-          ${structProps.map(function(p){
-            var isTrue=p.value==='true'||p.value==='1'||p.value.toLowerCase()==='yes';
-            var isFalse=p.value==='false'||p.value==='0'||p.value.toLowerCase()==='no';
-            return html`<div style=${ROW}>
-              <span style=${LBL}>${p.label}</span>
-              <span style=${{...VAL,color:isFalse?'var(--text-muted)':'var(--text-primary)'}}>${p.value}</span>
-            </div>`;
-          })}
         </div>`}
         <!-- Dimensions if available -->
         ${allDims.length>0 && html`<div style=${CARD}>
@@ -45394,7 +45381,7 @@ function startApp() {
         }}>
           <div style=${{padding:'var(--space-1) var(--space-3) var(--space-2)',borderBottom:'1px solid var(--hairline)',marginBottom:'var(--space-1)'}}>
             <div style=${{fontSize:'var(--text-sm)',fontWeight:500,color:'var(--ink-primary)',letterSpacing:'-.005em'}}>${sp.userName||_cc_t('avatar.localUser','Local user')}</div>
-            <div style=${{fontSize:'var(--text-xs)',color:'var(--ink-muted)',marginTop:'1px'}}>${activeProj.name}</div>
+            <div style=${{fontSize:'var(--text-xs)',color:'var(--ink-muted)',marginTop:'1px'}}>${_ccProjectName(activeProj)}</div>
           </div>
           ${row(_cc_t('avatar.openModel','Open model…'), function(){ if(window._ccOpenIFC) window._ccOpenIFC(); }, 'O')}
           ${row(_cc_t('avatar.saveProject','Save project…'), function(){ saveProject(s); })}
@@ -45427,7 +45414,7 @@ function startApp() {
                       color:on?'var(--ink-primary)':'var(--ink-secondary)',fontWeight:on?500:400}}
                     onMouseEnter=${function(e){if(!on)e.currentTarget.parentElement.style.background='var(--surface-warm)';}}
                     onMouseLeave=${function(e){if(!on)e.currentTarget.parentElement.style.background='transparent';}}>
-                    <span style=${{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${p.name}</span>
+                    <span style=${{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${_ccProjectName(p)}</span>
                     ${on && html`<span style=${{width:6,height:6,borderRadius:'50%',background:'var(--ink-accent)',flexShrink:0}}></span>`}
                   </button>`}
               ${!isRenaming && html`<button aria-label=${_cc_t('avatar.renameProject','Rename project {name}',{name:p.name})}
@@ -46717,7 +46704,7 @@ function startApp() {
             ${rd.connected && html`<div>
               <div style=${S_LBL}>${_cc_t('revitBridge.targetProject','Target Project')}</div>
               <select value=${targetProj} onChange=${function(e){setTargetProj(e.target.value)}} style=${S_INP}>
-                ${projects.map(function(p){return html`<option key=${p.id} value=${p.id}>${p.name}</option>`})}
+                ${projects.map(function(p){return html`<option key=${p.id} value=${p.id}>${_ccProjectName(p)}</option>`})}
               </select>
               <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginTop:'var(--space-1)'}}>${_cc_t('revitBridge.modelsAddedTo','Revit models will be added to this project.')}</div>
             </div>`}
