@@ -168,6 +168,8 @@ project-codec.js            — Non-addon core module: project state encode/deco
 safety-migrations.js        — Non-addon core module: feature-flag gate + migration/self-check plumbing (`window._ccSafetyMigrations`)
 renderer-contract.js        — Non-addon core module: pinned r180 renderer contract, checked by `tests/browser/smoke.mjs`
 section-clipping.js         — Non-addon core module: section plane/box clipping helpers
+viewer-camera-core.js       — Non-addon core module: pure orbit/zoom/pan math (`window._ccViewerCamera`), incl. the bounded zoom step `dollyStep` (always escapes on zoom-out, never zooms through a surface)
+viewer-pick-core.js         — Non-addon core module: hit matrices (Mesh/InstancedMesh/BatchedMesh), first-visible-hit filter (clip planes, ghost, hidden) and the measure snap (vertex > midpoint > edge > face from feature edges)
 occlusion-core.js           — Non-addon core module: conservative CPU occlusion buffer + per-device verdict helpers (`occlusionCulling` flag: culls only after the device passes an offscreen culled-vs-unculled pixel check; never runs during detection)
 analytics-consent.js        — Non-addon core module: consent-gated analytics, loaded by every SEO landing page too
 mcp-server.js                — MCP server (stdio) implementing Model Context Protocol for Claude Desktop/Code — distributed via GitHub Releases, not served from clashcontrol.io

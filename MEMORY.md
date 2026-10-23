@@ -28,7 +28,7 @@
 
 **Addons (`addons/`):** accessibility, align, data-quality, geoplace, local-engine, openaec-bridge, pointcloud, pwa, revit-bridge, shared-project, smart-bridge, splat, tiles, tauri-bridge (desktop only, inert in the browser), training-data, visibility, wasm-engine (+ `wasm-engine-pkg/`).
 
-**Non-addon core modules** (plain `<script defer>`, required, all `// @ts-check`): `cc-runtime.js`, `safety-migrations.js`, `storage-core.js`, `clash-{discipline,assignment,identity,reconciliation,classification}-core.js`, `project-codec.js`, `section-clipping.js`, `occlusion-core.js`, `renderer-contract.js`, `analytics-consent.js`.
+**Non-addon core modules** (plain `<script defer>`, required, all `// @ts-check`): `cc-runtime.js`, `safety-migrations.js`, `storage-core.js`, `clash-{discipline,assignment,identity,reconciliation,classification}-core.js`, `project-codec.js`, `section-clipping.js`, `viewer-{camera,pick}-core.js`, `occlusion-core.js`, `renderer-contract.js`, `analytics-consent.js`.
 
 **Backend (`api/`):** `nl` (Groq), `title`/`triage` (Gemma), `project`, `training`, `health`, `tile`, `_lib.js`, `schema.sql`. **Deployment:** Vercel, `www.clashcontrol.io`, no COOP/COEP; `.vercelignore` keeps docs/tests/engine/desktop sources out of the deploy.
 
@@ -237,6 +237,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ---
 
 ## Recently completed (details in git history)
+- **2026-10-23 — viewer zoom + measure snap:** zoom-out always escapes near surfaces and zoom-in stops in front of them (`viewer-camera-core.js` `dollyStep`, wheel + pinch); measure snap works on BatchedMesh, snaps to real edges/midpoints, never to section-clipped geometry (`viewer-pick-core.js`; `tests/browser/measure-snap.mjs`).
 - **2026-10-23 — country packs:** `country-pack-core.js` (validation, safeRegex, resolver, CRS/UTM), `_ccResolveCountry` + auto-activation without saving, IfcPostalAddress.Country in both loaders, generic DQ standards engine (ILS/RVB → nl.json), accessibility without built-in numbers, CRS/3D-tiles/visibility/Revit/Smart-Bridge name data from packs; nl parity golden.
 - **2026-10-23 — clash review design pass:** severity by pair class × extent (CI fixture review critical 68 % → 12.9 %), `adjacent` bucket + "Near misses" view, overview header (Suggested strip + Filters popover / bottom sheet), sidebar "Run details" + ⋯ list actions, visible-first snapshots with skeleton / no-picture states, chevron group headers, empty states, mobile strips + 44 px targets (`tests/browser/triage-overview.mjs`).
 - 2026-07 (Waves 0–5, V7 P0–P6 slices, i18n infra, storage campaign, IFC worker protocol v2): see `git show 0f08459:MEMORY.md`.
@@ -290,6 +291,8 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ---
 
 ## Active Work
+
+- ~~2026-10-23: viewer zoom-out escape + measure snap fixes — `viewer-camera-core.js` (`dollyStep`), `viewer-pick-core.js` (batched hit matrix, feature-edge snap, clip-aware first visible hit); `tests/browser/measure-snap.mjs`.~~ (2026-10-23)
 
 - ~~2026-10-23: clash review design pass P1–P7 — severity by pair class × extent, 'adjacent' bucket + near-miss view, overview header with Filters popover, sidebar de-dup + Run details, visible-first snapshots with skeletons, card/empty-state polish, mobile.~~ (2026-10-23)
 

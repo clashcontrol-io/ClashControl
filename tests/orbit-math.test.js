@@ -1,35 +1,21 @@
 'use strict';
-// Pure orbit-navigation math, extracted from index.html between the
-// ORBIT_MATH_START/ORBIT_MATH_END markers (see makeOrbit in index.html,
-// "Pure orbit-navigation math"). These functions operate on plain {x,y,z}
-// objects with no THREE.js dependency, specifically so they can be exercised
-// here without a browser. See CLAUDE.md task notes for the bugs these fix:
+// Pure orbit-navigation math (viewer-camera-core.js, used by makeOrbit in
+// index.html). These functions operate on plain {x,y,z} objects with no
+// THREE.js dependency, specifically so they can be exercised here without a
+// browser. Bugs these fix:
 //   1) view jump when the orbit pivot moves off the camera's view ray
 //   3) zoom-to-cursor drift / non-reversibility
 //   4) pan speed not matching true pixel-to-world scale
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
-const path = require('node:path');
 
-const REPO = path.join(__dirname, '..');
-
-function loadOrbitMath() {
-  const src = fs.readFileSync(path.join(REPO, 'index.html'), 'utf8').split('\n');
-  const startMarker = '// ORBIT_MATH_START';
-  const endMarker = '// ORBIT_MATH_END';
-  const startIdx = src.findIndex(l => l.includes(startMarker));
-  const endIdx = src.findIndex(l => l.includes(endMarker));
-  assert.ok(startIdx >= 0 && endIdx > startIdx, 'ORBIT_MATH markers not found in index.html');
-  const body = src.slice(startIdx, endIdx + 1).join('\n');
-  const mod = { exports: {} };
-  const fn = new Function('module', 'exports', body + '\n' +
-    'module.exports = { _ccRotateAroundAxis, _ccOrbitDragStep, _ccZoomDollyStep, _ccPanWorldPerPixel };');
-  fn(mod, mod.exports);
-  return mod.exports;
-}
-
-const M = loadOrbitMath();
+const VC = require('../viewer-camera-core.js');
+const M = {
+  _ccRotateAroundAxis: VC.rotateAroundAxis,
+  _ccOrbitDragStep: VC.orbitDragStep,
+  _ccZoomDollyStep: VC.zoomDollyStep,
+  _ccPanWorldPerPixel: VC.panWorldPerPixel,
+};
 
 function norm(v) {
   const l = Math.hypot(v.x, v.y, v.z) || 1;

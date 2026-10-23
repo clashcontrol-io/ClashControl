@@ -137,6 +137,8 @@ Spherical coordinates (`sph.r`, `sph.phi`, `sph.theta`) with `apply()` to update
 
 Pre-allocated vectors (`_tmpVec`, `_tmpDir`, `_tmpRight`) avoid per-frame allocations in the hot path.
 
+**Pure math in `viewer-camera-core.js`** (`window._ccViewerCamera`, `// @ts-check`, node-tested in `tests/orbit-math.test.js` / `tests/viewer-camera-core.test.js`): drag rotation, pan scale, the reversible zoom-to-cursor dolly and `dollyStep`, the bounded wheel/pinch step. Zoom OUT moves by `max(dist, 0.01·sceneDiag, 0.25 m)·(factor−1)` (dist = camera→anchor), so a camera parked on a surface (or behind the fallback anchor plane) always escapes instead of creeping ~2 cm per notch; zoom IN toward a picked surface stops `max(10·near, 0.05 m)` in front of it and never crosses it; far from surfaces the step is the exact multiplicative one (in/out reversible). `|camera−target|` stays in [0.5, 5000] like `apply()`. `_pickSurfacePoint` filters with `window._ccActivePlanes` (clipping is per-material, so `renderer.clippingPlanes` is always empty).
+
 ## 14. Three.js Viewer
 
 **Code section:** `// ── Three.js Viewer Component ──`
@@ -462,11 +464,11 @@ The chained area mode sets the `_ccChainedArea` flag so the area commit skips `_
 
 The legacy active-clash 3D pin (two intersecting forest-green rings) overlapped the new Points hotspot at the same location whenever the user selected a clash, creating "two markers" for one element. The EdgesGeometry outline on the selected elements + the Points dot now carry the same information, so the 3D pin geometry is suppressed. The function is kept to preserve the orbit-target side effect every call-site relies on.
 
-### 21.29 Snap engine — vertex > midpoint > edge > centroid
+### 21.29 Snap engine — vertex > midpoint > edge > face
 
-**Code reference:** `_SNAP_PX` and the snap helper.
+**Code reference:** `viewer-pick-core.js` (`snap`, `hitMatrix`, `firstVisibleHit`); `_ccComputeSnap` in index.html is a thin wrapper (projection, clip planes, occlusion ray).
 
-Computes the best snap point near the cursor from a raycaster hit: vertex > midpoint > edge > face-centroid > raw face point. Returns `{point, type, normal, screenX, screenY, srcObj}`. Pixel radius scales with element size on screen so dense parts of the model don't snap too aggressively. Side-effect-free so the click handler can re-call it on the click event.
+Candidates come from the FEATURE edges of the hit element's triangles near the hit point (boundary, non-manifold or crease > 20°; a diagonal shared by two coplanar triangles is not an edge): their endpoints (vertex), midpoints and the closest point on the edge (edge, perspective-correct). Within 12 px of the cursor: vertex first, then midpoint (within 6 px), then edge, else the raw face point. Work is capped (triangle AABB vs a sphere of ~3× the snap radius around the hit, at most 20k triangles in a window around the hit face). The element's world matrix includes the InstancedMesh instance matrix or the BatchedMesh batch-instance matrix (and only the batch instance's geometry range is read) — without it batched elements always read "Surface". Points cut away by `window._ccActivePlanes` are never candidates; the winning candidate is checked with one ray against the hit object so a back corner of the same element cannot win (up to 3 checks; each corner is considered once). Hover, measure-drag and the click pick all take the first VISIBLE hit (`firstVisibleHit`: visible object and ancestors, not ghosted, not clipped) — the same filter the orbit's `_pickSurfacePoint` uses. Glyph colours are `currentColor` = `--accent` / `--accent-contrast`. Tests: `tests/viewer-pick-core.test.js`, `tests/browser/measure-snap.mjs`.
 
 ### 21.30 Chunk-merge per-element hide — REMOVED
 
