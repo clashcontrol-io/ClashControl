@@ -520,6 +520,30 @@
     });
     return out;
   }
+  // Is an IfcSite RefLatitude/RefLongitude the building's location, or a
+  // value the authoring tool wrote by default? Authoring tools commonly
+  // export 0/0 or their own default city when the user never set a
+  // location. Judged against the country the FILE itself names (postal
+  // address, projected CRS, or a Settings pick): a site outside that
+  // country's geo.bounds is not the building. A country resolved from the
+  // site location itself says nothing (it is inside by construction).
+  // Returns {ok:true} | {ok:false, reason:'missing'|'null-island'|'outside-country', region?}.
+  /** @param {any[]} packs @param {number} lat @param {number} lon @param {any} [resolution] */
+  function siteLocationCheck(packs, lat, lon, resolution) {
+    if (typeof lat !== 'number' || typeof lon !== 'number' || !isFinite(lat) || !isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return { ok: false, reason: 'missing' };
+    if (Math.abs(lat) < 0.01 && Math.abs(lon) < 0.01) return { ok: false, reason: 'null-island' };
+    var r = resolution || null;
+    if (r && r.region && (r.reason === 'address' || r.reason === 'crs' || r.reason === 'user')) {
+      /** @type {any} */
+      var pack = (packs || []).filter(function(p) { return isObj(p) && p.region === r.region; })[0] || null;
+      var bounds = (pack && pack.geo && pack.geo.bounds) || [];
+      if (bounds.length) {
+        var inside = bounds.some(function(b) { return lat >= b[0] && lat <= b[2] && lon >= b[1] && lon <= b[3]; });
+        if (!inside) return { ok: false, reason: 'outside-country', region: r.region };
+      }
+    }
+    return { ok: true };
+  }
   // IFC TargetCRS name -> registry key (pack code/alias, else a generic UTM code).
   /** @param {any[]} packs @param {any} name */
   function resolveCrs(packs, name) {
@@ -554,6 +578,7 @@
     normName: normName,
     epsgCode: epsgCode,
     resolveCountry: resolveCountry,
+    siteLocationCheck: siteLocationCheck,
     utmCrs: utmCrs,
     crsRegistry: crsRegistry,
     resolveCrs: resolveCrs,
