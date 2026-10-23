@@ -274,6 +274,25 @@ try {
       if (b.arcPx < 24 || b.arcPx > 32) fail(`${fx}: arc radius ${b.arcPx.toFixed(2)} px (want 24–32)`);
     }
     handlePx[fx] = sizes.map((a, i) => [a, boxSizes[i].tabs[0], boxSizes[i].arcPx]);
+    // Box + plane together clip with both; turning the box off hands
+    // clipping straight back to the plane (model materials and the click
+    // filter), without waiting for the plane to change.
+    const clip = await page.evaluate(async () => {
+      const S = window._ccState3d;
+      const count = (want) => { let n = 0, bad = 0; S.mg.traverse((o) => {
+        if (!o.isMesh || !o.material || (o.userData.expressId == null && !o.isInstancedMesh && !o.userData._isCCBatch)) return;
+        (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { n++; if ((m.clippingPlanes || []).length !== want) bad++; });
+      }); return { n, bad, active: (window._ccActivePlanes || []).length }; };
+      await window.__gz.dispatch({ t: 'SECTION', axis: 'x', pos: 0.5 });
+      const both = count(7);
+      await window.__gz.dispatch({ t: 'SECTION_BOX', v: { enabled: false } });
+      const plane = count(1);
+      await window.__gz.dispatch({ t: 'SECTION_BOX', v: window._ccModelSectionBoxSpec() });
+      return { both, plane };
+    });
+    if (!clip.both.n || clip.both.bad || clip.both.active !== 7) fail(`${fx}: box + plane: ${clip.both.bad}/${clip.both.n} materials (and ${clip.both.active} active planes) not clipped by both`);
+    else if (clip.plane.bad || clip.plane.active !== 1) fail(`${fx}: box off with a plane active left ${clip.plane.bad}/${clip.plane.n} materials (and ${clip.plane.active} active planes) not clipped by the plane alone`);
+    else console.log(`GIZMO OK — ${fx}: box + plane clip together; box off hands clipping back to the plane`);
 
     // Real pointer interaction: hover paints --accent, drag moves a box face /
     // the plane, release returns to idle; rotating keeps the gizmo on the plane.

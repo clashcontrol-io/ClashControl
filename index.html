@@ -900,6 +900,19 @@ function startApp() {
     });
   }
   window._ccApplySectionMaterialPlanes = _ccApplySectionMaterialPlanes;
+  // Single owner of model clipping: the active section plane and the
+  // active section box combine (both may be on at once); either effect calls
+  // this after updating its own planes, so neither wipes the other's.
+  function _ccApplyActiveClipping(S, st) {
+    if (!S || !S.renderer) return;
+    var pl = (st.sectionAxis || st.sectionCustom) && S._sectionPlanes ? S._sectionPlanes : [];
+    var bx = st.sectionBox && st.sectionBox.enabled && S._sboxPlanes ? S._sboxPlanes : [];
+    var all = pl.length && bx.length ? pl.concat(bx) : (pl.length ? pl : bx);
+    S.renderer.clippingPlanes = [];
+    S.renderer.localClippingEnabled = all.length > 0;
+    _ccApplySectionMaterialPlanes(S, all, all.length ? 'box' : 'clear');
+    window._ccActivePlanes = all; // click / hover / snap filter
+  }
   window._ccSetSRGBTexture = function(tex) {
     if (!tex || !window.THREE) return;
     tex.colorSpace = THREE.SRGBColorSpace;
@@ -2679,7 +2692,7 @@ function startApp() {
       case A.DEL_VIEWPOINT: return Object.assign({},s,{viewpoints:s.viewpoints.filter(function(v){return v.id!==a.id})});
       case A.UPD_VIEWPOINT: return Object.assign({},s,{viewpoints:s.viewpoints.map(function(v){return v.id===a.id?Object.assign({},v,a.u):v})});
       case A.SET_CLASSIFICATIONS: return Object.assign({},s,{classifications:a.v});
-      case A.SECTION_BOX:  return Object.assign({},s,{sectionBox:a.v, sectionAxis:null, sectionCustom:null, walkMode:a.v?false:s.walkMode});
+      case A.SECTION_BOX:  { var _sbOn=!!(a.v&&a.v.enabled!==false); return Object.assign({},s,{sectionBox:a.v, sectionAxis:_sbOn?null:s.sectionAxis, sectionCustom:_sbOn?null:s.sectionCustom, walkMode:a.v?false:s.walkMode}); } // turning the box on replaces a plane; turning it off keeps one added since
       case A.TOGGLE_CLASS_VIS: var hc2=Object.assign({},s.hiddenClasses); if(hc2[a.key])delete hc2[a.key];else hc2[a.key]=true; _persistHiddenClasses(hc2); return Object.assign({},s,{hiddenClasses:hc2});
       case A.SHOW_ALL_CLASSES: _persistHiddenClasses({}); return Object.assign({},s,{hiddenClasses:{}});
       case '_REPLACE_HIDDEN_CLASSES': var hc3=Object.assign({},a.v||{}); _persistHiddenClasses(hc3); return Object.assign({},s,{hiddenClasses:hc3});
@@ -20170,12 +20183,8 @@ function startApp() {
         S.scene.add(S._sectionPlaneVis);
       }
       // ── Per-material clipping ──  See docs/INTERNALS.md § 21.36
-      S.renderer.clippingPlanes = [];
-      S.renderer.localClippingEnabled = true;
-      _ccApplySectionMaterialPlanes(S, planes, 'section');
-      if(!planes.length && !(s.sectionBox&&s.sectionBox.enabled)) S.renderer.localClippingEnabled=false;
       S._sectionPlanes = planes;
-      if(!(s.sectionBox&&s.sectionBox.enabled)) window._ccActivePlanes = planes; // expose for click filter
+      _ccApplyActiveClipping(S, s);
       // Debounced section cut highlight lines
       clearTimeout(S._sectionCutLinesTimer);
       if(s.sectionAxis && S.mg.children.length>0){
@@ -20221,17 +20230,10 @@ function startApp() {
       }
       if(!s.sectionBox||!s.sectionBox.enabled) {
         if(S._sectionBoxActive) {
-          // Clear per-material clipping on model meshes (skip if section plane is also
-          // active — it will re-apply its own planes on its next effect run).
-          if(!s.sectionAxis && !s.sectionCustom) {
-            _ccApplySectionMaterialPlanes(S, [], 'clear');
-            S.renderer.clippingPlanes=[];
-            S.renderer.localClippingEnabled=false;
-          }
+          // Clipping goes back to the section plane alone (or none).
+          S._sboxPlanes=null;
+          _ccApplyActiveClipping(S, s);
           S._sectionBoxActive=false;
-          // The plane effect (declared first) may already have published its
-          // planes in this same commit — don't wipe them.
-          window._ccActivePlanes = (s.sectionAxis || s.sectionCustom) && S._sectionPlanes ? S._sectionPlanes : [];
         }
         cleanupSbox();
         window._ccCurrentSbox=null;
@@ -20254,12 +20256,11 @@ function startApp() {
         new THREE.Plane().setFromNormalAndCoplanarPoint(axZ.clone(), ctr.clone().addScaledVector(axZ,-hz)),
         new THREE.Plane().setFromNormalAndCoplanarPoint(axZ.clone().negate(), ctr.clone().addScaledVector(axZ,hz))
       ];
-      window._ccActivePlanes = planes; // expose for click filter
       // Per-material clipping: only model meshes (expressId != null) get the
-      // section box planes; handles, gizmos, and vis objects render unclipped.
-      S.renderer.clippingPlanes=[];
-      S.renderer.localClippingEnabled=true;
-      _ccApplySectionMaterialPlanes(S, planes, 'box');
+      // section box planes (plus an active section plane's); handles, gizmos,
+      // and vis objects render unclipped.
+      S._sboxPlanes=planes;
+      _ccApplyActiveClipping(S, s);
       S._sectionBoxActive=true;
       window._ccCurrentSbox=sb; // expose for drag handlers
 

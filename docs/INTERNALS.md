@@ -510,6 +510,8 @@ For vertical section planes the plane normal is horizontal, so the ring (axis = 
 
 Setting clip planes on each model mesh material instead of globally means gizmos / helpers / visualization objects (no expressId) are NEVER clipped and always render — section-box handles stay visible. The render loop and render-style effect both call this through the dep array so newly-swapped style materials pick up the planes automatically.
 
+**One owner:** `_ccApplyActiveClipping(S, s)` is the only caller of `_ccApplySectionMaterialPlanes`. The section-plane effect stores `S._sectionPlanes`, the section-box effect `S._sboxPlanes`; each then calls the owner, which applies their union (a plane added while the box is on clips together with it) and publishes it as `window._ccActivePlanes` for click/hover/snap filtering. Turning the box on replaces a plane (reducer); turning it off keeps a plane added since, and clipping goes straight back to that plane. Covered by `tests/browser/section-gizmo.mjs` and `tests/section-clipping-wiring.test.js`.
+
 ### 21.37 Floor-plan cut-plane arrow — clippingPlanes:[] required
 
 **Code reference:** floor-plan drag handle build.

@@ -16,13 +16,17 @@ test('BatchedMesh section candidate is default-off and isolated to its named fla
 });
 
 test('section plane, section box and clear paths all use the guarded material helper', () => {
-  const calls = [...source.matchAll(/_ccApplySectionMaterialPlanes\(S, ([^,]+), '([^']+)'\)/g)]
-    .map((m) => [m[1].trim(), m[2]]);
-  assert.deepEqual(calls, [
-    ['planes', 'section'],
-    ['[]', 'clear'],
-    ['planes', 'box'],
-  ]);
+  // One owner: _ccApplyActiveClipping combines the active plane and box
+  // planes and is the only caller of the guarded helper.
+  const calls = [...source.matchAll(/_ccApplySectionMaterialPlanes\(S, ([^,]+), ([^)]+)\)/g)]
+    .filter((m) => !source.slice(m.index - 9, m.index).endsWith('function '))
+    .map((m) => [m[1].trim(), m[2].trim()]);
+  assert.deepEqual(calls, [["all", "all.length ? 'box' : 'clear'"]]);
+  const owners = [...source.matchAll(/_ccApplyActiveClipping\(S, s\);/g)].length;
+  assert.equal(owners, 3, 'plane effect, box enable and box disable');
+  assert.match(source, /S\._sectionPlanes = planes;\n\s*_ccApplyActiveClipping\(S, s\);/);
+  assert.match(source, /S\._sboxPlanes=planes;\n\s*_ccApplyActiveClipping\(S, s\);/);
+  assert.match(source, /S\._sboxPlanes=null;\n\s*_ccApplyActiveClipping\(S, s\);/);
 });
 
 test('new helper has an inline legacy fallback for stale offline service workers', () => {
