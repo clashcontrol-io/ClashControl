@@ -120,6 +120,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 - Snapshot rendering draws ONLY the pair + the elements whose box meets the local section box (≤ 300 elements / 400k triangles, nearest first) into a 320×200 MSAA target — never the live scene (a whole-scene context pass cost 1–3.5 s per card on a 20k-clash federation). SwiftShader: ~140–190 ms median per card, most of it the readback sync; one card per idle slice there. `stats().lastPhases` has the split.
 
 ### React / htm / UI
+- **Clash objects are immutable state — never mutate one in place after it is in `s.clashes`.** The list/triage/autosave caches are WeakMaps keyed by clash object identity (INTERNALS §21.45); an in-place edit would show and save stale data. A small action must cost what it changes: `tests/browser/action-cost.mjs` asserts render counts (`?ccRenderCount=1` → `window.__ccRenderCount`).
 - **Rules of Hooks:** never call hooks inside `${cond && function(){...}()}` render IIFEs. That crashed clash review (React #310). Extract a component instead (e.g. `ClashToleranceEditor`). Prefer native `<details>` for disclosure, since it needs no state.
 - **htm `<img src=${…}>` must be written `\x3Cimg`.** In plain report strings, split it as `'<im'+'g'`. Otherwise Chromium's preload scanner fetches the literal `${…}` URL (404 noise). The cooked string is identical for the htm parser.
 - **Lazily-loaded addon state slices** (`s.smartBridge`, `s.openaecBridge`) exist only after first activation, so every core read must be null-guarded. Addon `reducerCases` only run while the addon is active: call `_ccActivateAddon(id)` before dispatching (e.g. the string action `'REVIT_BRIDGE'`; `A.REVIT_BRIDGE` doesn't exist). Lazy activation must fire `def.onEnable` after it resolves.
@@ -237,6 +238,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ---
 
 ## Recently completed (details in git history)
+- **2026-10-23 — action cost (branch `action-cost`):** the always-grouped clash list mounted every row (~24k DOM nodes on a 2k-clash synthetic review set) and recomputed grouping/triage/filters on every dispatch. Now windowed above 50 grouped items, memoised headers/rows/cards, per-clash WeakMap caches, incremental triage + regroup on edits, lazy Run details, idle autosave that clones/sizes only changed clashes. `tests/browser/action-cost.mjs` (synthetic, two sizes): DOM 24k → ~0.7k; no-op prefs 241 → ~11 ms, status edit 225 → ~30–45 ms, select 74 → ~10 ms, keystroke 65 → ~35 ms, autosave long task 394 → < 50 ms (headless SwiftShader medians). See INTERNALS §21.45.
 - **2026-10-23 — viewer zoom + measure snap:** zoom-out always escapes near surfaces and zoom-in stops in front of them (`viewer-camera-core.js` `dollyStep`, wheel + pinch); measure snap works on BatchedMesh, snaps to real edges/midpoints, never to section-clipped geometry (`viewer-pick-core.js`; `tests/browser/measure-snap.mjs`).
 - **2026-10-23 — country packs:** `country-pack-core.js` (validation, safeRegex, resolver, CRS/UTM), `_ccResolveCountry` + auto-activation without saving, IfcPostalAddress.Country in both loaders, generic DQ standards engine (ILS/RVB → nl.json), accessibility without built-in numbers, CRS/3D-tiles/visibility/Revit/Smart-Bridge name data from packs; nl parity golden.
 - **2026-10-23 — clash review design pass:** severity by pair class × extent (CI fixture review critical 68 % → 12.9 %), `adjacent` bucket + "Near misses" view, overview header (Suggested strip + Filters popover / bottom sheet), sidebar "Run details" + ⋯ list actions, visible-first snapshots with skeleton / no-picture states, chevron group headers, empty states, mobile strips + 44 px targets (`tests/browser/triage-overview.mjs`).
@@ -292,6 +294,8 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ---
 
 ## Active Work
+
+- ~~2026-10-23: action cost — clash list windowed when grouped, memoised rows/headers/cards, incremental triage/grouping on edits, autosave off the interaction path (branch `action-cost`, `tests/browser/action-cost.mjs`).~~ (2026-10-23)
 
 - ~~2026-10-23: pressure harness B5 (adapters: sharded load, role leave-out, bucket filter, BVH cap/evict, autosave gate, status undo) + B6 (CI fast tier, nightly workflow) on branch `pressure-b5b6-v2`.~~ (2026-10-23)
 
