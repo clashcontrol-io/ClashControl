@@ -1,0 +1,82 @@
+name: Pressure (nightly)
+
+# Randomized pressure test of the real app (tests/pressure/, see the header
+# of tests/pressure/run.mjs): the nightly tier is a complete pairwise
+# covering array over every dimension value plus a third of the
+# {engine path, run kind, cancel, failure} triples — any three consecutive
+# seeds cover all of them — on a NEW random seed every night, so the
+# combinations explored keep moving. CI (ci.yml browser-pressure) runs the
+# fast tier on a fixed seed for every app change.
+#
+# On failure the shrinker (ddmin) reduces each failing combo to its minimal
+# set of non-default dimensions; the report, the repro files and the shrunk
+# combos are uploaded. Replay locally with
+#   node tests/pressure/run.mjs --combo <repro-or-shrunk.json>
+# Not a merge gate: a nightly finding is triaged, fixed with a regression
+# test, and its seed noted in the fix.
+
+on:
+  schedule:
+    - cron: '43 2 * * *' # nightly, 02:43 UTC
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: 'Tier (fast | nightly | soak)'
+        required: false
+        default: 'nightly'
+      seed:
+        description: 'Seed (empty = random)'
+        required: false
+        default: ''
+      count:
+        description: 'Cap the number of combos (empty = the whole tier; soak needs one)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  pressure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      CC_PRESSURE_OUT: ${{ runner.temp }}/cc-pressure
+      CC_PRESSURE_COMBO_TIMEOUT_MS: '600000'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Playwright Chromium
+        run: |
+          npm install --no-save playwright@1
+          npx playwright install --with-deps chromium
+
+      - name: Pick the seed
+        id: seed
+        env:
+          INPUT_SEED: ${{ github.event.inputs.seed }}
+        run: |
+          if [ -n "$INPUT_SEED" ]; then SEED="$INPUT_SEED"; else SEED=$(( (RANDOM << 15) | RANDOM )); fi
+          echo "seed=$SEED" >> "$GITHUB_OUTPUT"
+          echo "Pressure seed: $SEED (replay: node tests/pressure/run.mjs --tier ${{ github.event.inputs.tier || 'nightly' }} --seed $SEED)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Pressure test
+        env:
+          TIER: ${{ github.event.inputs.tier || 'nightly' }}
+          COUNT: ${{ github.event.inputs.count }}
+        run: |
+          ARGS="--tier $TIER --seed ${{ steps.seed.outputs.seed }} --shrink --shrink-max 3"
+          if [ -n "$COUNT" ]; then ARGS="$ARGS --count $COUNT"; fi
+          node tests/pressure/run.mjs $ARGS
+
+      - name: Upload report (always) and repros + shrunk combos (on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pressure-${{ github.event.inputs.tier || 'nightly' }}-seed-${{ steps.seed.outputs.seed }}
+          path: ${{ runner.temp }}/cc-pressure
+          if-no-files-found: ignore

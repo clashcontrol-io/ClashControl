@@ -7,13 +7,15 @@
 //                            profile says smart when nothing invalidated it, with
 //                            exactly the edited elements recomputed)
 //   I3  load order/subset  — order, duplicate loads, reloads, the main-thread
-//                            loader and loading a subset don't change the
+//                            loader, the sharded load (every file at once,
+//                            results in reverse order) and loading a subset don't change the
 //                            (element-pair, type, opening) set vs the canonical
 //                            federation restricted to that subset
 //   I5  accuracy           — planted manifest outcomes per ruleset, and a seeded
 //                            exact-oracle sample (≤150 pairs) at P = R = 1
-//   I6  buckets            — the clash list's headline + "N pass through provided
-//                            openings" + "N only touch" + denied == raw clashes
+//   I6  buckets            — review buckets add up to the raw clashes; the bucket
+//                            bar (display.filter=bucket) lists exactly the shown
+//                            buckets
 //   I7  display no-op      — tab/style/section/spaces/occlusion/locale/filter
 //                            don't change the signature and keep smart re-runs smart
 //   I8  cancel             — a cancelled run commits nothing, stops its workers,
@@ -26,7 +28,15 @@
 //   I11 project round-trip — save -> fresh page -> restore -> re-load files -> run:
 //                            statuses, ids, issues intact
 //   I12 BCF round-trip     — export (shown / all) -> import: topic count, GUIDs,
-//                            components, Z-up camera
+//                            components, Z-up camera; undo/redo of section,
+//                            box, hide and a clash status edit (deny -> undo
+//                            must not come back at the next run)
+//   I13 role leave-out     — rules.roleChoices 'exclude': no clash involves a
+//                            left-out element, the run reports exactly those
+//                            per group (result._ccExcluded, lastRunExcluded)
+//   I14 storage knobs      — a tiny BVH cache cap really evicts, clearCachesAfter
+//                            empties the cache (results: I1/I2/I9), the gated
+//                            autosave leaves IndexedDB equal to the session
 //   I15 health             — no page errors; workers back to 0; WebGL contexts and
 //                            window/document listeners constant (checked in run.mjs)
 //   I16 determinism        — the same run twice gives the same list; the combo's
