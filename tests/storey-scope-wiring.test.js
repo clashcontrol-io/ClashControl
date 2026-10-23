@@ -63,7 +63,7 @@ test('the per-file load handler auto-triggers _ccReloadModelFull only for regist
   assert.match(html, /window\._ccAutoCompleteScopedLoads\.delete\(f\.name\);\s*\n\s*_persistDone\.then\(function\(\) \{\s*\n\s*if \(window\._ccReloadModelFull\) window\._ccReloadModelFull\(modelId\);\s*\n\s*\}\);/);
   // Still gated behind the loadedScope check — a full (non-scoped) load
   // must never look at the auto-complete registry at all.
-  assert.match(html, /if \(!\(result\.stats && result\.stats\.loadedScope\)\) \{\s*\n\s*idbSaveGeoCache\(modelId, _geoSerialize\(result\)\);\s*\n\s*\} else if \(window\._ccAutoCompleteScopedLoads/);
+  assert.match(html, /if \(!\(result\.stats && result\.stats\.loadedScope\)\) \{\s*\n\s*idbSaveGeoCacheFresh\(modelId, _geoSerialize\(result\)\);\s*\n\s*\} else if \(window\._ccAutoCompleteScopedLoads/);
 });
 
 test('_ccReloadModelFull skips the scope picker on its own reload (would otherwise re-open it forever)', () => {

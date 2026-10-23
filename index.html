@@ -3004,7 +3004,7 @@ function startApp() {
   function _ccColdParseParkedEntry(entry) {
     if (!entry || !entry.buffer) return Promise.resolve(null); // no cache AND no source → cannot restore
     return loadIFC(entry.buffer, DISC[0].c, function(){}).then(function(result) {
-      if (result) idbSaveGeoCache(entry.id, _geoSerialize(result));
+      if (result) idbSaveGeoCacheFresh(entry.id, _geoSerialize(result));
       return result;
     });
   }
@@ -3360,6 +3360,105 @@ function startApp() {
         tx.onerror = function(e) { reject(e.target.error); };
       });
     }).catch(function(e) { console.warn('Failed to delete geo cache:', e); });
+  }
+
+  // Off-main-thread write for a FRESHLY serialised payload (_geoSerialize
+  // output: its geometry buffers are new copies nothing else references):
+  // the buffers are transferred (zero-copy) to a small worker that does the
+  // IndexedDB put, so the structured clone of hundreds of MB of geometry no
+  // longer blocks the UI right after a load. Started when the browser is
+  // idle. Any worker problem → the normal main-thread write.
+  var _ccGeoSaveWorker = null, _ccGeoSaveSeq = 0, _ccGeoSavePending = {};
+  // Worker protocol (one save = seq): 'begin' {record without meshData /
+  // elData}, then 'mesh' / 'el' chunks (structured clone, geometry buffers
+  // transferred), then 'end' → assemble + put. Chunked so no single message
+  // clones the whole object graph on the main thread.
+  function _ccGeoSaveWorkerGet() {
+    if (_ccGeoSaveWorker !== null) return _ccGeoSaveWorker;
+    try {
+      var STORE = JSON.stringify(IDB_GEOCACHE);
+      var src = 'var conn=null,jobs={};function db(){if(conn)return conn;conn=new Promise(function(res,rej){var r=indexedDB.open(' + JSON.stringify(IDB_NAME) + ');' +
+        'r.onsuccess=function(){var d=r.result;d.onversionchange=function(){d.close();conn=null;};res(d);};r.onerror=function(){conn=null;rej(r.error);};});return conn;}' +
+        'function bufs(rec){var b=[];((rec.data&&rec.data.meshData)||[]).forEach(function(md){["pos","n8","nrm","idx"].forEach(function(k){if(md[k]instanceof ArrayBuffer)b.push(md[k]);});});return b;}' +
+        'onmessage=function(e){var m=e.data,j=jobs[m.seq];' +
+        'if(m.t==="begin"){jobs[m.seq]={rec:m.rec,mesh:[],el:[]};return;}if(!j)return;' +
+        'if(m.t==="mesh"){for(var i=0;i<m.items.length;i++)j.mesh.push(m.items[i]);return;}' +
+        'if(m.t==="el"){for(var k=0;k<m.items.length;k++)j.el.push(m.items[k]);return;}' +
+        'if(m.t==="end"){delete jobs[m.seq];var rec=j.rec;rec.data.meshData=j.mesh;rec.data.elData=j.el;' +
+        'db().then(function(d){return new Promise(function(res,rej){var tx=d.transaction(' + STORE + ',"readwrite");tx.objectStore(' + STORE + ').put(rec);' +
+        'tx.oncomplete=function(){res();};tx.onerror=function(){rej(tx.error);};tx.onabort=function(){rej(tx.error);};});})' +
+        '.then(function(){postMessage({seq:m.seq,ok:true});},function(err){postMessage({seq:m.seq,ok:false,error:String(err&&err.message||err),record:rec},bufs(rec));});}};';
+      _ccGeoSaveWorker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+      _ccGeoSaveWorker.onmessage = function(e) {
+        var m = e.data, p = _ccGeoSavePending[m.seq];
+        delete _ccGeoSavePending[m.seq];
+        if (p) p(m);
+      };
+      _ccGeoSaveWorker.onerror = function() {
+        // The worker died: its in-flight payloads are gone with it (the cache
+        // is optional — the next load re-saves); never leave a caller waiting.
+        _ccGeoSaveWorker = false;
+        Object.keys(_ccGeoSavePending).forEach(function(k) { var p = _ccGeoSavePending[k]; delete _ccGeoSavePending[k]; try { p({ ok: true, lost: true }); } catch (_) {} });
+      };
+    } catch (e) { _ccGeoSaveWorker = false; }
+    return _ccGeoSaveWorker;
+  }
+  var _CC_GEO_SAVE_MESH_CHUNK = 400, _CC_GEO_SAVE_EL_CHUNK = 250;
+  function _ccIdle(fn, timeout) {
+    if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(fn, { timeout: timeout || 1000 });
+    else setTimeout(fn, 0);
+  }
+  // Save a payload produced by _geoSerialize (fresh buffers, safe to transfer).
+  function idbSaveGeoCacheFresh(fileId, data) {
+    return new Promise(function(resolve) {
+      var fallback = function() { resolve(idbSaveGeoCache(fileId, data)); };
+      var start = function() {
+        var w = _ccGeoSaveWorkerGet();
+        if (!w || window._ccGeoSaveOnMain) { fallback(); return; }
+        var candidate = _ccGeoCacheV8Enabled();
+        var cacheKey = _ccGeoCacheKey(fileId, candidate);
+        var head = {};
+        Object.keys(data).forEach(function(k) { if (k !== 'meshData' && k !== 'elData') head[k] = data[k]; });
+        var rec = candidate ? {id:cacheKey, sourceId:fileId, schema:8, data:head, savedAt:Date.now()} : {id:fileId, data:head, savedAt:Date.now()};
+        rec.bytes = _ccEstimateBytesFast(data) + 64;
+        var seq = ++_ccGeoSaveSeq, meshData = data.meshData || [], elData = data.elData || [];
+        _ccGeoSavePending[seq] = function(m) {
+          if (m.ok) { if (!m.lost) _ccScheduleBudgetCheck(); resolve(); return; }
+          // Buffers came back with the failure: retry on the main thread
+          // (it handles quota pressure with eviction + one retry).
+          resolve(idbSaveGeoCache(fileId, m.record ? m.record.data : data));
+        };
+        try { w.postMessage({ seq: seq, t: 'begin', rec: rec }); }
+        catch (e) { delete _ccGeoSavePending[seq]; fallback(); return; }
+        var mi = 0, ei = 0;
+        var step = function() {
+          try {
+            if (mi < meshData.length) {
+              var mc = meshData.slice(mi, mi + _CC_GEO_SAVE_MESH_CHUNK), tl = [];
+              mc.forEach(function(md) { ['pos', 'n8', 'nrm', 'idx'].forEach(function(k) { if (md[k] instanceof ArrayBuffer && md[k].byteLength) tl.push(md[k]); }); });
+              w.postMessage({ seq: seq, t: 'mesh', items: mc }, tl);
+              mi += mc.length;
+            } else if (ei < elData.length) {
+              var ec = elData.slice(ei, ei + _CC_GEO_SAVE_EL_CHUNK);
+              w.postMessage({ seq: seq, t: 'el', items: ec });
+              ei += ec.length;
+            } else {
+              w.postMessage({ seq: seq, t: 'end' });
+              return;
+            }
+          } catch (e) {
+            // A failed chunk: the worker drops the half-built job (no 'end');
+            // buffers may already be gone — the cache is optional.
+            delete _ccGeoSavePending[seq]; resolve(); return;
+          }
+          _ccIdle(step, 1000);
+        };
+        _ccIdle(step, 1000);
+      };
+      // The main thread opens (and if needed upgrades) the database first,
+      // so the worker's version-less open always finds the current schema.
+      _ccIdle(function() { _openIDB().then(start, fallback); }, 5000);
+    });
   }
 
   function idbSaveGeoCache(fileId, data) {
@@ -23318,7 +23417,7 @@ function startApp() {
     function _coldParseAndCache(entry) {
       return loadIFC(entry.buffer, DISC[0].c, function(){})
         .then(function(result) {
-          if (result) idbSaveGeoCache(entry.id, _geoSerialize(result));
+          if (result) idbSaveGeoCacheFresh(entry.id, _geoSerialize(result));
           return result;
         });
     }
@@ -25778,7 +25877,7 @@ function startApp() {
               // only: a storey-scoped result would restore as a partial
               // model with no record of what's missing.
               if (!(result.stats && result.stats.loadedScope)) {
-                idbSaveGeoCache(modelId, _geoSerialize(result));
+                idbSaveGeoCacheFresh(modelId, _geoSerialize(result));
               } else if (window._ccAutoCompleteScopedLoads && window._ccAutoCompleteScopedLoads.has(f.name)) {
                 // "Load selected now, then complete in background" — the
                 // scoped load just settled; auto-trigger the exact same
