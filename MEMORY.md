@@ -292,6 +292,10 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- 2026-10-23: section plane / section box gizmos — one screen-constant plane gizmo at the cut, outline clipped to the model, calm box tabs + corner arc, token colours (`viewer-gizmo-core.js`, branch `viewer-gizmos`). Strict DESIGN.md pass on new UI (branch `design-pass`).
+
+- ~~2026-10-23: rooms written in their storey's frame (footprint in storey coordinates + own placement → doubled offset) land in their walls — `ccSpacePlacementFix` in both loaders, geo cache `sp:2`; storey-frame fixture in `tests/browser/spaces.mjs`.~~ (2026-10-23)
+
 - ~~2026-10-23: viewer zoom-out escape + measure snap fixes — `viewer-camera-core.js` (`dollyStep`), `viewer-pick-core.js` (batched hit matrix, feature-edge snap, clip-aware first visible hit); `tests/browser/measure-snap.mjs`.~~ (2026-10-23)
 
 - ~~2026-10-23: clash review design pass P1–P7 — severity by pair class × extent, 'adjacent' bucket + near-miss view, overview header with Filters popover, sidebar de-dup + Run details, visible-first snapshots with skeletons, card/empty-state polish, mobile.~~ (2026-10-23)
