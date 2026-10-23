@@ -192,8 +192,8 @@
        the inline <script> blocks parse but BEFORE window.onload fires —
        which is where startApp() runs from, so THREE is guaranteed available
        by the time any `THREE.X` lookup actually executes. We also eagerly
-       load GLTFLoader and TransformControls and reattach them to THREE.* so
-       the legacy `new THREE.GLTFLoader()` / `new THREE.TransformControls()`
+       load GLTFLoader and the other addons and reattach them to THREE.* so
+       the legacy `new THREE.GLTFLoader()`
        call sites keep working without a per-call refactor. -->
   <script type="module">
     // CRITICAL: ESM Module namespace objects are FROZEN — you cannot assign
@@ -202,7 +202,6 @@
     import * as THREE_NS              from 'three';
     import { GLTFLoader }             from 'three/addons/loaders/GLTFLoader.js';
     import { GLTFExporter }           from 'three/addons/exporters/GLTFExporter.js';
-    import { TransformControls }      from 'three/addons/controls/TransformControls.js';
     import { PLYLoader }              from 'three/addons/loaders/PLYLoader.js';
     import { PCDLoader }              from 'three/addons/loaders/PCDLoader.js';
     import { EffectComposer }         from 'three/addons/postprocessing/EffectComposer.js';
@@ -213,7 +212,6 @@
     if (THREE_NS.ColorManagement) THREE_NS.ColorManagement.enabled = false;
     THREE.GLTFLoader        = GLTFLoader;
     THREE.GLTFExporter      = GLTFExporter;
-    THREE.TransformControls = TransformControls;
     THREE.PLYLoader         = PLYLoader;
     THREE.PCDLoader         = PCDLoader;
     THREE.EffectComposer    = EffectComposer;
@@ -13321,8 +13319,8 @@ function startApp() {
   // Section-plane/box dispatches are tracked generically from inside
   // reducer() (see its first line) rather than at each of the dozen+ call
   // sites that dispatch A.SECTION/A.SECTION_CUSTOM/A.SECTION_BOX — that's
-  // the only way to also catch drag-commit paths (TransformControls
-  // objectChange, section-box corner drag, the toolbar cut slider) without
+  // the only way to also catch drag-commit paths (section-plane arrow /
+  // ring drag, section-box tab drag, the toolbar cut slider) without
   // touching each one individually. undo/redo replay their own redispatch
   // with `_ccReplay:true` so this never re-tracks its own restore as a new
   // undoable action. Measurement actions (ADD_MEASUREMENT/DEL_MEASUREMENT)
@@ -14037,6 +14035,38 @@ function startApp() {
       return frame;
     }
     window._ccPlanFrame = _ccPlanFrame;
+    // Section-plane visual: ONE gizmo (arrow + rotate ring at its base) at the
+    // centre of the outline, and the outline = the model box (building grid)
+    // cut by the plane — the same rule for axis and picked/rotated planes, so
+    // the sheet never sits beside the model. n = arrow direction, p = any
+    // point on the plane. Builds `vis` when null, else refits it (live drag).
+    function _sectionVisFit(S, vis, n, p) {
+      var gzc = window._ccViewerGizmo, fr = _ccPlanFrame();
+      function a3(v){ return [v.x, v.y, v.z]; }
+      var b = gzc.planeBasis(a3(n), a3(fr.axes.x));
+      var out = gzc.planeOutline(gzc.boxCorners({x:a3(fr.axes.x), y:a3(fr.axes.y), z:a3(fr.axes.z)}, fr.min, fr.max), b.n, a3(p), b, 1.3);
+      if (!vis) {
+        vis = new THREE.Group();
+        var sheet = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({transparent:true, side:THREE.DoubleSide, depthWrite:false}));
+        sheet.add(new THREE.LineSegments(new THREE.EdgesGeometry(sheet.geometry), new THREE.LineBasicMaterial({transparent:true})));
+        sheet.renderOrder = 998; sheet.children[0].renderOrder = 999;
+        sheet.userData.ccGizmo = {style:'outline', fixed:true};
+        var arrow = gzc.buildArrow(THREE);
+        arrow.move.userData._secHandle = 'move'; arrow.ring.userData._secHandle = 'rotate';
+        vis.add(sheet, arrow.group);
+        vis.traverse(function(o){ o.userData._sectionPlane = true; o.castShadow = false; if (o.material) o.material.clippingPlanes = []; });
+        vis._secDragHandles = [arrow.move, arrow.ring];
+        vis._secRotRing = arrow.ring;
+        S.gz.track(sheet); S.gz.track(arrow.group);
+      }
+      var sh = vis.children[0];
+      sh.geometry.dispose(); sh.geometry = new THREE.PlaneGeometry(2 * out.halfW, 2 * out.halfH);
+      sh.children[0].geometry.dispose(); sh.children[0].geometry = new THREE.EdgesGeometry(sh.geometry);
+      vis.position.fromArray(out.center);
+      vis.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3().fromArray(b.u), new THREE.Vector3().fromArray(b.v), new THREE.Vector3().fromArray(b.n)));
+      invalidate();
+      return vis;
+    }
     // Section-box spec for the whole model, aligned to the building grid
     // (rotation + min/max whose midpoint is the frame centre — the shape the
     // section-box effect expects). Padding in metres.
@@ -14150,6 +14180,9 @@ function startApp() {
       renderer.domElement.setAttribute('aria-label', 'Interactive 3D model viewer');
       S.renderer = renderer;
       S._floorPlanOverlayCanvas = planOverlayRef.current;
+      // Shared gizmo registry (viewer-gizmo-core.js): screen-constant handles,
+      // DESIGN.md token colours, repainted on theme change.
+      S.gz = window._ccViewerGizmo.create({THREE: THREE, observeTheme: true, onChange: function(){ invalidate(2); }});
       window._ccState3d = S;
 
       /* Project a 3D point to viewport screen coordinates so DOM overlays
@@ -17360,22 +17393,13 @@ function startApp() {
       renderer.domElement.addEventListener('mousedown', function(e){
         if(e.button!==0) return;
         var S2=state3d.current;
-        if(!S2._sboxHandles&&!S2._sboxRotRing&&!S2._sboxFaceHandles) return;
-        var rect=renderer.domElement.getBoundingClientRect();
-        var mx=((e.clientX-rect.left)/rect.width)*2-1;
-        var my=-((e.clientY-rect.top)/rect.height)*2+1;
-        raycaster.setFromCamera(new THREE.Vector2(mx,my), S2.camera);
-        var allHandles=[];
-        if(S2._sboxRotRing) allHandles.push(S2._sboxRotRing);
-        if(S2._sboxFaceHandles) allHandles=allHandles.concat(S2._sboxFaceHandles);
-        if(S2._sboxHandles) allHandles=allHandles.concat(S2._sboxHandles);
-        var hh=raycaster.intersectObjects(allHandles,false);
-        if(hh.length>0){
-          var hitH=hh[0].object;
+        var hitH=_sboxHit(e);
+        if(hitH){
           e.stopImmediatePropagation();
           _sboxDragging=true;
           var curSb=window._ccCurrentSbox;
           if(!curSb) return;
+          S2.gz.setState(hitH,'active'); S2._sboxActiveHandle=hitH;
           if(hitH.userData._sboxRotation){
             _sboxDragState={type:'rotate',startX:e.clientX,startRot:curSb.rotation||0,startSb:Object.assign({},curSb,{min:curSb.min.slice(),max:curSb.max.slice()})};
           } else if(hitH.userData._sboxFaceHandle){
@@ -17390,18 +17414,13 @@ function startApp() {
             _sboxDragState={type:'face',axis:faxis,sign:hitH.userData._faceSign,idx:hitH.userData._faceIdx,side:hitH.userData._faceSide,
               startSb:Object.assign({},curSb,{min:curSb.min.slice(),max:curSb.max.slice()}),
               dragPlane:dpF,startPos:hitH.position.clone()};
-          } else if(hitH.userData._sboxHandle){
-            var camDir2=new THREE.Vector3();
-            camera.getWorldDirection(camDir2);
-            var dp2=new THREE.Plane().setFromNormalAndCoplanarPoint(camDir2,hitH.position.clone());
-            _sboxDragState={type:'corner',signs:hitH.userData._handleSigns,axX:hitH.userData._handleAxX,axY:hitH.userData._handleAxY,axZ:hitH.userData._handleAxZ,startSb:Object.assign({},curSb,{min:curSb.min.slice(),max:curSb.max.slice()}),dragPlane:dp2,startPos:hitH.position.clone()};
           }
           renderer.domElement.style.cursor='grabbing';
         }
       }, true); // useCapture to fire before orbit
 
       _wlAdd('mousemove', function(e){
-        if(_sboxDragging && e.buttons===0){ _sboxDragging=false; _sboxDragState=null; renderer.domElement.style.cursor=''; _sboxHudHide(); return; } // released off-canvas
+        if(_sboxDragging && e.buttons===0){ _sboxEndDrag(); return; } // released off-canvas
         if(!_sboxDragState||!_sboxDragging) return;
         var ds=_sboxDragState;
         var rect=renderer.domElement.getBoundingClientRect();
@@ -17414,20 +17433,13 @@ function startApp() {
           var newRot=ds.startRot + dx*0.01;
           var newSb=Object.assign({},ds.startSb,{min:ds.startSb.min.slice(),max:ds.startSb.max.slice(),rotation:newRot});
           if(window._ccDispatch) window._ccDispatch({t:A.SECTION_BOX,v:newSb});
-          // Immediately update wireframe + handles in Three.js for smooth visual feedback
-          // (React effect will reconcile, but may lag during fast drag)
-          var S3=state3d.current;
-          if(S3._sboxHelper) S3._sboxHelper.rotation.y=newRot;
+          // Move the gizmo + clipping now; the React effect reconciles after.
+          var S3=state3d.current, sb3=newSb;
+          if(S3._sboxLayout) S3._sboxLayout(newSb);
           var cosR3=Math.cos(newRot), sinR3=Math.sin(newRot);
           var axX3=new THREE.Vector3(cosR3,0,-sinR3), axZ3=new THREE.Vector3(sinR3,0,cosR3), axY3=new THREE.Vector3(0,1,0);
-          var sb3=newSb;
           var ctr3=new THREE.Vector3((sb3.min[0]+sb3.max[0])/2,(sb3.min[1]+sb3.max[1])/2,(sb3.min[2]+sb3.max[2])/2);
           var hx3=(sb3.max[0]-sb3.min[0])/2, hy3=(sb3.max[1]-sb3.min[1])/2, hz3=(sb3.max[2]-sb3.min[2])/2;
-          var hSz3=Math.max(0.07,Math.min(Math.max(hx3,hy3,hz3)*0.028,0.20));
-          if(S3._sboxHandles){var cSigns=[[-1,-1,-1],[-1,-1,1],[-1,1,-1],[-1,1,1],[1,-1,-1],[1,-1,1],[1,1,-1],[1,1,1]];S3._sboxHandles.forEach(function(h,i){var sg=cSigns[i];var p=ctr3.clone().addScaledVector(axX3,sg[0]*hx3).addScaledVector(axY3,sg[1]*hy3).addScaledVector(axZ3,sg[2]*hz3);h.position.copy(p).addScaledVector(new THREE.Vector3(sg[0],sg[1],sg[2]).normalize(),hSz3);h.userData._handleAxX=axX3.clone();h.userData._handleAxZ=axZ3.clone();});}
-          var faS3=Math.max(0.08,Math.min(Math.max(hx3,hy3,hz3)*0.0173,0.69));
-          if(S3._sboxFaceHandles){var fD3=[{ax:axX3,s:+1,he:hx3},{ax:axX3,s:-1,he:hx3},{ax:axY3,s:+1,he:hy3},{ax:axY3,s:-1,he:hy3},{ax:axZ3,s:+1,he:hz3},{ax:axZ3,s:-1,he:hz3}];S3._sboxFaceHandles.forEach(function(h,i){var fd3=fD3[i];if(!fd3)return;var fc=ctr3.clone().addScaledVector(fd3.ax,fd3.s*fd3.he);h.position.copy(fc).addScaledVector(fd3.ax,fd3.s*faS3*1.0);h.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),fd3.ax.clone().multiplyScalar(fd3.s).normalize());h.userData._faceAxis=fd3.ax.clone().multiplyScalar(fd3.s);});}
-          if(S3._sboxRotRing) S3._sboxRotRing.position.copy(ctr3).addScaledVector(axY3,hy3+(S3._sboxRotRing.userData._floatH||0.5));
           // Update clipping planes immediately
           var np3=[new THREE.Plane().setFromNormalAndCoplanarPoint(axX3.clone(),ctr3.clone().addScaledVector(axX3,-hx3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axX3.clone().negate(),ctr3.clone().addScaledVector(axX3,hx3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axY3.clone(),ctr3.clone().addScaledVector(axY3,-hy3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axY3.clone().negate(),ctr3.clone().addScaledVector(axY3,hy3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axZ3.clone(),ctr3.clone().addScaledVector(axZ3,-hz3)),new THREE.Plane().setFromNormalAndCoplanarPoint(axZ3.clone().negate(),ctr3.clone().addScaledVector(axZ3,hz3))];
           S3.scene.traverse(function(obj){if(!obj.isMesh||!obj.material||(obj.userData.expressId==null&&!obj.isInstancedMesh&&!obj.userData._isCCBatch))return;var ms=Array.isArray(obj.material)?obj.material:[obj.material];ms.forEach(function(m){m.clippingPlanes=np3;m.needsUpdate=true;});var sm=obj.userData._styleMats;if(sm)Object.keys(sm).forEach(function(k){(Array.isArray(sm[k])?sm[k]:[sm[k]]).forEach(function(m){if(m){m.clippingPlanes=np3;m.needsUpdate=true;}});});});
@@ -17457,75 +17469,38 @@ function startApp() {
             if(window._ccDispatch) window._ccDispatch({t:A.SECTION_BOX,v:nsb});
             _sboxHudShow(_sboxFmt(nsb.max[ds.idx]-nsb.min[ds.idx]), e.clientX, e.clientY);
           }
-        } else if(ds.type==='corner'){
-          var intPt=new THREE.Vector3();
-          if(raycaster.ray.intersectPlane(ds.dragPlane,intPt)){
-            var delta=intPt.clone().sub(ds.startPos);
-            var d0=delta.dot(ds.axX), d1=delta.dot(ds.axY), d2=delta.dot(ds.axZ);
-            var newSb=Object.assign({},ds.startSb,{min:ds.startSb.min.slice(),max:ds.startSb.max.slice()});
-            if(ds.signs[0]>0){newSb.max[0]=ds.startSb.max[0]+d0;}else{newSb.min[0]=ds.startSb.min[0]+d0;}
-            if(ds.signs[1]>0){newSb.max[1]=ds.startSb.max[1]+d1;}else{newSb.min[1]=ds.startSb.min[1]+d1;}
-            if(ds.signs[2]>0){newSb.max[2]=ds.startSb.max[2]+d2;}else{newSb.min[2]=ds.startSb.min[2]+d2;}
-            if(newSb.min[0]>=newSb.max[0]-0.01){if(ds.signs[0]>0)newSb.max[0]=newSb.min[0]+0.01;else newSb.min[0]=newSb.max[0]-0.01;}
-            if(newSb.min[1]>=newSb.max[1]-0.01){if(ds.signs[1]>0)newSb.max[1]=newSb.min[1]+0.01;else newSb.min[1]=newSb.max[1]-0.01;}
-            if(newSb.min[2]>=newSb.max[2]-0.01){if(ds.signs[2]>0)newSb.max[2]=newSb.min[2]+0.01;else newSb.min[2]=newSb.max[2]-0.01;}
-            if(ds.startSb.rotation) newSb.rotation=ds.startSb.rotation;
-            if(window._ccDispatch) window._ccDispatch({t:A.SECTION_BOX,v:newSb});
-            _sboxHudShow(_sboxFmt(newSb.max[0]-newSb.min[0])+' × '
-              + _sboxFmt(newSb.max[1]-newSb.min[1])+' × '
-              + _sboxFmt(newSb.max[2]-newSb.min[2]), e.clientX, e.clientY);
-          }
         }
       });
 
-      _wlAdd('mouseup', function(){
-        if(_sboxDragging){
-          _sboxDragging=false;
-          _sboxDragState=null;
-          renderer.domElement.style.cursor='';
-          _sboxHudHide();
-        }
-      });
+      function _sboxEndDrag(){
+        if(!_sboxDragging) return;
+        var S2=state3d.current;
+        if(S2._sboxActiveHandle){ S2.gz.setState(S2._sboxActiveHandle, S2._sboxActiveHandle===S2._lastHoveredHandle?'hover':'idle'); S2._sboxActiveHandle=null; }
+        _sboxDragging=false;
+        _sboxDragState=null;
+        renderer.domElement.style.cursor='';
+        _sboxHudHide();
+      }
+      _wlAdd('mouseup', _sboxEndDrag);
 
-      // ── Hover cursor for section box handles ──
+      // Section-box handle under the cursor (tabs + corner arc), or null.
+      function _sboxHit(e){
+        var S2=state3d.current;
+        if(!S2._sboxFaceHandles) return null;
+        var rect=renderer.domElement.getBoundingClientRect();
+        raycaster.setFromCamera(new THREE.Vector2(((e.clientX-rect.left)/rect.width)*2-1, -((e.clientY-rect.top)/rect.height)*2+1), S2.camera);
+        var hh=raycaster.intersectObjects(S2._sboxFaceHandles.concat([S2._sboxRotRing]),false);
+        return hh.length ? hh[0].object : null;
+      }
+      // ── Hover state + cursor for section box handles ──
       renderer.domElement.addEventListener('mousemove', function(e){
         if(_sboxDragging || _walkActive) return;
-        var S2=state3d.current;
-        if(!S2._sboxHandles&&!S2._sboxRotRing&&!S2._sboxFaceHandles) return;
-        var rect=renderer.domElement.getBoundingClientRect();
-        var mx=((e.clientX-rect.left)/rect.width)*2-1;
-        var my=-((e.clientY-rect.top)/rect.height)*2+1;
-        raycaster.setFromCamera(new THREE.Vector2(mx,my), S2.camera);
-        var allH=[];
-        if(S2._sboxRotRing) allH.push(S2._sboxRotRing);
-        if(S2._sboxFaceHandles) allH=allH.concat(S2._sboxFaceHandles);
-        if(S2._sboxHandles) allH=allH.concat(S2._sboxHandles);
-        var hh=raycaster.intersectObjects(allH,false);
-        if(hh.length>0){
-          var h=hh[0].object;
-          if(h.userData._sboxRotation) renderer.domElement.style.cursor='crosshair';
-          else renderer.domElement.style.cursor='grab';
-          if(S2._lastHoveredHandle&&S2._lastHoveredHandle!==h){
-            var _lh=S2._lastHoveredHandle;
-            if(_lh.userData._sboxOrigColor!==undefined) _lh.material.color.setHex(_lh.userData._sboxOrigColor);
-            _lh.material.opacity=_lh.userData._sboxOrigOpacity||0.8;
-            _lh.material.needsUpdate=true;
-          }
-          if(!h.userData._sboxOrigColor){ h.userData._sboxOrigColor=h.material.color.getHex(); h.userData._sboxOrigOpacity=h.material.opacity; }
-          h.material.color.set(0xffffff); h.material.opacity=1.0; h.material.needsUpdate=true;
-          S2._lastHoveredHandle=h;
-          invalidate();
-        } else {
-          if(!_sboxDragging) renderer.domElement.style.cursor='';
-          if(S2._lastHoveredHandle){
-            var _lh2=S2._lastHoveredHandle;
-            if(_lh2.userData._sboxOrigColor!==undefined) _lh2.material.color.setHex(_lh2.userData._sboxOrigColor);
-            _lh2.material.opacity=_lh2.userData._sboxOrigOpacity||0.8;
-            _lh2.material.needsUpdate=true;
-            S2._lastHoveredHandle=null;
-            invalidate();
-          }
-        }
+        var S2=state3d.current, h=_sboxHit(e);
+        if(h===S2._lastHoveredHandle) return;
+        if(S2._lastHoveredHandle) S2.gz.setState(S2._lastHoveredHandle,'idle');
+        if(h) S2.gz.setState(h,'hover');
+        S2._lastHoveredHandle=h;
+        renderer.domElement.style.cursor = !h ? '' : h.userData._sboxRotation ? 'crosshair' : 'grab';
       });
 
       var downPos = {x:0,y:0};
@@ -18182,41 +18157,29 @@ function startApp() {
 
       // ── Right-click drag to move section plane ──
       var _secDrag = null;
+      // Rotation pivots on the gizmo (outline centre, on the plane), so a
+      // rotated plane stays where it was and keeps a model-fitted outline.
       function _getSecNormalAndPoint(cs) {
-        var S2 = state3d.current;
-        if (cs.custom) return {normal:cs.custom.normal.slice(), point:cs.custom.point.slice()};
-        if (cs.axis && S2.mg) {
-          // Building-grid aligned (see _ccPlanFrame) — rotating an axis plane
-          // starts from the plane the user actually sees.
-          var fc = _ccPlanFrame().cut(cs.axis, cs.pos);
-          return {normal:[fc.normal.x, fc.normal.y, fc.normal.z], point:[fc.point.x, fc.point.y, fc.point.z]};
-        }
-        return null;
+        var g = state3d.current._sectionPlaneVis;
+        if (!g) return null;
+        var n = new THREE.Vector3(0, 0, 1).applyQuaternion(g.quaternion);
+        return {normal:[n.x, n.y, n.z], point:[g.position.x, g.position.y, g.position.z]};
       }
       // Imperative section-plane drag.  See docs/INTERNALS.md § 21.33
       function _secPlaneLiveMove(newPos) {
         var S2 = state3d.current; if (!S2) return;
         var cs = window._ccCurrentSection; if (!cs) return;
         var plane = window._ccActivePlanes && window._ccActivePlanes[0];
-        var gizmo = S2._sectionPlaneVis;
-        var box = (_secDrag && _secDrag.box) ? _secDrag.box : _elemsBBox();
+        var n, p;
         if (cs.axis) {
-          var _frL = _ccPlanFrame(), _fcL = _frL.cut(cs.axis, newPos), _nL = _fcL.normal;
-          // Slide along the (building-grid) normal, keeping the gizmo's
-          // in-plane position and the plane's normal (preserves flip).
-          var cp = gizmo ? gizmo.position.clone() : _frL.center.clone();
-          cp.addScaledVector(_nL, _fcL.d - cp.dot(_nL));
-          if (plane) plane.setFromNormalAndCoplanarPoint(plane.normal.clone(), cp);
-          if (gizmo) gizmo.position.copy(cp);
+          var _fcL = _ccPlanFrame().cut(cs.axis, newPos); n = _fcL.normal; p = _fcL.point;
         } else if (cs.custom) {
-          var sc = cs.custom;
-          var nrm = new THREE.Vector3(sc.normal[0], sc.normal[1], sc.normal[2]);
-          var pt  = new THREE.Vector3(sc.point[0], sc.point[1], sc.point[2]);
-          var diag = box.getSize(new THREE.Vector3()).length();
-          var shifted = pt.clone().addScaledVector(nrm, (newPos - 0.5) * diag);
-          if (plane) plane.setFromNormalAndCoplanarPoint(plane.normal.clone(), shifted);
-          if (gizmo) gizmo.position.copy(shifted);
-        }
+          var sc = cs.custom, box = (_secDrag && _secDrag.box) ? _secDrag.box : _elemsBBox();
+          n = new THREE.Vector3(sc.normal[0], sc.normal[1], sc.normal[2]).normalize();
+          p = new THREE.Vector3(sc.point[0], sc.point[1], sc.point[2]).addScaledVector(n, (newPos - 0.5) * box.getSize(new THREE.Vector3()).length());
+        } else return;
+        if (plane) plane.setFromNormalAndCoplanarPoint(plane.normal.clone(), p); // keeps the flip
+        if (S2._sectionPlaneVis) _sectionVisFit(S2, S2._sectionPlaneVis, n, p);
         cs.pos = newPos; // keep click-filter / commit in sync
         invalidate();
       }
@@ -18230,7 +18193,9 @@ function startApp() {
           if (cs && cs.axis) window._ccDispatch({t:A.SECTION, axis:cs.axis, pos:_secDrag.lastPos});
           else if (cs && cs.custom) window._ccDispatch({t:A.SECTION_CUSTOM, v:cs.custom, pos:_secDrag.lastPos});
         }
-        if (_secDrag.button === 0) { var S2 = state3d.current; if (S2 && S2.orbit) S2.orbit.enabled = true; }
+        var S2 = state3d.current;
+        if (_secDrag.button === 0 && S2 && S2.orbit) S2.orbit.enabled = true;
+        if (_secDrag.handle && S2) S2.gz.setState(_secDrag.handle, 'idle');
         _secDrag = null;
         window._ccSectionDragging = false;
         renderer.domElement.style.cursor = '';
@@ -18310,10 +18275,11 @@ function startApp() {
             var wantsRotate = hits[0].object.userData._secHandle === 'rotate' || e.shiftKey;
             if (wantsRotate) {
               var np = _getSecNormalAndPoint(cs);
-              if (np) _secDrag = {startX: e.clientX, startPos: cs.pos, didDrag: false, button: 0, mode:'rotate', startNormal: np.normal, startPoint: np.point};
+              if (np) _secDrag = {startX: e.clientX, startPos: 0.5, didDrag: false, button: 0, mode:'rotate', startNormal: np.normal, startPoint: np.point, handle: hits[0].object};
             } else {
-              _secDrag = {startX: e.clientX, startY: e.clientY, startPos: cs.pos, didDrag: false, button: 0, mode:'move', box: _elemsBBox(), lastPos: cs.pos};
+              _secDrag = {startX: e.clientX, startY: e.clientY, startPos: cs.pos, didDrag: false, button: 0, mode:'move', box: _elemsBBox(), lastPos: cs.pos, handle: hits[0].object};
             }
+            S2.gz.setState(hits[0].object, 'active');
           }
         }
       }, true);
@@ -18329,15 +18295,7 @@ function startApp() {
           window._ccSectionDragging = true;
           // World-Y units per screen pixel at the gizmo distance — matches the
           // section-plane handle scale logic so 1 px of drag ≈ 1 px of motion.
-          var _camF = S2f.camera;
-          var _vpHF = renderer.domElement.clientHeight || 1;
-          var _wppF;
-          if (_camF.isOrthographicCamera) {
-            _wppF = ((_camF.top - _camF.bottom) / (_camF.zoom || 1)) / _vpHF;
-          } else {
-            var _distF = _camF.position.distanceTo(S2f._cutPlaneHelper.position);
-            _wppF = (2 * Math.tan((_camF.fov * Math.PI / 180) / 2) * _distF) / _vpHF;
-          }
+          var _wppF = S2f.gz.pxScale(S2f.camera, S2f._cutPlaneHelper.position, renderer.domElement.clientHeight || 1, 1);
           var fp = (window._ccLatestState||{}).floorPlan;
           var minCut = fp ? (fp.elevation + 0.1) : -Infinity;
           var maxCut = fp ? (fp.elevation + 50) : Infinity;
@@ -18425,53 +18383,24 @@ function startApp() {
         if (_secDrag && _secDrag.didDrag) { e.preventDefault(); e.stopPropagation(); }
       }, true);
       var _lastSecHoverHandle = null;
-      function _secHandleGlow(h, on) {
-        if (!h || !h.material) return;
-        if (on) {
-          if (!h.userData._secOrigColor) h.userData._secOrigColor = h.material.color.getHex();
-          if (!h.userData._secOrigOpacity) h.userData._secOrigOpacity = h.material.opacity;
-          h.material.color.set(h.userData._secHandle === 'rotate' ? 0xffd700 : 0x4fffb0);
-          h.material.opacity = 1.0;
-        } else {
-          if (h.userData._secOrigColor !== undefined) h.material.color.set(h.userData._secOrigColor);
-          if (h.userData._secOrigOpacity !== undefined) h.material.opacity = h.userData._secOrigOpacity;
-        }
-        h.material.needsUpdate = true;
-      }
+      // Hover: floor-plan cut arrow first (while a plan is active), then the
+      // section-plane arrow / ring. One hovered handle, painted via S.gz.
       renderer.domElement.addEventListener('mousemove', function(e) {
         if (_secDrag || _fpDrag) return;
-        var S2 = state3d.current;
-        var rect = renderer.domElement.getBoundingClientRect();
-        var mx = ((e.clientX-rect.left)/rect.width)*2-1;
-        var my = -((e.clientY-rect.top)/rect.height)*2+1;
-        // Floor-plan cut handle hover takes priority while floor plan is active.
-        if (S2 && S2._cutPlaneHelper && S2._cutPlaneHelper._fpDragHandles) {
-          raycaster.setFromCamera(new THREE.Vector2(mx,my), S2.camera);
-          var fpH = raycaster.intersectObjects(S2._cutPlaneHelper._fpDragHandles, false);
-          if (fpH.length > 0) {
-            renderer.domElement.style.cursor = 'ns-resize';
-            if (_lastSecHoverHandle) { _secHandleGlow(_lastSecHoverHandle, false); _lastSecHoverHandle = null; invalidate(); }
-            return;
-          }
+        var S2 = state3d.current; if (!S2 || !S2.gz) return;
+        var cands = (S2._cutPlaneHelper && S2._cutPlaneHelper._fpDragHandles) || (S2._sectionPlaneVis && S2._sectionPlaneVis._secDragHandles) || [];
+        var h = null;
+        if (cands.length) {
+          var rect = renderer.domElement.getBoundingClientRect();
+          raycaster.setFromCamera(new THREE.Vector2(((e.clientX-rect.left)/rect.width)*2-1, -((e.clientY-rect.top)/rect.height)*2+1), S2.camera);
+          var hits = raycaster.intersectObjects(cands, false);
+          h = hits.length ? hits[0].object : null;
         }
-        if (!S2 || !S2._sectionPlaneVis || !S2._sectionPlaneVis._secDragHandles) {
-          if (_lastSecHoverHandle) { _secHandleGlow(_lastSecHoverHandle, false); _lastSecHoverHandle = null; renderer.domElement.style.cursor = ''; }
-          return;
-        }
-        raycaster.setFromCamera(new THREE.Vector2(mx,my), S2.camera);
-        var hits = raycaster.intersectObjects(S2._sectionPlaneVis._secDragHandles, false);
-        if (hits.length > 0) {
-          var h = hits[0].object;
-          if (h !== _lastSecHoverHandle) {
-            if (_lastSecHoverHandle) _secHandleGlow(_lastSecHoverHandle, false);
-            _secHandleGlow(h, true);
-            _lastSecHoverHandle = h;
-            invalidate();
-          }
-          renderer.domElement.style.cursor = h.userData._secHandle === 'rotate' ? 'crosshair' : 'grab';
-        } else {
-          if (_lastSecHoverHandle) { _secHandleGlow(_lastSecHoverHandle, false); _lastSecHoverHandle = null; renderer.domElement.style.cursor = ''; invalidate(); }
-        }
+        if (h === _lastSecHoverHandle) return;
+        if (_lastSecHoverHandle) S2.gz.setState(_lastSecHoverHandle, 'idle');
+        if (h) S2.gz.setState(h, 'hover');
+        _lastSecHoverHandle = h;
+        renderer.domElement.style.cursor = !h ? '' : h.userData._fpHandle ? 'ns-resize' : h.userData._secHandle === 'rotate' ? 'crosshair' : 'grab';
       });
 
       // ── Viewpoint capture/restore ──
@@ -19830,50 +19759,16 @@ function startApp() {
           if (movedLOD && camLOD) clashMarkersRef.current.userData.updateLOD(camLOD);
         }
 
-        // Constant-size section-box handles — face arrows AND corner grips, so
-        // both read at the same scale.  See docs/INTERNALS.md § 21.24
-        var _sboxScaleAll = [];
-        if (S._sboxFaceHandles) _sboxScaleAll = _sboxScaleAll.concat(S._sboxFaceHandles);
-        if (S._sboxHandles)     _sboxScaleAll = _sboxScaleAll.concat(S._sboxHandles);
-        _sboxScaleAll.forEach(function(h) {
-          if (h && h.userData && h.userData._maxWorldSize && h.userData._baseSize) {
-            var s = h.userData._maxWorldSize / h.userData._baseSize;
-            if (s > 0 && isFinite(s)) h.scale.setScalar(s);
-          }
-        });
-
-        // Section-plane gizmo ring reorientation (scale is fixed at creation time).
-        if (S._sectionPlaneVis && S._sectionPlaneVis._secHandleGroup) {
-          var _giz = S._sectionPlaneVis;
-
-          // Vertical-plane ring reorient.  See docs/INTERNALS.md § 21.35
-          var _ring = _giz._secRotRing;
-          if (_ring) {
-            var _wq = _giz.getWorldQuaternion(new THREE.Quaternion());
-            var _wn = new THREE.Vector3(0, 0, 1).applyQuaternion(_wq);
-            if (Math.abs(_wn.y) < 0.7) {
-              var _localUp = new THREE.Vector3(0, 1, 0).applyQuaternion(_wq.invert());
-              _ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), _localUp);
-            } else {
-              _ring.quaternion.identity();
-            }
-          }
-        }
-
-        // Same constant-size scaling for the floor-plan cut-plane arrow.
-        if (S._cutPlaneHelper && S._cutPlaneHelper._fpHandleGroup) {
-          var _fpg = S._cutPlaneHelper;
-          var _camF = S.camera;
-          var _vpHF = renderer.domElement.clientHeight || 1;
-          var _wppF;
-          if (_camF.isOrthographicCamera) {
-            _wppF = ((_camF.top - _camF.bottom) / (_camF.zoom || 1)) / _vpHF;
-          } else {
-            var _distF = _camF.position.distanceTo(_fpg.position);
-            _wppF = (2 * Math.tan((_camF.fov * Math.PI / 180) / 2) * _distF) / _vpHF;
-          }
-          var _scF = (_wppF * 110) / (_fpg._fpHandleSpan || 1);
-          if (_scF > 0 && isFinite(_scF)) _fpg._fpHandleGroup.scale.setScalar(_scF);
+        // Screen-constant gizmo handles (section plane / box / floor-plan
+        // arrow) — viewer-gizmo-core.js; no-op while no gizmo exists.
+        if (S.gz) S.gz.update(S.camera, renderer.domElement.clientHeight || 1);
+        // Section rotation ring: lies flat (spins about world up) on a vertical
+        // plane, stands on a horizontal one.  See docs/INTERNALS.md § 21.35
+        var _ring = S._sectionPlaneVis && S._sectionPlaneVis._secRotRing;
+        if (_ring) {
+          var _wq = S._sectionPlaneVis.quaternion.clone(), _wn = new THREE.Vector3(0, 0, 1).applyQuaternion(_wq);
+          if (Math.abs(_wn.y) < 0.7) _ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 1, 0).applyQuaternion(_wq.invert()));
+          else _ring.quaternion.identity();
         }
 
         // Lower resolution while moving — but only once motion has actually
@@ -20229,152 +20124,25 @@ function startApp() {
       }
       _ccDisposeSectionCutLines(S);
       if (S._sectionHatchMesh) { S.scene.remove(S._sectionHatchMesh); S._sectionHatchMesh.geometry.dispose(); S._sectionHatchMesh.material.dispose(); S._sectionHatchMesh=null; }
-      function _makeSectionVis(halfW, halfH, position, quaternion) {
-        var grp = new THREE.Group();
-        var fillGeo = new THREE.PlaneGeometry(halfW * 2, halfH * 2);
-        var fillMat = new THREE.MeshBasicMaterial({
-          color: 0x1a6b4a, transparent: true, opacity: 0.08,
-          side: THREE.DoubleSide, depthWrite: false
-        });
-        fillMat.clippingPlanes = [];
-        var fill = new THREE.Mesh(fillGeo, fillMat);
-        fill.userData._sectionPlane = true;
-        fill.renderOrder = 998;
-        grp.add(fill);
-        var borderGeo = new THREE.EdgesGeometry(fillGeo);
-        var borderMat = new THREE.LineBasicMaterial({color: 0x1a6b4a, transparent: true, opacity: 0.85});
-        borderMat.clippingPlanes = [];
-        var border = new THREE.LineSegments(borderGeo, borderMat);
-        border.userData._sectionPlane = true;
-        border.renderOrder = 999;
-        grp.add(border);
-
-        // Section-plane handle group — constant on-screen size.  See docs/INTERNALS.md § 21.34
-        var handleGroup = new THREE.Group();
-        handleGroup.userData._sectionPlane = true;
-
-        // ── Rotation ring — amber, matches section-box ring style ──────────
-        // Built at a fixed reference size; the sub-group scale handles sizing.
-        var _torusR = 1.0;
-        var _tubeR  = _torusR * 0.055;
-        var arcGeo  = new THREE.TorusGeometry(_torusR, _tubeR, 8, 32, Math.PI * 1.5);
-        var arcMat  = new THREE.MeshBasicMaterial({color: 0xf59e0b, transparent: true, opacity: 0.7, depthTest: false});
-        arcMat.clippingPlanes = [];
-        var rotRing = new THREE.Mesh(arcGeo, arcMat);
-        rotRing.userData._sectionPlane = true;
-        rotRing.userData._secHandle   = 'rotate';
-        rotRing.renderOrder = 1000;
-        handleGroup.add(rotRing);
-
-        // ── Move arrow — stem + cone tip pointing along local +Z (plane normal) ──
-        // Reference sizes; constant on-screen size is applied via handleGroup.scale.
-        var shaftLen  = 1.8;
-        var shaftCylR = 0.03;
-        var tipR      = 0.12;
-        var tipLen    = 0.3;
-        // Match the section rotation ring (0xf59e0b amber) so the drag arrow,
-        // tip, and ring read as one gizmo. Was the brand green which made the
-        // axis arrow visually disjoint from the rotation ring.
-        var arrowMat  = new THREE.MeshBasicMaterial({color: 0xf59e0b, transparent: true, opacity: 0.85, depthTest: false});
-        arrowMat.clippingPlanes = [];
-        var shaftGeo  = new THREE.CylinderGeometry(shaftCylR, shaftCylR, shaftLen, 8, 1, true);
-        var shaft     = new THREE.Mesh(shaftGeo, arrowMat);
-        shaft.rotation.x = -Math.PI / 2;
-        shaft.position.set(0, 0, shaftLen / 2);
-        shaft.userData._sectionPlane = true;
-        shaft.userData._secHandle    = 'move';
-        shaft.renderOrder = 1000;
-        handleGroup.add(shaft);
-        var tipGeo = new THREE.ConeGeometry(tipR, tipLen, 12);
-        var tip    = new THREE.Mesh(tipGeo, arrowMat.clone());
-        tip.rotation.x = -Math.PI / 2;
-        tip.position.set(0, 0, shaftLen + tipLen / 2);
-        tip.userData._sectionPlane = true;
-        tip.userData._secHandle    = 'move';
-        tip.renderOrder = 1000;
-        handleGroup.add(tip);
-
-        // Invisible fat hit-proxy spanning the whole arrow. The visible shaft is
-        // thin, so the pick ray usually missed it and the click fell through to
-        // the orbit handler ("it just rotates"). A wide invisible cylinder along
-        // the arrow makes the move handle reliably grabbable.
-        var hitR = tipR * 2.2;
-        var hitProxy = new THREE.Mesh(
-          new THREE.CylinderGeometry(hitR, hitR, shaftLen + tipLen, 8, 1, false),
-          new THREE.MeshBasicMaterial({ visible: false })
-        );
-        hitProxy.rotation.x = -Math.PI / 2;
-        hitProxy.position.set(0, 0, (shaftLen + tipLen) / 2);
-        hitProxy.userData._sectionPlane = true;
-        hitProxy.userData._secHandle    = 'move';
-        hitProxy.renderOrder = 1000;
-        handleGroup.add(hitProxy);
-
-        grp.add(handleGroup);
-        grp._secHandleGroup = handleGroup;
-        grp._secHandleSpan  = shaftLen + tipLen; // reference world span at scale 1
-        grp._secRotRing     = rotRing; // re-oriented per frame for vertical planes
-        grp._secDragHandles = [rotRing, shaft, tip, hitProxy];
-        grp.position.copy(position);
-        if (quaternion) grp.quaternion.copy(quaternion);
-        grp.renderOrder = 999;
-        grp.userData._sectionPlane = true;
-        return grp;
-      }
       if(s.sectionAxis && S.mg.children.length>0){
         // Axis planes follow the building's plan grid (_ccPlanFrame) — world
         // axes when the model isn't rotated in plan.
-        var fr=_ccPlanFrame(), box=fr.box;
-        var fc=fr.cut(s.sectionAxis, s.sectionPos);
+        var fc=_ccPlanFrame().cut(s.sectionAxis, s.sectionPos);
         var axPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(fc.normal.clone().negate(), fc.point);
         if(s.sectionFlip) axPlane.negate();
         planes.push(axPlane);
-        var size = new THREE.Vector3(fr.max.x-fr.min.x, fr.max.y-fr.min.y, fr.max.z-fr.min.z);
-        var hw, hh, pos = fc.point.clone(), q = new THREE.Quaternion(), qa = new THREE.Quaternion();
-        // Estimate above-grade height: from grade (Y=0 or model min) to model top.
-        // Avoids deep piles inflating the vertical plane size to absurd heights.
-        var _aboveH = (box.max.y > 0) ? Math.max(2, box.max.y - Math.max(box.min.y, 0)) : size.y;
-        var _visCtrY = (box.max.y > 0 ? Math.max(box.min.y, 0) : box.min.y) + _aboveH * 0.5;
-        // Outline size follows the model (_ccSectionClipping.outlineHalfExtents):
-        // per axis, the model's extent + a margin of 2x the distance from the
-        // cut to the furthest geometry (so geometry above/below stays inside
-        // in perspective), clamped to 4%..25% of that axis — proportional to
-        // the model, rectangular for a long building.
-        var _gapN = Math.max(0, fc.d - fr.min[s.sectionAxis], fr.max[s.sectionAxis] - fc.d);
-        function _outline(a, b){
-          var api = window._ccSectionClipping;
-          return api && typeof api.outlineHalfExtents === 'function' ? api.outlineHalfExtents([a, b], _gapN) : [a / 2 * 1.04, b / 2 * 1.04];
-        }
-        var _oh;
-        if(s.sectionAxis==='x'){ _oh=_outline(size.z, _aboveH); hw=_oh[0]; hh=_oh[1]; pos.y=_visCtrY; qa.setFromAxisAngle(new THREE.Vector3(0,1,0),Math.PI/2); }
-        else if(s.sectionAxis==='y'){ _oh=_outline(size.x, size.z); hw=_oh[0]; hh=_oh[1]; qa.setFromAxisAngle(new THREE.Vector3(1,0,0),-Math.PI/2); }
-        else { _oh=_outline(size.x, _aboveH); hw=_oh[0]; hh=_oh[1]; pos.y=_visCtrY; }
-        q.copy(fr.quaternion).multiply(qa); // building-grid rotation, then the per-axis plane orientation
-        var vis = _makeSectionVis(hw, hh, pos, q);
-        // Fixed world-proportional handle size: ~3.5 % of model diagonal,
-        // independent of camera distance so the gizmo never grows on zoom-out.
-        var _visScale = box.getSize(new THREE.Vector3()).length() * 0.035 / (vis._secHandleSpan || 2.1);
-        vis._secHandleGroup.scale.setScalar(Math.max(0.5, _visScale));
-        S.scene.add(vis);
-        S._sectionPlaneVis = vis;
+        S._sectionPlaneVis = _sectionVisFit(S, null, fc.normal, fc.point);
+        S.scene.add(S._sectionPlaneVis);
       } else if(s.sectionCustom){
         var sc=s.sectionCustom;
-        var normal=new THREE.Vector3(sc.normal[0],sc.normal[1],sc.normal[2]);
-        var pt=new THREE.Vector3(sc.point[0],sc.point[1],sc.point[2]);
-        var box2=_elemsBBox();
-        var diag=box2.getSize(new THREE.Vector3()).length();
-        var offset=(s.sectionPos-0.5)*diag;
-        var shiftedPt=pt.clone().addScaledVector(normal,offset);
+        var normal=new THREE.Vector3(sc.normal[0],sc.normal[1],sc.normal[2]).normalize();
+        var diag=_elemsBBox().getSize(new THREE.Vector3()).length();
+        var shiftedPt=new THREE.Vector3(sc.point[0],sc.point[1],sc.point[2]).addScaledVector(normal,(s.sectionPos-0.5)*diag);
         var plane=new THREE.Plane().setFromNormalAndCoplanarPoint(normal.clone().negate(),shiftedPt);
         if(s.sectionFlip) plane.negate();
         planes.push(plane);
-        var halfDim = diag * 0.22;
-        var vis2 = _makeSectionVis(halfDim, halfDim, shiftedPt, null);
-        vis2.lookAt(shiftedPt.clone().add(normal));
-        var _visScale2 = diag * 0.035 / (vis2._secHandleSpan || 2.1);
-        vis2._secHandleGroup.scale.setScalar(Math.max(0.5, _visScale2));
-        S.scene.add(vis2);
-        S._sectionPlaneVis = vis2;
+        S._sectionPlaneVis = _sectionVisFit(S, null, normal, shiftedPt);
+        S.scene.add(S._sectionPlaneVis);
       }
       // ── Per-material clipping ──  See docs/INTERNALS.md § 21.36
       S.renderer.clippingPlanes = [];
@@ -20413,158 +20181,17 @@ function startApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- plane rebuild keyed on the plane params; sectionBox.enabled is only read to decide clipping ownership (the section-box effect re-applies on its own toggle); the renderStyle term is a deliberate composite dep
     }, [s.sectionAxis, s.sectionPos, s.sectionCustom, s.sectionFlip, s.sectionHatch, s.models, s.prefs&&s.prefs.renderStyle]);
 
-    // ── TransformControls section gizmo (PR-A) ─────────────────
-    // Draggable 3-axis-aware translate gizmo on the active section plane.
-    useEffect(function(){
-      var S = state3d.current;
-      if (!S || !S.scene || !S.camera || !S.renderer) return;
-      var _disp = window._ccDispatch;
-
-      // Helper accessor — works on both pre-r170 (TC is itself an Object3D)
-      // and modern Three (TC is a Controls; its visual lives on getHelper()).
-      function _tcVisual(tc) {
-        if (!tc) return null;
-        return (typeof tc.getHelper === 'function') ? tc.getHelper() : tc;
-      }
-      function detachAndHide() {
-        if (S._sectionTC) {
-          try { S._sectionTC.detach(); } catch(e){}
-          var v = _tcVisual(S._sectionTC);
-          if (v && v.parent) v.parent.remove(v);
-        }
-      }
-
-      function ensureGizmo(cb) {
-        if (S._sectionTC) { cb(); return; }
-        if (typeof THREE.TransformControls !== 'function') { cb(); return; }
-        buildAndCb();
-        function buildAndCb() {
-          if (S._sectionTC) { cb(); return; }
-          var anchor = new THREE.Object3D();
-          anchor.userData._sectionAnchor = true;
-          S._sectionAnchor = anchor;
-          // TransformControls requires its target to be in the scene graph or
-          // it spams `updateMatrixWorld` warnings every frame and eventually
-          // pointerDown throws on a null `object`. The anchor itself is
-          // invisible (empty Object3D) — adding it costs nothing but fixes
-          // the every-frame "must be a part of the scene graph" warning.
-          if (S.scene && !anchor.parent) S.scene.add(anchor);
-          var tc = new THREE.TransformControls(S.camera, S.renderer.domElement);
-          tc.setMode('translate');
-          tc.setSize(0.85);
-          if (!tc.userData) tc.userData = {}; // r180 Controls has no userData
-          tc.userData._isSectionTC = true;
-          var _tcV0 = _tcVisual(tc);
-          if (_tcV0) { _tcV0.userData = _tcV0.userData || {}; _tcV0.userData._isSectionTC = true; }
-          // Brand-recolour the gizmo (was R/G/B per-axis) to ClashControl green.
-          // Done on next tick so the internal gizmo is fully built first.
-          setTimeout(function(){
-            var _tcVis0 = _tcVisual(tc) || tc;
-            if (typeof _tcVis0.traverse !== 'function') return;
-            _tcVis0.traverse(function(o){
-              if (!o.material) return;
-              var mats = Array.isArray(o.material) ? o.material : [o.material];
-              mats.forEach(function(m){
-                if (!m || !m.color) return;
-                if (m.opacity === 0 || m.visible === false) return; // skip pickers
-                m.color.setHex(0x1a6b4a);
-                if (m._color) m._color.setHex(0x1a6b4a); // override TC's cached restore color
-              });
-            });
-            invalidate();
-          }, 0);
-          tc.addEventListener('dragging-changed', function(ev){
-            if (S.orbit) S.orbit.enabled = !ev.value;
-            window._ccSectionDragging = !!ev.value;
-            invalidate(3);
-          });
-          tc.addEventListener('objectChange', function(){
-            if (!_disp) return;
-            var st = window._ccLatestState || {};
-            var box = _elemsBBox(); if (box.isEmpty()) return;
-            var ax = st.sectionAxis;
-            if (ax) {
-              var _frO = _ccPlanFrame();
-              if (Math.abs(_frO.max[ax] - _frO.min[ax]) < 1e-6) return;
-              var t = _frO.posOf(ax, anchor.position); // along the building-grid axis
-              t = Math.max(0.005, Math.min(0.995, t));
-              _disp({t:A.SECTION, axis:ax, pos:t});
-            } else if (st.sectionCustom) {
-              var sc = st.sectionCustom;
-              var n = new THREE.Vector3(sc.normal[0],sc.normal[1],sc.normal[2]);
-              var p0 = new THREE.Vector3(sc.point[0],sc.point[1],sc.point[2]);
-              var diag = box.getSize(new THREE.Vector3()).length();
-              if (diag < 1e-6) return;
-              var rel = anchor.position.clone().sub(p0).dot(n) / diag + 0.5;
-              rel = Math.max(0.005, Math.min(0.995, rel));
-              _disp({t:A.SECTION_CUSTOM, v:sc, pos:rel});
-            }
-          });
-          S._sectionTC = tc;
-          cb();
-        }
-      }
-
-      // Detach when there's no active section, or while walking/presenting.
-      if (!s.sectionAxis && !s.sectionCustom) { detachAndHide(); invalidate(2); return; }
-      if (s.walkMode || s.presenting) { detachAndHide(); invalidate(2); return; }
-
-      ensureGizmo(function(){
-        if (!S._sectionTC || !S._sectionAnchor) return;
-        var box = _elemsBBox();
-        if (box.isEmpty()) return;
-        var center = box.getCenter(new THREE.Vector3());
-        if (s.sectionAxis) {
-          var ax = s.sectionAxis;
-          var _frG = _ccPlanFrame();
-          S._sectionAnchor.position.copy(_frG.cut(ax, s.sectionPos).point);
-          // Local frame = building grid, so the single visible arrow runs
-          // along the plane normal even when the model is rotated in plan.
-          S._sectionAnchor.quaternion.copy(_frG.quaternion);
-          S._sectionTC.space = 'local';
-          S._sectionTC.showX = (ax==='x');
-          S._sectionTC.showY = (ax==='y');
-          S._sectionTC.showZ = (ax==='z');
-        } else if (s.sectionCustom) {
-          var sc = s.sectionCustom;
-          var n = new THREE.Vector3(sc.normal[0],sc.normal[1],sc.normal[2]).normalize();
-          var p0 = new THREE.Vector3(sc.point[0],sc.point[1],sc.point[2]);
-          var diag = box.getSize(new THREE.Vector3()).length();
-          var offset = (s.sectionPos - 0.5) * diag;
-          var pos = p0.clone().addScaledVector(n, offset);
-          S._sectionAnchor.position.copy(pos);
-          var q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1), n);
-          S._sectionAnchor.quaternion.copy(q);
-          S._sectionAnchor.rotation.copy(S._sectionAnchor.rotation); // sync
-          S._sectionTC.showX = false;
-          S._sectionTC.showY = false;
-          S._sectionTC.showZ = true;
-          S._sectionTC.space = 'local';
-        }
-        var _tcVis = _tcVisual(S._sectionTC);
-        if (_tcVis && !_tcVis.parent) S.scene.add(_tcVis);
-        S._sectionTC.attach(S._sectionAnchor);
-        invalidate(3);
-      });
-
-      return function(){};
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- _ccPlanFrame is a render-scoped helper that reads modelsRef and caches by model set; s.models re-anchors the gizmo when the loaded models change
-    }, [s.sectionAxis, s.sectionCustom, s.sectionPos, s.walkMode, s.presenting, s.models]);
-
-    var sboxDragRef = useRef(null); // {handle, axis, side, startMouse, startVal, plane}
     useEffect(function(){
       var S = state3d.current; if(!S.renderer||!S.mg) return;
       function _disposeMesh(obj){
         S.scene.remove(obj);
-        if(obj.geometry) obj.geometry.dispose();
-        if(obj.material) { (Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();}); }
+        obj.traverse(function(o){ if(o.geometry) o.geometry.dispose(); if(o.material) o.material.dispose(); });
       }
       function cleanupSbox(){
         if(S._sboxHelper){_disposeMesh(S._sboxHelper);S._sboxHelper=null;}
-        if(S._sboxHandles){S._sboxHandles.forEach(_disposeMesh);S._sboxHandles=null;}
         if(S._sboxFaceHandles){S._sboxFaceHandles.forEach(_disposeMesh);S._sboxFaceHandles=null;}
         if(S._sboxRotRing){_disposeMesh(S._sboxRotRing);S._sboxRotRing=null;}
-        if(S._sboxFacePanels){S._sboxFacePanels.forEach(_disposeMesh);S._sboxFacePanels=null;}
+        S._sboxLayout=null;
       }
       if(!s.sectionBox||!s.sectionBox.enabled) {
         if(S._sectionBoxActive) {
@@ -20607,170 +20234,49 @@ function startApp() {
       _ccApplySectionMaterialPlanes(S, planes, 'box');
       S._sectionBoxActive=true;
       window._ccCurrentSbox=sb; // expose for drag handlers
-      cleanupSbox();
 
-      var boxGeo=new THREE.BoxGeometry(hx*2,hy*2,hz*2);
-      var edges=new THREE.EdgesGeometry(boxGeo);
-      var lineMat=new THREE.LineBasicMaterial({color:0x1a6b4a,transparent:true,opacity:0.5});
-      var wireframe=new THREE.LineSegments(edges,lineMat);
-      wireframe.position.copy(ctr);
-      wireframe.rotation.y=rot;
-      wireframe.userData._sboxPart=true;
-      // Helpers shouldn't cast shadows — the box wireframe + face panels
-      // were projecting a phantom rotated trapezoid on the ground that
-      // looked like the section box was tilted differently than its
-      // visual. Explicit false on both ends keeps it clean.
-      wireframe.castShadow = false;
-      wireframe.receiveShadow = false;
-      S.scene.add(wireframe);
-      S._sboxHelper=wireframe;
-
-      var facePanels=[];
-      var faceDefs=[
-        {w:hz*2,h:hy*2,pos:axX.clone().multiplyScalar(hx),lookDir:'x'},   // +X face
-        {w:hz*2,h:hy*2,pos:axX.clone().multiplyScalar(-hx),lookDir:'-x'}, // -X face
-        {w:hx*2,h:hz*2,pos:axY.clone().multiplyScalar(hy),lookDir:'y'},   // +Y (top)
-        {w:hx*2,h:hz*2,pos:axY.clone().multiplyScalar(-hy),lookDir:'-y'}, // -Y (bottom)
-        {w:hx*2,h:hy*2,pos:axZ.clone().multiplyScalar(hz),lookDir:'z'},   // +Z face
-        {w:hx*2,h:hy*2,pos:axZ.clone().multiplyScalar(-hz),lookDir:'-z'}  // -Z face
-      ];
-      faceDefs.forEach(function(fd){
-        // Skip the bottom fill: it sat on the floor like a shadow and (because of
-        // its Euler order) spun counter to the box when rotating. Turning it off.
-        if(fd.lookDir==='-y') return;
-        var pg=new THREE.PlaneGeometry(fd.w,fd.h);
-        var pm=new THREE.Mesh(pg,new THREE.MeshBasicMaterial({color:0x1a6b4a,transparent:true,opacity:0.06,side:THREE.DoubleSide,depthWrite:false}));
-        pm.castShadow = false;     // see wireframe note above
-        pm.receiveShadow = false;
-        pm.position.copy(ctr).add(fd.pos);
-        if(fd.lookDir==='x'||fd.lookDir==='-x'){
-          pm.rotation.y=rot+(fd.lookDir==='x'?Math.PI/2:-Math.PI/2);
-        } else if(fd.lookDir==='y'||fd.lookDir==='-y'){
-          pm.rotation.x=(fd.lookDir==='y'?-Math.PI/2:Math.PI/2);
-          pm.rotation.z=rot;
-        } else {
-          pm.rotation.y=rot+(fd.lookDir==='z'?Math.PI:0);
-        }
-        pm.userData._sboxPart=true;
-        S.scene.add(pm);
-        facePanels.push(pm);
-      });
-      S._sboxFacePanels=facePanels;
-
-      var maxDim = Math.max(hx,hy,hz);
-      // Handles are built at a representative world size, but the tick loop
-      // re-scales them every frame so they appear at a constant pixel size
-      // regardless of model scale or camera distance — otherwise the same
-      // handle looks tiny on a 5 m apartment and huge on a 500 m tower.
-      var handleSize = Math.max(0.07, Math.min(maxDim*0.028, 0.20));
-      // Corner grips get the SAME constant-size treatment as the face arrows
-      // (re-applied every frame in the tick loop) so they don't read at a
-      // different scale than the arrows on big or small models.
-      var _cornerMaxWorld = Math.max(0.08, Math.min(maxDim*0.02, 0.28));
-      var handleGeo=new THREE.SphereGeometry(handleSize,8,8);
-      var handles=[];
-      // renderer.clippingPlanes clips everything outside the section box, including
-      // handles that are positioned at/outside the box boundary. material.clippingPlanes=[]
-      // only controls local clipping, not the global renderer planes. Use
-      // onBeforeRender/onAfterRender to temporarily suspend global clipping for each
-      // handle so it always renders regardless of where the box face is.
+      // Box gizmo, built once per enable and re-laid-out on every change (so
+      // a hovered / dragged tab keeps its state): 1 px edges (--border), one
+      // flat screen-constant tab per face (drag = move that face) and a small
+      // arc at a top corner (drag = rotate about up). Colours via S.gz.
+      // The handles opt out of global clipping (floor-plan cut) per draw.
       function _sboxUnclip(obj){
-        obj.onBeforeRender = function(r){ obj._scp=r.clippingPlanes; r.clippingPlanes=[]; };
-        obj.onAfterRender  = function(r){ r.clippingPlanes=obj._scp; };
+        obj.traverse(function(o){
+          o.onBeforeRender = function(r){ o._scp=r.clippingPlanes; r.clippingPlanes=[]; };
+          o.onAfterRender  = function(r){ r.clippingPlanes=o._scp; };
+        });
       }
-      var cornerSigns=[[-1,-1,-1],[-1,-1,1],[-1,1,-1],[-1,1,1],[1,-1,-1],[1,-1,1],[1,1,-1],[1,1,1]];
-      cornerSigns.forEach(function(sg){
-        var pos=ctr.clone().addScaledVector(axX,sg[0]*hx).addScaledVector(axY,sg[1]*hy).addScaledVector(axZ,sg[2]*hz);
-        var outDir=new THREE.Vector3(sg[0],sg[1],sg[2]).normalize();
-        var mat=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.9,depthTest:false});
-        var mesh=new THREE.Mesh(handleGeo,mat);
-        mesh.castShadow = false; mesh.receiveShadow = false; // helper
-        mesh.position.copy(pos).addScaledVector(outDir,handleSize);
-        mesh.userData._sboxHandle=true;
-        mesh.userData._handleSigns=sg;
-        mesh.userData._handleAxX=axX.clone();
-        mesh.userData._handleAxY=axY.clone();
-        mesh.userData._handleAxZ=axZ.clone();
-        mesh.userData._baseSize=handleSize;
-        mesh.userData._maxWorldSize=_cornerMaxWorld;
-        mesh.renderOrder=999;
-        _sboxUnclip(mesh);
-        S.scene.add(mesh);
-        handles.push(mesh);
-      });
-
-      S._sboxHandles=handles;
-
-      // ── Revit-style face arrow handles — drag one face at a time ─────────
-      // 6 arrows (one per face center), each constrained to slide along its face normal.
-      // Sized generously relative to the box so they are clearly visible and clickable
-      // even on big building-scale models (no hard upper cap).
-      var faceArrowSize = Math.max(0.08, Math.min(maxDim * 0.0173, 0.69));
-      var faceArrowGeo = new THREE.ConeGeometry(faceArrowSize * 0.55, faceArrowSize * 1.6, 16);
-      var _arrowMaxWorld = Math.max(0.12, Math.min(maxDim * 0.04, 0.55));
-      var faceHandles = [];
-      var faceDirs = [
-        {axis: axX.clone(), sign: +1, idx: 0, side: 'max', halfExt: hx},
-        {axis: axX.clone(), sign: -1, idx: 0, side: 'min', halfExt: hx},
-        {axis: axY.clone(), sign: +1, idx: 1, side: 'max', halfExt: hy},
-        {axis: axY.clone(), sign: -1, idx: 1, side: 'min', halfExt: hy},
-        {axis: axZ.clone(), sign: +1, idx: 2, side: 'max', halfExt: hz},
-        {axis: axZ.clone(), sign: -1, idx: 2, side: 'min', halfExt: hz}
-      ];
-      faceDirs.forEach(function(fd){
-        var faceCenter = ctr.clone().addScaledVector(fd.axis, fd.sign * fd.halfExt);
-        var arrowPos   = faceCenter.clone().addScaledVector(fd.axis, fd.sign * faceArrowSize * 1.0);
-        // Section box face arrows match the section-plane gizmo (amber).
-        var fmat = new THREE.MeshBasicMaterial({color:0xf59e0b, transparent:true, opacity:0.85, depthTest:false});
-        var arrow = new THREE.Mesh(faceArrowGeo, fmat);
-        arrow.castShadow = false; arrow.receiveShadow = false; // helper
-        arrow.position.copy(arrowPos);
-        arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), fd.axis.clone().multiplyScalar(fd.sign).normalize());
-        arrow.userData._sboxFaceHandle = true;
-        arrow.userData._faceAxis = fd.axis.clone().multiplyScalar(fd.sign); // outward-facing
-        arrow.userData._faceSign = fd.sign;
-        arrow.userData._faceIdx  = fd.idx;
-        arrow.userData._faceSide = fd.side;
-        arrow.userData._baseSize = faceArrowSize;
-        arrow.userData._maxWorldSize = _arrowMaxWorld;
-        arrow.renderOrder = 999;
-        _sboxUnclip(arrow);
-        S.scene.add(arrow);
-        faceHandles.push(arrow);
-      });
-      S._sboxFaceHandles = faceHandles;
-
-      // Fixed world-space size capped at 2.5 m — _scaleHandle uniform scaling
-      // makes the tube sub-pixel thin on large models, so we skip that mechanism here.
-      var ringRadius=Math.min(Math.max(maxDim*0.15, 0.6), 2.5);
-      var ringTubeRadius=Math.max(ringRadius*0.055, 0.04);
-      var ringFloatHeight=ringRadius*1.5; // constant gap (ring-relative) so it doesn't drift when the box is resized
-      var ringGeo=new THREE.TorusGeometry(ringRadius,ringTubeRadius,8,48);
-      var ringMat=new THREE.MeshBasicMaterial({color:0xf59e0b,transparent:true,opacity:0.7,depthTest:false});
-      var ring=new THREE.Mesh(ringGeo,ringMat);
-      ring.castShadow = false; ring.receiveShadow = false; // helper, no shadow
-      var ringY=hy+ringFloatHeight;
-      ring.position.copy(ctr).addScaledVector(axY,ringY);
-      ring.userData._floatH=ringFloatHeight; // reused by the live rotate-drag repositioning
-      ring.rotation.x=Math.PI/2; // lay flat
-      ring.userData._sboxRotation=true;
-      ring.renderOrder=999;
-      _sboxUnclip(ring);
-      S.scene.add(ring);
-      S._sboxRotRing=ring;
-
-      var lineGeo=new THREE.BufferGeometry().setFromPoints([
-        ctr.clone().addScaledVector(axY,hy),
-        ctr.clone().addScaledVector(axY,ringY)
-      ]);
-      var lineMat2=new THREE.LineBasicMaterial({color:0xf59e0b,transparent:true,opacity:0.35});
-      var connLine=new THREE.Line(lineGeo,lineMat2);
-      connLine.userData._sboxPart=true;
-      connLine.renderOrder=999;
-      _sboxUnclip(connLine);
-      S.scene.add(connLine);
-      if(!S._sboxFacePanels) S._sboxFacePanels=[];
-      S._sboxFacePanels.push(connLine); // cleaned up with face panels
+      if(!S._sboxHelper){
+        var gzc=window._ccViewerGizmo;
+        var wire=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1,1,1)), new THREE.LineBasicMaterial({transparent:true}));
+        wire.userData._sboxPart=true; wire.userData.ccGizmo={style:'edge', fixed:true};
+        S.scene.add(wire); S.gz.track(wire); S._sboxHelper=wire;
+        S._sboxFaceHandles=[0,1,2,3,4,5].map(function(i){
+          var tab=gzc.buildTab(THREE, 12);
+          tab.userData._sboxFaceHandle=true; tab.userData._faceIdx=i>>1; tab.userData._faceSign=(i&1)?-1:1; tab.userData._faceSide=(i&1)?'min':'max';
+          _sboxUnclip(tab); S.scene.add(tab); S.gz.track(tab);
+          return tab;
+        });
+        var arc=gzc.buildArc(THREE, 28);
+        arc.userData._sboxRotation=true;
+        _sboxUnclip(arc); S.scene.add(arc); S.gz.track(arc);
+        S._sboxRotRing=arc;
+        S._sboxLayout=function(b){
+          var r=b.rotation||0, ax=[new THREE.Vector3(Math.cos(r),0,-Math.sin(r)), new THREE.Vector3(0,1,0), new THREE.Vector3(Math.sin(r),0,Math.cos(r))];
+          var c=new THREE.Vector3((b.min[0]+b.max[0])/2,(b.min[1]+b.max[1])/2,(b.min[2]+b.max[2])/2);
+          var he=[(b.max[0]-b.min[0])/2,(b.max[1]-b.min[1])/2,(b.max[2]-b.min[2])/2];
+          S._sboxHelper.position.copy(c); S._sboxHelper.rotation.set(0,r,0); S._sboxHelper.scale.set(2*he[0],2*he[1],2*he[2]);
+          S._sboxFaceHandles.forEach(function(t){
+            var i=t.userData._faceIdx, sg=t.userData._faceSign;
+            t.position.copy(c).addScaledVector(ax[i], sg*he[i]);
+            t.userData._faceAxis=ax[i].clone().multiplyScalar(sg); // outward
+          });
+          S._sboxRotRing.position.copy(c).addScaledVector(ax[0],he[0]).addScaledVector(ax[1],he[1]).addScaledVector(ax[2],-he[2]);
+          S._sboxRotRing.rotation.set(0,r,0);
+          invalidate();
+        };
+      }
+      S._sboxLayout(sb);
       // Force the static shadow map to refresh now that the helper
       // meshes are in the scene. Without this the IFC's existing shadow
       // map is stale and the model can appear unshadowed alongside the
@@ -20861,55 +20367,26 @@ function startApp() {
       var box = _elemsBBox();
       var ctr = box.getCenter(new THREE.Vector3());
       var sz = box.getSize(new THREE.Vector3());
-      var planeSize = Math.max(sz.x,sz.z)*2.0;
       var cutGroup = new THREE.Group();
-      // Translucent plane + border. clippingPlanes:[] so the cut plane isn't
-      // clipped by its own clipping plane (Three.js treats a mesh exactly on
-      // the plane as ambiguous and can drop it without this opt-out).
-      var cutGeo = new THREE.PlaneGeometry(planeSize, planeSize);
-      var cutMat = new THREE.MeshBasicMaterial({color:0x1a6b4a, transparent:true, opacity:0.04, side:THREE.DoubleSide, depthWrite:false});
-      cutMat.clippingPlanes = [];
-      var cutMesh = new THREE.Mesh(cutGeo, cutMat);
+      // Model-sized translucent cut sheet + outline (token colours, same
+      // style as the section plane) and the shared screen-constant arrow,
+      // pointing up: drag it to raise/lower the cut.  See docs/INTERNALS.md § 21.37
+      // clippingPlanes:[] (set by the gizmo builders / below) so the sheet isn't
+      // clipped by its own plane.
+      var cutGeo = new THREE.PlaneGeometry(Math.max(sz.x, 0.1) * 1.08, Math.max(sz.z, 0.1) * 1.08);
+      var cutMesh = new THREE.Mesh(cutGeo, new THREE.MeshBasicMaterial({transparent:true, side:THREE.DoubleSide, depthWrite:false}));
+      cutMesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(cutGeo), new THREE.LineBasicMaterial({transparent:true})));
+      cutMesh.traverse(function(o){ o.material.clippingPlanes = []; });
       cutMesh.rotation.x = -Math.PI/2;
+      cutMesh.userData.ccGizmo = {style:'outline', fixed:true};
       cutGroup.add(cutMesh);
-      var borderGeo = new THREE.EdgesGeometry(cutGeo);
-      var borderMat = new THREE.LineBasicMaterial({color:0x1a6b4a, transparent:true, opacity:0.5});
-      borderMat.clippingPlanes = [];
-      var border = new THREE.LineSegments(borderGeo, borderMat);
-      border.rotation.x = -Math.PI/2;
-      cutGroup.add(border);
-      // Floor-plan cut-plane arrow.  See docs/INTERNALS.md § 21.37
-      var fpHandleGroup = new THREE.Group();
-      var shaftLen = 1.8, shaftCylR = 0.03, tipR = 0.12, tipLen = 0.3;
-      var arrowMat = new THREE.MeshBasicMaterial({color:0xf59e0b, transparent:true, opacity:0.85, depthTest:false});
-      arrowMat.clippingPlanes = [];
-      var shaft = new THREE.Mesh(new THREE.CylinderGeometry(shaftCylR, shaftCylR, shaftLen, 8, 1, true), arrowMat);
-      shaft.position.set(0, shaftLen / 2, 0);
-      shaft.userData._fpHandle = 'move';
-      shaft.renderOrder = 1000;
-      fpHandleGroup.add(shaft);
-      var tipMat = arrowMat.clone(); tipMat.clippingPlanes = [];
-      var tip = new THREE.Mesh(new THREE.ConeGeometry(tipR, tipLen, 12), tipMat);
-      tip.position.set(0, shaftLen + tipLen / 2, 0);
-      tip.userData._fpHandle = 'move';
-      tip.renderOrder = 1000;
-      fpHandleGroup.add(tip);
-      // Invisible fat hit proxy for reliable picking
-      var hitR = tipR * 2.2;
-      var hitProxy = new THREE.Mesh(
-        new THREE.CylinderGeometry(hitR, hitR, shaftLen + tipLen, 8, 1, false),
-        new THREE.MeshBasicMaterial({ visible: false })
-      );
-      hitProxy.position.set(0, (shaftLen + tipLen) / 2, 0);
-      hitProxy.userData._fpHandle = 'move';
-      fpHandleGroup.add(hitProxy);
-      cutGroup.add(fpHandleGroup);
+      var fpArrow = window._ccViewerGizmo.buildArrow(THREE, 44, {ring:false});
+      fpArrow.group.rotation.x = -Math.PI/2; // local +Z (arrow) → world up
+      fpArrow.move.userData._fpHandle = 'move';
+      cutGroup.add(fpArrow.group);
+      S.gz.track(cutMesh); S.gz.track(fpArrow.group);
+      cutGroup._fpDragHandles = [fpArrow.move];
       cutGroup.position.set(ctr.x, cutAt, ctr.z);
-      cutGroup._fpHandleGroup = fpHandleGroup;
-      cutGroup._fpHandleSpan = shaftLen + tipLen;
-      cutGroup._fpDragHandles = [shaft, tip, hitProxy];
-      cutGroup._fpCutMesh = cutMesh;
-      cutGroup._fpBorder  = border;
       S.scene.add(cutGroup);
       S._cutPlaneHelper = cutGroup;
       // Capture the pre-plan camera/projection ONCE per plan session (entering
