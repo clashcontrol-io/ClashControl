@@ -298,6 +298,33 @@ try {
     else if (plan.roomEdge) fail('floor plan cut contains room outline vertices');
     else ok('floor plan cut has no room outlines');
     await fbPage.close();
+
+    // ── Rooms written in their storey's frame (doubled placement) ──
+    // The same building far from its storey origin, once with rooms written
+    // normally and once with each room's footprint in storey coordinates
+    // plus its own placement next to it. Both must put every room exactly
+    // around its storey's walls, on the worker and the fallback path.
+    await writeFile(join(generatedDir, 'rooms-own.ifc'), generateSyntheticIfc({ storeyCount: 2, wallsPerStorey: 3, withSpaces: true, offsetX: 120 }));
+    await writeFile(join(generatedDir, 'rooms-parent.ifc'), generateSyntheticIfc({ storeyCount: 2, wallsPerStorey: 3, withSpaces: true, offsetX: 120, spaceFrame: 'parent' }));
+    const roomBoxes = (pg, base) => pg.evaluate((base) => {
+      const m = window._ccLatestState.models.find((x) => x.name === base);
+      const r = (b) => [b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z].map((v) => Math.round(v * 1000) / 1000);
+      const rooms = m.elements.filter((e) => e.props.ifcType === 'IfcSpace').sort((a, b) => a.props.storey < b.props.storey ? -1 : 1);
+      const walls = m.elements.filter((e) => e.props.ifcType === 'IfcWall');
+      const enclosed = rooms.every((sp) => walls.filter((w) => w.props.storey === sp.props.storey).every((w) => sp.box.min.x <= w.box.min.x && sp.box.max.x >= w.box.max.x && sp.box.min.z <= w.box.min.z && sp.box.max.z >= w.box.max.z));
+      return { boxes: rooms.map((e) => r(e.box)), enclosed, walls: walls.map((w) => r(w.box)) };
+    }, base);
+    for (const fb of [false, true]) {
+      const pg = await newPage();
+      await load(pg, '/tests/fixtures/_generated-spaces/rooms-own.ifc', 'rooms-own.ifc', fb, 60_000);
+      await load(pg, '/tests/fixtures/_generated-spaces/rooms-parent.ifc', 'rooms-parent.ifc', fb, 60_000);
+      const own = await roomBoxes(pg, 'rooms-own'), par = await roomBoxes(pg, 'rooms-parent');
+      const label = fb ? 'fallback' : 'worker';
+      if (!own.enclosed || own.boxes.length !== 2) fail(label + ': normally written rooms do not enclose their walls (test setup): ' + JSON.stringify(own));
+      else if (JSON.stringify(par.boxes) !== JSON.stringify(own.boxes) || !par.enclosed) fail(label + ': rooms written in the storey frame land elsewhere: ' + JSON.stringify({ own: own.boxes, parent: par.boxes }));
+      else ok(label + ': rooms written in the storey frame land exactly where normally written rooms do');
+      await pg.close();
+    }
   }
 
   // ── Optional: a local IFC with IfcSpace (never committed) ──

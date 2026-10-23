@@ -70,7 +70,9 @@ web-ifc WASM is lazy-loaded via ESM (`import()`) on first model load to avoid bl
 2. `_extractAxis()` reads placement direction for parallel-axis clash rejection
 3. Quantities and property sets are extracted lazily in Phase 2 (after geometry streaming completes) to avoid blocking the 3D view
 
-**Element filtering:** `IfcOpeningElement` is filtered entirely (void cutters). `IfcSpace`, `IfcVirtualElement`, `IfcAnnotation`, `IfcGrid` have meshes cleared but are kept as stubs for storey navigation and classification.
+**Element filtering:** `IfcOpeningElement` is filtered entirely (void cutters). `IfcVirtualElement`, `IfcAnnotation`, `IfcGrid` have meshes cleared but are kept as stubs for storey navigation and classification. `IfcSpace` keeps its geometry (streamed in a separate pass, own layer, hidden by default; see `tests/browser/spaces.mjs`).
+
+**Rooms written in their storey's frame:** some exporters write an `IfcSpace` footprint in its parent's (storey) coordinates and also give the space its own placement next to that footprint, so following the placement rules applies the room's offset twice and the room lands away from its walls. `ccSpacePlacementFix` (shared by the worker and the main-thread fallback) detects this per room from the file itself: in the space's own frame the geometry lies within one room diagonal of the space's own placement point, and that point is more than two diagonals from the parent origin (a correctly authored room sits near its own origin, so it never matches). It then removes the space's own placement step once, keeping its vertical offset. Geo caches stamped before this (`sp` ≠ 2) are re-parsed once. Covered by the storey-frame fixture in `tests/browser/spaces.mjs` (`generateSyntheticIfc({spaceFrame:'parent', offsetX})`).
 
 **IFC type constants:** The `IFC` object maps constant names to numeric IDs (from the IFC schema). `IFC_TYPE_NAMES` is built from `IFC` to provide human-readable names — defined once, no numeric ID duplication.
 

@@ -3662,14 +3662,15 @@ function startApp() {
         props: el.props
       };
     });
-    // sp:1 — written by a loader that keeps IfcSpace geometry. Caches without
-    // it predate that (rooms have no volume, or are missing entirely on the
-    // worker path) and are re-parsed once from the stored IFC on restore —
-    // see _ccGeoCacheLacksSpaces.
+    // sp:2 — written by a loader that keeps IfcSpace geometry AND places
+    // rooms written in their storey's frame correctly (ccSpacePlacementFix).
+    // Older caches (sp missing: rooms without volume or missing; sp:1: such
+    // rooms doubled away from their walls) are re-parsed once from the
+    // stored IFC on restore — see _ccGeoCacheLacksSpaces.
     // sem:1 — written by a loader that extracts discipline/role evidence
     // (props.typeObject/groups/classification/predefinedType) and space
     // boundaries; older caches are refreshed once like sp:1 ones.
-    return {v:_ccGeoCacheV8Enabled()?8:7, sp:1, sem:1, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, spaceBoundaries:result.spaceBoundaries||null, stats:result.stats};
+    return {v:_ccGeoCacheV8Enabled()?8:7, sp:2, sem:1, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, spaceBoundaries:result.spaceBoundaries||null, stats:result.stats};
   }
 
 
@@ -3783,13 +3784,13 @@ function startApp() {
     return {meshes:meshes, elements:elements, storeys:cached.storeys, storeyData:cached.storeyData, spatialHierarchy:cached.spatialHierarchy||{}, relatedPairs:cached.relatedPairs||{}, spaceBoundaries:cached.spaceBoundaries||null, stats:cached.stats};
   }
 
-  // A geo cache written before IfcSpace geometry was kept (no sp:1 marker)
-  // would restore rooms without volume — or, for worker-path loads, without
+  // A geo cache written before the current room handling (sp !== 2) would
+  // restore rooms without volume, displaced, — or, for worker-path loads, without
   // the room elements at all — forever. When the source IFC is stored, treat
   // such a cache as stale so the restore cold-parses once and re-saves a
   // current cache; with no source bytes the old cache is still the best we have.
   function _ccGeoCacheLacksSpaces(cached, entry) {
-    return !!(cached && (cached.sp !== 1 || cached.sem !== 1) && entry && entry.buffer);
+    return !!(cached && (cached.sp !== 2 || cached.sem !== 1) && entry && entry.buffer);
   }
 
   function _ccRestoredGeoMatchesCache(cached, result) {
@@ -4577,6 +4578,97 @@ function startApp() {
       }
     }
     return n;
+  }
+
+  // Some IFC exporters write an IfcSpace's footprint in its PARENT's frame
+  // (storey coordinates) while also giving the space its own placement near
+  // that footprint — so every reader that follows the IFC placement rules
+  // applies the room's offset twice and the room lands away from the walls
+  // that bound it. Detected per placed room geometry, from the file itself:
+  // in the space's own frame the geometry sits within one room diagonal of
+  // the space's own placement point, and that point is more than two room
+  // diagonals from the parent origin. (A correctly authored room has its
+  // geometry near its own origin, so it never matches.) The fix removes the
+  // space's own placement step once, keeping its vertical offset:
+  //   tf' = C · Mp · T(0,0,lz) · L^-1 · Mp^-1 · C^-1 · tf
+  // (C = web-ifc's unit scale + Z-up→Y-up, Mp = parent placement, L = the
+  // space's own relative placement). Returns tf unchanged when nothing
+  // applies. box = [minx,miny,minz,maxx,maxy,maxz] of the geometry's
+  // vertices; memo = per-model cache object. Shared by the worker and the
+  // main-thread fallback (worker source is built from .toString()).
+  function ccSpacePlacementFix(api, modelID, spaceId, box, tf, memo) {
+    if (!api || !box || box.length < 6 || !tf || !(box[3] >= box[0])) return tf;
+    memo = memo || {};
+    var plMemo = memo.pl || (memo.pl = {});
+    function rv(x) { return x && typeof x === 'object' && x.value != null ? x.value : x; }
+    function line(id) { try { return id == null ? null : api.GetLine(modelID, id); } catch (e) { return null; } }
+    function num(x) { x = rv(x); return typeof x === 'number' ? x : +x; }
+    function norm(v) { var l = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); return l > 1e-12 ? [v[0] / l, v[1] / l, v[2] / l] : null; }
+    function dirOf(id) { var d = line(rv(id)); var r = d && d.DirectionRatios; return r ? norm([num(r[0]) || 0, num(r[1]) || 0, r.length > 2 ? (num(r[2]) || 0) : 0]) : null; }
+    function axisMatrix(apId) {
+      var a = line(rv(apId));
+      if (!a) return null;
+      var pt = line(rv(a.Location)), c = pt && pt.Coordinates;
+      var o = c ? [num(c[0]) || 0, num(c[1]) || 0, c.length > 2 ? (num(c[2]) || 0) : 0] : [0, 0, 0];
+      var z = (a.Axis ? dirOf(a.Axis) : null) || [0, 0, 1];
+      var x = (a.RefDirection ? dirOf(a.RefDirection) : null) || (Math.abs(z[0]) > 0.9 ? [0, 1, 0] : [1, 0, 0]);
+      var d = x[0] * z[0] + x[1] * z[1] + x[2] * z[2];
+      x = norm([x[0] - d * z[0], x[1] - d * z[1], x[2] - d * z[2]]) || [1, 0, 0];
+      var y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
+      return [x[0], x[1], x[2], 0, y[0], y[1], y[2], 0, z[0], z[1], z[2], 0, o[0], o[1], o[2], 1];
+    }
+    function mul(A, B) {
+      var C = new Array(16);
+      for (var c = 0; c < 4; c++) for (var r = 0; r < 4; r++) {
+        C[c * 4 + r] = A[r] * B[c * 4] + A[4 + r] * B[c * 4 + 1] + A[8 + r] * B[c * 4 + 2] + A[12 + r] * B[c * 4 + 3];
+      }
+      return C;
+    }
+    function invRigid(M) { // orthonormal rotation + translation
+      var t = [M[12], M[13], M[14]];
+      return [M[0], M[4], M[8], 0, M[1], M[5], M[9], 0, M[2], M[6], M[10], 0,
+        -(M[0] * t[0] + M[1] * t[1] + M[2] * t[2]), -(M[4] * t[0] + M[5] * t[1] + M[6] * t[2]), -(M[8] * t[0] + M[9] * t[1] + M[10] * t[2]), 1];
+    }
+    function apply(M, p) { return [M[0] * p[0] + M[4] * p[1] + M[8] * p[2] + M[12], M[1] * p[0] + M[5] * p[1] + M[9] * p[2] + M[13], M[2] * p[0] + M[6] * p[1] + M[10] * p[2] + M[14]]; }
+    var I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    function placement(plId, depth) {
+      if (plId == null || (depth || 0) > 32) return null;
+      if (plMemo[plId]) return plMemo[plId];
+      var pl = line(plId);
+      if (!pl) return null;
+      var local = axisMatrix(pl.RelativePlacement) || I;
+      var parent = pl.PlacementRelTo ? placement(rv(pl.PlacementRelTo), (depth || 0) + 1) : null;
+      return (plMemo[plId] = parent ? mul(parent, local) : local);
+    }
+    var sp = line(spaceId), plId = sp ? rv(sp.ObjectPlacement) : null, pl = line(plId);
+    var L = pl ? axisMatrix(pl.RelativePlacement) : null;
+    if (!L) return tf;
+    var lh = Math.sqrt(L[12] * L[12] + L[13] * L[13]);
+    if (!(lh > 0)) return tf;
+    var Ms = placement(plId, 0);
+    var Mp = pl.PlacementRelTo ? placement(rv(pl.PlacementRelTo), 0) : I;
+    if (!Ms || !Mp) return tf;
+    // web-ifc's unit scale (tf's linear part is s·rotation)
+    var det = tf[0] * (tf[5] * tf[10] - tf[9] * tf[6]) - tf[4] * (tf[1] * tf[10] - tf[9] * tf[2]) + tf[8] * (tf[1] * tf[6] - tf[5] * tf[2]);
+    var s = Math.cbrt(Math.abs(det));
+    if (!(s > 0) || !isFinite(s)) return tf;
+    var C = [s, 0, 0, 0, 0, 0, -s, 0, 0, s, 0, 0, 0, 0, 0, 1];          // IFC (Z up) -> web-ifc (Y up)
+    var Ci = [1 / s, 0, 0, 0, 0, 0, 1 / s, 0, 0, -1 / s, 0, 0, 0, 0, 0, 1];
+    // geometry box in the space's own frame (file units)
+    var toLocal = mul(invRigid(Ms), mul(Ci, Array.prototype.slice.call(tf)));
+    var mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+    for (var k = 0; k < 8; k++) {
+      var q = apply(toLocal, [box[k & 1 ? 3 : 0], box[k & 2 ? 4 : 1], box[k & 4 ? 5 : 2]]);
+      for (var a = 0; a < 3; a++) { if (q[a] < mn[a]) mn[a] = q[a]; if (q[a] > mx[a]) mx[a] = q[a]; }
+    }
+    var dx = mx[0] - mn[0], dy = mx[1] - mn[1], dz = mx[2] - mn[2];
+    var diag = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    var ex = (mn[0] + mx[0]) / 2 - L[12], ey = (mn[1] + mx[1]) / 2 - L[13];
+    if (!(diag > 0 && lh > 2 * diag && Math.sqrt(ex * ex + ey * ey) <= diag)) return tf;
+    var D = mul(Mp, mul([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, L[14], 1], mul(invRigid(L), invRigid(Mp))));
+    var out = mul(C, mul(D, mul(Ci, Array.prototype.slice.call(tf))));
+    memo.fixed = (memo.fixed || 0) + 1;
+    return out;
   }
 
   // Structured "not drawn" loader report, shared by the worker and the
@@ -5572,6 +5664,7 @@ function startApp() {
       var _streamCount = 0;
       var _spaceGeoEids = {}; // IfcSpace elements that got geometry (see the space pass below)
       var _streamed = {}, _notDrawn = createNotDrawnReport(api, modelID); // not-drawn report (same helper as the worker)
+      var _spaceFixMemo = {}; // ccSpacePlacementFix cache (placement chains, fixed count)
       // isSpace: called from the separate IfcSpace pass — web-ifc's
       // StreamAllMeshes never yields IfcSpace, so rooms are streamed by id
       // afterwards (mirrored exactly in _ifcWorkerMain).
@@ -5618,7 +5711,13 @@ function startApp() {
             else { var _fb = new THREE.Color(fallbackColor); col = { r:_fb.r, g:_fb.g, b:_fb.b }; }
             var mat = _ccGetSharedPhongMat(col.r, col.g, col.b, c ? c.w : 1);
             var mesh = new THREE.Mesh(geo, mat);
-            mesh.applyMatrix4(_tmpMtx4.fromArray(placed.flatTransformation));
+            var _tfm = placed.flatTransformation;
+            if (isSpace) {
+              if (!geo.boundingBox) geo.computeBoundingBox();
+              var _gb = geo.boundingBox;
+              _tfm = ccSpacePlacementFix(api, modelID, expressID, [_gb.min.x, _gb.min.y, _gb.min.z, _gb.max.x, _gb.max.y, _gb.max.z], _tfm, _spaceFixMemo);
+            }
+            mesh.applyMatrix4(_tmpMtx4.fromArray(_tfm));
             mesh.userData.expressId = expressID;
             mesh.userData._ifcMaterial = matMap[expressID] || '';
             // Stash the source geometryExpressID so the cache serializer
@@ -6064,6 +6163,8 @@ function startApp() {
 
         var xfer = [];
         var _geoTable = {}; // geometryExpressID → {pos, nrm, idx} (dedup)
+        var _spaceGeoBox = {}; // geoExpId -> [minx,miny,minz,maxx,maxy,maxz] of IfcSpace geometry (ccSpacePlacementFix)
+        var _spaceFixMemo = {}; // ccSpacePlacementFix cache (placement chains, fixed count)
         var _geoReused = 0;
         var _geoNV = {};    // geometryExpressID → vertex count (survives transfer)
         var _streamed = {}; // expressIDs the stream callback saw (not-drawn report)
@@ -6210,6 +6311,16 @@ function startApp() {
               _nTris += _geoNV[geoExpId] || 0;
               var c = placed.color;
               var tf = placed.flatTransformation;
+              if (isSpace) {
+                // the geometry buffer may already have been transferred with a
+                // preview batch, so the room fix reads a kept 2-corner box
+                if (!_spaceGeoBox[geoExpId] && _geoTable[geoExpId] && _geoTable[geoExpId].pos.length) {
+                  var _sp = _geoTable[geoExpId].pos, _b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+                  for (var _si = 0; _si < _sp.length; _si += 3) for (var _sa = 0; _sa < 3; _sa++) { var _sv = _sp[_si + _sa]; if (_sv < _b[_sa]) _b[_sa] = _sv; if (_sv > _b[3 + _sa]) _b[3 + _sa] = _sv; }
+                  _spaceGeoBox[geoExpId] = _b;
+                }
+                tf = ccSpacePlacementFix(api, modelID, eid, _spaceGeoBox[geoExpId] || null, tf, _spaceFixMemo);
+              }
               if (!isSpace && c && c.w < 0.05) _alphaSkip++; // the decode drops these (see its colour filter)
               // Preview placement (display only): same filters the decode
               // applies — rooms (hidden by default) and ~transparent styles
@@ -6372,6 +6483,7 @@ function startApp() {
       + 'var extractSemanticRecords=' + extractSemanticRecords.toString() + ';\n'
       + 'var extractSpaceBoundaryRecords=' + extractSpaceBoundaryRecords.toString() + ';\n'
       + 'var createNotDrawnReport=' + createNotDrawnReport.toString() + ';\n'
+      + 'var ccSpacePlacementFix=' + ccSpacePlacementFix.toString() + ';\n'
       + 'var extractStoreys=' + extractStoreys.toString() + ';\n'
       + 'var extractSpatialHierarchy=' + extractSpatialHierarchy.toString() + ';\n'
       + 'var resolveMaterialName=' + resolveMaterialName.toString() + ';\n'
