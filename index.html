@@ -14542,6 +14542,12 @@ function startApp() {
       renderer.domElement.setAttribute('role', 'application');
       renderer.domElement.setAttribute('aria-label', 'Interactive 3D model viewer');
       S.renderer = renderer;
+      // three.js checks every shader program's link status and info log
+      // synchronously, which stalls the main thread until the driver has
+      // finished compiling (seconds on the first draw of a large model). Off
+      // in normal use, as three.js recommends for production; ?ccDebugShaders
+      // turns it back on when a shader needs debugging.
+      try { renderer.debug.checkShaderErrors = /[?&]ccDebugShaders\b/.test(location.search); } catch (_) {}
       S._floorPlanOverlayCanvas = planOverlayRef.current;
       // Shared gizmo registry (viewer-gizmo-core.js): screen-constant handles,
       // DESIGN.md token colours, repainted on theme change.
