@@ -8,14 +8,14 @@
 // caught by the mismatch check.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
-const path = require('node:path');
+const { countryWindow, loadAddon } = require('./_country-pack.js');
 
+// The rules are data in regulations/nl.json (country pack), run by the
+// generic standards engine in addons/data-quality.js.
 function loadEngine() {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'addons', 'data-quality.js'), 'utf8');
-  const window = {};
-  new Function('window', src)(window);
-  return window;
+  const window = loadAddon('data-quality.js', countryWindow({ regions: ['nl'], active: 'nl' }));
+  assert.equal(typeof window._ccRunStandard, 'function');
+  return { runILS: (input) => window._ccRunStandard('ils', input) };
 }
 
 function furnishing(id, psets) {
@@ -23,19 +23,19 @@ function furnishing(id, psets) {
 }
 
 test('furnishing with no NL/SfB code is flagged (already worked, still true post-fix)', () => {
-  const { _ccRunILSChecks } = loadEngine();
-  const result = _ccRunILSChecks([furnishing(1, {})]);
+  const { runILS } = loadEngine();
+  const result = runILS([furnishing(1, {})]);
   assert.equal(result.noNLSfB.count, 1);
 });
 
 test('furnishing correctly coded 90 (Vaste inrichting) is not flagged as a mismatch', () => {
-  const { _ccRunILSChecks } = loadEngine();
-  const result = _ccRunILSChecks([furnishing(1, { Pset_FurnishingCommon: { 'NL-SfB': '90' } })]);
+  const { runILS } = loadEngine();
+  const result = runILS([furnishing(1, { Pset_FurnishingCommon: { 'NL-SfB': '90' } })]);
   assert.equal(result.mismatchNLSfB.count, 0);
 });
 
 test('furnishing wrongly carrying a wall NL/SfB code (21) is now caught as a mismatch', () => {
-  const { _ccRunILSChecks } = loadEngine();
-  const result = _ccRunILSChecks([furnishing(1, { Pset_FurnishingCommon: { 'NL-SfB': '21' } })]);
+  const { runILS } = loadEngine();
+  const result = runILS([furnishing(1, { Pset_FurnishingCommon: { 'NL-SfB': '21' } })]);
   assert.equal(result.mismatchNLSfB.count, 1, 'IFC_TO_NLSFB must now include IfcFurnishingElement:[\'90\']');
 });

@@ -1019,7 +1019,7 @@ const TOOLS = [
   },
   {
     name: 'run_data_quality',
-    description: 'Runs BIM/ILS data quality checks on all loaded models and returns structured results.',
+    description: 'Runs the general and BIM-basics data quality checks plus any national data standard (country pack) that applies to the loaded models, and returns structured results.',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
 ];

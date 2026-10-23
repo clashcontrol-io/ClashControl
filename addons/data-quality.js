@@ -1,5 +1,7 @@
 // ── ClashControl Addon: Data Quality Check Engines ──────────────
-// Contains all data quality, BIM model, and ILS/NL-SfB check logic.
+// Contains the general data quality and BIM-basics checks, the generic
+// engine for national data standards declared by country packs
+// (regulations/*.json, dataQuality.standards) and the IDS 1.0 engine.
 // The UI panel (DataQualityPanel) remains in index.html and calls
 // these engines via window._ccRunDataQualityChecks, etc.
 
@@ -280,94 +282,16 @@
     };
   }
 
-  // ── NL/SfB Table 1 — Building element codes ──────────────────────
-
-  var NLSFB_TABLE1 = {
-    '11':'Grondwerk','13':'Vloeren op grond','16':'Funderingen',
-    '21':'Buitenwanden','22':'Binnenwanden','23':'Vloeren','24':'Trappen en hellingen',
-    '27':'Daken','28':'Hoofddraagconstructie',
-    '31':'Buitenramen','32':'Buitendeuren','33':'Binnenramen','34':'Binnendeuren',
-    '37':'Dakramen/lichtkoepels',
-    '41':'Wandafwerkingen buiten','42':'Wandafwerkingen binnen',
-    '43':'Vloerafwerkingen','44':'Trapafwerkingen','45':'Plafondafwerkingen','47':'Dakafwerkingen',
-    '52':'Afvoer/riolering','53':'Watervoorziening','54':'Gasvoorziening',
-    '55':'Koeling','56':'Verwarming','57':'Ventilatie',
-    '61':'Elektrische voorziening','62':'Krachtstroom','63':'Verlichting',
-    '64':'Communicatie','66':'Transport (liften)','68':'Beveiliging',
-    '73':'Terreinverharding','74':'Terreinafscheiding','90':'Vaste inrichting'
-  };
-
-  var IFC_TO_NLSFB = {
-    IfcWall:['21','22'], IfcWallStandardCase:['21','22'],
-    IfcSlab:['13','23','43'], IfcRoof:['27'],
-    IfcColumn:['28'], IfcBeam:['28'], IfcMember:['28'],
-    IfcWindow:['31','33','37'], IfcDoor:['32','34'],
-    IfcStair:['24'], IfcStairFlight:['24'], IfcRamp:['24'], IfcRampFlight:['24'],
-    IfcCurtainWall:['21'], IfcPlate:['28'],
-    IfcCovering:['41','42','43','44','45','47'],
-    IfcRailing:['34','28'],
-    IfcSpace:['--'], IfcBuildingElementProxy:['--'],
-    IfcPipeSegment:['52','53','54'], IfcPipeFitting:['52','53','54'],
-    IfcDuctSegment:['57'], IfcDuctFitting:['57'],
-    IfcFlowTerminal:['53','55','56','57','63'],
-    IfcSanitaryTerminal:['53'], IfcLightFixture:['63'],
-    IfcSwitchingDevice:['61','62'], IfcOutlet:['62'],
-    IfcDistributionElement:['52','53','54','55','56','57','61','62','63','64'],
-    // RVB BIM Norm v1.1 2.2.7.11 "Meubilair" - fixed furnishing falls under
-    // NL/SfB group 90 (Vaste inrichting).
-    IfcFurnishingElement:['90']
-  };
-
-  var ILS_REQUIRED = {
-    IfcWall:          ['IsExternal','LoadBearing','FireRating','AcousticRating','ThermalTransmittance'],
-    IfcWallStandardCase:['IsExternal','LoadBearing','FireRating','AcousticRating','ThermalTransmittance'],
-    IfcSlab:          ['IsExternal','LoadBearing','FireRating','AcousticRating'],
-    IfcRoof:          ['IsExternal','ThermalTransmittance'],
-    IfcDoor:          ['IsExternal','FireRating','AcousticRating'],
-    IfcWindow:        ['IsExternal','ThermalTransmittance'],
-    IfcColumn:        ['LoadBearing','FireRating'],
-    IfcBeam:          ['LoadBearing','FireRating'],
-    IfcMember:        ['LoadBearing'],
-    IfcCurtainWall:   ['IsExternal','ThermalTransmittance'],
-    IfcStair:         ['FireRating'],
-    IfcRamp:          ['FireRating'],
-    IfcCovering:      ['FireRating']
-  };
-
-  function _extractNLSfB(psets, objectType) {
-    var code = null;
-    Object.keys(psets).forEach(function(ps) {
-      var grp = psets[ps]||{};
-      var psLower = ps.toLowerCase();
-      Object.keys(grp).forEach(function(k) {
-        var kl = k.toLowerCase();
-        if (kl==='nl-sfb'||kl==='nl/sfb'||kl==='nlsfb'||kl==='nl_sfb'||kl==='sfbcode'||kl==='sfb-code'||kl==='sfb code'||
-            kl==='classificationcode'||kl==='classification code'||kl==='classification'||
-            (psLower.indexOf('sfb')>=0 && (kl==='code'||kl==='value'||kl==='elementcode'))) {
-          var v = grp[k];
-          if (v && String(v).trim()) code = String(v).trim();
-        }
-      });
-    });
-    if (!code && objectType) {
-      var m = /\((\d{2})\)/.exec(objectType) || /^(\d{2})[\.\-\s]/.exec(objectType);
-      if (m) code = m[1];
-    }
-    return code;
-  }
-
-  function _isValidNLSfBFormat(code) {
-    if (!code) return false;
-    var c = code.replace(/[()]/g,'').trim();
-    return /^\d{2}(\.\d{1,2})*$/.test(c);
-  }
-
-  function _nlsfbMainGroup(code) {
-    if (!code) return null;
-    var c = code.replace(/[()]/g,'').trim();
-    var m = /^(\d{2})/.exec(c);
-    return m ? m[1] : null;
-  }
+  // ── National data standards (from country packs) ──────────────────
+  //
+  // The core ships no country's standard. A country pack's
+  // `dataQuality.standards` (regulations/*.json, validated by
+  // country-pack-core.js) declares a standard as DATA: an element or model
+  // scope, an optional classification block (where the code lives, its
+  // format, group table and the groups each IFC class may use) and a list of
+  // checks, each one of the generic rule kinds below with its label, severity
+  // and parameters. Patterns are strings compiled through the core's
+  // safeRegex gate — a pack can only ever be bad data, never code.
 
   function _findPropValue(psets, propName) {
     var val = null;
@@ -380,305 +304,280 @@
     });
     return val;
   }
+  function _re(src, flags) {
+    var core = window._ccCountryPackCore;
+    return (core && src) ? core.safeRegex(src, flags || '') : null;
+  }
+  function _tpl(t, vars) {
+    return String(t).replace(/\{(\w+)\}/g, function(m, k) { return Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : m; });
+  }
+  function _truthy(v) { return !!v && /^(true|1|yes)$/i.test(String(v)); }
 
-  // ── ILS / NL-SfB Check Engine ──────────────────────────────────────
-  //
-  // Rule set derived from the public NL-BIM Basis ILS v2 standard
-  // (bimloket.nl / buildingSMART Benelux). The individual checks are
-  // re-implementations against the standard's requirements — no code
-  // is copied from any specific validator implementation.
-
-  // Storey naming: "-01 Kelder", "00 Begane grond", "01 Eerste…" etc.
-  // Two digits with optional leading minus, then whitespace, then label.
-  var STOREY_NAME_RE = /^-?\d{2}(\s.+)?$/;
-  // Door naming: D-001, D001, D_12, etc. Dutch convention.
-  var DOOR_NAME_RE = /^D[\s\-_]?\d{2,4}/i;
-  // Fire rating values accepted by the standard (minutes) plus the
-  // common EN 13501-2 REI/EI prefixed variants.
-  var VALID_FIRE_RATING_RE = /^(REI|EI|R|E)?\s*-?\s*(30|60|90|120|180|240)$/i;
-  // Approved structural materials for load-bearing walls — Dutch + EN
-  // equivalents. Matches anywhere in the material string so composite
-  // names like "Beton C30/37" still pass.
-  var APPROVED_STRUCT_MAT_RE = /\b(beton|concrete|kalkzandsteen|limestone|cellular|metselwerk|masonry|brick|staal|steel|reinforced)\b/i;
-  // Renovation status vocabulary — Dutch ILS values + common English.
-  var VALID_RENOVATION_RE = /^(bestaand|nieuw|te\s+slopen|existing|new|demolish(ed)?|to\s+(be\s+)?demolish(ed)?|retained)$/i;
-  var MEP_FLOW_TYPES = {IfcFlowSegment:1, IfcPipeSegment:1, IfcDuctSegment:1, IfcCableSegment:1, IfcCableCarrierSegment:1};
-
-  function runILSChecks(elements) {
-    var acc = {
-      noNLSfB: [], invalidNLSfB: [], mismatchNLSfB: [],
-      noDescription: [], noMaterial: [], noStorey: [],
-      missingILSProp: [], noObjectType: [], noName: [],
-      // New ILS v2 rules
-      storeyNaming: [], doorNaming: [], spaceIncomplete: [],
-      fireRatingInvalid: [], extWallNoUValue: [],
-      loadBearingInvalidMaterial: [], mepNoRenovationStatus: []
-    };
-    var nlsfbDist = {};
-    function addNLSfBDist(code, el) {
-      var mainGroup = _nlsfbMainGroup(code);
-      var label = mainGroup ? (mainGroup + ' ' + (NLSFB_TABLE1[mainGroup]||'Onbekend')) : '(geen code)';
-      if (!nlsfbDist[label]) nlsfbDist[label] = [];
-      nlsfbDist[label].push({expressId:el.expressId, modelId:el._modelId, name:(el.props||{}).name||'#'+el.expressId, ifcType:(el.props||{}).ifcType||'', code:code||''});
+  // Classification code of an element per the standard's classification
+  // block: the last matching property wins; ObjectType patterns are the
+  // fallback ("(21) Buitenwand", "21.12 ...").
+  function _classCode(cls, psets, objectType) {
+    var code = null;
+    var keys = cls.keys || [], pc = cls.psetContains ? String(cls.psetContains).toLowerCase() : null, pk = cls.psetKeys || [];
+    Object.keys(psets).forEach(function(ps) {
+      var grp = psets[ps]||{};
+      var psLower = ps.toLowerCase();
+      Object.keys(grp).forEach(function(k) {
+        var kl = k.toLowerCase();
+        if (keys.indexOf(kl) >= 0 || (pc && psLower.indexOf(pc) >= 0 && pk.indexOf(kl) >= 0)) {
+          var v = grp[k];
+          if (v && String(v).trim()) code = String(v).trim();
+        }
+      });
+    });
+    if (!code && objectType) {
+      var pats = cls.objectTypePatterns || [];
+      for (var i = 0; i < pats.length && !code; i++) {
+        var re = _re(pats[i]);
+        var m = re && re.exec(objectType);
+        if (m) code = m[1] != null ? m[1] : m[0];
+      }
     }
-    var ilsCompDist = {'Compliant':[], 'Minor issues':[], 'Major issues':[]};
+    return code;
+  }
+  function _classStrip(code) { return String(code).replace(/[()]/g, '').trim(); }
+  function _classGroup(cls, code) {
+    if (!code) return null;
+    var re = _re(cls.groupPattern);
+    var m = re && re.exec(_classStrip(code));
+    return m ? (m[1] != null ? m[1] : m[0]) : null;
+  }
 
-    var PHYSICAL = {IfcWall:1,IfcWallStandardCase:1,IfcSlab:1,IfcRoof:1,IfcColumn:1,IfcBeam:1,
-      IfcMember:1,IfcWindow:1,IfcDoor:1,IfcStair:1,IfcStairFlight:1,IfcRamp:1,IfcRampFlight:1,
-      IfcCurtainWall:1,IfcPlate:1,IfcCovering:1,IfcRailing:1,IfcBuildingElementProxy:1,
-      IfcPipeSegment:1,IfcPipeFitting:1,IfcDuctSegment:1,IfcDuctFitting:1,
-      IfcFlowTerminal:1,IfcSanitaryTerminal:1,IfcLightFixture:1,
-      IfcSwitchingDevice:1,IfcOutlet:1,IfcDistributionElement:1,IfcFurnishingElement:1,
-      IfcFooting:1,IfcPile:1};
+  var _ATTR_LABEL = {name:'Name', longName:'LongName', objectType:'ObjectType', description:'Description'};
+  function _blank(v) { return !v || !String(v).trim(); }
 
-    // ── Pre-pass: storey + space checks (not in PHYSICAL set) ──────
+  // Rule kinds evaluated on every element of their ifcTypes (no compliance
+  // tally), before the per-element pass.
+  var PREPASS_KINDS = {entityName:1, spaceCompleteness:1};
+
+  function _runElementStandard(std, elements) {
+    var cls = std.classification || null;
+    var checks = std.checks || [];
+    var acc = {};
+    checks.forEach(function(ch) { acc[ch.id] = []; });
+    var typeSet = {};
+    (std.elementTypes || []).forEach(function(t) { typeSet[t] = 1; });
+    var classDist = {};
+    function addDist(code, el) {
+      var g = _classGroup(cls, code);
+      var label = g ? (g + ' ' + ((cls.groups || {})[g] || cls.unknownGroupLabel || '?')) : (cls.noCodeLabel || '(no code)');
+      if (!classDist[label]) classDist[label] = [];
+      classDist[label].push({expressId:el.expressId, modelId:el._modelId, name:(el.props||{}).name||'#'+el.expressId, ifcType:(el.props||{}).ifcType||'', code:code||''});
+    }
+    var minorMax = std.compliance && typeof std.compliance.minorMax === 'number' ? std.compliance.minorMax : 2;
+    var compDist = {'Compliant':[], 'Minor issues':[], 'Major issues':[]};
+    function inTypes(ch, t) { return !ch.ifcTypes || ch.ifcTypes.indexOf(t) >= 0; }
+    function w(ch) { return typeof ch.weight === 'number' ? ch.weight : 1; }
+    function withDetail(it, d) { return Object.assign({}, it, {detail: d}); }
+
+    // Pre-pass: storey / space style checks on any element of their class.
     (elements||[]).forEach(function(el) {
       var p = el.props||{};
       var it = {name:p.name||('#'+el.expressId), gid:p.globalId, ifcType:p.ifcType, el:el};
-      if (p.ifcType === 'IfcBuildingStorey') {
-        var sname = (p.name||'').trim();
-        if (!sname || !STOREY_NAME_RE.test(sname)) {
-          acc.storeyNaming.push(Object.assign({}, it, {detail: sname || '(empty)'}));
+      checks.forEach(function(ch) {
+        if (!PREPASS_KINDS[ch.kind] || !inTypes(ch, p.ifcType)) return;
+        if (ch.kind === 'entityName') {
+          var sname = (p.name||'').trim();
+          var re = _re(ch.pattern, ch.flags);
+          if (!sname || (re && !re.test(sname))) acc[ch.id].push(withDetail(it, sname || ch.emptyDetail || ''));
+        } else if (ch.kind === 'spaceCompleteness') {
+          var missing = [];
+          (ch.attrs || []).forEach(function(a) { if (_blank(p[a])) missing.push(_ATTR_LABEL[a] || a); });
+          var ps = p.psets||{};
+          (ch.props || []).forEach(function(pr) { if (_findPropValue(ps, pr) === null) missing.push(pr); });
+          var q = p.quantities||{};
+          (ch.quantities || []).forEach(function(qd) {
+            var re2 = _re(qd.pattern, 'i'), has = false;
+            Object.keys(q).forEach(function(qk) { if (re2 && re2.test(qk.trim()) && parseFloat(q[qk]) > 0) has = true; });
+            if (!has) missing.push(qd.label);
+          });
+          if (missing.length) acc[ch.id].push(withDetail(it, missing.join(', ')));
         }
-      } else if (p.ifcType === 'IfcSpace') {
-        var spaceMissing = [];
-        if (!p.name || !p.name.trim()) spaceMissing.push('Name');
-        if (!p.longName || !p.longName.trim()) spaceMissing.push('LongName');
-        if (!p.objectType || !p.objectType.trim()) spaceMissing.push('ObjectType');
-        var spacePsets = p.psets||{};
-        if (_findPropValue(spacePsets, 'IsExternal') === null) spaceMissing.push('IsExternal');
-        var q = p.quantities||{};
-        var hasNetArea = false, hasGrossArea = false, hasHeight = false;
-        Object.keys(q).forEach(function(qk){
-          if (/netfloorarea|net\s*floor\s*area|netarea/i.test(qk) && parseFloat(q[qk]) > 0) hasNetArea = true;
-          if (/grossfloorarea|gross\s*floor\s*area/i.test(qk) && parseFloat(q[qk]) > 0) hasGrossArea = true;
-          if (/^(height|finishceilingheight|finish\s*ceiling\s*height)$/i.test(qk.trim()) && parseFloat(q[qk]) > 0) hasHeight = true;
-        });
-        if (!hasNetArea) spaceMissing.push('NetFloorArea');
-        // RVB BIM Norm v1.1 2.2.7.6b (Qto_SpaceBaseQuantities) - GrossFloorArea/Height,
-        // alongside NL-BIM Basis ILS v2 4.1's NetFloorArea above.
-        if (!hasGrossArea) spaceMissing.push('GrossFloorArea');
-        if (!hasHeight) spaceMissing.push('Height');
-        if (spaceMissing.length) {
-          acc.spaceIncomplete.push(Object.assign({}, it, {detail: spaceMissing.join(', ')}));
-        }
-      }
+      });
     });
 
+    // Per-element pass over the standard's element classes.
     (elements||[]).forEach(function(el) {
       var p = el.props||{};
-      if (!PHYSICAL[p.ifcType]) return;
+      if (!typeSet[p.ifcType]) return;
       var psets = p.psets||{};
       var it = {name:p.name||('#'+el.expressId), gid:p.globalId, ifcType:p.ifcType, el:el};
       var issues = 0;
-
-      // Door naming pattern (ILS 3.5)
-      if (p.ifcType === 'IfcDoor') {
-        var dname = (p.name||'').trim();
-        if (!dname || !DOOR_NAME_RE.test(dname)) {
-          acc.doorNaming.push(Object.assign({}, it, {detail: dname || '(empty)'}));
-          issues += 1;
+      var code = cls ? _classCode(cls, psets, p.objectType) : null;
+      var codeState = !cls ? null : !code ? 'missing' : !((_re(cls.formatPattern) || {test:function(){return false;}}).test(_classStrip(code))) ? 'invalid' : 'ok';
+      checks.forEach(function(ch) {
+        if (PREPASS_KINDS[ch.kind] || !inTypes(ch, p.ifcType)) return;
+        var bucket = acc[ch.id], v, re;
+        switch (ch.kind) {
+          case 'elementName':
+            var nm = (p.name||'').trim(); re = _re(ch.pattern, ch.flags);
+            if (!nm || (re && !re.test(nm))) { bucket.push(withDetail(it, nm || ch.emptyDetail || '')); issues += w(ch); }
+            break;
+          case 'propertyPattern':
+            v = _findPropValue(psets, ch.prop); re = _re(ch.pattern, ch.flags);
+            if (v && re && !re.test(String(v).trim())) { bucket.push(ch.detail ? withDetail(it, _tpl(ch.detail, {value:v})) : it); issues += w(ch); }
+            break;
+          case 'requiredWhen':
+            if (_truthy(_findPropValue(psets, ch.when)) && !_findPropValue(psets, ch.require)) { bucket.push(it); issues += w(ch); }
+            break;
+          case 'materialPattern':
+            re = _re(ch.pattern, ch.flags);
+            if (_truthy(_findPropValue(psets, ch.when)) && p.material && re && !re.test(p.material)) { bucket.push(withDetail(it, p.material)); issues += w(ch); }
+            break;
+          case 'propertyValue':
+            v = null;
+            for (var i = 0; i < (ch.props||[]).length && !v; i++) v = _findPropValue(psets, ch.props[i]);
+            re = _re(ch.pattern, ch.flags);
+            if (!v || (re && !re.test(String(v).trim()))) { bucket.push(withDetail(it, v || ch.missingDetail || '')); issues += w(ch); }
+            break;
+          case 'classificationMissing':
+            if (codeState === 'missing') { bucket.push(it); issues += w(ch); }
+            break;
+          case 'classificationFormat':
+            if (codeState === 'invalid') { bucket.push(ch.detail ? withDetail(it, _tpl(ch.detail, {code:code})) : it); issues += w(ch); }
+            break;
+          case 'classificationExpected':
+            if (codeState === 'ok') {
+              var g = _classGroup(cls, code), allowed = (cls.expected || {})[p.ifcType];
+              if (allowed && allowed[0] !== '--' && g && allowed.indexOf(g) < 0) {
+                bucket.push(ch.detail ? withDetail(it, _tpl(ch.detail, {code:code, ifcType:p.ifcType, expected:allowed.join('/')})) : it);
+                issues += w(ch);
+              }
+            }
+            break;
+          case 'requiredProps':
+            var missingProps = [];
+            ((ch.props||{})[p.ifcType] || []).forEach(function(prop) { if (!_findPropValue(psets, prop)) missingProps.push(prop); });
+            if (missingProps.length) { bucket.push(withDetail(it, missingProps.join(', '))); issues += missingProps.length * w(ch); }
+            break;
+          case 'attribute':
+            v = p[ch.attr];
+            if (_blank(v) || (ch.notEqualAttr && String(v).trim() === p[ch.notEqualAttr])) { bucket.push(it); issues += w(ch); }
+            break;
         }
-      }
-
-      // Wall-specific strict checks (ILS 4.5, 4.6, 4.7.2)
-      if (p.ifcType === 'IfcWall' || p.ifcType === 'IfcWallStandardCase') {
-        var fireVal = _findPropValue(psets, 'FireRating');
-        var loadVal = _findPropValue(psets, 'LoadBearing');
-        var extVal = _findPropValue(psets, 'IsExternal');
-        var isLoadBearing = loadVal && /^(true|1|yes)$/i.test(String(loadVal));
-        var isExternal = extVal && /^(true|1|yes)$/i.test(String(extVal));
-        // 4.5 — FireRating value must match standard enum on internal load-bearing walls
-        if (fireVal && !VALID_FIRE_RATING_RE.test(String(fireVal).trim())) {
-          acc.fireRatingInvalid.push(Object.assign({}, it, {detail: 'Value: "' + fireVal + '" (expected 30/60/90/120)'}));
-          issues += 1;
-        }
-        // 4.6 — External walls need a U-value
-        if (isExternal && !_findPropValue(psets, 'ThermalTransmittance')) {
-          acc.extWallNoUValue.push(it);
-          issues += 1;
-        }
-        // 4.7.2 — Load-bearing walls must use an approved structural material
-        if (isLoadBearing && p.material && !APPROVED_STRUCT_MAT_RE.test(p.material)) {
-          acc.loadBearingInvalidMaterial.push(Object.assign({}, it, {detail: p.material}));
-          issues += 1;
-        }
-      }
-
-      // MEP renovation status (ILS 4.8)
-      if (MEP_FLOW_TYPES[p.ifcType]) {
-        var renov = _findPropValue(psets, 'RenovationStatus') || _findPropValue(psets, 'Status');
-        if (!renov || !VALID_RENOVATION_RE.test(String(renov).trim())) {
-          acc.mepNoRenovationStatus.push(Object.assign({}, it, {detail: renov || '(missing)'}));
-          issues += 1;
-        }
-      }
-
-      // NL/SfB classification
-      var nlsfb = _extractNLSfB(psets, p.objectType);
-      if (!nlsfb) {
-        acc.noNLSfB.push(it);
-        issues += 2;
-      } else if (!_isValidNLSfBFormat(nlsfb)) {
-        acc.invalidNLSfB.push(Object.assign({}, it, {detail: 'Code: "' + nlsfb + '"'}));
-        issues += 1;
-      } else {
-        var mainGroup = _nlsfbMainGroup(nlsfb);
-        var allowed = IFC_TO_NLSFB[p.ifcType];
-        if (allowed && allowed[0] !== '--' && mainGroup && allowed.indexOf(mainGroup) < 0) {
-          acc.mismatchNLSfB.push(Object.assign({}, it, {detail: nlsfb + ' \u2194 ' + p.ifcType + ' (verwacht: ' + allowed.join('/') + ')'}));
-          issues += 1;
-        }
-      }
-      addNLSfBDist(nlsfb, el);
-
-      // Required ILS properties
-      var reqProps = ILS_REQUIRED[p.ifcType] || [];
-      var missingProps = [];
-      reqProps.forEach(function(prop) {
-        if (!_findPropValue(psets, prop)) missingProps.push(prop);
       });
-      if (missingProps.length > 0) {
-        acc.missingILSProp.push(Object.assign({}, it, {detail: missingProps.join(', ')}));
-        issues += missingProps.length;
-      }
-
-      if (!p.description || !p.description.trim() || p.description.trim() === p.name) {
-        acc.noDescription.push(it);
-        issues += 1;
-      }
-      if (!p.material || !p.material.trim()) {
-        acc.noMaterial.push(it);
-        issues += 1;
-      }
-      if (!p.storey || !p.storey.trim()) {
-        acc.noStorey.push(it);
-        issues += 1;
-      }
-      if (!p.objectType || !p.objectType.trim()) {
-        acc.noObjectType.push(it);
-        issues += 1;
-      }
-      if (!p.name || !p.name.trim()) {
-        acc.noName.push(it);
-        issues += 1;
-      }
-
+      if (cls) addDist(code, el);
       var elInfo = {expressId:el.expressId, modelId:el._modelId, name:p.name||'#'+el.expressId, ifcType:p.ifcType||''};
-      if (issues === 0) ilsCompDist['Compliant'].push(elInfo);
-      else if (issues <= 2) ilsCompDist['Minor issues'].push(elInfo);
-      else ilsCompDist['Major issues'].push(elInfo);
+      if (issues === 0) compDist['Compliant'].push(elInfo);
+      else if (issues <= minorMax) compDist['Minor issues'].push(elInfo);
+      else compDist['Major issues'].push(elInfo);
     });
 
-    return {
-      noNLSfB:        {label:'Geen NL/SfB classificatie',           sev:'error',cat:'nlsfb', count:acc.noNLSfB.length,        ex:acc.noNLSfB.slice(0,8)},
-      invalidNLSfB:   {label:'Ongeldig NL/SfB formaat',             sev:'error',cat:'nlsfb', count:acc.invalidNLSfB.length,    ex:acc.invalidNLSfB.slice(0,8)},
-      mismatchNLSfB:  {label:'NL/SfB komt niet overeen met IFC type',sev:'warn', cat:'nlsfb', count:acc.mismatchNLSfB.length,  ex:acc.mismatchNLSfB.slice(0,8)},
-      missingILSProp: {label:'Ontbrekende ILS-verplichte eigenschappen',sev:'warn',cat:'properties',count:acc.missingILSProp.length,ex:acc.missingILSProp.slice(0,8)},
-      // noDescription/noMaterial/noStorey/noObjectType are deliberately NOT
-      // returned here (they're still tallied into acc above, for this
-      // engine's own ilsCompDist compliance-distribution scoring) — they run
-      // the exact same field test, on the same elements, as
-      // runDataQualityChecks' noDescription/noMaterial/noStorey and
-      // runBIMModelChecks' noObjectType. Surfacing both the English general/
-      // BIM version AND this Dutch-labelled ILS re-run of the identical
-      // check double-counted every one of those findings in the Data
-      // Quality panel's totals/CSV/issue-creation (e.g. 525 findings on a
-      // 46-element model). Dedupe by check id: one englishlabelled source of
-      // truth per underlying test, not one per engine that happens to test it.
-      noName:         {label:'Geen elementnaam',                     sev:'warn', cat:'naming', count:acc.noName.length,          ex:acc.noName.slice(0,8)},
-      // NL-BIM Basis ILS v2 additions
-      storeyNaming:   {label:'Bouwlaag naamgeving (ILS 3.3)',        sev:'info', cat:'naming', count:acc.storeyNaming.length,    ex:acc.storeyNaming.slice(0,8)},
-      doorNaming:     {label:'Deurnaamgeving D-### (ILS 3.5)',       sev:'info', cat:'naming', count:acc.doorNaming.length,      ex:acc.doorNaming.slice(0,8)},
-      spaceIncomplete:{label:'IfcSpace onvolledig: naam, classificatie of hoeveelheden (ILS 4.1 / RVB 2.2.7.6)',sev:'warn',cat:'properties',count:acc.spaceIncomplete.length,ex:acc.spaceIncomplete.slice(0,8)},
-      fireRatingInvalid:{label:'FireRating ongeldige waarde (ILS 4.5)',sev:'warn',cat:'properties',count:acc.fireRatingInvalid.length,ex:acc.fireRatingInvalid.slice(0,8)},
-      extWallNoUValue:{label:'Buitenwand zonder ThermalTransmittance (ILS 4.6)',sev:'warn',cat:'properties',count:acc.extWallNoUValue.length,ex:acc.extWallNoUValue.slice(0,8)},
-      loadBearingInvalidMaterial:{label:'Dragende wand: niet-constructief materiaal (ILS 4.7.2)',sev:'warn',cat:'properties',count:acc.loadBearingInvalidMaterial.length,ex:acc.loadBearingInvalidMaterial.slice(0,8)},
-      mepNoRenovationStatus:{label:'MEP segment zonder RenovationStatus (ILS 4.8)',sev:'info',cat:'properties',count:acc.mepNoRenovationStatus.length,ex:acc.mepNoRenovationStatus.slice(0,8)},
-      _total: (elements||[]).length,
-      _nlsfbDist: nlsfbDist,
-      _compDist: ilsCompDist
-    };
+    var out = {};
+    checks.forEach(function(ch) {
+      if (ch.report === false) return;
+      out[ch.id] = {label:ch.label, sev:ch.sev, cat:ch.cat, count:acc[ch.id].length, ex:acc[ch.id].slice(0,8)};
+    });
+    out._total = (elements||[]).length;
+    if (cls) out._classDist = classDist;
+    if (std.compliance) out._compDist = compDist;
+    return out;
   }
 
-  // ── RVB BIM Norm v1.1 — Project/Site/Building/Zone metadata ──────────
-  //
-  // Rule set derived from the public RVB BIM Norm v1.1 standard
-  // (Rijksvastgoedbedrijf / buildingSMART Benelux), covering the
-  // project-level metadata specs (2.2.7.1-2.2.7.4, 2.2.7.7) that
-  // runILSChecks above can't reach because they live above the
-  // per-element level: IfcProject/IfcSite/IfcBuilding/IfcZone, plus
-  // IfcBuildingStorey.Elevation (extractStoreys' storeyData, not part of
-  // the per-element props runILSChecks reads). The individual checks are
-  // re-implementations against the standard's requirements — no code is
-  // copied from any specific validator implementation. The RVB
-  // element-level gap-fills (furnishing NL-SfB, space quantities) live in
-  // runILSChecks itself, alongside the ILS checks they extend.
-  //
-  // Takes the loaded models directly (spatialHierarchy/storeyData are
-  // per-model, not per-element) rather than a flat elements array.
-  function runRVBChecks(models) {
-    var acc = {
-      projectIncomplete: [], siteIncomplete: [], buildingIncomplete: [],
-      zoneIncomplete: [], storeyNoElevation: []
-    };
-    var totals = {projectIncomplete:0, siteIncomplete:0, buildingIncomplete:0, zoneIncomplete:0, storeyNoElevation:0};
-
-    (models||[]).forEach(function(m) {
-      var sh = m.spatialHierarchy || {};
-      var mName = m.name || m.id || 'model';
-
-      // 2.2.7.1 — Project informatie
-      totals.projectIncomplete++;
-      if (!sh.project || !sh.project._hasName) {
-        acc.projectIncomplete.push({name:mName, ifcType:'IfcProject', detail:'Name'});
-      }
-
-      // 2.2.7.2 — Terrein informatie (Name + georeferentie)
-      (sh.sites||[]).forEach(function(site) {
-        totals.siteIncomplete++;
-        var missing = [];
-        if (!site._hasName) missing.push('Name');
-        var g = site.georef;
-        if (!g || g.refLat == null || g.refLon == null) missing.push('RefLatitude/RefLongitude');
-        if (!g || g.refElev == null) missing.push('RefElevation');
-        if (missing.length) acc.siteIncomplete.push({name:mName+' — '+site.name, ifcType:'IfcSite', detail:missing.join(', ')});
+  var _REQ_LABEL = {name:'Name', georefLatLon:'RefLatitude/RefLongitude', georefElevation:'RefElevation', objectType:'ObjectType', elevation:'Elevation'};
+  var _ENTITY_IFC = {project:'IfcProject', site:'IfcSite', building:'IfcBuilding', zone:'IfcZone', storey:'IfcBuildingStorey'};
+  function _entityMissing(ent, x, req) {
+    var g = x && x.georef;
+    switch (req) {
+      case 'name': return ent === 'storey' ? !(x && x.name) : !(x && x._hasName);
+      case 'georefLatLon': return !g || g.refLat == null || g.refLon == null;
+      case 'georefElevation': return !g || g.refElev == null;
+      case 'objectType': return !(x && x.objectType);
+      case 'elevation': return !(x && x.hasElevation);
+    }
+    return false;
+  }
+  // Model-level standards: project / site / building / zone / storey metadata.
+  function _runModelStandard(std, models) {
+    var out = {};
+    (std.checks || []).forEach(function(ch) {
+      if (ch.kind !== 'spatialEntity') return;
+      var fails = [], total = 0;
+      (models||[]).forEach(function(m) {
+        var sh = m.spatialHierarchy || {};
+        var mName = m.name || m.id || 'model';
+        var list = ch.entity === 'project' ? [sh.project || null]
+          : ch.entity === 'site' ? (sh.sites||[]) : ch.entity === 'building' ? (sh.buildings||[])
+          : ch.entity === 'zone' ? (sh.zones||[]) : (m.storeyData||[]);
+        list.forEach(function(x) {
+          total++;
+          var missing = (ch.require||[]).filter(function(r) { return _entityMissing(ch.entity, x, r); }).map(function(r) { return _REQ_LABEL[r] || r; });
+          if (!missing.length) return;
+          fails.push({name: ch.entity === 'project' ? mName : mName + ' — ' + ((x && x.name) || ''), ifcType:_ENTITY_IFC[ch.entity], detail:missing.join(', ')});
+        });
       });
+      if (ch.report === false) return;
+      out[ch.id] = {label:ch.label, sev:ch.sev, cat:ch.cat, count:fails.length, total:total, ex:fails.slice(0,8)};
+    });
+    out._total = (models||[]).length;
+    return out;
+  }
 
-      // 2.2.7.3 — Gebouw informatie
-      (sh.buildings||[]).forEach(function(bld) {
-        totals.buildingIncomplete++;
-        if (!bld._hasName) acc.buildingIncomplete.push({name:mName+' — '+bld.name, ifcType:'IfcBuilding', detail:'Name'});
-      });
-
-      // 2.2.7.7 — Zone informatie. IfcZone is an optional IFC grouping —
-      // most models legitimately have none, so an empty set is not itself
-      // flagged, only zones that DO exist and are incomplete.
-      (sh.zones||[]).forEach(function(zone) {
-        totals.zoneIncomplete++;
-        var zMissing = [];
-        if (!zone._hasName) zMissing.push('Name');
-        if (!zone.objectType) zMissing.push('ObjectType');
-        if (zMissing.length) acc.zoneIncomplete.push({name:mName+' — '+zone.name, ifcType:'IfcZone', detail:zMissing.join(', ')});
-      });
-
-      // 2.2.7.4 — Bouwlaag: Elevation. Name-format is already checked by
-      // runILSChecks' storeyNaming (ILS 3.3); this is the RVB addition,
-      // read from storeyData since Elevation isn't in per-element props.
-      (m.storeyData||[]).forEach(function(sd) {
-        totals.storeyNoElevation++;
-        if (!sd.hasElevation) acc.storeyNoElevation.push({name:mName+' — '+sd.name, ifcType:'IfcBuildingStorey', detail:'Elevation'});
+  // Every standard of every registered country pack:
+  // [{key:'<region>:<id>', region, packName, std}].
+  function dataQualityStandards() {
+    var packs = (typeof window._ccGetCountryPacks === 'function' && window._ccGetCountryPacks()) || [];
+    var out = [];
+    packs.forEach(function(pk) {
+      ((pk && pk.dataQuality && pk.dataQuality.standards) || []).forEach(function(std) {
+        out.push({key: pk.region + ':' + std.id, region: pk.region, packName: pk.name, std: std});
       });
     });
-
-    return {
-      projectIncomplete:{label:'IfcProject zonder naam (RVB 2.2.7.1)',sev:'warn',cat:'metadata',count:acc.projectIncomplete.length,total:totals.projectIncomplete,ex:acc.projectIncomplete.slice(0,8)},
-      siteIncomplete:{label:'IfcSite: naam of georeferentie ontbreekt (RVB 2.2.7.2)',sev:'info',cat:'metadata',count:acc.siteIncomplete.length,total:totals.siteIncomplete,ex:acc.siteIncomplete.slice(0,8)},
-      buildingIncomplete:{label:'IfcBuilding zonder naam (RVB 2.2.7.3)',sev:'warn',cat:'metadata',count:acc.buildingIncomplete.length,total:totals.buildingIncomplete,ex:acc.buildingIncomplete.slice(0,8)},
-      zoneIncomplete:{label:'IfcZone: naam of ObjectType ontbreekt (RVB 2.2.7.7)',sev:'info',cat:'metadata',count:acc.zoneIncomplete.length,total:totals.zoneIncomplete,ex:acc.zoneIncomplete.slice(0,8)},
-      storeyNoElevation:{label:'Bouwlaag zonder Elevation (RVB 2.2.7.4)',sev:'info',cat:'metadata',count:acc.storeyNoElevation.length,total:totals.storeyNoElevation,ex:acc.storeyNoElevation.slice(0,8)},
-      _total: (models||[]).length
-    };
+    return out;
+  }
+  function _findStandard(ref) {
+    if (ref && ref.std) return ref;
+    var all = dataQualityStandards();
+    for (var i = 0; i < all.length; i++) if (all[i].key === ref) return all[i];
+    var active = (typeof window._ccGetRegulationRegion === 'function' && window._ccGetRegulationRegion()) || null;
+    var byId = all.filter(function(e) { return e.std.id === ref; });
+    return byId.filter(function(e) { return e.region === active; })[0] || byId[0] || null;
+  }
+  // Labels go through the locale (key country.<region>.<standard>.<check>),
+  // falling back to the pack's own text.
+  function _localize(entry, res) {
+    if (typeof window._cc_t !== 'function') return res;
+    Object.keys(res).forEach(function(k) {
+      if (k.charAt(0) === '_' || !res[k] || !res[k].label) return;
+      res[k].label = window._cc_t('country.' + entry.region + '.' + entry.std.id + '.' + k, res[k].label);
+    });
+    return res;
+  }
+  // Runs one standard ('ils', '<region>:ils' or a dataQualityStandards()
+  // entry) on elements (scope 'elements') or models (scope 'models'); null
+  // when no registered pack carries it.
+  function runStandard(ref, input) {
+    var entry = _findStandard(ref);
+    if (!entry) return null;
+    var res = entry.std.scope === 'models' ? _runModelStandard(entry.std, input) : _runElementStandard(entry.std, input);
+    return _localize(entry, res);
+  }
+  // Share of elements that carry the standard's classification (the
+  // classificationMissing check counts the ones without).
+  function standardAdopted(entry, res, elements) {
+    var std = entry && entry.std;
+    if (!std || std.headline !== 'adoption' || !res) return false;
+    var missCheck = (std.checks || []).filter(function(c) { return c.kind === 'classificationMissing'; })[0];
+    var total = res._total || (elements || []).length || 1;
+    var missing = (missCheck && res[missCheck.id] && res[missCheck.id].count) || 0;
+    return (total - missing) / total >= (std.adoptionMin || 0.2);
+  }
+  // A standard applies when its pack is the active regional code (chosen, or
+  // resolved from the models' address / CRS / site location), or when the
+  // project demonstrably uses its classification. Otherwise its findings are
+  // informational only (a project elsewhere would fail every check).
+  function standardApplicability(ref, res) {
+    var entry = _findStandard(ref);
+    if (!entry) return {applicable:false, reason:'none'};
+    var active = (typeof window._ccGetRegulationRegion === 'function' && window._ccGetRegulationRegion()) || null;
+    if (active && active === entry.region) return {applicable:true, reason:'region'};
+    if (standardAdopted(entry, res, null)) return {applicable:true, reason:'adopted'};
+    return {applicable:false, reason:'none'};
   }
 
   // ── IDS (Information Delivery Specification) Export ─────────────
@@ -1316,9 +1215,9 @@
 
   window._ccRunDataQualityChecks = runDataQualityChecks;
   window._ccRunBIMModelChecks = runBIMModelChecks;
-  window._ccRunILSChecks = runILSChecks;
-  window._ccRunRVBChecks = runRVBChecks;
-  window._ccNLSFB_TABLE1 = NLSFB_TABLE1;
+  window._ccDataQualityStandards = dataQualityStandards;
+  window._ccRunStandard = runStandard;
+  window._ccStandardApplicability = standardApplicability;
   window._ccExportIDS = exportIDS;
   window._ccImportIDS = importIDS;
   window._ccParseIDS = parseIDSSpec;
@@ -1338,7 +1237,10 @@
   // recompute on every panel render.
   var _scoreCache = {};
   function _sigForState(elements, models) {
-    return (models||[]).map(function(m){ return m.id+':'+((m.elements||[]).length); }).join('|') + '|n=' + (elements||[]).length;
+    var region = (typeof window._ccGetRegulationRegion === 'function' && window._ccGetRegulationRegion()) || '';
+    var packs = (typeof window._ccGetCountryPacks === 'function' && window._ccGetCountryPacks()) || [];
+    return (models||[]).map(function(m){ return m.id+':'+((m.elements||[]).length); }).join('|') + '|n=' + (elements||[]).length +
+      '|r=' + region + '|p=' + packs.map(function(p){ return p.region; }).join(',');
   }
   function computeQualityScore(elements, models, opts) {
     opts = opts || {};
@@ -1350,9 +1252,9 @@
     var breakdown = { categories: [] };
 
     // Shared by any check engine returning the {checkKey:{count,sev}} map
-    // shape (runDataQualityChecks / runBIMModelChecks / runILSChecks all do).
+    // shape (runDataQualityChecks / runBIMModelChecks / element standards).
     // fold=false still adds the category to the breakdown for visibility but
-    // keeps it out of the single headline number - see the ILS call below.
+    // keeps it out of the single headline number - see the standards below.
     function _foldCheckMap(label, checksResult, fold) {
       if (!checksResult) return;
       var total = checksResult._total || (elements||[]).length || 1;
@@ -1377,9 +1279,9 @@
 
     // Like _foldCheckMap, but for check maps whose buckets each carry their
     // OWN denominator (checksResult[k].total) instead of sharing one
-    // checksResult._total - runRVBChecks mixes project/site/building/zone/
-    // storey counts, which aren't the same population, so a single shared
-    // total would misstate every bucket's failure ratio.
+    // checksResult._total - a model-scope standard mixes project/site/
+    // building/zone/storey counts, which aren't the same population, so a
+    // single shared total would misstate every bucket's failure ratio.
     function _foldEntityCheckMap(label, checksResult, fold) {
       if (!checksResult) return;
       var catDamage = 0, catWeight = 0, catChecks = 0;
@@ -1410,31 +1312,24 @@
     //    regardless of region, so always folds into the headline score. ──
     try { _foldCheckMap('BIM basics', runBIMModelChecks(elements), true); } catch(e) {}
 
-    // ── ILS / NL-SfB (Dutch NL-BIM Basis ILS v2) - region/methodology
-    //    specific. noNLSfB alone fires on every element with no NL-SfB
-    //    classification at all (no type gating, unlike the BIM-basics
-    //    checks above), so on a project that never adopted NL-SfB this
-    //    category would always score near-zero for reasons that have
-    //    nothing to do with actual data quality. Always shown as its own
-    //    breakdown category (so Dutch users see the full picture), but
-    //    only folded into the single headline number once the project is
-    //    actually using NL-SfB (at least 20% of elements carry a code) -
-    //    otherwise the check isn't applicable and shouldn't tank the score. ──
-    try {
-      var ils = runILSChecks(elements);
-      var ilsTotal = ils._total || (elements||[]).length || 1;
-      var noNLSfBCount = (ils.noNLSfB && ils.noNLSfB.count) || 0;
-      var nlsfbAdopted = ilsNlsfbAdopted(ils, elements);
-      _foldCheckMap('ILS / NL-SfB', ils, nlsfbAdopted);
-    } catch(e) {}
-
-    // ── RVB BIM Norm v1.1 (project/site/building/zone metadata) - a single
-    //    Dutch central-government client's own BIM norm, narrower than
-    //    NL-SfB. Always shown for visibility, never folded into the
-    //    headline score - most projects have no reason to target it, and
-    //    "missing IfcSite georeference" shouldn't tank the score of a
-    //    renovation-only model that was never meant to be geo-referenced. ──
-    try { _foldEntityCheckMap('RVB BIM Norm', runRVBChecks(models), false); } catch(e) {}
+    // ── National data standards (country packs) - each applicable standard
+    //    is its own breakdown category. Whether it also folds into the
+    //    headline number is the standard's own `headline` rule: 'adoption'
+    //    = only once the project actually uses its classification (share of
+    //    elements carrying a code >= adoptionMin; a project that never
+    //    adopted it would otherwise score near zero for reasons that have
+    //    nothing to do with data quality), 'never' = shown for visibility
+    //    only (a single client's norm), 'always'. ──
+    dataQualityStandards().forEach(function(entry) {
+      try {
+        var isModels = entry.std.scope === 'models';
+        var res = runStandard(entry, isModels ? models : elements);
+        if (!res || !standardApplicability(entry, res).applicable) return;
+        var fold = entry.std.headline === 'always' || (entry.std.headline === 'adoption' && standardAdopted(entry, res, elements));
+        if (isModels) _foldEntityCheckMap(entry.std.label, res, fold);
+        else _foldCheckMap(entry.std.label, res, fold);
+      } catch(e) {}
+    });
 
     // ── Accessibility checks (if engine loaded) ──
     try {
@@ -1471,39 +1366,6 @@
   }
   window._ccComputeQualityScore = computeQualityScore;
 
-  // ── ILS / NL-SfB applicability (Dutch NL-BIM Basis ILS v2) ─────────
-  // Adopted = at least 20% of elements carry an NL-SfB code — the same
-  // threshold computeQualityScore uses to fold ILS into the headline score.
-  function ilsNlsfbAdopted(ils, elements) {
-    if (!ils) return false;
-    var total = ils._total || (elements || []).length || 1;
-    var missing = (ils.noNLSfB && ils.noNLSfB.count) || 0;
-    return (total - missing) / total >= 0.2;
-  }
-  // Rough NL bounding box (mainland + Wadden islands, excl. Caribbean NL).
-  function _inNetherlands(lat, lon) {
-    return lat != null && lon != null && lat >= 50.7 && lat <= 53.7 && lon >= 3.2 && lon <= 7.3;
-  }
-  // The Data Quality panel shows the ILS section as applicable when the
-  // project uses NL-SfB, a model's IfcSite lies in the Netherlands, or the
-  // active regulation region is NL; otherwise its findings are informational
-  // (a non-Dutch project with no NL-SfB would otherwise show every element
-  // failing "no NL-SfB code" as an issue).
-  function ilsApplicability(ils, models) {
-    var adopted = ilsNlsfbAdopted(ils, null);
-    var located = (models || []).some(function (m) {
-      var sites = (m && m.spatialHierarchy && m.spatialHierarchy.sites) || [];
-      return sites.some(function (st) { var g = st && st.georef; return g && _inNetherlands(g.refLat, g.refLon); });
-    });
-    var region = (typeof window._ccGetRegulationRegion === 'function' && window._ccGetRegulationRegion()) || '';
-    var regionNL = String(region).toUpperCase() === 'NL';
-    return {
-      applicable: adopted || located || regionNL,
-      reason: adopted ? 'nlsfb' : located ? 'site-in-nl' : regionNL ? 'region-nl' : 'none'
-    };
-  }
-  window._ccIlsApplicability = ilsApplicability;
-
   // ── DQ re-run reconciliation ──────────────────────────────────────
   // Clash detection has full GUID-identity reconciliation (new/persisting/
   // auto-resolved, computeClashIdentityKey/mergeDetectionResults in
@@ -1515,9 +1377,8 @@
   // This reconciles at the check level instead: did THIS check's count go
   // up, down, or stay the same since the last run - same "was N, now M"
   // framing the clash trend sparkline already uses, without requiring an
-  // engine-shape change. Prefixed by engine name since bucket keys collide
-  // across engines (e.g. both runDataQualityChecks and runILSChecks have a
-  // 'noMaterial' bucket checking a different thing).
+  // engine-shape change. Prefixed by engine name since bucket keys may
+  // collide across engines (a standard's check id can repeat a general one).
   function flattenDQCounts(results) {
     var flat = {};
     Object.keys(results || {}).forEach(function(engineName) {
@@ -1556,7 +1417,7 @@
       id: 'data-quality',
       alwaysOn: true,
       name: 'Data quality checks',
-      description: 'BIM-basics, ILS and NL-SfB classification check engines behind the Data Quality panel — naming, classification, property completeness, plus a buildingSMART IDS 1.0 engine (parse, execute against the loaded models, import/export).'
+      description: 'General and BIM-basics check engines behind the Data Quality panel, national data standards from country packs (rules as data), plus a buildingSMART IDS 1.0 engine (parse, execute against the loaded models, import/export).'
     });
   }
 })();

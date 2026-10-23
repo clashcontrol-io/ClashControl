@@ -1607,6 +1607,17 @@
     var results = {};
     if (window._ccRunDataQualityChecks) results.general = window._ccRunDataQualityChecks(allElements);
     if (window._ccRunBIMModelChecks) results.bim = window._ccRunBIMModelChecks(allElements);
+    // National data standards from country packs that apply to these models
+    // (active regional code, or the project uses the standard's classification).
+    if (typeof window._ccDataQualityStandards === 'function' && typeof window._ccRunStandard === 'function') {
+      window._ccDataQualityStandards().forEach(function(entry) {
+        var res = window._ccRunStandard(entry, entry.std.scope === 'models' ? s.models : allElements);
+        var app = res && typeof window._ccStandardApplicability === 'function' ? window._ccStandardApplicability(entry, res) : null;
+        if (!res || !app || !app.applicable) return;
+        if (!results.standards) results.standards = {};
+        results.standards[entry.key] = { label: entry.std.label, pack: entry.packName, appliesBecause: app.reason, checks: res };
+      });
+    }
     return results;
   };
 
@@ -1864,7 +1875,7 @@
       params:{ name:{type:'string'} } },
     { name:'toggle_model',        description:'Shows or hides a model by name.',
       params:{ name:{type:'string'}, visible:{type:'boolean'} } },
-    { name:'run_data_quality',    description:'Runs BIM/ILS data quality checks on all loaded models.' }
+    { name:'run_data_quality',    description:'Runs the general and BIM-basics data quality checks plus any national data standard (country pack) that applies to the loaded models.' }
   ];
 
   // Convert compact schema to JSON Schema object format used by MCP/OpenAPI

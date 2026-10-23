@@ -125,13 +125,20 @@ function plain(v) {
   }));
 }
 
+// The generic standards engine names the classification distribution
+// `_classDist`; the pre-migration ILS engine called it `_nlsfbDist`.
+function ilsShape(res) {
+  const out = Object.assign({}, res);
+  if ('_classDist' in out) { out._nlsfbDist = out._classDist; delete out._classDist; }
+  return out;
+}
+
 function run(window, els, mods) {
   const out = {};
-  const ils = window._ccRunILSChecks(els);
-  out.ils = plain(ils);
-  out.ilsSubset = plain(window._ccRunILSChecks(els.slice(0, 20)));
-  out.rvb = plain(window._ccRunRVBChecks(mods));
-  out.rvbEmpty = plain(window._ccRunRVBChecks([]));
+  out.ils = plain(ilsShape(window._ccRunStandard('ils', els)));
+  out.ilsSubset = plain(ilsShape(window._ccRunStandard('nl:ils', els.slice(0, 20))));
+  out.rvb = plain(window._ccRunStandard('rvb', mods));
+  out.rvbEmpty = plain(window._ccRunStandard('nl:rvb', []));
   out.accessibility = plain(window._ccRunAccessibilityChecks(els));
   out.accessibilityOverride = plain(window._ccRunAccessibilityChecks(els, { thresholds: { doorClearWidth: 0.9 } }));
   out.score = plain(window._ccComputeQualityScore(els, mods, { force: true }));

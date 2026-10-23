@@ -13,8 +13,10 @@ const runChecksStart = src.indexOf('function runChecks() {', panelStart);
 const runChecksEnd = src.indexOf('\n    }', runChecksStart);
 const runChecksSrc = src.slice(runChecksStart, runChecksEnd);
 
-test('runChecks() flattens all four engines into one map and diffs against the previous run', () => {
-  assert.ok(/window\._ccFlattenDQCounts\(\{qc:newQc, bim:newBim, ils:newIls, rvb:newRvb\}\)/.test(runChecksSrc));
+test('runChecks() flattens every engine (general, BIM, each national standard) into one map and diffs against the previous run', () => {
+  assert.ok(/var flatIn = \{qc:newQc, bim:newBim\};/.test(runChecksSrc));
+  assert.ok(/newStds\.forEach\(function\(x\)\{ flatIn\[x\.entry\.key\] = x\.res; \}\)/.test(runChecksSrc), 'standards are keyed <region>:<id>');
+  assert.ok(/window\._ccFlattenDQCounts\(flatIn\)/.test(runChecksSrc));
   assert.ok(/window\._ccDiffDQCounts\(flatNow, prevDqCounts\)/.test(runChecksSrc));
   assert.ok(/setPrevDqCounts\(flatNow\)/.test(runChecksSrc), 'this run\'s snapshot must become "previous" for the next run');
 });

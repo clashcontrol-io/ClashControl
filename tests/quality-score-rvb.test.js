@@ -11,11 +11,13 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { countryWindow, loadAddon } = require('./_country-pack.js');
 
-function loadEngine() {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'addons', 'data-quality.js'), 'utf8');
-  const window = {};
-  new Function('window', src)(window);
+// The Dutch ILS / RVB standards are country-pack data (regulations/nl.json);
+// with the nl pack active they behave exactly like the former built-in engines.
+function loadEngine(opts) {
+  const window = loadAddon('data-quality.js', countryWindow(opts || { regions: ['nl'], active: 'nl' }));
+  assert.equal(typeof window._ccComputeQualityScore, 'function');
   return window;
 }
 
@@ -31,7 +33,7 @@ function incompleteModel(id, elements) {
   };
 }
 
-test('RVB always appears in the breakdown, even when every RVB check fails', () => {
+test('with the nl pack active, RVB appears in the breakdown even when every RVB check fails', () => {
   const { _ccComputeQualityScore } = loadEngine();
   const elements = [1, 2, 3].map(wall);
   const result = _ccComputeQualityScore(elements, [incompleteModel('m1', elements)], { force: true });

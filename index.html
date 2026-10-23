@@ -29196,17 +29196,21 @@ function startApp() {
       rules: [
         {desc:'Elements must be assigned to a storey', applicability:{ifcType:'(?!IfcSpace|IfcZone|IfcGroup|IfcSystem).*'}, requirement:{property:{pset:'',name:'Storey',pattern:'.+'}}, severity:'error'}
       ]
-    },
-    {
-      name: 'NL-SfB Classification',
-      description: 'Validates that physical elements carry a NL-SfB classification code (checks NL-SfB, NLsfb, Classification.Reference and common Revit psets)',
-      rules: [
-        {desc:'Physical elements must have a NL-SfB code', applicability:{ifcType:'(?!IfcSpace|IfcZone|IfcGroup|IfcSystem|IfcSite|IfcBuilding|IfcBuildingStorey|IfcAnnotation|IfcGrid).*'}, requirement:{property:{pset:'',name:'NL-SfB',pattern:'.+'}}, severity:'error'},
-        {desc:'Physical elements must have a NL-SfB code (NLsfb variant)', applicability:{ifcType:'(?!IfcSpace|IfcZone|IfcGroup|IfcSystem|IfcSite|IfcBuilding|IfcBuildingStorey|IfcAnnotation|IfcGrid).*'}, requirement:{property:{pset:'',name:'NLsfb',pattern:'.+'}}, severity:'warning'},
-        {desc:'Physical elements must have a classification reference', applicability:{ifcType:'(?!IfcSpace|IfcZone|IfcGroup|IfcSystem|IfcSite|IfcBuilding|IfcBuildingStorey|IfcAnnotation|IfcGrid).*'}, requirement:{property:{pset:'Classification',name:'Reference',pattern:'.+'}}, severity:'warning'}
-      ]
     }
   ];
+  // Generic rule sets above, then each country pack's dataQuality.idsSpecs
+  // (labelled with the pack name). Generic sets come first so their indices
+  // stay stable while packs load.
+  function _ccBundledIdsSpecs() {
+    var out = IDS_BUNDLED_SPECS.slice();
+    var packs = (typeof window._ccGetCountryPacks === 'function' && window._ccGetCountryPacks()) || [];
+    packs.forEach(function(pk) {
+      ((pk.dataQuality && pk.dataQuality.idsSpecs) || []).forEach(function(sp) {
+        out.push({name: sp.name + ' (' + pk.name + ')', description: sp.description, rules: sp.rules});
+      });
+    });
+    return out;
+  }
 
   function parseIDSXml(xmlText) {
     // Full IDS 1.0 engine (all facets, restrictions, cardinality) lives in
@@ -29645,7 +29649,7 @@ function startApp() {
 
   // Print-ready Data Quality report — same new-window/window.print() pattern
   // as _ccClashReport above, covering the checks that report doesn't:
-  // general DQ, BIM basics, ILS/NL-SfB, RVB BIM Norm, accessibility, and the
+  // general DQ, BIM basics, national standards from country packs, accessibility, and the
   // composite Quality Score. IDS specifications have their own dedicated
   // report already (generateValidationReport, below) and are not repeated
   // here. Self-sufficient like _ccClashReport - re-runs the check engines
@@ -29663,8 +29667,9 @@ function startApp() {
 
     var qc = runDataQualityChecks(elements);
     var bim = runBIMModelChecks(elements);
-    var ils = runILSChecks(elements);
-    var rvb = runRVBChecks(s.models);
+    var stdRuns = runStandardChecks(elements, s.models).filter(function(x){
+      return typeof window._ccStandardApplicability === 'function' && window._ccStandardApplicability(x.entry, x.res).applicable;
+    });
     var acc = (typeof window._ccRunAccessibilityChecks === 'function') ? window._ccRunAccessibilityChecks(elements) : null;
     var score = (typeof window._ccComputeQualityScore === 'function') ? window._ccComputeQualityScore(elements, s.models) : null;
 
@@ -29679,8 +29684,6 @@ function startApp() {
     }
     var QC_KEYS = Object.keys(qc||{}).filter(function(k){return k!=='_total';});
     var BIM_KEYS = Object.keys(bim||{}).filter(function(k){return k!=='_total'&&k!=='_dist';});
-    var ILS_REPORT_KEYS = Object.keys(ils||{}).filter(function(k){return k.charAt(0)!=='_';});
-    var RVB_REPORT_KEYS = Object.keys(rvb||{}).filter(function(k){return k.charAt(0)!=='_';});
 
     function scoreCard(cat) {
       var col = cat.score>=90?'#16a34a':cat.score>=60?'#d97706':'#dc2626';
@@ -29716,9 +29719,13 @@ function startApp() {
       +   '<table><tr><th>Check</th><th>Count</th></tr>'+checkRows(qc, QC_KEYS)+'</table>'
       +   '<table><tr><th>Check</th><th>Count</th></tr>'+checkRows(bim, BIM_KEYS)+'</table>'
       + '</div>'
-      + '<h2>ILS / NL-SfB (NL-BIM Basis ILS v2)</h2><table><tr><th>Check</th><th>Count</th></tr>'+checkRows(ils, ILS_REPORT_KEYS)+'</table>'
-      + '<h2>RVB BIM Norm v1.1</h2><div class="sub" style="margin-bottom:6px">Rijksvastgoedbedrijf project/site/building/zone metadata — shown for visibility, excluded from the Quality Score.</div>'
-      +   '<table><tr><th>Check</th><th>Count</th></tr>'+checkRows(rvb, RVB_REPORT_KEYS)+'</table>'
+      + stdRuns.map(function(x){
+          var std = x.entry.std;
+          var keys = (std.checks||[]).filter(function(c){ return c.report !== false; }).map(function(c){ return c.id; });
+          return '<h2>'+esc(std.title || std.label)+'</h2>'
+            + '<div class="sub" style="margin-bottom:6px">'+esc(x.entry.packName)+(std.note ? ' — '+esc(std.note) : '')+'</div>'
+            + '<table><tr><th>Check</th><th>Count</th></tr>'+checkRows(x.res, keys)+'</table>';
+        }).join('')
       + (acc && acc.groups
         ? '<h2>Accessibility (NL Bbl/NEN)</h2><table><tr><th>Check</th><th>Pass / total</th></tr>'
           + Object.keys(acc.groups).map(function(k){ var g=acc.groups[k]; if(!g||!g.total) return ''; return '<tr><td>'+esc(g.label||k)+'</td><td>'+(g.total-(g.fail||0))+' / '+g.total+'</td></tr>'; }).join('')
@@ -29935,13 +29942,14 @@ function startApp() {
     if (window._ccRunBIMModelChecks) return window._ccRunBIMModelChecks(elements);
     return {_total:(elements||[]).length, _dist:{}};
   }
-  function runILSChecks(elements) {
-    if (window._ccRunILSChecks) return window._ccRunILSChecks(elements);
-    return {_total:(elements||[]).length, _nlsfbDist:{}, _compDist:{}};
-  }
-  function runRVBChecks(models) {
-    if (window._ccRunRVBChecks) return window._ccRunRVBChecks(models);
-    return {_total:(models||[]).length};
+  // Every national data standard of every registered country pack, run on
+  // the given scope: [{entry, res}] (entry from window._ccDataQualityStandards).
+  function runStandardChecks(elements, models) {
+    if (typeof window._ccDataQualityStandards !== 'function' || typeof window._ccRunStandard !== 'function') return [];
+    return window._ccDataQualityStandards().map(function(entry) {
+      var res = window._ccRunStandard(entry, entry.std.scope === 'models' ? models : elements);
+      return res ? {entry: entry, res: res} : null;
+    }).filter(Boolean);
   }
 
   // ── Data Quality Panel (dedicated tab) ─────────────────────────────
@@ -30109,11 +30117,13 @@ function startApp() {
     var s = props.s, d = props.d;
     var qcSt = useState(null), qc = qcSt[0], setQc = qcSt[1];
     var bimSt = useState(null), bim = bimSt[0], setBim = bimSt[1];
-    var ilsSt = useState(null), ils = ilsSt[0], setIls = ilsSt[1];
-    // Show ILS findings even when the section is "not applicable" (no NL-SfB,
-    // not located in NL, region not NL — see window._ccIlsApplicability).
-    var ilsAnywaySt = useState(false), ilsAnyway = ilsAnywaySt[0], setIlsAnyway = ilsAnywaySt[1];
-    var rvbSt = useState(null), rvb = rvbSt[0], setRvb = rvbSt[1];
+    // National data standards from country packs: [{entry, res}] per run
+    // (window._ccDataQualityStandards / _ccRunStandard, addons/data-quality.js).
+    var stdSt = useState(null), stds = stdSt[0], setStds = stdSt[1];
+    // Standards the user asked to check although they don't apply here (not
+    // the active regional code, classification not used): key -> true.
+    var anywaySt = useState({}), stdAnyway = anywaySt[0], setStdAnyway = anywaySt[1];
+    useCcRegion();
     // DQ re-run reconciliation - session-local (not persisted like clash
     // runHistory): compares this run's per-check counts against the
     // immediately preceding run in the same session, so re-checking after
@@ -30124,20 +30134,18 @@ function startApp() {
     var selModel = useState('all'), selectedModel = selModel[0], setSelectedModel = selModel[1];
     var running = useState(false), isRunning = running[0], setRunning = running[1];
     var lcSt = useState(null), lastChecked = lcSt[0], setLastChecked = lcSt[1];
-    var secSt = useState({general:true,bim:true,ils:true,rvb:true,dist:true,ids:true}), sections = secSt[0], setSections = secSt[1];
+    var secSt = useState({general:true,bim:true,dist:true,ids:true}), sections = secSt[0], setSections = secSt[1];
 
-    // Full runILSChecks() key set, incl. the NL-BIM Basis ILS v2 additions
-    // (storeyNaming..mepNoRenovationStatus) - previously computed by the
-    // engine but never rendered/exported/actioned in this panel, so those
-    // findings were invisible even though they'd already run.
-    // noDescription/noMaterial/noStorey/noObjectType deliberately omitted —
-    // they duplicate runDataQualityChecks/runBIMModelChecks' identically-
-    // tested general/BIM checks (see runILSChecks in addons/data-quality.js);
-    // counting both was double-counting the same findings under an English
-    // and a Dutch label.
-    var ILS_KEYS = ['noNLSfB','invalidNLSfB','mismatchNLSfB','missingILSProp','noName',
-      'storeyNaming','doorNaming','spaceIncomplete','fireRatingInvalid','extWallNoUValue','loadBearingInvalidMaterial','mepNoRenovationStatus'];
-    var RVB_KEYS = ['projectIncomplete','siteIncomplete','buildingIncomplete','zoneIncomplete','storeyNoElevation'];
+    // A standard's reported check ids, in pack order (checks with
+    // report:false only feed its compliance tally).
+    function stdKeys(x) {
+      return ((x && x.entry && x.entry.std && x.entry.std.checks) || []).filter(function(c){ return c.report !== false; }).map(function(c){ return c.id; });
+    }
+    function stdApp(x) {
+      return typeof window._ccStandardApplicability === 'function' ? window._ccStandardApplicability(x.entry, x.res) : {applicable:false, reason:'none'};
+    }
+    // Counted as issues (badge, "Create all issues"): applies here, or asked for.
+    function stdCounts(x) { return stdApp(x).applicable || !!stdAnyway[x.entry.key]; }
 
     function toggleSection(key) { setSections(function(p){var n=Object.assign({},p);n[key]=!n[key];return n;}); }
 
@@ -30145,25 +30153,25 @@ function startApp() {
       setRunning(true);
       setTimeout(function() {
         var elements = [];
-        var rvbModels = [];
+        var scopeModels = [];
         (s.models||[]).forEach(function(m) {
           if (selectedModel !== 'all' && m.id !== selectedModel) return;
-          rvbModels.push(m);
+          scopeModels.push(m);
           (m.elements||[]).forEach(function(el) { el._modelId = m.id; elements.push(el); });
         });
         var newQc = runDataQualityChecks(elements);
         var newBim = runBIMModelChecks(elements);
-        var newIls = runILSChecks(elements);
-        var newRvb = runRVBChecks(rvbModels);
+        var newStds = runStandardChecks(elements, scopeModels);
         if (typeof window._ccFlattenDQCounts === 'function') {
-          var flatNow = window._ccFlattenDQCounts({qc:newQc, bim:newBim, ils:newIls, rvb:newRvb});
+          var flatIn = {qc:newQc, bim:newBim};
+          newStds.forEach(function(x){ flatIn[x.entry.key] = x.res; });
+          var flatNow = window._ccFlattenDQCounts(flatIn);
           setDqDelta(prevDqCounts && typeof window._ccDiffDQCounts === 'function' ? window._ccDiffDQCounts(flatNow, prevDqCounts) : null);
           setPrevDqCounts(flatNow);
         }
         setQc(newQc);
         setBim(newBim);
-        setIls(newIls);
-        setRvb(newRvb);
+        setStds(newStds);
         setExpanded({});
         setLastChecked(Date.now());
         setRunning(false);
@@ -30278,8 +30286,11 @@ function startApp() {
       invalidate();
     }
 
-    function highlightILSDistGroup(distKey, value) {
-      var src = distKey === 'nlsfb' ? (ils ? ils._nlsfbDist : null) : (ils ? ils._compDist : null);
+    // Distribution of a standard: kind 'class' (classification groups) or
+    // 'compliance'; the active colouring key is '<kind>:<standard key>'.
+    function stdDist(x, kind) { return x && x.res ? (kind === 'class' ? x.res._classDist : x.res._compDist) : null; }
+    function highlightStdDistGroup(x, kind, value) {
+      var src = stdDist(x, kind);
       if (!src) return;
       var items = src[value] || [];
       // Model-scoped refs (items carry modelId) so a shared expressId in
@@ -30294,9 +30305,10 @@ function startApp() {
       invalidate();
     }
 
-    function colorByILSDist(distKey) {
+    function colorByStdDist(x, kind) {
       var S = window._ccState3d;
-      var src = distKey === 'nlsfb' ? (ils ? ils._nlsfbDist : null) : (ils ? ils._compDist : null);
+      var src = stdDist(x, kind);
+      var distKey = kind + ':' + x.entry.key;
       if (!S || !S.mg || !src) {
         if (_unghostAll) _unghostAll();
         setActiveDistKey(null);
@@ -30315,13 +30327,10 @@ function startApp() {
       setActiveDistKey(distKey);
       var gKeys = Object.keys(src).sort(function(a,b){return (src[b]||[]).length - (src[a]||[]).length;});
       var colorMap = {};
-      var _chunkColors = {};                                            // [Stage 2B]
       var compColors = {'Compliant':'#4ade80','Minor issues':'#fbbf24','Major issues':'#ef4444'};
       gKeys.forEach(function(k, idx) {
         (src[k]||[]).forEach(function(item) {
-          var _c = distKey==='compliance' ? (compColors[k]||DQ_COLORS[idx%DQ_COLORS.length]) : DQ_COLORS[idx%DQ_COLORS.length];
-          colorMap[(item.modelId||'')+'_'+item.expressId] = _c;
-          _chunkColors[(item.modelId||'')+'_'+item.expressId] = new THREE.Color(_c);
+          colorMap[(item.modelId||'')+'_'+item.expressId] = kind==='compliance' ? (compColors[k]||DQ_COLORS[idx%DQ_COLORS.length]) : DQ_COLORS[idx%DQ_COLORS.length];
         });
       });
       if (_unghostAll) _unghostAll();
@@ -30364,8 +30373,7 @@ function startApp() {
       }
       addRows(qc, ['guidCollision','noGlobalId','proxy','genericName','duplicateName','noMaterial','noStorey','emptyGeometry','zeroLayers','unhostedOpenings','noProperties','noDescription']);
       addRows(bim, ['thicknessMismatch','noFireRating','noIsExternal','noLoadBearing','missingCommonPset','noClassification','noObjectType','invalidName','missingArea','missingVolume']);
-      addRows(ils, ILS_KEYS);
-      addRows(rvb, RVB_KEYS);
+      (stds||[]).forEach(function(x){ if (stdCounts(x)) addRows(x.res, stdKeys(x)); });
       var csv = rows.map(function(r){return r.map(function(c){return '"'+(String(c||'').replace(/"/g,'""'))+'"';}).join(',');}).join('\r\n');
       var a = document.createElement('a'); a.href = 'data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
       a.download = 'data-quality-'+new Date().toISOString().slice(0,10)+'.csv'; a.click();
@@ -30377,15 +30385,14 @@ function startApp() {
       }
       addFromChecks(qc, ['guidCollision','noGlobalId','proxy','genericName','duplicateName','noMaterial','noStorey','emptyGeometry','zeroLayers','unhostedOpenings','noProperties','noDescription']);
       addFromChecks(bim, ['thicknessMismatch','noFireRating','noIsExternal','noLoadBearing','missingCommonPset','noClassification','noObjectType','invalidName','missingArea','missingVolume']);
-      if (ilsCounts) addFromChecks(ils, ILS_KEYS);
-      addFromChecks(rvb, RVB_KEYS);
+      (stds||[]).forEach(function(x){ if (stdCounts(x)) addFromChecks(x.res, stdKeys(x)); });
       if (created > 0) d({t:A.TAB, v:'issues'});
     }
 
     var hasModels = s.models && s.models.length > 0;
     var totalIssues = 0;
     var totalBim = 0;
-    var totalIls = 0;
+    var totalStd = 0;
     if (qc) {
       var qcKeys = Object.keys(qc).filter(function(k){return k!=='_total';});
       qcKeys.forEach(function(k){totalIssues += qc[k].count||0;});
@@ -30394,24 +30401,14 @@ function startApp() {
       var bimKeys = Object.keys(bim).filter(function(k){return k!=='_total'&&k!=='_dist';});
       bimKeys.forEach(function(k){totalBim += bim[k].count||0;});
     }
-    var ilsApp = (ils && typeof window._ccIlsApplicability === 'function') ? window._ccIlsApplicability(ils, s.models) : {applicable:true, reason:'unknown'};
-    // Not-applicable ILS findings stay out of the "N issues" badge and
-    // "Create all issues" unless the user asked to see them anyway.
-    var ilsCounts = ilsApp.applicable || ilsAnyway;
-    if (ils && ilsCounts) {
-      var ilsKeys = Object.keys(ils).filter(function(k){return k[0]!=='_';});
-      ilsKeys.forEach(function(k){totalIls += ils[k].count||0;});
-    }
-    // RVB deliberately excluded from the top "N issues" badge above (unlike
-    // qc/bim/ils) - it's a single Dutch central-government client's own BIM
-    // norm, and most users have no reason to target it. Same reasoning as
-    // computeQualityScore never folding it into the headline score. It still
-    // gets its own local badge on the RVB section header below.
-    var totalRvb = 0;
-    if (rvb) {
-      var rvbKeys = Object.keys(rvb).filter(function(k){return k[0]!=='_';});
-      rvbKeys.forEach(function(k){totalRvb += rvb[k].count||0;});
-    }
+    function stdTotal(x) { return stdKeys(x).reduce(function(a,k){ return a + ((x.res[k]||{}).count||0); }, 0); }
+    // Standards that don't apply here stay out of the "N issues" badge and
+    // "Create all issues" unless the user asked to check them anyway; a
+    // standard with badge:false (e.g. a single client's norm) never counts
+    // toward the top badge — it keeps its own section badge.
+    (stds||[]).forEach(function(x){ if (stdCounts(x) && x.entry.std.badge !== false) totalStd += stdTotal(x); });
+    var stdShown = (stds||[]).filter(stdCounts);
+    var stdOther = (stds||[]).filter(function(x){ return !stdCounts(x); });
 
     var SEV = {error:'var(--color-danger-fg)', warn:'var(--color-warning-fg)', info:'var(--color-info-fg)'};
     var SEC = {fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.03em',padding:'.4rem .6rem',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',background:'var(--bg-secondary)',borderBottom:'1px solid var(--border-subtle)'};
@@ -30454,6 +30451,99 @@ function startApp() {
       </div>`;
     }
 
+    function renderStandard(x) {
+      var std = x.entry.std, res = x.res, key = x.entry.key, secKey = 'std:' + key;
+      var open = sections[secKey] !== false;
+      var app = stdApp(x);
+      var tot = stdTotal(x);
+      var cls = std.classification || null;
+      var why = app.reason === 'adopted' ? _cc_t('dq.stdWhyAdopted','the project uses {name}',{name:(cls && cls.name) || std.label})
+        : app.reason === 'region' ? x.entry.packName : _cc_t('dq.stdWhyAnyway','checked on request');
+      var classKey = 'class:' + key, compKey = 'compliance:' + key;
+      var COMP = ['Compliant','Minor issues','Major issues'];
+      return html`<div key=${key}>
+        <div onClick=${function(){toggleSection(secKey);}} style=${SEC}>
+          <span title=${std.title || std.label}>${std.title || std.label}</span>
+          <span style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
+            ${tot > 0 ? html`<span style=${{fontSize:'0.57rem',padding:'1px 5px',borderRadius:99,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',fontWeight:600}}>${tot}</span>` : null}
+            <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${open?'▲':'▼'}</span>
+          </span>
+        </div>
+        ${open && html`<div>
+          <div style=${{padding:'.3rem .6rem',fontSize:'0.6rem',color:'var(--text-faint)',borderBottom:'1px solid var(--border-subtle)'}}>${_cc_t('dq.stdFrom','Country pack: {pack} · applies because: {why}',{pack:x.entry.packName, why:why})}</div>
+          ${renderCheckGroup(res, stdKeys(x), std.label)}
+
+          ${res._classDist && cls && html`<div style=${{borderTop:'1px solid var(--border-subtle)'}}>
+            <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.4rem .6rem'}}>
+              <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',flex:1}}>${cls.distLabel || _cc_t('dq.classDist','{name} distribution',{name:cls.name})}</span>
+              <button onClick=${function(){colorByStdDist(x, 'class');}}
+                title=${activeDistKey===classKey?_cc_t('dq.clearColoring','Clear coloring'):_cc_t('dq.colorByClass','Color by {name}',{name:cls.name})}
+                style=${{fontSize:'0.57rem',padding:'1px 5px',background:activeDistKey===classKey?'var(--accent)':'none',border:'1px solid '+(activeDistKey===classKey?'var(--accent)':'var(--border)'),borderRadius:3,
+                  color:activeDistKey===classKey?'var(--accent-contrast)':'var(--text-faint)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>
+                ${activeDistKey===classKey?_cc_t('dq.clear','Clear'):_cc_t('dq.color','Color')}
+              </button>
+              <span onClick=${function(){toggleExp('dist_'+classKey);}} style=${{fontSize:'0.57rem',color:'var(--text-faint)',cursor:'pointer'}}>${expanded['dist_'+classKey]?'▲':'▼'}</span>
+            </div>
+            ${expanded['dist_'+classKey] && html`<div style=${{padding:'0 .6rem .3rem',background:'var(--bg-primary)'}}>
+              ${Object.keys(res._classDist).sort(function(a,b){return (res._classDist[b]||[]).length-(res._classDist[a]||[]).length;}).slice(0,40).map(function(val, idx) {
+                var items = res._classDist[val]||[];
+                var totalN = 0; Object.keys(res._classDist).forEach(function(k){totalN+=(res._classDist[k]||[]).length;});
+                var pct = totalN > 0 ? Math.round(items.length / totalN * 100) : 0;
+                var isActive = activeDistKey === classKey;
+                var barColor = isActive ? DQ_COLORS[idx%DQ_COLORS.length] : 'var(--accent)';
+                var isNone = val === cls.noCodeLabel;
+                return html`<div key=${val}
+                  onClick=${function(){highlightStdDistGroup(x, 'class', val);}}
+                  style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.2rem 0',cursor:'pointer',borderBottom:'1px solid var(--border-subtle)'}}>
+                  ${isActive && html`<span style=${{width:8,height:8,borderRadius:'50%',background:barColor,flexShrink:0}}></span>`}
+                  <span style=${{fontSize:'0.63rem',color:isNone?'var(--text-faint)':'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontStyle:isNone?'italic':'normal'}} title=${val}>${val}</span>
+                  <span style=${{fontSize:'0.57rem',color:'var(--text-faint)',flexShrink:0}}>${items.length}</span>
+                  <div style=${{width:40,height:4,background:'var(--bg-secondary)',borderRadius:2,overflow:'hidden',flexShrink:0}}>
+                    <div style=${{width:pct+'%',height:'100%',background:barColor,borderRadius:2}}></div>
+                  </div>
+                  <span style=${{fontSize:'0.57rem',color:'var(--text-faint)',flexShrink:0,minWidth:20,textAlign:'right'}}>${pct}%</span>
+                </div>`;
+              })}
+            </div>`}
+          </div>`}
+
+          ${res._compDist && html`<div style=${{borderTop:'1px solid var(--border-subtle)'}}>
+            <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.4rem .6rem'}}>
+              <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',flex:1}}>${(std.compliance && std.compliance.label) || _cc_t('dq.compliance','Compliance')}</span>
+              <button onClick=${function(){colorByStdDist(x, 'compliance');}}
+                title=${activeDistKey===compKey?_cc_t('dq.clearColoring','Clear coloring'):_cc_t('dq.colorByCompliance','Color by compliance')}
+                style=${{fontSize:'0.57rem',padding:'1px 5px',background:activeDistKey===compKey?'var(--accent)':'none',border:'1px solid '+(activeDistKey===compKey?'var(--accent)':'var(--border)'),borderRadius:3,
+                  color:activeDistKey===compKey?'var(--accent-contrast)':'var(--text-faint)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>
+                ${activeDistKey===compKey?_cc_t('dq.clear','Clear'):_cc_t('dq.color','Color')}
+              </button>
+            </div>
+            <div style=${{padding:'0 .6rem .3rem'}}>
+              ${COMP.map(function(val) {
+                var items = res._compDist[val]||[];
+                if (items.length === 0) return null;
+                var totalN = 0; COMP.forEach(function(k){totalN+=(res._compDist[k]||[]).length;});
+                var pct = totalN > 0 ? Math.round(items.length / totalN * 100) : 0;
+                var compColor = val==='Compliant'?'var(--color-success)':val==='Minor issues'?'var(--color-warning)':'var(--color-danger)';
+                var compFg = val==='Compliant'?'var(--color-success-fg)':val==='Minor issues'?'var(--color-warning-fg)':'var(--color-danger-fg)';
+                return html`<div key=${val}
+                  onClick=${function(){highlightStdDistGroup(x, 'compliance', val);}}
+                  style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.25rem 0',cursor:'pointer',borderBottom:'1px solid var(--border-subtle)'}}>
+                  <span style=${{width:8,height:8,borderRadius:'50%',background:compColor,flexShrink:0}}></span>
+                  <span style=${{fontSize:'0.66rem',color:'var(--text-secondary)',flex:1}}>${{'Compliant':_cc_t('dq.compliant','Compliant'),'Minor issues':_cc_t('dq.minorIssues','Minor issues'),'Major issues':_cc_t('dq.majorIssues','Major issues')}[val]||val}</span>
+                  <span style=${{fontSize:'0.63rem',fontWeight:600,color:compFg}}>${items.length}</span>
+                  <div style=${{width:50,height:5,background:'var(--bg-secondary)',borderRadius:2,overflow:'hidden',flexShrink:0}}>
+                    <div style=${{width:pct+'%',height:'100%',background:compColor,borderRadius:2}}></div>
+                  </div>
+                  <span style=${{fontSize:'0.57rem',color:'var(--text-faint)',flexShrink:0,minWidth:24,textAlign:'right'}}>${pct}%</span>
+                </div>`;
+              })}
+            </div>
+          </div>`}
+          ${std.note && html`<div style=${{padding:'.4rem .6rem',fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.5}}>${std.note}</div>`}
+        </div>`}
+      </div>`;
+    }
+
     return html`<div style=${{display:'flex',flexDirection:'column',flex:1,overflow:'hidden',minWidth:0}}>
       <div style=${{padding:'.5rem .6rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',gap:'.4rem',flexShrink:0,minWidth:0}}>
         <div style=${{display:'flex',gap:'.3rem',alignItems:'center'}}>
@@ -30463,9 +30553,9 @@ function startApp() {
             ${(s.models||[]).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}</option>`})}
           </select>
           ${qc && html`<span style=${{fontSize:'0.63rem',padding:'2px 6px',borderRadius:99,
-            background:totalIssues+totalBim+totalIls===0?'var(--color-success-bg)':'var(--color-warning-bg)',
-            color:totalIssues+totalBim+totalIls===0?'var(--color-success-fg)':'var(--color-warning-fg)',fontWeight:600,flexShrink:0}}>
-            ${totalIssues+totalBim+totalIls===0?_cc_t('dq.allPassed','All passed'):_cc_t('dq.issuesCount','{n} issues',{n:totalIssues+totalBim+totalIls})}
+            background:totalIssues+totalBim+totalStd===0?'var(--color-success-bg)':'var(--color-warning-bg)',
+            color:totalIssues+totalBim+totalStd===0?'var(--color-success-fg)':'var(--color-warning-fg)',fontWeight:600,flexShrink:0}}>
+            ${totalIssues+totalBim+totalStd===0?_cc_t('dq.allPassed','All passed'):_cc_t('dq.issuesCount','{n} issues',{n:totalIssues+totalBim+totalStd})}
           </span>`}
           <button onClick=${runChecks} disabled=${isRunning || !hasModels}
             style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.72rem',fontWeight:600,cursor:hasModels?'pointer':'not-allowed',border:'none',flexShrink:0,whiteSpace:'nowrap',
@@ -30516,107 +30606,19 @@ function startApp() {
           ${sections.bim && renderCheckGroup(bim, ['thicknessMismatch','noFireRating','noIsExternal','noLoadBearing','missingCommonPset','noClassification','noObjectType','invalidName','missingArea','missingVolume'], 'BIM')}
         </div>`}
 
-        ${ils && html`<div>
-          <div onClick=${function(){toggleSection('ils');}} style=${SEC}>
-            <span>${_cc_t('dq.ilsChecks','ILS / NL-SfB')}</span>
-            <span style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
-              ${!ilsCounts ? html`<span style=${{fontSize:'0.57rem',padding:'1px 5px',borderRadius:99,border:'1px solid var(--border)',color:'var(--text-faint)',fontWeight:600}}>${_cc_t('dq.ilsNotApplicable','not applicable')}</span>`
-                : totalIls > 0 ? html`<span style=${{fontSize:'0.57rem',padding:'1px 5px',borderRadius:99,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',fontWeight:600}}>${totalIls}</span>` : null}
-              <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${sections.ils?'▲':'▼'}</span>
-            </span>
+        ${stdShown.map(function(x){ return renderStandard(x); })}
+
+        ${stdOther.length > 0 && html`<details style=${{borderBottom:'1px solid var(--border-subtle)'}}>
+          <summary style=${{fontSize:'0.65rem',color:'var(--text-muted)',padding:'.4rem .6rem',cursor:'pointer'}}>${_cc_t('dq.otherStandards','National standards that don\u2019t apply here ({n})',{n:stdOther.length})}</summary>
+          <div style=${{padding:'0 .6rem .45rem',fontSize:'0.65rem',color:'var(--text-secondary)',display:'flex',flexDirection:'column',gap:'.35rem',alignItems:'flex-start'}}>
+            <span>${_cc_t('dq.otherStandardsHelp','These come from country packs. None is the active regional code and the project doesn\u2019t use their classification, so their findings aren\u2019t counted as issues.')}</span>
+            ${stdOther.map(function(x){ return html`<div key=${x.entry.key} style=${{display:'flex',alignItems:'center',gap:'.4rem',flexWrap:'wrap'}}>
+              <span>${x.entry.std.label} <span style=${{color:'var(--text-faint)'}}>(${x.entry.packName})</span></span>
+              <button onClick=${function(){ setStdAnyway(function(p){ var n = Object.assign({}, p); n[x.entry.key] = true; return n; }); }}
+                style=${{fontSize:'0.65rem',padding:'.15rem .45rem',background:'none',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>${_cc_t('dq.checkAnyway','Check against {name} anyway',{name:x.entry.std.label})}</button>
+            </div>`; })}
           </div>
-          ${sections.ils && !ilsCounts && html`<div style=${{padding:'.45rem .6rem',fontSize:'0.65rem',color:'var(--text-secondary)',display:'flex',flexDirection:'column',gap:'.3rem',alignItems:'flex-start'}}>
-            <span>${_cc_t('dq.ilsNotApplicableHelp','Dutch ILS / NL-SfB checks: this project uses no NL-SfB classification, no model is located in the Netherlands and the regulation region isn’t NL, so these findings aren’t counted as issues.')}</span>
-            <button onClick=${function(){setIlsAnyway(true);}}
-              style=${{fontSize:'0.65rem',padding:'.15rem .45rem',background:'none',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>${_cc_t('dq.ilsShowAnyway','Check against ILS anyway')}</button>
-          </div>`}
-          ${sections.ils && ilsCounts && html`<div>
-            ${renderCheckGroup(ils, ILS_KEYS, 'ILS')}
-
-            ${ils._nlsfbDist && html`<div style=${{borderTop:'1px solid var(--border-subtle)'}}>
-              <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.4rem .6rem'}}>
-                <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',flex:1}}>NL/SfB Verdeling</span>
-                <button onClick=${function(){colorByILSDist('nlsfb');}}
-                  title=${activeDistKey==='nlsfb'?_cc_t('dq.clearColoring','Clear coloring'):_cc_t('dq.colorByNlsfb','Color by NL/SfB')}
-                  style=${{fontSize:'0.57rem',padding:'1px 5px',background:activeDistKey==='nlsfb'?'var(--accent)':'none',border:'1px solid '+(activeDistKey==='nlsfb'?'var(--accent)':'var(--border)'),borderRadius:3,
-                    color:activeDistKey==='nlsfb'?'var(--accent-contrast)':'var(--text-faint)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>
-                  ${activeDistKey==='nlsfb'?_cc_t('dq.clear','Clear'):_cc_t('dq.color','Color')}
-                </button>
-                <span onClick=${function(){toggleExp('dist_nlsfb');}} style=${{fontSize:'0.57rem',color:'var(--text-faint)',cursor:'pointer'}}>${expanded['dist_nlsfb']?'▲':'▼'}</span>
-              </div>
-              ${expanded['dist_nlsfb'] && html`<div style=${{padding:'0 .6rem .3rem',background:'var(--bg-primary)'}}>
-                ${Object.keys(ils._nlsfbDist).sort(function(a,b){return (ils._nlsfbDist[b]||[]).length-(ils._nlsfbDist[a]||[]).length;}).slice(0,40).map(function(val, idx) {
-                  var items = ils._nlsfbDist[val]||[];
-                  var totalN = 0; Object.keys(ils._nlsfbDist).forEach(function(k){totalN+=(ils._nlsfbDist[k]||[]).length;});
-                  var pct = totalN > 0 ? Math.round(items.length / totalN * 100) : 0;
-                  var isActive = activeDistKey === 'nlsfb';
-                  var barColor = isActive ? DQ_COLORS[idx%DQ_COLORS.length] : 'var(--accent)';
-                  var isNone = val === '(geen code)';
-                  return html`<div key=${val}
-                    onClick=${function(){highlightILSDistGroup('nlsfb', val);}}
-                    style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.2rem 0',cursor:'pointer',borderBottom:'1px solid var(--border-subtle)'}}>
-                    ${isActive && html`<span style=${{width:8,height:8,borderRadius:'50%',background:barColor,flexShrink:0}}></span>`}
-                    <span style=${{fontSize:'0.63rem',color:isNone?'var(--text-faint)':'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontStyle:isNone?'italic':'normal'}} title=${val}>${val}</span>
-                    <span style=${{fontSize:'0.57rem',color:'var(--text-faint)',flexShrink:0}}>${items.length}</span>
-                    <div style=${{width:40,height:4,background:'var(--bg-secondary)',borderRadius:2,overflow:'hidden',flexShrink:0}}>
-                      <div style=${{width:pct+'%',height:'100%',background:barColor,borderRadius:2}}></div>
-                    </div>
-                    <span style=${{fontSize:'0.57rem',color:'var(--text-faint)',flexShrink:0,minWidth:20,textAlign:'right'}}>${pct}%</span>
-                  </div>`;
-                })}
-              </div>`}
-            </div>`}
-
-            ${ils._compDist && html`<div style=${{borderTop:'1px solid var(--border-subtle)'}}>
-              <div style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.4rem .6rem'}}>
-                <span style=${{fontSize:'0.69rem',fontWeight:600,color:'var(--text-muted)',flex:1}}>ILS Compliance</span>
-                <button onClick=${function(){colorByILSDist('compliance');}}
-                  title=${activeDistKey==='compliance'?_cc_t('dq.clearColoring','Clear coloring'):_cc_t('dq.colorByCompliance','Color by compliance')}
-                  style=${{fontSize:'0.57rem',padding:'1px 5px',background:activeDistKey==='compliance'?'var(--accent)':'none',border:'1px solid '+(activeDistKey==='compliance'?'var(--accent)':'var(--border)'),borderRadius:3,
-                    color:activeDistKey==='compliance'?'var(--accent-contrast)':'var(--text-faint)',cursor:'pointer',lineHeight:1.2,fontFamily:'inherit'}}>
-                  ${activeDistKey==='compliance'?_cc_t('dq.clear','Clear'):_cc_t('dq.color','Color')}
-                </button>
-              </div>
-              <div style=${{padding:'0 .6rem .3rem'}}>
-                ${['Compliant','Minor issues','Major issues'].map(function(val) {
-                  var items = ils._compDist[val]||[];
-                  if (items.length === 0) return null;
-                  var totalN = 0; ['Compliant','Minor issues','Major issues'].forEach(function(k){totalN+=(ils._compDist[k]||[]).length;});
-                  var pct = totalN > 0 ? Math.round(items.length / totalN * 100) : 0;
-                  var compColor = val==='Compliant'?'var(--color-success)':val==='Minor issues'?'var(--color-warning)':'var(--color-danger)';
-                  var compFg = val==='Compliant'?'var(--color-success-fg)':val==='Minor issues'?'var(--color-warning-fg)':'var(--color-danger-fg)';
-                  return html`<div key=${val}
-                    onClick=${function(){highlightILSDistGroup('compliance', val);}}
-                    style=${{display:'flex',alignItems:'center',gap:'.35rem',padding:'.25rem 0',cursor:'pointer',borderBottom:'1px solid var(--border-subtle)'}}>
-                    <span style=${{width:8,height:8,borderRadius:'50%',background:compColor,flexShrink:0}}></span>
-                    <span style=${{fontSize:'0.66rem',color:'var(--text-secondary)',flex:1}}>${{'Compliant':_cc_t('dq.compliant','Compliant'),'Minor issues':_cc_t('dq.minorIssues','Minor issues'),'Major issues':_cc_t('dq.majorIssues','Major issues')}[val]||val}</span>
-                    <span style=${{fontSize:'0.63rem',fontWeight:600,color:compFg}}>${items.length}</span>
-                    <div style=${{width:50,height:5,background:'var(--bg-secondary)',borderRadius:2,overflow:'hidden',flexShrink:0}}>
-                      <div style=${{width:pct+'%',height:'100%',background:compColor,borderRadius:2}}></div>
-                    </div>
-                    <span style=${{fontSize:'0.57rem',color:'var(--text-faint)',flexShrink:0,minWidth:24,textAlign:'right'}}>${pct}%</span>
-                  </div>`;
-                })}
-              </div>
-            </div>`}
-          </div>`}
-        </div>`}
-
-        ${rvb && html`<div>
-          <div onClick=${function(){toggleSection('rvb');}} style=${SEC}>
-            <span>RVB BIM Norm</span>
-            <span style=${{display:'flex',alignItems:'center',gap:'.3rem'}}>
-              ${totalRvb > 0 ? html`<span style=${{fontSize:'0.57rem',padding:'1px 5px',borderRadius:99,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',fontWeight:600}}>${totalRvb}</span>` : null}
-              <span style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>${sections.rvb?'▲':'▼'}</span>
-            </span>
-          </div>
-          ${sections.rvb && html`<div>
-            ${renderCheckGroup(rvb, RVB_KEYS, 'RVB')}
-            <div style=${{padding:'.4rem .6rem',fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.5}}>
-              Rijksvastgoedbedrijf BIM Norm v1.1 project/site/building/zone metadata — a Dutch central-government client standard, shown for visibility only and excluded from the Quality Score and the badge above.
-            </div>
-          </div>`}
-        </div>`}
+        </details>`}
 
         ${bim && bim._dist && html`<div>
           <div onClick=${function(){toggleSection('dist');}} style=${SEC}>
@@ -30676,7 +30678,7 @@ function startApp() {
         ${qc && html`<div style=${{padding:'.5rem .6rem',borderTop:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',gap:'.3rem'}}>
           <div style=${{display:'flex',alignItems:'center',gap:'.3rem',flexWrap:'wrap'}}>
             <span style=${{fontSize:'0.63rem',color:'var(--text-faint)',flex:1}}>
-              ${qc._total} elements · ${totalIssues+totalBim+totalIls} finding${totalIssues+totalBim+totalIls!==1?'s':''}
+              ${qc._total} elements · ${totalIssues+totalBim+totalStd} finding${totalIssues+totalBim+totalStd!==1?'s':''}
             </span>
             ${activeDistKey && html`<button onClick=${function(){colorByDistribution(activeDistKey);}}
               style=${{fontSize:'0.63rem',padding:'.15rem .4rem',background:'var(--bg-secondary)',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>${_cc_t('dq.clearColor','Clear color')}</button>`}
@@ -30684,7 +30686,7 @@ function startApp() {
               style=${{fontSize:'0.63rem',padding:'.15rem .4rem',background:'var(--bg-secondary)',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>${_cc_t('dq.resetView','Reset view')}</button>
           </div>
           <div style=${{display:'flex',gap:'.3rem',flexWrap:'wrap'}}>
-            <button onClick=${function(){ if (window._ccDataQualityReport) window._ccDataQualityReport(s); }} title=${_cc_t('dq.printReportTitle','Open a print-ready report (Quality Score, BIM basics, ILS/NL-SfB, RVB BIM Norm, accessibility)')}
+            <button onClick=${function(){ if (window._ccDataQualityReport) window._ccDataQualityReport(s); }} title=${_cc_t('dq.printReportTitle','Open a print-ready report (Quality Score, BIM basics, national standards, accessibility)')}
               style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit',whiteSpace:'nowrap'}}>
               ⎙ ${_cc_t('dq.printReport','Print report')}
             </button>
@@ -30692,8 +30694,8 @@ function startApp() {
               style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit',whiteSpace:'nowrap'}}>
               ↓ ${_cc_t('dq.exportCsv','Export CSV')}
             </button>
-            ${totalIssues+totalBim+totalIls > 0 && html`<button onClick=${createAllIssues}
-              title=${_cc_t('dq.createNIssuesTitle','Create {n} issues from all failing checks',{n:totalIssues+totalBim+totalIls})}
+            ${totalIssues+totalBim+totalStd > 0 && html`<button onClick=${createAllIssues}
+              title=${_cc_t('dq.createNIssuesTitle','Create {n} issues from all failing checks',{n:totalIssues+totalBim+totalStd})}
               style=${{flex:1,fontSize:'0.69rem',padding:'.3rem .5rem',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:4,cursor:'pointer',fontWeight:600,fontFamily:'inherit',whiteSpace:'nowrap'}}>
               + ${_cc_t('dq.createAllIssues','Create all issues')}
             </button>`}
@@ -30708,6 +30710,7 @@ function startApp() {
   function IDSValidationPanel(props) {
     var s = props.s, d = props.d;
     var ids = s.idsValidation;
+    useCcRegion(); // pack rule sets appear once the country packs have loaded
     var _sp = useState(null), customSpecs = _sp[0], setCustomSpecs = _sp[1];
     var _ipe = useState(null), idsParseError = _ipe[0], setIdsParseError = _ipe[1];
     var _sel = useState([]), selectedBundled = _sel[0], setSelectedBundled = _sel[1];
@@ -30746,7 +30749,8 @@ function startApp() {
     function runValidation() {
       var specsToRun = [];
       selectedBundled.forEach(function(idx) {
-        if (IDS_BUNDLED_SPECS[idx]) specsToRun.push(IDS_BUNDLED_SPECS[idx]);
+        var bundled = _ccBundledIdsSpecs();
+        if (bundled[idx]) specsToRun.push(bundled[idx]);
       });
       if (customSpecs) specsToRun = specsToRun.concat(customSpecs);
       if (specsToRun.length === 0) return;
@@ -30774,7 +30778,7 @@ function startApp() {
 
       <div>
         <span style=${{fontSize: '0.69rem', color: 'var(--text-muted)', display: 'block', marginBottom: '.25rem'}}>${_cc_t('ids.builtInRuleSets','Built-in Rule Sets')}</span>
-        ${IDS_BUNDLED_SPECS.map(function(spec, idx) {
+        ${_ccBundledIdsSpecs().map(function(spec, idx) {
           var isSelected = selectedBundled.indexOf(idx) !== -1;
           var tooltip = spec.description + '\n\nRules:\n' + spec.rules.map(function(r){ return '• ' + r.desc + ' (' + (r.severity||'error') + ')'; }).join('\n');
           return html`<label key=${idx} title=${tooltip} style=${{display: 'flex', alignItems: 'flex-start', gap: '.3rem', padding: '.2rem 0', cursor: 'pointer', fontSize: '0.69rem'}}>
