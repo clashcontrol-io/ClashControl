@@ -46,7 +46,7 @@ for (const name of CLASH_PANELS) {
 }
 
 test('clash-panel status maps are tokenised', () => {
-  assert.match(html, /var statusColors = \{open:'var\(--color-danger\)',in_progress:'var\(--color-warning\)',resolved:'var\(--color-success\)'/);
+  assert.match(html, /var _CC_VL_STATUS_COLORS = \{open:'var\(--color-danger\)',in_progress:'var\(--color-warning\)',resolved:'var\(--color-success\)'/);
   assert.match(html, /bg:'var\(--color-success-bg\)',col:'var\(--color-success-fg\)',brd:'var\(--color-success-border\)'/);
 });
 

@@ -218,3 +218,17 @@ test('formatBytes renders human-readable sizes', () => {
   assert.equal(core.formatBytes(5 * 1024 * 1024), '5.0 MB');
   assert.equal(core.formatBytes(null), '—');
 });
+
+test('estimateRecordBytes: a size cache gives the same answer and reuses unchanged objects', () => {
+  const clashes = Array.from({ length: 50 }, (_, i) => ({ id: 'c' + i, status: 'open', title: 'Run ' + i, point: [i, 1, 2] }));
+  const shared = { note: 'shared' };
+  const rec = { id: 'p', clashes, a: shared, b: shared };
+  const plain = core.estimateRecordBytes(rec);
+  const cache = new WeakMap();
+  assert.equal(core.estimateRecordBytes(rec, cache), plain);
+  assert.equal(core.estimateRecordBytes(rec, cache), plain, 'second call from the cache');
+  // one clash replaced by an edited copy: only that one is walked again
+  const edited = clashes.slice(); edited[3] = Object.assign({}, clashes[3], { status: 'resolved' });
+  const rec2 = { id: 'p', clashes: edited, a: shared, b: shared };
+  assert.equal(core.estimateRecordBytes(rec2, cache), core.estimateRecordBytes(rec2));
+});
