@@ -10227,7 +10227,9 @@ function startApp() {
   // thread), so they need a much larger run before worker start-up + buffer
   // copies pay off.
   var _ccNarrowPoolCfg = window._ccNarrowPool = { minCandidates: 800, minCandidatesHardOnly: 20000, nativeMinCandidates: 400, disabled: false, forceJs: false, maxWorkers: 0, last: null };
-  var _NP_JOB_PAIRS = 40;                    // pairs per worker job
+  var _NP_JOB_PAIRS = 10;                    // pairs per worker job (small, so element affinity keeps neighbourhoods on one worker)
+  var _NP_PICK_SCAN = 64;                    // queued jobs a free worker scores for affinity
+  var _NP_SLOT_DEPTH = 2;                    // jobs posted ahead per worker (see pump)
   var _NP_WINDOW_CHUNKS = 16;                // detection chunks per prefetch window
   var _NP_WORKER_FLOATS = 4 * 1024 * 1024;   // per-worker triangle-cache budget (floats, ~16 MB; the worker's WASM copy + BVH come on top)
   var _NP_INIT_TIMEOUT_MS = 10000;
@@ -10376,7 +10378,7 @@ function startApp() {
     }
     function pickJob(sl) {
       var win = queue[0].win, best = 0, bestOwn = -1, bestOther = Infinity;
-      for (var q = 0; q < queue.length && queue[q].win === win; q++) {
+      for (var q = 0; q < queue.length && q < _NP_PICK_SCAN && queue[q].win === win; q++) {
         var job = queue[q];
         if (!job.ids) {
           var u = new Set();
@@ -10391,23 +10393,30 @@ function startApp() {
       }
       return queue.splice(best, 1)[0];
     }
+    // Up to _NP_SLOT_DEPTH jobs per worker are posted ahead, so a worker
+    // does not idle between finishing a job and the main thread (busy with a
+    // chunk) handing it the next one. The worker runs its messages in order,
+    // so the cache mirror (adds/drops applied when a payload is built) stays
+    // exact.
     function pump() {
       if (pool.dead) return;
-      for (var i = 0; i < slots.length && queue.length; i++) {
-        var sl = slots[i];
-        if (sl.busy || !sl.ready) continue;
-        var job = pickJob(sl), payload;
-        try { payload = buildPayload(sl, job); }
-        catch (e) { pool.fail('payload: ' + ((e && e.message) || e)); return; }
-        sl.busy = true; sl.job = job;
-        try { sl.w.postMessage(payload.msg, payload.xfer); }
-        catch (e2) { pool.fail('postMessage: ' + ((e2 && e2.message) || e2)); return; }
+      for (var depth = 1; depth <= _NP_SLOT_DEPTH && queue.length; depth++) {
+        for (var i = 0; i < slots.length && queue.length; i++) {
+          var sl = slots[i];
+          if (sl.jobs.length >= depth || !sl.ready) continue;
+          var job = pickJob(sl), payload;
+          try { payload = buildPayload(sl, job); }
+          catch (e) { pool.fail('payload: ' + ((e && e.message) || e)); return; }
+          sl.jobs.push(job);
+          try { sl.w.postMessage(payload.msg, payload.xfer); }
+          catch (e2) { pool.fail('postMessage: ' + ((e2 && e2.message) || e2)); return; }
+        }
       }
     }
     function onResult(sl, d) {
-      var job = sl.job;
+      var job = sl.jobs[0];
       if (!job || job.id !== d.id || !d.res || d.res.length !== job.cidx.length * _NP_REC) { pool.fail('protocol-error'); return; }
-      sl.job = null; sl.busy = false;
+      sl.jobs.shift();
       for (var k = 0; k < job.cidx.length; k++) pool.results.set(job.cidx[k], d.res.subarray(k * _NP_REC, k * _NP_REC + _NP_REC));
       pool.stats.jobsDone++; pool.stats.pairsDone += job.cidx.length;
       if (d.tm) for (var q = 0; q < 3; q++) pool.stats.workerMs[q] += d.tm[q];
@@ -10431,7 +10440,7 @@ function startApp() {
     try {
       for (var w = 0; w < nWorkers; w++) {
         (function() {
-          var sl = { w: new Worker(blobUrl), busy: false, ready: false, job: null, cache: new Map(), floats: 0 };
+          var sl = { w: new Worker(blobUrl), ready: false, jobs: [], cache: new Map(), floats: 0 };
           slots.push(sl);
           sl.w.onmessage = function(ev) {
             var d = ev.data;
