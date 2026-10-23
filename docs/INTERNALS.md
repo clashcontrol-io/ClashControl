@@ -394,6 +394,8 @@ A run whose signature matches only recomputes pairs that involve a changed eleme
 
 Rule-derived severity (`_sevSource:'rule'`) is re-derived on every re-run by the reconciler; only AI/human verdicts are carried.
 
+**Cost proportional to the change (2026-10-23, `tests/browser/rerun-cost.mjs`).** Change detection hashes every element each run, but the expensive parts are cached: the strided vertex sample per position attribute (`_ccVertexSampleHash`, valid while the attribute's `version` — bumped by `needsUpdate` — backing array and count are unchanged) and the props part per props object (`_ccPropsHash`, reused only while every hashed value is still `===`). An in-place geometry edit that does not bump the attribute version is not seen (three.js would not render it either). The pool and the chunk loop are sized by `_nWork` (pairs touching a changed element), not by the candidate count: an all-carried run, or one with at most `_DETECT_SMALL_WORK` (32) pairs to test, is one synchronous pass with no workers; carried pairs never pre-build JS BVHs. When a run recomputed nothing and emitted exactly the previous pairs (`emitKeys`), `classifyClashes` applies the previous run's per-row classification (`_ccRunMemo.classified`) instead of recomputing it. Profile fields: `pairs_recomputed`, `change_detect_ms`. Per-pair derived data (opening/provision status, roles, titles) lives in the snapshot, so it is computed only for recomputed pairs; merge and clustering stay global.
+
 ### 21.19b Provision for void (clashes through openings)
 
 **Code reference:** `extractOpeningRecords` (loader/worker), `_ccOpeningStatusForPair`, `classifyOpening` in `clash-classification-core.js`.
