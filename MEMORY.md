@@ -300,6 +300,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- 2026-10-23: federation memory (branch `memory`): one CPU copy of batched geometry, detection caches capped by bytes from heap headroom, load-only data released, memory-aware load scheduling (serial under pressure); `tests/browser/memory-federation.mjs`.
 - ~~2026-10-23: first-load speed — storage inventory from IndexedDB v4 index keys (`tests/browser/storage-metadata.mjs`), shader error checks off unless `?ccDebugShaders`, single-file sharded loading (branch `shard-load`).~~ (2026-10-23)
 - ~~2026-10-23: first-run detection throughput (branch `first-run`): BVH reuse from the Engine, cheaper refinement, pool scheduling.~~ (2026-10-23)
 - ~~2026-10-23: sharded first load of ONE large IFC file across parallel web-ifc workers (branch `shard-load`), merged result identical to the single-worker load (order, geometry, instancing, colours, not-drawn, spaces, semantics); flag-gated, any shard failure → single worker.~~ (2026-10-23)

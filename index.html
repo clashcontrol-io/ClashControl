@@ -5513,6 +5513,32 @@ function startApp() {
   var _CC_BATCH_MAX_VERTS = 4000000;
   var _CC_BATCH_MAX_IDX   = 12000000;
 
+  // leanMemory: one CPU copy of batched geometry. BatchedMesh.addGeometry
+  // copies the source's vertex attributes verbatim into the batch's arrays
+  // (TypedArray#set when the array types match), so the off-scene source
+  // geometry (element.meshes[] — clash engine, picking, snapping, export,
+  // the geo cache) can read the very same values through a view into the
+  // batch's array instead of keeping its own copy. Only position/normal: the
+  // batch's index holds vertexStart-offset values, so the source keeps its
+  // own index. Skipped (source keeps its array) for anything that was not a
+  // plain verbatim copy: interleaved, other array type/itemSize/normalized.
+  function _ccShareBatchArrays(b, gid, g) {
+    var r;
+    try { r = b.getGeometryRangeAt(gid); } catch (_) { return; }
+    if (!r || !(r.vertexStart >= 0)) return;
+    ['position', 'normal'].forEach(function(name) {
+      var src = g.attributes[name], dst = b.geometry.attributes[name];
+      if (!src || !dst || src.isInterleavedBufferAttribute || !src.array || src.array.buffer === dst.array.buffer) return;
+      if (src.array.constructor !== dst.array.constructor || src.itemSize !== dst.itemSize || !!src.normalized !== !!dst.normalized) return;
+      var n = src.count * src.itemSize, at = r.vertexStart * dst.itemSize;
+      if (src.array.length !== n || at + n > dst.array.length) return;
+      src.array = dst.array.subarray(at, at + n);
+    });
+  }
+  function _ccLeanMemory() {
+    return !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('leanMemory'));
+  }
+
   function _ccBatchPathological(elements, meshes, geoUnique) {
     if (typeof THREE.BatchedMesh !== 'function') return {meshes:meshes, batches:0, batched:0};
     function _matOk(mat) { return mat && !mat.transparent && !(mat.opacity != null && mat.opacity < 0.99); }
@@ -5546,7 +5572,7 @@ function startApp() {
     var cur = null;
     function _newBatch(seed) {
       var instCap = Math.min(_CC_BATCH_MAX_INST, seed.count);
-      var b = new THREE.BatchedMesh(instCap, seed.verts, seed.idx,
+      var b = new THREE.BatchedMesh(instCap, seed.seen ? seed.uv : seed.verts, seed.seen ? seed.ui : seed.idx,
         new THREE.MeshPhongMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
       b.frustumCulled = false;             // whole-batch box is huge; per-instance culling below
       b.perObjectFrustumCulled = true;
@@ -5559,15 +5585,22 @@ function startApp() {
     }
     // Pre-measure totals in capped windows (instanced groups add their
     // geometry once but one batch instance per IFC instance).
-    var win = { count:0, verts:0, idx:0, items:[] }, wins = [win];
+    // leanMemory: a geometry shared by several plain meshes is added to its
+    // batch ONCE (one geometry range, one instance per mesh — the same
+    // vertices drawn with the same matrices), and the batch is sized for the
+    // distinct geometries only. The windows themselves (which item goes to
+    // which batch) are measured exactly as before.
+    var _lean = _ccLeanMemory();
+    var win = { count:0, verts:0, idx:0, items:[], uv:0, ui:0, seen: _lean ? new Set() : null }, wins = [win];
     candidates.forEach(function(c) {
       var g = (c.mesh || c.inst).geometry;
       var v = g.attributes.position.count, ix = g.index.count;
       var n = c.inst ? c.inst.count : 1;
       if (win.count + n > _CC_BATCH_MAX_INST || win.verts + v > _CC_BATCH_MAX_VERTS || win.idx + ix > _CC_BATCH_MAX_IDX) {
-        win = { count:0, verts:0, idx:0, items:[] }; wins.push(win);
+        win = { count:0, verts:0, idx:0, items:[], uv:0, ui:0, seen: _lean ? new Set() : null }; wins.push(win);
       }
       win.count += n; win.verts += v; win.idx += ix; win.items.push(c);
+      if (_lean && !win.seen.has(g)) { win.seen.add(g); win.uv += v; win.ui += ix; }
     });
     var nBatched = 0;
     var _tmpIM = new THREE.Matrix4();
@@ -5575,11 +5608,18 @@ function startApp() {
       if (!w.items.length) return;
       var b = _newBatch(w);
       var _col = new THREE.Color();
+      var gidOf = w.seen ? new Map() : null; // source geometry → batch geometry id (leanMemory)
+      function _addGeo(g) {
+        if (!gidOf) return b.addGeometry(g);
+        var id = gidOf.get(g);
+        if (id === undefined) { id = b.addGeometry(g); gidOf.set(g, id); }
+        return id;
+      }
       w.items.forEach(function(c) {
         try {
           if (c.inst) {
             var im = c.inst;
-            var gidI = b.addGeometry(im.geometry);
+            var gidI = _addGeo(im.geometry);
             _col.copy(im.material.color || _col.set(0xcccccc));
             var exprIds = im.userData.instanceExprIds || [];
             im.updateMatrixWorld(true);
@@ -5597,7 +5637,7 @@ function startApp() {
             return;
           }
           var m = c.mesh;
-          var gid = b.addGeometry(m.geometry);
+          var gid = _addGeo(m.geometry);
           var iid = b.addInstance(gid);
           m.updateMatrix();
           b.setMatrixAt(iid, m.matrix);
@@ -5612,6 +5652,7 @@ function startApp() {
         } catch (e) { /* capacity edge — leave this entry per-element */ }
       });
       _ccBakeMesh(b);
+      if (gidOf) gidOf.forEach(function(id, g) { _ccShareBatchArrays(b, id, g); });
     });
     if (!nBatched) return {meshes:meshes, batches:0, batched:0};
     var filtered = meshes.filter(function(m) { return !removed[m.uuid]; });
