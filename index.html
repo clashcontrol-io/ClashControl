@@ -9042,7 +9042,14 @@ function startApp() {
   // now a JS post-step on CLOSED meshes only, identical on every path by
   // construction: see _ccContainment below.)
 
-  function _triTriDistSq(trisA, oA9, trisB, oB9, outA, outB) {
+  // skipEE (optional): the caller has proven (_ccEELowerSq) that none of the
+  // 9 edge-edge sub-tests can come out below its running best, so they are
+  // not evaluated. The result is then only meaningful for the caller's
+  // strict `d < best` test, where it decides exactly as the full 15-test
+  // minimum would: if the 6 vertex tests reach below best, the first of them
+  // achieving the minimum is the full minimum's first achiever too (every
+  // skipped value is >= best); otherwise neither version updates.
+  function _triTriDistSq(trisA, oA9, trisB, oB9, outA, outB, skipEE) {
     // Intersecting triangles (e.g. an edge of one piercing the other's
     // face) have true distance 0 — the 15-subtest point/edge distance
     // below is only valid for NON-intersecting triangles and otherwise
@@ -9070,6 +9077,7 @@ function startApp() {
     d = _closestPtOnTri(b0x,b0y,b0z, trisA,oA9, pa); if (d<best){best=d;outB[0]=b0x;outB[1]=b0y;outB[2]=b0z;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];}
     d = _closestPtOnTri(b1x,b1y,b1z, trisA,oA9, pa); if (d<best){best=d;outB[0]=b1x;outB[1]=b1y;outB[2]=b1z;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];}
     d = _closestPtOnTri(b2x,b2y,b2z, trisA,oA9, pa); if (d<best){best=d;outB[0]=b2x;outB[1]=b2y;outB[2]=b2z;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];}
+    if (skipEE) return best;
     d = _segSegDistSq(a0x,a0y,a0z,a1x,a1y,a1z, b0x,b0y,b0z,b1x,b1y,b1z, pa,pb); if(d<best){best=d;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];outB[0]=pb[0];outB[1]=pb[1];outB[2]=pb[2];}
     d = _segSegDistSq(a0x,a0y,a0z,a1x,a1y,a1z, b1x,b1y,b1z,b2x,b2y,b2z, pa,pb); if(d<best){best=d;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];outB[0]=pb[0];outB[1]=pb[1];outB[2]=pb[2];}
     d = _segSegDistSq(a0x,a0y,a0z,a1x,a1y,a1z, b2x,b2y,b2z,b0x,b0y,b0z, pa,pb); if(d<best){best=d;outA[0]=pa[0];outA[1]=pa[1];outA[2]=pa[2];outB[0]=pb[0];outB[1]=pb[1];outB[2]=pb[2];}
@@ -9095,19 +9103,66 @@ function startApp() {
   // node; a leaf can never be the one split) so the two traversals stay
   // structurally identical - and, ported the same way in Rust, so does
   // mesh_dist::traverse_min_dist.
+  // ── Exact edge-edge skip (2026-10-23) ──
+  // _ccTriBoxInto writes a triangle's AABB (the BVH's own comparisons, from
+  // the first vertex) and the largest |coordinate| (Infinity when any
+  // coordinate is NaN/Infinity) at out[k..k+6].
+  function _ccTriBoxInto(tris, o9, out, k) {
+    var mnx=tris[o9], mny=tris[o9+1], mnz=tris[o9+2], mxx=mnx, mxy=mny, mxz=mnz;
+    for (var v=3; v<9; v+=3) {
+      var x=tris[o9+v], y=tris[o9+v+1], z=tris[o9+v+2];
+      if (x<mnx) mnx=x; if (x>mxx) mxx=x;
+      if (y<mny) mny=y; if (y>mxy) mxy=y;
+      if (z<mnz) mnz=z; if (z>mxz) mxz=z;
+    }
+    out[k]=mnx; out[k+1]=mny; out[k+2]=mnz; out[k+3]=mxx; out[k+4]=mxy; out[k+5]=mxz;
+    var M=0;
+    for (var q=0; q<9; q++) { var a=Math.abs(tris[o9+q]); if (a>M) M=a; else if (a!==a) M=Infinity; }
+    out[k+6]=M;
+  }
+  // A lower bound (squared) on what any of the 9 edge-edge sub-tests of
+  // _triTriDistSq can return for the triangle pair whose boxes are at A[ka..],
+  // B[kb..] — 0 when nothing useful can be proven. Sound in floating point:
+  // _segSegDistSq clamps both parameters to [0,1] (or yields NaN, which never
+  // wins), so each closest point is p + (q-p)*s on its edge up to ~8 ulp of the
+  // largest coordinate M; the per-axis box gaps are shrunk by a relative 1e-12
+  // plus 1e-12*M (+1e-290 for underflow) and the sum by a relative 1e-12 —
+  // orders of magnitude above the rounding of the sub-test and of this bound.
+  // Non-finite coordinates and tiny scales (< 1e-200) give 0.
+  function _ccEELowerSq(A, ka, B, kb) {
+    var M = A[ka+6] > B[kb+6] ? A[ka+6] : B[kb+6];
+    if (!(M < 1e300)) return 0;
+    var m = 1e-12 * M + 1e-290, s = 0, g;
+    g = Math.max(A[ka]-B[kb+3], B[kb]-A[ka+3], 0); g = g - g*1e-12 - m; if (g > 0) s += g*g;
+    g = Math.max(A[ka+1]-B[kb+4], B[kb+1]-A[ka+4], 0); g = g - g*1e-12 - m; if (g > 0) s += g*g;
+    g = Math.max(A[ka+2]-B[kb+5], B[kb+2]-A[ka+5], 0); g = g - g*1e-12 - m; if (g > 0) s += g*g;
+    s = s * (1 - 1e-12);
+    return s > 1e-200 ? s : 0;
+  }
   var _bmdPtA = new Float64Array(3), _bmdPtB = new Float64Array(3);
+  var _bmdBoxA = new Float64Array(7), _bmdBoxB = new Float64Array(28);
   function _bvhMinDistTraverse(nA, trisA, nB, trisB, best, outA, outB) {
     if (_aabbAabbDistSq(nA, nB) >= best[0]) return;
     var aLeaf = nA.lo !== undefined;
     var bLeaf = nB.lo !== undefined;
     if (aLeaf && bLeaf) {
+      // Same triangle pairs in the same order with the same strict update as
+      // the plain double loop; only work that provably cannot lower best[0]
+      // is left out (edge-edge sub-tests, _ccEELowerSq; everything after
+      // best[0] reaches 0, as no distance is below 0 — the rest of the
+      // traversal prunes on `box >= 0` anyway).
+      var bx = (nB.hi - nB.lo) * 7 <= _bmdBoxB.length ? _bmdBoxB : new Float64Array((nB.hi - nB.lo) * 7);
+      for (var jb=nB.lo, kb0=0; jb<nB.hi; jb++, kb0+=7) _ccTriBoxInto(trisB, nB.idx[jb]*9, bx, kb0);
       for (var i=nA.lo; i<nA.hi; i++) {
-        for (var j=nB.lo; j<nB.hi; j++) {
-          var d = _triTriDistSq(trisA, nA.idx[i]*9, trisB, nB.idx[j]*9, _bmdPtA, _bmdPtB);
+        var oA = nA.idx[i]*9;
+        _ccTriBoxInto(trisA, oA, _bmdBoxA, 0);
+        for (var j=nB.lo, kb=0; j<nB.hi; j++, kb+=7) {
+          var d = _triTriDistSq(trisA, oA, trisB, nB.idx[j]*9, _bmdPtA, _bmdPtB, _ccEELowerSq(_bmdBoxA, 0, bx, kb) >= best[0]);
           if (d < best[0]) {
             best[0]=d;
             outA[0]=_bmdPtA[0];outA[1]=_bmdPtA[1];outA[2]=_bmdPtA[2];
             outB[0]=_bmdPtB[0];outB[1]=_bmdPtB[1];outB[2]=_bmdPtB[2];
+            if (d === 0) return;
           }
         }
       }
@@ -9209,7 +9264,7 @@ function startApp() {
     var fns = [
       _triTriTest, _bvhStableSort, _buildBVHNode, _buildBVHForTris, _bvhTraverseAll,
       _pointInBothBoxes, _postProcessIntersectPoints, _jsIntersectBVH,
-      _closestPtOnTri, _segSegDistSq, _triTriDistSq, _aabbAabbDistSq, _bvhMinDistTraverse,
+      _closestPtOnTri, _segSegDistSq, _triTriDistSq, _aabbAabbDistSq, _ccTriBoxInto, _ccEELowerSq, _bvhMinDistTraverse,
       _jsMinDistBVH,
       // hit refinement (crossing vs contact, containment, depth) — the REAL
       // functions, run on the worker's copy of the same triangles, so a
@@ -9225,7 +9280,7 @@ function startApp() {
       'var _miProbe=[],_miPts=[],_miValid=[],_miProbeDepth=[0],_miMaxDepth=[0];',
       'var _MI_MARGIN=' + JSON.stringify(_MI_MARGIN) + ';',
       'var _ttdPtA=new Float64Array(3),_ttdPtB=new Float64Array(3);',
-      'var _bmdPtA=new Float64Array(3),_bmdPtB=new Float64Array(3);',
+      'var _bmdPtA=new Float64Array(3),_bmdPtB=new Float64Array(3),_bmdBoxA=new Float64Array(7),_bmdBoxB=new Float64Array(28);',
       'var _mmdBest=new Float64Array(1),_mmdOutA=new Float64Array(3),_mmdOutB=new Float64Array(3);',
       'var _PEN_RAY_DIRS=' + JSON.stringify(_PEN_RAY_DIRS) + ';',
       'var _CC_CONTACT_TOL_M=' + JSON.stringify(_CC_CONTACT_TOL_M) + ',_CC_CONTACT_TOL_REL=' + JSON.stringify(_CC_CONTACT_TOL_REL) +
