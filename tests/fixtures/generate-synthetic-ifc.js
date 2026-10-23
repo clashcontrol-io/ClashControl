@@ -225,6 +225,11 @@ function generateSyntheticIfc(opts) {
 //     plane origin (the systematic offset some exporters write)
 //   opts.boundaryNoise: true -> boundaries are scattered (no consistent
 //     offset), so placement must be refused
+//   opts.boundaryCases (arch): room solids 2.6 m high while their virtual
+//     top boundaries lie at the 3.0 m wall tops (0.4 m off the room solid,
+//     on the walls bounding the room), plus a third room WITHOUT a solid
+//     (x 32.25–37.75, y 5.25–7.75) — all boundaries must still be placed
+//     (verified against the elements bounding the room)
 //   opts.geoProvision (struct): + an UNNAMED, untyped proxy (NOTDEFINED, no
 //     material) that the vent duct, the drain pipe and the cable tray all
 //     pass through — a provision recognisable only from geometry
@@ -369,8 +374,16 @@ function generateSemanticIfc(opts) {
     const floor = product('IFCSLAB', N.slab, [32, 0, -0.25], [38, 5, 0], ',$,.FLOOR.');
 
     const off = opts.boundaryOffset || [0, 0, 0];
-    const rooms = [{ n: '1', min: [32.25, 0.25, 0], max: [34.875, 4.75, 2.75], west: 'W', east: 'M' },
-      { n: '2', min: [35.125, 0.25, 0], max: [37.75, 4.75, 2.75], west: 'M', east: 'E' }];
+    const cases = !!opts.boundaryCases;
+    const topZ = 3.0; // cases: the virtual top boundary at the wall tops, above a 2.6 m room solid
+    if (cases) {
+      [['S2', [32, 5, 0], [38, 5.25, 3]], ['N2', [32, 7.75, 0], [38, 8, 3]], ['W2', [32, 5.25, 0], [32.25, 7.75, 3]], ['E2', [37.75, 5.25, 0], [38, 7.75, 3]]]
+        .forEach(([k, a, b]) => { walls[k] = product('IFCWALL', N.wall + ' ' + k, a, b, ',$,.STANDARD.'); });
+    }
+    const rh = cases ? 2.6 : 2.75;
+    const rooms = [{ n: '1', min: [32.25, 0.25, 0], max: [34.875, 4.75, rh], west: 'W', east: 'M', south: 'S', north: 'N' },
+      { n: '2', min: [35.125, 0.25, 0], max: [37.75, 4.75, rh], west: 'M', east: 'E', south: 'S', north: 'N' }];
+    if (cases) rooms.push({ n: '3', min: [32.25, 5.25, 0], max: [37.75, 7.75, rh], west: 'W2', east: 'E2', south: 'S2', north: 'N2', noSolid: true });
     const spaceIds = [];
     rooms.forEach((r, ri) => {
       const sx = r.max[0] - r.min[0], sy = r.max[1] - r.min[1], sz = r.max[2] - r.min[2];
@@ -380,14 +393,15 @@ function generateSemanticIfc(opts) {
       const shape = add(`IFCPRODUCTDEFINITIONSHAPE($,$,(#${rep}))`);
       // Space placement origin = the room's min corner (boundaries are in this frame).
       const pl = add(`IFCLOCALPLACEMENT(#${stPl},#${ax(r.min)})`);
-      const sp = add(`IFCSPACE('${guid()}',$,${q(N.room + ' ' + r.n)},$,$,#${pl},#${shape},${q(N.room + ' ' + r.n)},.ELEMENT.,.INTERNAL.,$)`);
+      const sp = add(`IFCSPACE('${guid()}',$,${q(N.room + ' ' + r.n)},$,$,#${pl},${r.noSolid ? '$' : '#' + shape},${q(N.room + ' ' + r.n)},.ELEMENT.,.INTERNAL.,$)`);
       spaceIds.push(sp);
       // Faces in the space frame: [origin, zAxis, xAxis, w, h, elementId]
       const faces = [
-        [[0, 0, 0], [0, 0, -1], [1, 0, 0], sx, sy, floor],
-        [[0, 0, sz], [0, 0, 1], [1, 0, 0], sx, sy, null],
-        [[0, 0, 0], [0, 1, 0], [1, 0, 0], sx, sz, walls.S],
-        [[0, sy, 0], [0, -1, 0], [1, 0, 0], sx, sz, walls.N],
+        [[0, 0, 0], [0, 0, -1], [1, 0, 0], sx, sy, r.noSolid ? null : floor],
+        // the top boundary (virtual) lies at the wall tops in the cases variant
+        [[0, 0, cases ? topZ : sz], [0, 0, 1], [1, 0, 0], sx, sy, null],
+        [[0, 0, 0], [0, 1, 0], [1, 0, 0], sx, sz, walls[r.south]],
+        [[0, sy, 0], [0, -1, 0], [1, 0, 0], sx, sz, walls[r.north]],
         [[0, 0, 0], [1, 0, 0], [0, 1, 0], sy, sz, walls[r.west]],
         [[sx, 0, 0], [-1, 0, 0], [0, 1, 0], sy, sz, walls[r.east]],
       ];

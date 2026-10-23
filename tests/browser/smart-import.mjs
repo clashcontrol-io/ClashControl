@@ -197,6 +197,7 @@ try {
   await writeFile(join(genDir, 'vent-equip.ifc'), generateSemanticIfc({ kind: 'vent', equipmentProxy: true }));
   await writeFile(join(genDir, 'firecomp-geo.ifc'), generateSemanticIfc({ kind: 'firecomp', names: false, geoZoneMarker: true }));
   await writeFile(join(genDir, 'arch-noise.ifc'), generateSemanticIfc({ kind: 'arch', boundaryOffset: OFFSET, boundaryNoise: true }));
+  await writeFile(join(genDir, 'arch-cases.ifc'), generateSemanticIfc({ kind: 'arch', boundaryOffset: OFFSET, boundaryCases: true }));
 
   // ── Federation, worker path ──
   const page = await newPage(false);
@@ -392,6 +393,18 @@ try {
     const r3 = await semanticReport(p3);
     check(r3[0].els.every((e) => e.role === 'zone' && e.roleSrc === 'name'), 'Dutch-named compartments ("Brandcompartiment") are zones via the nl pack hints', r3[0].els.map((e) => [e.role, e.roleSrc]));
     await p3.close();
+  }
+
+  // ── Boundaries off their room solid but on the room's bounding elements,
+  //    and a room without a solid: all placed (same tolerance) ──
+  {
+    const p5 = await newPage(false);
+    await loadAll(p5, [{ url: '/tests/fixtures/_generated-smart-import/arch-cases.ifc', name: 'cases.ifc' }], false);
+    const r5 = await semanticReport(p5);
+    const cb = r5[0].boundaries;
+    check(cb && cb.total === 18 && cb.placed === 18 && cb.geo > 0 && r5[0].warnings.indexOf('space-boundaries-unplaced') < 0,
+      'boundaries 0.4 m off the room solid but on its walls, and those of a room without a solid, are all placed', cb && { total: cb.total, placed: cb.placed, frame: cb.frame, offset: cb.offset, scale: cb.scale });
+    await p5.close();
   }
 
   // ── Scattered boundaries: refused, never drawn ──

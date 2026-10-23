@@ -24755,13 +24755,30 @@ function startApp() {
       return false;
     }
     var _p3 = [0, 0, 0];
+    // Every element the file says bounds a space (IfcRelSpaceBoundary), with
+    // geometry — a boundary vertex on any of them is on real geometry of
+    // that room: virtual boundaries (no element of their own) at room
+    // separations / floor / ceiling, and boundaries whose own element is a
+    // finish layer while the face belongs to the wall behind it. Same
+    // tolerance; only the set of surfaces is the full, IFC-stated one.
+    var nbCache = {};
+    function neighbourTris(sid) {
+      if (nbCache[sid] !== undefined) return nbCache[sid];
+      var list = (spaceToEls[sid] || []).map(trisOf).filter(Boolean);
+      return (nbCache[sid] = list.length ? list : null);
+    }
     function polyOnSurface(pIdx, t) {
       var bIdx = sb.polyB[pIdx], sid2 = sb.b[bIdx * 3], eid2 = sb.b[bIdx * 3 + 1];
       var sT = sBox[sid2] ? trisOf(sid2) : null, eT = eid2 ? trisOf(eid2) : null;
-      if (!sT && !eT) return false;
+      var nbT;
+      if (!sT && !eT && !(nbT = neighbourTris(sid2))) return false; // nothing to verify against
       for (var v = sb.polyOff[pIdx]; v < sb.polyOff[pIdx + 1]; v++) {
         scenePt(v, t, _p3);
-        if (!nearSurface(_p3, sT, _CC_SB_TOL_M) && !nearSurface(_p3, eT, _CC_SB_TOL_M)) return false;
+        if (nearSurface(_p3, sT, _CC_SB_TOL_M) || nearSurface(_p3, eT, _CC_SB_TOL_M)) continue;
+        if (nbT === undefined) nbT = neighbourTris(sid2);
+        var onNb = false;
+        for (var ni = 0; nbT && ni < nbT.length && !onNb; ni++) if (nbT[ni] !== eT && nearSurface(_p3, nbT[ni], _CC_SB_TOL_M)) onNb = true;
+        if (!onNb) return false;
       }
       return true;
     }
@@ -24794,8 +24811,13 @@ function startApp() {
           Math.abs((b[4] - b[1]) * S - e[1]) <= Math.max(_CC_SB_TOL_M * 2, 0.05 * e[1]) &&
           Math.abs((b[5] - b[2]) * S - e[2]) <= Math.max(_CC_SB_TOL_M * 2, 0.05 * e[2]);
         if (!ok) return;
-        var cS = [(bx.min.x + bx.max.x) / 2, -(bx.min.z + bx.max.z) / 2, (bx.min.y + bx.max.y) / 2];
-        ts[k] = [cS[0] - (b[0] + b[3]) / 2 * S, cS[1] - (b[1] + b[4]) / 2 * S, cS[2] - (b[2] + b[5]) / 2 * S];
+        // Plan offset from the centres; vertical offset from the bottoms: a
+        // room's floor boundary sits on the room's floor, while its top
+        // (often a virtual boundary at the slab / wall tops) can sit well
+        // above the exported room solid — matching centres would drop every
+        // polygon by half that gap.
+        var cS = [(bx.min.x + bx.max.x) / 2, -(bx.min.z + bx.max.z) / 2, bx.min.y];
+        ts[k] = [cS[0] - (b[0] + b[3]) / 2 * S, cS[1] - (b[1] + b[4]) / 2 * S, cS[2] - b[2] * S];
       });
       var tk = Object.keys(ts);
       function median(list, a) { var v = list.map(function(k) { return ts[k][a]; }).sort(function(p, q) { return p - q; }); return v[Math.floor(v.length / 2)]; }
@@ -24850,6 +24872,16 @@ function startApp() {
         }
       }
     }
+    // Spaces with boundaries but no room solid of their own: the verified
+    // file-wide frame (spec / one offset / placement-scaled) applies to them
+    // too; each of their polygons is still drawn only if it lies on its own
+    // element or one that bounds the same space (polyOnSurface), so this
+    // never shows a stray outline. ('groups' has no file-wide frame.)
+    var frameFor = out.frame === 'spec' ? function() { return t0; }
+      : out.frame === 'offset' ? function() { return out.offset; }
+      : (out.frame === 'placement-scaled' && lin) ? function(k) { var L = (sb.spaceRel && sb.spaceRel[k]) || [0, 0, 0]; return [lin.A[0] + lin.k * L[0] * S, lin.A[1] + lin.k * L[1] * S, lin.A[2] + lin.k * L[2] * S]; }
+      : null;
+    if (frameFor) Object.keys(polysOf).forEach(function(k) { if (!sBox[k]) accepted.push({ sids: [k], t: frameFor(k) }); });
     // Geometry for accepted spaces (polygon outlines as line segments).
     var segs = [], placedPolys = 0;
     var q0 = [0, 0, 0], q1 = [0, 0, 0];
