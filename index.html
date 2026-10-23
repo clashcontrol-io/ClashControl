@@ -4691,15 +4691,19 @@ function startApp() {
           var site = {id:siteIds.get(i), name:safeStr(sLine.Name)||'IfcSite', description:safeStr(sLine.Description), _hasName:!!safeStr(sLine.Name)};
           // Georef — IfcSite RefLatitude/Longitude are compound plane angles:
           // [degrees, minutes, seconds, millionth-seconds]. Convert to decimal.
+          // web-ifc 0.0.77 hands the compound over wrapped ({type, value:[d,m,s,u]});
+          // IFC writes every component with the same sign, so the sign comes
+          // from the first non-zero one and the magnitudes add up.
           function _compoundToDeg(arr) {
+            if (arr && !Array.isArray(arr) && Array.isArray(arr.value)) arr = arr.value;
             if (!arr || !arr.length) return null;
             function _v(x){ return (x && x.value != null) ? +x.value : +x; }
             var d = _v(arr[0]) || 0;
             var m = arr.length > 1 ? (_v(arr[1]) || 0) : 0;
             var s = arr.length > 2 ? (_v(arr[2]) || 0) : 0;
             var u = arr.length > 3 ? (_v(arr[3]) || 0) : 0;
-            var sign = d < 0 ? -1 : 1;
-            return sign * (Math.abs(d) + m/60 + s/3600 + u/3600000000);
+            var sign = (d || m || s || u) < 0 ? -1 : 1;
+            return sign * (Math.abs(d) + Math.abs(m)/60 + Math.abs(s)/3600 + Math.abs(u)/3600000000);
           }
           var lat = _compoundToDeg(sLine.RefLatitude);
           var lon = _compoundToDeg(sLine.RefLongitude);

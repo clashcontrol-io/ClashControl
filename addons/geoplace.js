@@ -254,12 +254,14 @@
   }
 
   // List of {epsg, label, region} for the CRS selector: the active country
-  // pack's systems first, then the other packs', then the generic ones.
+  // pack's default and other systems first, then the other packs', then the
+  // generic ones.
   // `extraKey` (e.g. a detected UTM code) is included when not listed.
   window._ccCRSList = function(extraKey) {
     var reg = _registry();
     var active = (typeof window._ccGetRegulationRegion === 'function' && window._ccGetRegulationRegion()) || null;
-    var rank = function(k) { var r = reg[k].region; return r == null ? 2 : r === active ? 0 : 1; };
+    var def = window._ccDefaultCRS ? window._ccDefaultCRS() : null;
+    var rank = function(k) { var r = reg[k].region; return k === def ? -1 : r == null ? 2 : r === active ? 0 : 1; };
     var keys = Object.keys(reg).sort(function(a, b) { return (rank(a) - rank(b)) || ((reg[a].region || '') < (reg[b].region || '') ? -1 : (reg[a].region || '') > (reg[b].region || '') ? 1 : 0); });
     var out = keys.map(function(k){ return {epsg:k, label:reg[k].label, region:reg[k].region}; });
     if (extraKey && !reg[extraKey]) { var e = _entry(extraKey); if (e) out.unshift({epsg:String(extraKey), label:e.label, region:null}); }
