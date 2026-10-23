@@ -24224,6 +24224,7 @@ function startApp() {
 
   function ModelSidebar(props) {
     var s=props.s, d=props.d;
+    useCcRegion(); // CRS default + 3D-tiles presets follow the active country pack
     var fileRef = useRef(null);
     var file2dRef = useRef(null);
     var ld = useState(false), loading=ld[0], _setLoadingRaw=ld[1];
@@ -25147,7 +25148,10 @@ function startApp() {
             if (!mcModel) return null;
             var hasEN = mcModel.eastings!=null && mcModel.northings!=null;
             var detectedKey = (window._ccCRSResolve && window._ccCRSResolve(mcModel.epsg)) || null;
-            var crsList = (window._ccCRSList && window._ccCRSList()) || [];
+            // No hard-coded national default: the detected CRS, else the active
+            // country pack's preferred one, else the user picks.
+            var defaultKey = detectedKey || (window._ccDefaultCRS && window._ccDefaultCRS()) || '';
+            var crsList = (window._ccCRSList && window._ccCRSList(detectedKey)) || [];
             var crsRef = {current:null};
             return html`<div style=${{marginBottom:'.25rem'}}>
               <div title=${_cc_t('geoplace.mapConversionTitle','IFC4 IfcMapConversion / IfcProjectedCRS read from the model')} style=${{padding:'.2rem .35rem',borderRadius:'var(--radius-xs)',background:'rgba(91,141,239,0.06)',fontSize:'.62rem',color:'var(--text-muted)',fontFamily:'var(--font-mono)',lineHeight:1.5}}>
@@ -25155,13 +25159,15 @@ function startApp() {
                 <span style=${{color:'var(--text-faint)'}}>E ${mcModel.eastings!=null?mcModel.eastings.toFixed(1):'—'}, N ${mcModel.northings!=null?mcModel.northings.toFixed(1):'—'}</span>
               </div>
               ${hasEN && !s.modelGeo && window._ccGeoplaceFromCRS && html`<div style=${{display:'flex',gap:'.2rem',marginTop:'.2rem',alignItems:'stretch'}}>
-                <select ref=${function(el){ crsRef.current=el; }} defaultValue=${detectedKey||'28992'}
+                <select key=${'crs:'+defaultKey} ref=${function(el){ crsRef.current=el; }} defaultValue=${defaultKey}
                   title=${_cc_t('tip.coordinateReferenceSystemOfThe','Coordinate reference system of the projected Eastings/Northings. Auto-detected from the IFC when recognised; pick it here otherwise.')}
                   style=${{flex:1,minWidth:0,fontSize:'.6rem',padding:'.1rem .15rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-body)'}}>
+                  ${!defaultKey && html`<option value="">${_cc_t('geoplace.chooseCrs','Choose the coordinate system…')}</option>`}
                   ${crsList.map(function(c){ return html`<option key=${c.epsg} value=${c.epsg}>EPSG:${c.epsg} · ${c.label}</option>`; })}
                 </select>
                 <button onClick=${function(){
-                    var key = (crsRef.current && crsRef.current.value) || detectedKey || '28992';
+                    var key = (crsRef.current && crsRef.current.value) || defaultKey;
+                    if (!key) { if (window._ccToast) window._ccToast(_cc_t('toast.chooseCrsFirst','Choose the coordinate system of the model first.')); return; }
                     window._ccGeoplaceFromCRS(mcModelId, mcModel, key)
                       .catch(function(err){ alert(_cc_t('dlg.crsPlacementFailed','CRS placement failed: {v1}',{v1:(err && err.message || err)})); });
                   }}
@@ -25323,14 +25329,17 @@ function startApp() {
               if (tilesOn) return html`<button onClick=${function(){ window._ccUnloadTiles3D(); }}
                 style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
                 ${_cc_t('sidebar.remove3dContext','Remove 3D world context')}</button>`;
-              return html`<button onClick=${function(){
+              // Keyless national 3D layers come from the active country pack
+              // (geo.tiles3d); labels are the pack's own text.
+              var tilePresets = (window._ccTiles3DPresets && window._ccTiles3DPresets()) || [];
+              return html`${tilePresets.map(function(tp){ return html`<button key=${tp.id} onClick=${function(){
                   var ll = _tilesLatLon(); if (!ll) return;
-                  window._ccLoadTiles3D({ preset:'nl', lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north, offset: ll.offset })
-                    .catch(function(err){ alert(_cc_t('dlg.pdok3dTilesFailed','PDOK 3D tiles failed: {v1}',{v1:(err && err.message || err)})); });
+                  window._ccLoadTiles3D({ preset:tp.id, lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north, offset: ll.offset })
+                    .catch(function(err){ alert(_cc_t('dlg.tiles3dPresetFailed','{name} 3D tiles failed: {v1}',{name:tp.label, v1:(err && err.message || err)})); });
                 }}
-                title=${_cc_t('tip.freeDutchNational3dBuildings','Free Dutch national 3D buildings (Kadaster 3D Basisvoorziening via PDOK, LoD 2.2 from BAG + AHN) around your georeferenced model — no key needed')}
+                title=${tp.title || tp.label}
                 style=${{flex:1,fontSize:'.66rem',padding:'.22rem .4rem',background:'var(--accent)',color:'var(--accent-contrast)',border:'none',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>
-                3D omgeving \u2014 NL (PDOK)</button>
+                ${tp.label}</button>`; })}
               <button onClick=${function(){
                   var ll = _tilesLatLon(); if (!ll) return;
                   var itok = '';

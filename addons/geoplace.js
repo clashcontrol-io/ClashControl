@@ -221,31 +221,22 @@
   // which is a megabytes-scale opt-in we deliberately don't ship here.
   var PROJ4_URL = 'https://cdn.jsdelivr.net/npm/proj4@2.20.9/dist/proj4.js';
 
-  // EPSG → {label, def}. Just the systems our users actually hit; the
-  // selector is the escape hatch for anything an IFC doesn't name.
-  var CRS_DEFS = {
-    '28992': {label:'Amersfoort / RD New — Netherlands', def:'+proj=sterea +lat_0=52.1561605555556 +lon_0=5.38763888888889 +k=0.9999079 +x_0=155000 +y_0=463000 +ellps=bessel +towgs84=565.417,50.3319,465.552,-0.398957,0.343988,-1.8774,4.0725 +units=m +no_defs'},
-    '31370': {label:'Belgian Lambert 72 — Belgium', def:'+proj=lcc +lat_1=51.16666723333333 +lat_2=49.8333339 +lat_0=90 +lon_0=4.367486666666666 +x_0=150000.013 +y_0=5400088.438 +ellps=intl +towgs84=-106.8686,52.2978,-103.7239,0.3366,-0.457,1.8422,-1.2747 +units=m +no_defs'},
-    '2056':  {label:'CH1903+ / LV95 — Switzerland', def:'+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs'},
-    '27700': {label:'OSGB36 / British National Grid — UK', def:'+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,-125.157,542.06,0.15,0.247,0.842,-20.489 +units=m +no_defs'},
-    '25831': {label:'ETRS89 / UTM 31N — NL/BE', def:'+proj=utm +zone=31 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs'},
-    '25832': {label:'ETRS89 / UTM 32N — DE/NL', def:'+proj=utm +zone=32 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs'},
-    '3857':  {label:'Web Mercator', def:'+proj=merc +a=6378137 +b=6378137 +lat_ts=0 +lon_0=0 +x_0=0 +y_0=0 +k=1 +units=m +nadgrids=@null +no_defs'},
-    '4326':  {label:'WGS84 — already lat/lon', def:'+proj=longlat +datum=WGS84 +no_defs'}
-  };
+  // EPSG → {label, def}. The core knows only country-neutral systems (WGS84,
+  // Web Mercator) plus generic UTM zones (326xx / 327xx / 258xx, built on
+  // demand by country-pack-core.js); national systems (RD New, Lambert 72,
+  // LV95, BNG …) come from the country packs' geo.crs sections. The selector
+  // is the escape hatch for anything an IFC doesn't name.
+  function _packs() { return (typeof window._ccGetCountryPacks === 'function' && window._ccGetCountryPacks()) || []; }
+  function _core() { return window._ccCountryPackCore || null; }
+  function _registry() { var c = _core(); return c ? c.crsRegistry(_packs()) : {}; }
+  function _entry(key) { var c = _core(); return c ? c.crsEntry(_packs(), key) : null; }
 
   // Map an IFC TargetCRS.Name to a registry key. Handles "EPSG:28992",
-  // "urn:ogc:def:crs:EPSG::28992", bare codes, and a few common names.
+  // "urn:ogc:def:crs:EPSG::28992", bare codes, pack aliases ("RD New") and
+  // generic UTM codes.
   function resolveEpsg(epsgStr) {
-    if (!epsgStr) return null;
-    var m = String(epsgStr).match(/(\d{4,6})/);
-    if (m && CRS_DEFS[m[1]]) return m[1];
-    var low = String(epsgStr).toLowerCase();
-    if (low.indexOf('rd new') >= 0 || low.indexOf('amersfoort') >= 0 || low.indexOf('rijksdriehoek') >= 0) return '28992';
-    if (low.indexOf('lambert 72') >= 0 || low.indexOf('lambert72') >= 0 || low.indexOf('belge') >= 0) return '31370';
-    if (low.indexOf('british national') >= 0 || low.indexOf('osgb') >= 0) return '27700';
-    if (low.indexOf('lv95') >= 0 || low.indexOf('ch1903') >= 0) return '2056';
-    return null;
+    var c = _core();
+    return (c && epsgStr) ? c.resolveCrs(_packs(), epsgStr) : null;
   }
 
   var _proj4P = null;
@@ -262,16 +253,29 @@
     return _proj4P;
   }
 
-  // List of {epsg, label} for the CRS selector.
-  window._ccCRSList = function() {
-    return Object.keys(CRS_DEFS).map(function(k){ return {epsg:k, label:CRS_DEFS[k].label}; });
+  // List of {epsg, label, region} for the CRS selector: the active country
+  // pack's systems first, then the other packs', then the generic ones.
+  // `extraKey` (e.g. a detected UTM code) is included when not listed.
+  window._ccCRSList = function(extraKey) {
+    var reg = _registry();
+    var active = (typeof window._ccGetRegulationRegion === 'function' && window._ccGetRegulationRegion()) || null;
+    var rank = function(k) { var r = reg[k].region; return r == null ? 2 : r === active ? 0 : 1; };
+    var keys = Object.keys(reg).sort(function(a, b) { return (rank(a) - rank(b)) || ((reg[a].region || '') < (reg[b].region || '') ? -1 : (reg[a].region || '') > (reg[b].region || '') ? 1 : 0); });
+    var out = keys.map(function(k){ return {epsg:k, label:reg[k].label, region:reg[k].region}; });
+    if (extraKey && !reg[extraKey]) { var e = _entry(extraKey); if (e) out.unshift({epsg:String(extraKey), label:e.label, region:null}); }
+    return out;
+  };
+  // The active country pack's preferred projected CRS (geo.defaultCrs), or null.
+  window._ccDefaultCRS = function() {
+    var pk = (typeof window._ccGetCountryPack === 'function') ? window._ccGetCountryPack() : null;
+    return (pk && pk.geo && pk.geo.defaultCrs) || null;
   };
   // Resolve an IFC CRS name → registry key (or null if unrecognised).
   window._ccCRSResolve = resolveEpsg;
 
   // Reproject projected (E, N) in the given CRS to {lat, lon} WGS84.
   window._ccReprojectToWGS84 = function(eastings, northings, crsKey) {
-    var entry = CRS_DEFS[crsKey];
+    var entry = _entry(crsKey);
     if (!entry) return Promise.reject(new Error('Unknown CRS: ' + crsKey));
     var e = Number(eastings), n = Number(northings);
     if (!isFinite(e) || !isFinite(n)) return Promise.reject(new Error('Eastings/Northings are not numeric'));

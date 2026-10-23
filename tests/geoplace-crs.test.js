@@ -8,13 +8,16 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { countryWindow } = require('./_country-pack.js');
 
 // Load the addon into a fake window. With no _ccRegisterAddon the IIFE
 // returns before registering, but only AFTER defining every window._cc*
-// helper — which is all we exercise.
-function loadAddon(proj4Stub) {
+// helper — which is all we exercise. National CRS definitions are country-pack
+// data (regulations/*.json geo.crs); by default every shipped pack is
+// registered, `opts.regions` narrows that.
+function loadAddon(proj4Stub, opts) {
   const src = fs.readFileSync(path.join(__dirname, '..', 'addons', 'geoplace.js'), 'utf8');
-  const window = {};
+  const window = countryWindow(Object.assign({ regions: ['be', 'ch', 'gb', 'nl'], active: 'nl' }, opts || {}));
   const documentStub = { createElement: () => ({}), head: { appendChild() {} } };
   if (proj4Stub) window.proj4 = proj4Stub; // present → loadProj4 resolves without touching the DOM
   new Function('window', 'document', src)(window, documentStub);
@@ -27,6 +30,31 @@ function makeProj4(returnLonLat) {
   fn.calls = calls;
   return fn;
 }
+
+test('IFC-neutral core: only WGS84 / Web Mercator without packs, UTM zones on demand', () => {
+  const w = loadAddon(null, { regions: [], active: null });
+  assert.deepStrictEqual(w._ccCRSList().map((c) => c.epsg).sort(), ['3857', '4326']);
+  assert.equal(w._ccCRSResolve('EPSG:28992'), null);
+  assert.equal(w._ccCRSResolve('EPSG:32631'), '32631');
+  assert.deepStrictEqual(w._ccCRSList('32631')[0], { epsg: '32631', label: 'WGS 84 / UTM 31N', region: null });
+  assert.equal(w._ccDefaultCRS(), null);
+});
+
+test('the active country pack\'s systems come first and its default CRS is offered', () => {
+  const w = loadAddon();
+  const list = w._ccCRSList();
+  assert.equal(list[0].region, 'nl');
+  assert.equal(w._ccDefaultCRS(), '28992');
+  assert.equal(loadAddon(null, { active: 'be' })._ccDefaultCRS(), '31370');
+  assert.deepStrictEqual(list.slice(-2).map((c) => c.epsg).sort(), ['3857', '4326']);
+});
+
+test('UTM reprojection uses the generic builder', async () => {
+  const proj4 = makeProj4([3.0, 51.0]);
+  const w = loadAddon(proj4, { regions: [], active: null });
+  await w._ccReprojectToWGS84(500000, 5650000, '32631');
+  assert.equal(proj4.calls[0].fromDef, '+proj=utm +zone=31 +datum=WGS84 +units=m +no_defs');
+});
 
 test('CRS registry exposes the expected systems', () => {
   const w = loadAddon();

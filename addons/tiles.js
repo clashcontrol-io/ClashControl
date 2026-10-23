@@ -279,9 +279,30 @@
   };
   window._ccTiles3DActive = function() { return !!_tiles; };
 
-  // Free Dutch national 3D layer: Kadaster 3D Basisvoorziening via PDOK
-  // (OGC API 3D GeoVolumes). Buildings are LoD 2.2 from BAG + AHN. No key.
-  var PDOK_NL_TILESET = 'https://api.pdok.nl/kadaster/3d-basisvoorziening/ogc/v1_0/collections/gebouwen/3dtiles';
+  // Keyless national 3D layers are country-pack data (geo.tiles3d: url,
+  // attribution, heightOffsetM — e.g. the Dutch PDOK layer in
+  // regulations/nl.json). opts.preset names a preset id, or a region id for
+  // that pack's first preset.
+  function _tilesPresets(region) {
+    var packs = (typeof window._ccGetCountryPacks === 'function' && window._ccGetCountryPacks()) || [];
+    var out = [];
+    packs.forEach(function(pk) {
+      if (region && pk.region !== region) return;
+      ((pk.geo && pk.geo.tiles3d) || []).forEach(function(t) { out.push({id:t.id, label:t.label, title:t.title || '', region:pk.region, preset:t}); });
+    });
+    return out;
+  }
+  function _findTilesPreset(id) {
+    var all = _tilesPresets(null);
+    for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i].preset;
+    for (var j = 0; j < all.length; j++) if (all[j].region === id) return all[j].preset;
+    return null;
+  }
+  // Presets of the active country pack (or of `region`): [{id, label, title, region}].
+  window._ccTiles3DPresets = function(region) {
+    var r = region || (typeof window._ccGetRegulationRegion === 'function' && window._ccGetRegulationRegion()) || null;
+    return r ? _tilesPresets(r).map(function(x) { return {id:x.id, label:x.label, title:x.title, region:x.region}; }) : [];
+  };
 
   window._ccLoadTiles3D = function(opts) {
     opts = opts || {};
@@ -289,17 +310,22 @@
     if (!S || !S.scene || !S.camera || !S.renderer) return Promise.reject(new Error('Viewer not ready'));
     var lat = Number(opts.lat), lon = Number(opts.lon);
     if (!isFinite(lat) || !isFinite(lon)) return Promise.reject(new Error('3D tiles need a latitude/longitude — set one in Geo Placement first.'));
-    if (opts.preset === 'nl') {
-      opts.url = PDOK_NL_TILESET;
-      opts.attribution = '3D: Kadaster / PDOK (CC-BY 4.0)';
-      // PDOK tiles are ECEF, so heights are ellipsoidal. NL geoid offset is
-      // ~+43 m (NAP ≈ ellipsoid − 43); anchoring at 0 floats the whole
-      // context ~43 m above the model. Overridable via opts.height.
-      if (!isFinite(Number(opts.height))) opts.height = 43;
+    if (opts.preset) {
+      var pr = _findTilesPreset(opts.preset);
+      var core = window._ccCountryPackCore;
+      if (!pr) return Promise.reject(new Error('Unknown 3D tiles preset: ' + opts.preset));
+      if (core && core.urlProblem(pr.url)) return Promise.reject(new Error('3D tiles preset URL rejected: ' + core.urlProblem(pr.url)));
+      opts.url = pr.url;
+      opts.attribution = pr.attribution;
+      // National tilesets are ECEF, so heights are ellipsoidal; the pack's
+      // heightOffsetM is the local geoid offset (e.g. ~43 m in NL: NAP ≈
+      // ellipsoid − 43) — anchoring at 0 would float the whole context that
+      // far above the model. Overridable via opts.height.
+      if (!isFinite(Number(opts.height)) && typeof pr.heightOffsetM === 'number') opts.height = pr.heightOffsetM;
     }
     var key = (opts.key || '').trim();
     var ion = opts.ion && opts.ion.token ? opts.ion : null;
-    if (!key && !ion && !opts.url) return Promise.reject(new Error('A tile source is needed: PDOK (NL), a Cesium ion token, a Google Map Tiles API key, or a tileset URL.'));
+    if (!key && !ion && !opts.url) return Promise.reject(new Error('A tile source is needed: a country-pack preset, a Cesium ion token, a Google Map Tiles API key, or a tileset URL.'));
     _teardown();
 
     // Validate a custom/preset tileset URL up front: fetch it, require a
