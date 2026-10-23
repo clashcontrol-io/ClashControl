@@ -71,6 +71,15 @@ async function load(page, name) {
   await page.waitForTimeout(300);
 }
 
+// Opens the Data Quality tab, runs the checks and returns the panel text.
+async function dqPanelText(page) {
+  await page.evaluate(() => window._ccDispatch({ t: 'TAB', v: 'dataquality' }));
+  await page.getByRole('button', { name: 'Run checks' }).first().click();
+  await page.waitForFunction(() => /Re-check/.test(document.body.innerText), null, { timeout: 30000 });
+  if (process.env.CC_COUNTRY_SHOTS) await page.screenshot({ path: join(process.env.CC_COUNTRY_SHOTS, 'dq-' + Date.now() + '.png') });
+  return page.evaluate(() => document.body.innerText.toLowerCase()); // section headers are text-transformed
+}
+
 function snapshot(page) {
   return page.evaluate(() => {
     const s = window._ccLatestState;
@@ -109,8 +118,11 @@ try {
     check(!s.visibility.includes('workplace-window-view-NL'), 'no national visibility preset');
     await page.evaluate(() => window._ccDispatch({ t: 'TAB', v: 'accessibility' }));
     await page.waitForTimeout(400);
+    if (process.env.CC_COUNTRY_SHOTS) await page.screenshot({ path: join(process.env.CC_COUNTRY_SHOTS, 'a11y-neutral.png') });
     const note = await page.evaluate(() => document.body.innerText.includes('No regional code applies to this model'));
     check(note, 'Accessibility panel asks to choose a regional code or enter thresholds');
+    const dq = await dqPanelText(page);
+    check(!dq.includes('ils / nl-sfb (nl-bim basis ils v2)') && /national standards that don.t apply here \(2\)/.test(dq), 'Data Quality panel lists the Dutch standards only under "don\'t apply here"');
     await context.close();
   }
 
@@ -131,6 +143,8 @@ try {
     await page.waitForTimeout(400);
     const txt = await page.evaluate(() => document.body.innerText);
     check(/Thresholds: Nederland/.test(txt), 'Accessibility panel names the pack as the threshold source');
+    const dq = await dqPanelText(page);
+    check(dq.includes('ils / nl-sfb (nl-bim basis ils v2)') && dq.includes('rvb bim norm v1.1') && /country pack: nederland/.test(dq), 'Data Quality panel shows the Dutch standards with their pack');
     await context.close();
   }
 
