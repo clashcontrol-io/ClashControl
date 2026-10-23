@@ -64,3 +64,34 @@ test('detectClashesAsync itself is untouched by this slice -- the candidate arra
   const body = sliceFrom('function _makeCompactCandidates(items, flat) {', 300);
   assert.match(body, /length: flat\.length \/ 3/);
 });
+
+// ClashControl.storage.bvhCache: an explicit cap over the automatic sizing
+// (tests/pressure storage=low-bvh-cap) and eviction stats. Run the real LRU
+// block in a sandbox.
+test('the BVH LRU honours an explicit cap, counts evictions and drops the evicted caches', () => {
+  const vm = require('node:vm');
+  const start = html.indexOf('  var _bvhCacheMaxCached = null;');
+  const end = html.indexOf('  // Between-chunk heap-pressure relief');
+  assert.ok(start !== -1 && end > start);
+  const ctx = { window: {}, navigator: {}, performance: {} };
+  vm.runInNewContext(html.slice(start, end) + '\nthis.api = { setO: function(n){ _bvhCacheMaxOverride = n; }, max: _BVH_CACHE_MAX_FN, evict: _bvhLRUEvict, lru: _bvhLRU, ev: function(){ return _bvhEvictions; } };', ctx);
+  const { api } = ctx;
+  assert.equal(api.max(), 300, 'automatic sizing without performance.memory');
+  api.setO(2);
+  assert.equal(api.max(), 2);
+  const els = [0, 1, 2].map((i) => ({ id: i, _triCache: [i], _bvhCache: {}, _wvCache: [], _topo: {} }));
+  for (const el of els) { api.evict(); api.lru.set(el, true); }
+  assert.equal(api.lru.size, 2);
+  assert.equal(api.ev(), 1);
+  assert.equal(els[0]._triCache, undefined, 'evicted element re-extracts on next touch');
+  assert.equal(els[0]._bvhCache, undefined);
+  assert.deepEqual(els[2]._triCache, [2]);
+  api.setO(null);
+  assert.equal(api.max(), 300, 'null returns to automatic sizing');
+});
+
+test('ClashControl.storage.bvhCache exposes stats() and setMax() (trims at once)', () => {
+  const body = sliceFrom('bvhCache: {', 900);
+  assert.match(body, /stats: function\(\)\{ return \{ size: _bvhLRU\.size, max: _BVH_CACHE_MAX_FN\(\), override: _bvhCacheMaxOverride, evictions: _bvhEvictions \}; \}/);
+  assert.match(body, /while \(_bvhLRU\.size > _bvhCacheMaxOverride\) _bvhLRUEvict1\(\);/);
+});
