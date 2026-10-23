@@ -9214,6 +9214,45 @@ function startApp() {
     var s = Math.max(thresholdM, _CC_CONTACT_TOL_M) * (1 + 1e-9) + 1e-9;
     return s * s;
   }
+  // ── Exact pair dismissal (before any narrow-phase work) ──
+  // The box every BVH root of these triangles gets (JS _buildBVHNode, Rust
+  // BvhNode::build: the same `<`/`>` comparisons in the same order), cached
+  // per triangle array: [mnx,mny,mnz,mxx,mxy,mxz].
+  var _ccTriBoxCache = new WeakMap();
+  function _ccTriRootBox(tris) {
+    var b = _ccTriBoxCache.get(tris);
+    if (b) return b;
+    var mnx=Infinity,mny=Infinity,mnz=Infinity,mxx=-Infinity,mxy=-Infinity,mxz=-Infinity;
+    for (var i=0; i+2<tris.length; i+=3) {
+      var x=tris[i], y=tris[i+1], z=tris[i+2];
+      if(x<mnx)mnx=x; if(x>mxx)mxx=x;
+      if(y<mny)mny=y; if(y>mxy)mxy=y;
+      if(z<mnz)mnz=z; if(z>mxz)mxz=z;
+    }
+    b = new Float64Array([mnx,mny,mnz,mxx,mxy,mxz]);
+    _ccTriBoxCache.set(tris, b);
+    return b;
+  }
+  // True when the kernel answers for this pair are known without running it:
+  // the two root boxes are disjoint (every hard path - JS _bvhTraverseAll,
+  // Rust traverse_pair, Engine, worker, native - returns "no hit" at the root
+  // overlap test) and, when a clearance search is due (seedSq > 0), their
+  // squared distance, computed exactly as _aabbAabbDistSq / Rust
+  // aabb_aabb_dist_sq do at the root, is >= seedSq, so every min-distance
+  // path returns Infinity before its first node visit. Only finite, non-empty
+  // boxes are decided here; anything else takes the normal path.
+  function _ccPairDismissed(eA, eB, seedSq) {
+    var tA = _getWorldTris(eA), tB = _getWorldTris(eB);
+    if (!tA.length || !tB.length) return false;
+    var a = _ccTriRootBox(tA), b = _ccTriRootBox(tB);
+    for (var k = 0; k < 6; k++) { if (a[k] - a[k] !== 0 || b[k] - b[k] !== 0) return false; }
+    if (!(a[0]>b[3]||a[3]<b[0]||a[1]>b[4]||a[4]<b[1]||a[2]>b[5]||a[5]<b[2])) return false;
+    if (!(seedSq > 0)) return true;
+    var dx = Math.max(a[0]-b[3], b[0]-a[3], 0);
+    var dy = Math.max(a[1]-b[4], b[1]-a[4], 0);
+    var dz = Math.max(a[2]-b[5], b[2]-a[5], 0);
+    return dx*dx+dy*dy+dz*dz >= seedSq;
+  }
   // thresholdM: the pair's clearance tolerance (metres). Surfaces farther
   // apart than it (see _ccMinDistSeedSq) report Infinity — the exact distance
   // of a pair that cannot be a soft clash or a contact is never needed.
@@ -11536,7 +11575,7 @@ function startApp() {
     }
 
     // ── Per-candidate timing accumulators ─────────────────────────
-    var _tHard = 0, _tSoft = 0, _tFilters = 0, _nHardTests = 0, _nSoftTests = 0, _nHardTestsBatched = 0, _nHardTestsPooled = 0, _nSoftTestsPooled = 0;
+    var _tHard = 0, _tSoft = 0, _tFilters = 0, _nHardTests = 0, _nSoftTests = 0, _nHardTestsBatched = 0, _nHardTestsPooled = 0, _nSoftTestsPooled = 0, _nDismissed = 0, _nSoftDismissed = 0;
 
     // ── Shared per-pair helpers (also used by the worker-pool prefilter) ──
     var _wantsSoftRule = (!rules.hard) || runGapM > 0;
@@ -11795,7 +11834,15 @@ function startApp() {
         } catch(e) {}
       }
       var _t1 = performance.now();
-      if (rules.hard && !_semanticSkipHard) {
+      // Exact pair dismissal (_ccPairDismissed): disjoint root boxes at least
+      // the clearance seed apart — the kernel's own first test would answer
+      // "no hit" / Infinity, so it is not run (nor offloaded, see _npBuildWindow).
+      var _wantSoft = pairGapM > 0 && _wantsSoftRule;
+      var _dismissed = !_pr && (rules.hard && !_semanticSkipHard || _wantSoft) && _ccPairDismissed(eA, eB, _wantSoft ? _ccMinDistSeedSq(pairGapM) : 0);
+      if (_dismissed) _nDismissed++;
+      if (rules.hard && !_semanticSkipHard && _dismissed) {
+        hardPt = false;
+      } else if (rules.hard && !_semanticSkipHard) {
         var _bpk = _chunkBatchCache && (mA.id + ':' + eA.expressId + '|' + mB.id + ':' + eB.expressId);
         if (_pr && (_pr[0] & 1)) {
           // Worker-computed: exactly what _meshesIntersect(eA, eB) returns.
@@ -11821,13 +11868,16 @@ function startApp() {
           d = _pr[5];
           if (d !== Infinity) { for (var _pj = 0; _pj < 6; _pj++) out[_pj] = _pr[6 + _pj]; }
           _nSoftTestsPooled++;
+        } else if (_dismissed) {
+          d = Infinity; // what _meshMinDist returns for this pair (root box >= seed)
+          _nSoftDismissed++;
         } else {
           d = _meshMinDist(eA, eB, pairGapM, out);
         }
         _tSoft += performance.now() - _t2;
         _nSoftTests++;
         return d;
-      }, { hard: !!rules.hard && !_semanticSkipHard, soft: pairGapM > 0 && _wantsSoftRule, gapM: pairGapM, minGapM: minGapM,
+      }, { hard: !!rules.hard && !_semanticSkipHard, soft: _wantSoft, gapM: pairGapM, minGapM: minGapM,
            minOverlapVolM3: rules.minOverlapVolM3 || 0, overlapVol: ov.vol }, _softPairBuf,
            (_pr && _pr.length >= _NP_REC) ? _pr : null);
       var kind = _rp2.kind;
@@ -12131,6 +12181,8 @@ function startApp() {
       soft_tests_pooled: _nSoftTestsPooled,
       narrow_pool: _npStats,
       soft_tests: _nSoftTests,
+      pairs_dismissed: _nDismissed,       // narrow phase decided by _ccPairDismissed (no kernel run)
+      soft_dismissed: _nSoftDismissed,    // ...of which clearance searches answered Infinity there
       memo_skipped: _nMemoSkipped,
       memo_active_pairs: _activeMemoSet ? _activeMemoSet.size : 0,
       matrix_skipped: _nMatrixSkipped,
@@ -12252,8 +12304,11 @@ function startApp() {
           var c = _candidateAt(candidates, i);
           if (_narrowPrefilterSkips(c)) continue;
           if (!c.eA.box || !c.eB.box) continue;
-          var fl = (rules.hard ? 1 : 0) | ((_pairGapMFor(c.eA, c.eB) > 0 && _wantsSoftRule) ? 2 : 0);
+          var _pg = _pairGapMFor(c.eA, c.eB);
+          var fl = (rules.hard ? 1 : 0) | ((_pg > 0 && _wantsSoftRule) ? 2 : 0);
           if (!fl) continue;
+          // known without the kernel (exact, see _ccPairDismissed): main decides it in _processCandidate
+          if (_ccPairDismissed(c.eA, c.eB, (fl & 2) ? _ccMinDistSeedSq(_pg) : 0)) continue;
           fl |= 4; // pre-compute the hit refinement too (_ccResolvePair reads it)
           if (!cur || cur.cidx.length >= _NP_JOB_PAIRS) { cur = { cidx: [], eA: [], eB: [], fl: [] }; specs.push(cur); }
           cur.cidx.push(i); cur.eA.push(c.eA); cur.eB.push(c.eB); cur.fl.push(fl);
