@@ -695,3 +695,93 @@ mod within_tests {
         assert!(eng.min_distance_within(1, 9, 1.0).is_none());
     }
 }
+
+// ── BVH export (2026-10-23) ─────────────────────────────────────────
+// Appended at the END of the file (see the notes above): nothing above
+// shifts, so existing panic locations in the wasm stay put.
+//
+// The JS hit refinement (crossing vs contact, containment, depth) walks a JS
+// BVH. `BvhNode::build` is an op-for-op port of JS `_buildBVHNode` (same
+// leaf size, axis choice, stable centroid-sum sort, median split), so the
+// tree the Engine already built for a registered mesh IS the tree JS would
+// build; exporting it saves the second build. Pre-order, per node:
+//   mnx, mny, mnz, mxx, mxy, mxz (the f32 box, exact in f64), then
+//   inner: count (> 4), left subtree, right subtree
+//   leaf:  -k (k = 1..4 triangles), then the k triangle indices.
+// `None` (JS `undefined`) when `id` is not registered; an empty Vec for a
+// registered mesh without triangles. Callers must only use it for meshes
+// whose coordinates are all finite (on NaN split keys the JS comparator sort
+// and Rust's stable sort may order differently).
+fn bvh_flat_into(node: &BvhNode, out: &mut Vec<f64>) {
+    out.extend_from_slice(&[
+        node.mn[0] as f64, node.mn[1] as f64, node.mn[2] as f64,
+        node.mx[0] as f64, node.mx[1] as f64, node.mx[2] as f64,
+    ]);
+    match &node.kind {
+        bvh::BvhKind::Leaf { indices } => {
+            out.push(-(indices.len() as f64));
+            for &i in indices {
+                out.push(i as f64);
+            }
+        }
+        bvh::BvhKind::Inner { left, right, count } => {
+            out.push(*count as f64);
+            bvh_flat_into(left, out);
+            bvh_flat_into(right, out);
+        }
+    }
+}
+
+#[wasm_bindgen]
+impl Engine {
+    /// The registered mesh's BVH, flattened (layout above).
+    pub fn bvh_flat(&self, id: u32) -> Option<Vec<f64>> {
+        let m = self.meshes.get(&id)?;
+        let mut out = Vec::new();
+        if let Some(b) = &m.bvh {
+            bvh_flat_into(b, &mut out);
+        }
+        Some(out)
+    }
+}
+
+#[cfg(test)]
+mod bvh_flat_tests {
+    use super::*;
+
+    #[test]
+    fn flat_bvh_round_trips_the_tree() {
+        // 3 x 5 grid of quads: ties on every axis, several levels deep
+        let mut t: Vec<f32> = Vec::new();
+        for i in 0..3 {
+            for j in 0..5 {
+                let (x, y) = (i as f32, j as f32);
+                t.extend_from_slice(&[x, y, 0.0, x + 1.0, y, 0.0, x + 1.0, y + 1.0, 0.0]);
+                t.extend_from_slice(&[x, y, 0.0, x + 1.0, y + 1.0, 0.0, x, y + 1.0, 0.0]);
+            }
+        }
+        let mut eng = Engine::new();
+        eng.register(1, &t);
+        eng.register(2, &[]);
+        let flat = eng.bvh_flat(1).unwrap();
+        let tree = BvhNode::build(&t);
+        let mut want = Vec::new();
+        bvh_flat_into(&tree, &mut want);
+        assert_eq!(flat, want);
+        assert_eq!(flat[6], 30.0);
+        // every triangle index appears exactly once
+        let mut seen = vec![0u32; 30];
+        let mut i = 0;
+        while i < flat.len() {
+            let tag = flat[i + 6];
+            i += 7;
+            if tag < 0.0 {
+                for k in 0..(-tag as usize) { seen[flat[i + k] as usize] += 1; }
+                i += -tag as usize;
+            }
+        }
+        assert!(seen.iter().all(|&c| c == 1));
+        assert_eq!(eng.bvh_flat(2).unwrap(), Vec::<f64>::new());
+        assert!(eng.bvh_flat(3).is_none());
+    }
+}

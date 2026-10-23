@@ -13,6 +13,10 @@ export class Engine {
     free(): void;
     [Symbol.dispose](): void;
     /**
+     * The registered mesh's BVH, flattened (layout above).
+     */
+    bvh_flat(id: number): Float64Array | undefined;
+    /**
      * Drop every registered mesh.
      */
     clear(): void;
@@ -145,6 +149,7 @@ export interface InitOutput {
     readonly __wbg_engine_free: (a: number, b: number) => void;
     readonly batch_intersect: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly batch_intersect_raw: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly engine_bvh_flat: (a: number, b: number, c: number) => void;
     readonly engine_clear: (a: number) => void;
     readonly engine_has: (a: number, b: number) => number;
     readonly engine_intersect: (a: number, b: number, c: number, d: number) => void;

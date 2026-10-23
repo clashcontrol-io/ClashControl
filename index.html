@@ -8224,12 +8224,69 @@ function startApp() {
     return { tris:tris, root:_buildBVHNode(tris, indices, 0, n) };
   }
 
+  // ── BVH reuse from the WASM Engine ──
+  // The Engine's BvhNode::build is an op-for-op port of _buildBVHNode (same
+  // tree, proven by tests/wasm-parity.test.js and tests/bvh-flat.test.js), and
+  // the Engine already built it for every mesh the narrow phase registered.
+  // Engine.bvh_flat exports it pre-order — per node the box (6 floats), then
+  // an inner node's count followed by both subtrees, or -k and a leaf's k
+  // triangle indices — and _ccBvhFromFlat turns that into exactly the object
+  // tree _buildBVHForTris returns (same boxes, counts, leaf ranges and leaf
+  // index order), so the JS-side hit refinement skips its own build. Only for
+  // meshes whose coordinates are all finite (_ccTrisFinite): on NaN split keys
+  // the two sorts need not agree. Returns null on any malformed input.
+  function _ccTrisFinite(tris) {
+    for (var i = 0; i < tris.length; i++) { var v = tris[i]; if (v - v !== 0) return false; }
+    return true;
+  }
+  function _ccBvhFromFlat(flat, tris) {
+    var n = (tris.length / 9) | 0;
+    if (!flat || !n || !flat.length) return null;
+    var indices = new Int32Array(n), p = 0, lo = 0;
+    function node() {
+      if (p + 7 > flat.length) throw new Error('truncated BVH export');
+      var nd = {mnx:flat[p],mny:flat[p+1],mnz:flat[p+2],mxx:flat[p+3],mxy:flat[p+4],mxz:flat[p+5]};
+      var tag = flat[p+6]; p += 7;
+      if (tag < 0) {
+        var k = -tag;
+        if (!(k >= 1 && k <= 4) || p + k > flat.length || lo + k > n) throw new Error('bad BVH leaf');
+        nd.lo = lo; nd.hi = lo + k; nd.idx = indices;
+        for (var j = 0; j < k; j++) indices[lo++] = flat[p++];
+        return nd;
+      }
+      if (!(tag > 4)) throw new Error('bad BVH node');
+      var start = lo;
+      nd.cnt = tag;
+      nd.left = node();
+      nd.right = node();
+      if (lo - start !== tag) throw new Error('BVH count mismatch');
+      return nd;
+    }
+    try {
+      var root = node();
+      if (p !== flat.length || lo !== n) return null;
+      return { tris: tris, root: root };
+    } catch (e) { return null; }
+  }
+  // JS tree -> the Engine.bvh_flat layout (self-checks and tests).
+  function _ccBvhFlatten(bvh) {
+    var out = [];
+    (function walk(nd) {
+      out.push(nd.mnx, nd.mny, nd.mnz, nd.mxx, nd.mxy, nd.mxz);
+      if (nd.lo !== undefined) { out.push(-(nd.hi - nd.lo)); for (var i = nd.lo; i < nd.hi; i++) out.push(nd.idx[i]); return; }
+      out.push(nd.cnt); walk(nd.left); walk(nd.right);
+    })(bvh.root);
+    return out;
+  }
+
   function _getBVH(el) {
     if (el._bvhCache !== undefined) { _bvhLRUTouch(el); return el._bvhCache; }
     _bvhLRUEvict();
     var tris = _getWorldTris(el);
     if (!tris.length) return (el._bvhCache = null);
-    el._bvhCache = _buildBVHForTris(tris);
+    var _we = window._ccWasmEngine, _fl = null;
+    if (_we && typeof _we.bvhFlat === 'function' && _ccTrisFinite(tris)) _fl = _ccBvhFromFlat(_we.bvhFlat(tris), tris);
+    el._bvhCache = _fl || _buildBVHForTris(tris);
     _bvhLRU.set(el, true);
     return el._bvhCache;
   }
@@ -8778,7 +8835,7 @@ function startApp() {
       _closestPtTriDistSq, _pointToAABBDistSq, _bvhClosestDistSq, _closestDistToBVH, _bvhClosestWithin, _ccFartherThan, _ccAnyVertexInBox,
       _ccContactTol, _ccMeshTopo, _ccFaceAxes, _ccLineInterval, _ccCoplanarOverlapWidth,
       _ccTriDeep, _ccRefineTraverse, _ccVertexDeepInside, _ccTouchVerdict, _ccBoxIn,
-      _ccContainment, _estimatePenetrationDepthM
+      _ccContainment, _estimatePenetrationDepthM, _ccTrisFinite, _ccBvhFromFlat, _ccBvhFlatten
     ];
     return [
       'var _ttIvalA=new Float64Array(8),_ttIvalB=new Float64Array(8);',
@@ -8795,7 +8852,9 @@ function startApp() {
       // Worker-side element accessors the refinement functions call. A worker
       // element E = {tris, box (world), fbox (engine frame), bvh, _topo}.
       'function _getWorldTris(E){return E.tris;}',
-      'function _getBVH(E){if(E.bvh===undefined)E.bvh=_buildBVHForTris(E.tris);return E.bvh;}',
+      // _wkBvhSrc (set by _ccNarrowWorkerMain): the Engine's own BVH of E, exported (see _ccBvhFromFlat)
+      'var _wkBvhSrc=null;',
+      'function _getBVH(E){if(E.bvh===undefined)E.bvh=(_wkBvhSrc&&_wkBvhSrc(E))||_buildBVHForTris(E.tris);return E.bvh;}',
       'function _ccFrameBox(E){return E.fbox;}',
       fns.map(function(f) { return f.toString(); }).join('\n'),
       '(' + _ccNarrowWorkerMain.toString() + ')();'
@@ -8816,7 +8875,7 @@ function startApp() {
   //   bit3 contained (point cx,cy,cz), bit4 depth done (NaN = null).
   //   Elements stay cached across jobs until dropped.
   function _ccNarrowWorkerMain() {
-    var _wasm = null, _eng = null, _within = false;
+    var _wasm = null, _eng = null, _within = false, _flatOk = false;
     var _els = new Map();
     function _post(msg, xfer) { self.postMessage(msg, xfer || []); }
     function _boxTris(x0, x1, y0, y1, z0, z1) {
@@ -8842,7 +8901,7 @@ function startApp() {
         [_boxTris(-1, 21, 2.4, 2.6, -0.1, 0.1), _boxTris(9, 11, -1, 5, -1, 1)],
         [_boxTris(0, 1, 0, 1, 0, 1), _boxTris(-1, 0, 0, 1, 1.5, 3)] // shared planes (old 0/0 case): rejects a stale binary
       ];
-      var eng = null;
+      var eng = null, flat = true;
       try {
         if (wantEngine && typeof mod.Engine === 'function') eng = new mod.Engine();
         for (var i = 0; i < cases.length; i++) {
@@ -8870,10 +8929,12 @@ function startApp() {
             var er = eng.intersect(1, 2), ed = eng.min_distance(1, 2);
             var ew = !within || (typeof eng.min_distance_within === 'function' && _same(eng.min_distance_within(1, 2, seeds[2]), mod.mesh_min_distance_within(a, b, seeds[2])));
             if (!er || !ed || !_same(er, raw) || !_same(ed, md) || !ew) { try { eng.free(); } catch (e0) {} eng = null; }
+            // the exported BVH must be the JS tree, node for node, before the refinement may use it
+            else if (flat) flat = typeof eng.bvh_flat === 'function' && _same(eng.bvh_flat(1), _ccBvhFlatten(bA)) && _same(eng.bvh_flat(2), _ccBvhFlatten(bB));
           }
         }
         if (eng) { try { eng.clear(); } catch (e1) {} }
-        return { ok: true, engine: eng };
+        return { ok: true, engine: eng, flat: !!(eng && flat) };
       } catch (e) {
         try { if (eng) eng.free(); } catch (e2) {}
         return { ok: false, engine: null };
@@ -8886,7 +8947,7 @@ function startApp() {
       p.then(function(mod) {
         return mod.default({ module_or_path: d.wasmBin }).then(function() {
           var chk = _selfCheck(mod, !!d.useEngine);
-          if (chk.ok) { _wasm = mod; _eng = chk.engine || null; _within = typeof mod.mesh_min_distance_within === 'function'; }
+          if (chk.ok) { _wasm = mod; _eng = chk.engine || null; _within = typeof mod.mesh_min_distance_within === 'function'; _flatOk = !!chk.flat; }
           _post({ t: 'ready', wasm: !!chk.ok, engine: !!_eng, err: chk.ok ? null : 'worker self-check failed' });
         });
       }).catch(function(e) {
@@ -8895,6 +8956,16 @@ function startApp() {
       });
     }
     function _bvh(E) { return _getBVH(E); }
+    // The refinement's JS BVH of E, taken from the Engine (which builds the
+    // identical tree on registration) instead of a second build here.
+    // eslint-disable-next-line no-undef -- declared by the worker prelude (_ccBuildNarrowWorkerSource)
+    _wkBvhSrc = function(E) {
+      if (!_eng || !_flatOk || !E.tris.length) return null;
+      if (E.fin === undefined) E.fin = _ccTrisFinite(E.tris);
+      if (!E.fin) return null;
+      try { _reg(E); var f = _eng.bvh_flat(E.id); return f ? _ccBvhFromFlat(f, E.tris) : null; }
+      catch (e) { return null; }
+    };
     function _reg(E) {
       if (!E.reg) { _eng.register(E.id, E.tris); E.reg = true; }
     }
@@ -9059,6 +9130,8 @@ function startApp() {
       if (seeded && best[0] === seedSq) return [Infinity];
       return [Math.sqrt(best[0]), outA[0],outA[1],outA[2], outB[0],outB[1],outB[2]];
     },
+    // The JS BVH of tris in the Engine.bvh_flat layout (the addon's export check).
+    bvhFlat: function(tris) { var b = _buildBVHForTris(tris); return b ? _ccBvhFlatten(b) : []; },
     // The seed the clearance path uses for a tolerance (metres).
     seedSq: function(thresholdM) { return _ccMinDistSeedSq(thresholdM); }
   };

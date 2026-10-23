@@ -20,6 +20,27 @@ export class Engine {
         wasm.__wbg_engine_free(ptr, 0);
     }
     /**
+     * The registered mesh's BVH, flattened (layout above).
+     * @param {number} id
+     * @returns {Float64Array | undefined}
+     */
+    bvh_flat(id) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.engine_bvh_flat(retptr, this.__wbg_ptr, id);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            let v1;
+            if (r0 !== 0) {
+                v1 = getArrayF64FromWasm0(r0, r1).slice();
+                wasm.__wbindgen_export2(r0, r1 * 8, 8);
+            }
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
      * Drop every registered mesh.
      */
     clear() {

@@ -4,6 +4,7 @@ export const memory: WebAssembly.Memory;
 export const __wbg_engine_free: (a: number, b: number) => void;
 export const batch_intersect: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
 export const batch_intersect_raw: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+export const engine_bvh_flat: (a: number, b: number, c: number) => void;
 export const engine_clear: (a: number) => void;
 export const engine_has: (a: number, b: number) => number;
 export const engine_intersect: (a: number, b: number, c: number, d: number) => void;
