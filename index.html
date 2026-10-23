@@ -6557,6 +6557,11 @@ function startApp() {
   var _ccOpenLoadBatches = [];
   window._ccAbortLoading = function() {
     _ccLoadGeneration++; // invalidates main-thread fallback loads at their gen checkpoints
+    // Files handed over (ClashControl.loadFiles / file input / drop) but not
+    // picked up yet: the Models panel's 'cc-pending-files' listener mounts
+    // with the panel, so a Cancel right after the hand-over used to run
+    // before the batch existed, and the batch then started anyway.
+    window._ccPendingFiles = null;
     _ccOpenLoadBatches.splice(0).forEach(function(b) { try { b.cancel(); } catch (_) {} });
     try { _ccLoadPreview.endSession(); } catch (_) {} // display-only previews go with the loads
     _ccActiveLoads.splice(0).forEach(function(l) {
