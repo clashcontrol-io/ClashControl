@@ -224,7 +224,7 @@
 
   // ── Suggested views ─────────────────────────────────────────────────
   // Offered only when they select something in the CURRENT data (a view that
-  // would show nothing is never suggested). Each is a facet set, so it
+  // would show nothing — or everything — is never suggested). Each is a facet set, so it
   // combines with whatever else is active.
   var SUGGESTED = [
     { id: 'structural-penetration', label: 'Structural penetrations', facets: { tag: ['structural-penetration'] } },
@@ -245,7 +245,9 @@
     var out = [];
     SUGGESTED.forEach(function(s) {
       var n = tags[s.facets.tag[0]] || 0;
-      if (n > 0) out.push({ id: s.id, label: s.label, facets: s.facets, count: n });
+      // non-empty, and narrower than "everything" (a first run makes every
+      // clash 'new' — offering that view would filter nothing)
+      if (n > 0 && n < index.length) out.push({ id: s.id, label: s.label, facets: s.facets, count: n });
     });
     var st = Object.keys(storeys);
     if (st.length > 1) {
