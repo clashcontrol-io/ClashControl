@@ -1521,7 +1521,8 @@ function startApp() {
     showProvisions:false, // "inside provisions / reservations — show" toggle (hidden while rules.roleChoices.provision is 'classify', the default)
     showRoleGroups:false, // clashes of 'classify' suggestion groups (zones, duplicates …) — show toggle
     showContacts:false, // "surfaces only touch — show" toggle — default OFF (rules.hideContacts)
-    showBuckets:[]      // review buckets shown on top of 'review' (bucket bar "show"); reset at every run
+    showBuckets:[],     // review buckets shown on top of 'review' (bucket bar "show"); reset at every run
+    hideBuckets:[]      // buckets the rules show (e.g. "show contacts") hidden for this run by the bucket bar; reset at every run
   };
   var _ccLoadPref = function(key,fallback){try{var v=localStorage.getItem('cc_'+key);return v!==null?JSON.parse(v):fallback;}catch(e){return fallback;}};
 
@@ -2400,7 +2401,7 @@ function startApp() {
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
-      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[], a.coverageModelIds); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary, lastRunExcluded:a.excluded||null}; var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* The bucket bar's "show" choices are per run, whatever the reset pref says: a new result starts on its review set. */ _st.filters=Object.assign({},_st.filters||s.filters,{showBuckets:[]}); /* Grouped by root-cause element ("one row = one thing to fix", see _ccRootCauseKeyFor) whenever the user has nothing chosen — at any size: big sets render through the windowed list (VirtualList). Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0) { _st.clashGroupBy=['element']; }
+      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[], a.coverageModelIds); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary, lastRunExcluded:a.excluded||null}; var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* The bucket bar's "show" choices are per run, whatever the reset pref says: a new result starts on its review set. */ _st.filters=Object.assign({},_st.filters||s.filters,{showBuckets:[],hideBuckets:[]}); /* Grouped by root-cause element ("one row = one thing to fix", see _ccRootCauseKeyFor) whenever the user has nothing chosen — at any size: big sets render through the windowed list (VirtualList). Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0) { _st.clashGroupBy=['element']; }
         return Object.assign({},s,_st);
       case A.ADD_CLASHES: { /* additive, non-destructive append (does NOT auto-resolve existing clashes like MERGE_CLASHES). Used by the accessibility panel. */
         var _addc=(a.v||[]).filter(Boolean); if(!_addc.length) return s;
@@ -7754,6 +7755,7 @@ function startApp() {
   function _ccBucketShown(bucket, rules, f) {
     if (bucket === 'review') return true;
     f = f || {};
+    if (Array.isArray(f.hideBuckets) && f.hideBuckets.indexOf(bucket) !== -1) return false;
     if (Array.isArray(f.showBuckets) && f.showBuckets.indexOf(bucket) !== -1) return true;
     var lg = _CC_BUCKET_LEGACY_SHOW[bucket];
     if (lg && f[lg]) return true;
@@ -27768,10 +27770,16 @@ function startApp() {
     var core = window._ccClashClassificationCore;
     var order = (core && core.REVIEW_BUCKETS) || ['review'];
     var others = order.filter(function(b){ return b !== 'review' && counts[b] > 0; });
+    // A bucket the rules show (rules.hideContacts:false, rules.hideBuckets …)
+    // is hidden for this run through filters.hideBuckets — every button
+    // really toggles (it used to stay pressed and do nothing).
+    var byRules = function(b){ return _ccBucketShown(b, rules, null); };
     function toggle(b) {
       var shown = _ccBucketShown(b, rules, f);
-      var list = (f.showBuckets || []).filter(function(x){ return x !== b; });
-      var u = {showBuckets: shown ? list : list.concat([b])};
+      var show = (f.showBuckets || []).filter(function(x){ return x !== b; });
+      var hide = (f.hideBuckets || []).filter(function(x){ return x !== b; });
+      if (shown) { if (byRules(b)) hide.push(b); } else show.push(b);
+      var u = {showBuckets: show, hideBuckets: hide};
       if (shown && _CC_BUCKET_LEGACY_SHOW[b]) u[_CC_BUCKET_LEGACY_SHOW[b]] = false;
       d({t:A.UPD_FILTERS, u:u});
     }
@@ -27788,8 +27796,8 @@ function startApp() {
         </button>`;
       })}
       ${others.length > 1 && html`<button data-cc-bucket-all="1" onClick=${function(){
-          if (hiddenNow.length) d({t:A.UPD_FILTERS, u:{showBuckets: others.slice()}});
-          else { var u = {showBuckets: []}; others.forEach(function(b){ if (_CC_BUCKET_LEGACY_SHOW[b]) u[_CC_BUCKET_LEGACY_SHOW[b]] = false; }); d({t:A.UPD_FILTERS, u:u}); }
+          if (hiddenNow.length) d({t:A.UPD_FILTERS, u:{showBuckets: others.slice(), hideBuckets: []}});
+          else { var u = {showBuckets: [], hideBuckets: others.filter(byRules)}; others.forEach(function(b){ if (_CC_BUCKET_LEGACY_SHOW[b]) u[_CC_BUCKET_LEGACY_SHOW[b]] = false; }); d({t:A.UPD_FILTERS, u:u}); }
         }}
         style=${{...S_BTN,marginLeft:'auto',padding:'0 var(--space-1)',fontSize:'var(--text-xs)',background:'none',color:'var(--text-secondary)',textDecoration:'underline',textUnderlineOffset:2}}>
         ${hiddenNow.length ? _cc_t('bucket.showAll','show all') : _cc_t('bucket.reviewOnly','review only')}
@@ -28280,7 +28288,7 @@ function startApp() {
           </div>`
         : html`<div data-cc-overview-empty="review" role="listitem" style=${{gridColumn:'1 / -1',display:'flex',flexDirection:'column',alignItems:'center',gap:'var(--space-3)',padding:'var(--space-8) var(--space-4)',textAlign:'center'}}>
             <span style=${{fontSize:'var(--text-md)',color:'var(--text-primary)'}}>${_cc_t('overview.emptyReview','Nothing to review — {n} findings are filed in other buckets',{n:nOther})}</span>
-            ${nOther > 0 && html`<button class="cc-tap" onClick=${function(){ d({t:A.UPD_FILTERS, u:{showBuckets: otherBuckets.slice()}}); close(); setTimeout(function(){ var bb = document.querySelector('[data-cc-bucket-bar]'); if (bb && bb.focus) { bb.setAttribute('tabindex', '-1'); bb.focus(); } }, 50); }} style=${EMPTY_BTN}>${_cc_t('bucket.showAll','show all')}</button>`}
+            ${nOther > 0 && html`<button class="cc-tap" onClick=${function(){ d({t:A.UPD_FILTERS, u:{showBuckets: otherBuckets.slice(), hideBuckets: []}}); close(); setTimeout(function(){ var bb = document.querySelector('[data-cc-bucket-bar]'); if (bb && bb.focus) { bb.setAttribute('tabindex', '-1'); bb.focus(); } }, 50); }} style=${EMPTY_BTN}>${_cc_t('bucket.showAll','show all')}</button>`}
           </div>`;
     }
     return html`<section ref=${secRef} class="cc-overview" data-cc-overview="1" aria-labelledby="cc-overview-title" onKeyDown=${onKey}
@@ -28413,7 +28421,7 @@ function startApp() {
       });
       return base.concat(idsItems);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- s.models feeds _ccTriageModel (memoised on clashes/rules/models identity)
-    }, [isClashTab, s.clashes, s.issues, s.models, s.idsValidation, f.status, f.showHandled, f.showProvided, f.showProvisions, f.showRoleGroups, f.showContacts, f.showBuckets, s.rules]);
+    }, [isClashTab, s.clashes, s.issues, s.models, s.idsValidation, f.status, f.showHandled, f.showProvided, f.showProvisions, f.showRoleGroups, f.showContacts, f.showBuckets, f.hideBuckets, s.rules]);
 
 
     var visibleModelIds = useMemo(function(){
