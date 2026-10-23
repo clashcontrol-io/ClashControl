@@ -41,11 +41,17 @@ const { generateShardIfc } = require('../fixtures/generate-synthetic-ifc.js');
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json', '.wasm': 'application/wasm', '.css': 'text/css' };
 
-// Budgets (MB of used JS heap) for the default federation below — between
-// the measured -leanMemory (old) and lean numbers, see the commit message.
-const BUDGET_LOAD = +(process.env.MEM_BUDGET_LOAD_MB || 0);
-const BUDGET_PEAK = +(process.env.MEM_BUDGET_PEAK_MB || 0);
+// Budgets (MB of used JS heap, performance.memory incl. typed arrays) for the
+// default federation below. Measured (headless Chromium, 2026-10-23):
+//                         code before this work   leanMemory
+//   after load (post-GC)        614 MB              425 MB
+//   detection peak              837 MB              614 MB
+//   after detection (GC)        823 MB              544 MB
+// The budgets sit between the two; they apply to the default fixture only
+// (a custom MEM_FED_DENSE needs explicit MEM_BUDGET_*_MB).
 const DENSE = +(process.env.MEM_FED_DENSE || 0.3);
+const BUDGET_LOAD = +(process.env.MEM_BUDGET_LOAD_MB || (process.env.MEM_FED_DENSE ? 0 : 520));
+const BUDGET_PEAK = +(process.env.MEM_BUDGET_PEAK_MB || (process.env.MEM_FED_DENSE ? 0 : 700));
 
 let failed = false;
 function fail(msg) { console.error('MEMORY-FEDERATION FAIL: ' + msg); failed = true; process.exitCode = 1; }
@@ -66,19 +72,27 @@ files.set('/__gen/batch-shared.ifc', Buffer.from(generateShardIfc({ storeys: 3, 
 const BATCH = [...files.keys()].filter((k) => k.startsWith('/__gen/batch-'));
 let fedBytes = 0; for (const k of FED) fedBytes += files.get(k).length;
 
-const server = createServer(async (req, res) => {
-  try {
-    const p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-    if (files.has(p)) { res.writeHead(200, { 'Content-Type': 'application/octet-stream' }); return res.end(files.get(p)); }
-    const file = normalize(join(root, p === '/' ? 'index.html' : p.slice(1)));
-    if (!file.startsWith(normalize(root))) { res.writeHead(403); return res.end(); }
-    const body = await readFile(file);
-    res.writeHead(200, { 'Content-Type': MIME[extname(file)] || 'application/octet-stream' });
-    res.end(body);
-  } catch { res.writeHead(404); res.end(); }
-});
-await new Promise((r) => server.listen(0, '127.0.0.1', r));
+// MEM_FED_REF_ROOT=<another checkout of the app>: the reference run loads
+// that code (e.g. the commit before this work) instead of ?ccSafety=-leanMemory,
+// so identity and the "before" numbers are measured against the real old code.
+const refRoot = process.env.MEM_FED_REF_ROOT || null;
+function serve(dir) {
+  const server = createServer(async (req, res) => {
+    try {
+      const p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+      if (files.has(p)) { res.writeHead(200, { 'Content-Type': 'application/octet-stream' }); return res.end(files.get(p)); }
+      const file = normalize(join(dir, p === '/' ? 'index.html' : p.slice(1)));
+      if (!file.startsWith(normalize(dir))) { res.writeHead(403); return res.end(); }
+      const body = await readFile(file);
+      res.writeHead(200, { 'Content-Type': MIME[extname(file)] || 'application/octet-stream' });
+      res.end(body);
+    } catch { res.writeHead(404); res.end(); }
+  });
+  return new Promise((r) => server.listen(0, '127.0.0.1', () => r(server)));
+}
+const server = await serve(root);
 const port = server.address().port;
+const refServer = refRoot ? await serve(refRoot) : null;
 // --enable-precise-memory-info: performance.memory unquantised; --expose-gc: post-GC numbers.
 const browser = await chromium.launch({ executablePath: process.env.CC_CHROMIUM_EXECUTABLE,
   args: ['--enable-precise-memory-info', '--js-flags=--expose-gc --max-old-space-size=8192'] });
@@ -102,19 +116,24 @@ function peakSampler(cdp) {
   return { async stop() { on = false; await loop; return { peakMB: peak / 1048576, samples: n, maxGapMs: maxGap }; } };
 }
 
-async function openPage(query) {
+async function openPage(query, atPort) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   if (offlineDepsEnabled()) await routeOfflineDeps(context, root);
   const page = await context.newPage();
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('crash', () => errors.push('page crashed'));
   page.on('dialog', (d) => d.accept());
-  await page.goto(`http://127.0.0.1:${port}/${query}`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`http://127.0.0.1:${atPort || port}/${query}`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function' && window._ccState3d && window._ccState3d.mg, null, { timeout: 60_000 });
   await page.waitForFunction(() => typeof window._ccWasmIntersect === 'function', null, { timeout: 30_000 }).catch(() => console.log('note: WASM narrow phase not ready — runs use the JS engine'));
   await page.evaluate(() => {
     window.__mem = {
       async gcMB() { for (let i = 0; i < 4; i++) { gc(); await new Promise((r) => setTimeout(r, 40)); } return performance.memory.usedJSHeapSize / 1048576; },
+      // in-page sampling: runs whenever the main thread yields (between
+      // detection chunks); CDP adds samples where V8 can be interrupted
+      peak: 0, timer: null,
+      startPeak() { this.peak = performance.memory.usedJSHeapSize; clearInterval(this.timer); this.timer = setInterval(() => { const u = performance.memory.usedJSHeapSize; if (u > this.peak) this.peak = u; }, 5); },
+      stopPeak() { clearInterval(this.timer); const u = performance.memory.usedJSHeapSize; if (u > this.peak) this.peak = u; return this.peak / 1048576; },
     };
   });
   const cdp = await context.newCDPSession(page);
@@ -135,10 +154,10 @@ async function loadAll(page, names, knob) {
           if (!w.idleAt) w.idleAt = performance.now();
           if (performance.now() - w.idleAt > 15000) { clearInterval(w); reject(new Error('loaded, but props never merged into: ' + s.models.filter((m) => !m._propsVersion).map((m) => m.name).join(', '))); }
         }
-        if (performance.now() - t0 > 1_500_000) { clearInterval(w); reject(new Error('load timed out')); }
+        if (performance.now() - t0 > (+window.__loadTimeoutMs || 1_500_000)) { clearInterval(w); reject(new Error('load timed out: ' + JSON.stringify({ models: s && s.models.map((m) => [m.name, m.elements.length, !!m._propsVersion]), loading: window._ccModelLoading, msg: window._ccModelLoadMsg }))); }
       }, 50);
     });
-    const lm = window._ccIfcLoadMem.last;
+    const lm = window._ccIfcLoadMem ? window._ccIfcLoadMem.last : null; // absent on reference code
     return { ms: Math.round(performance.now() - t0), parallelPeak: window._ccLoadPreview.parallelPeak(),
       serial: lm ? lm.serial : null, decisions: lm ? lm.decisions : null,
       sharded: window._ccLatestState.models.filter((m) => m.stats && m.stats.shards).length,
@@ -162,18 +181,19 @@ async function detect(page, extra) {
     const ms = performance.now() - t0;
     const rows = (res || []).map((c) => { const x = Object.assign({}, c); delete x.id; delete x.createdAt;
       return JSON.stringify(canon(x), (k, val) => (typeof val === 'string' && names.has(val) ? names.get(val) : val)); });
-    return { ms: Math.round(ms), rows, cache: window.ClashControl.storage.bvhCache.stats() };
+    return { ms: Math.round(ms), rows, cache: window.ClashControl.storage && window.ClashControl.storage.bvhCache ? window.ClashControl.storage.bvhCache.stats() : null };
   }, extra || null);
 }
 
 // One full run: load the federation, GC, digest, detect (peak sampled), GC.
-async function fullRun(label, query) {
-  const { page, context, cdp } = await openPage(query);
+async function fullRun(label, query, atPort) {
+  const { page, context, cdp } = await openPage(query, atPort);
   const r = { label };
   r.bootMB = await page.evaluate(() => window.__mem.gcMB());
   let ps = peakSampler(cdp);
+  await page.evaluate(() => window.__mem.startPeak());
   r.load = await loadAll(page, FED);
-  r.loadPeak = await ps.stop(); r.loadPeakMB = r.loadPeak.peakMB;
+  r.loadPeak = await ps.stop(); r.loadPeakMB = Math.max(r.loadPeak.peakMB, await page.evaluate(() => window.__mem.stopPeak()));
   await page.waitForTimeout(3000); // preview grace period + idle-time cache writes
   r.afterLoadMB = await page.evaluate(() => window.__mem.gcMB());
   r.digest = await page.evaluate(deepModelDigest);
@@ -199,10 +219,11 @@ async function fullRun(label, query) {
   });
   await page.evaluate(() => window.__mem.gcMB());
   ps = peakSampler(cdp);
-  r.det = await detect(page);
-  r.detectPeak = await ps.stop(); r.detectPeakMB = r.detectPeak.peakMB;
+  await page.evaluate(() => window.__mem.startPeak());
+  r.det = await detect(page); // the in-page stop sample follows the commit, before any GC
+  r.detectPeak = await ps.stop(); r.detectPeakMB = Math.max(r.detectPeak.peakMB, await page.evaluate(() => window.__mem.stopPeak()));
   r.afterDetectMB = await page.evaluate(() => window.__mem.gcMB());
-  if (query === '') {
+  if (query === '' && !atPort) {
     // 3. the byte cap never changes the answer
     const cap = await page.evaluate(() => window.ClashControl.storage.bvhCache.setMaxBytes(4 * 1048576));
     r.capped = await detect(page);
@@ -213,13 +234,14 @@ async function fullRun(label, query) {
   return r;
 }
 
+const REF = refRoot ? 'the reference code' : '-leanMemory';
 const mb = (x) => (x == null ? '-' : Math.round(x) + ' MB');
 try {
   console.log('federation: ' + FED.length + ' synthetic files, ' + (fedBytes / 1048576).toFixed(1) + ' MB IFC');
-  const old = await fullRun('-leanMemory', '?ccSafety=-leanMemory');
+  const old = refServer ? await fullRun('reference code', '', refServer.address().port) : await fullRun('-leanMemory', '?ccSafety=-leanMemory');
   const lean = await fullRun('leanMemory', '');
   console.log('  ' + lean.counts.models + ' models, ' + lean.counts.elements + ' elements, ' + lean.counts.tris + ' triangles, ' + lean.counts.batches + ' BatchedMesh; ' + lean.det.rows.length + ' clashes');
-  console.log('  heap per phase          -leanMemory     leanMemory');
+  console.log('  heap per phase       ' + (refServer ? 'reference code' : '   -leanMemory') + '     leanMemory');
   for (const [k, n] of [['bootMB', 'boot (post-GC)'], ['loadPeakMB', 'load peak'], ['afterLoadMB', 'after load (post-GC)'], ['detectPeakMB', 'detection peak'], ['afterDetectMB', 'after detection (GC)']]) {
     console.log('  ' + n.padEnd(22) + mb(old[k]).padStart(12) + mb(lean[k]).padStart(15));
   }
@@ -229,15 +251,15 @@ try {
 
   // 1. identity
   const d = diffDigests(old.digest, lean.digest);
-  if (d.length) fail('loaded models differ from -leanMemory:\n  ' + d.join('\n  '));
-  else ok('loaded federation deep-digest identical to -leanMemory (' + lean.counts.elements + ' elements)');
-  if (old.pixels.hash !== lean.pixels.hash) fail('rendered frame differs from -leanMemory: ' + JSON.stringify(old.pixels) + ' vs ' + JSON.stringify(lean.pixels));
+  if (d.length) fail('loaded models differ from ' + REF + ':\n  ' + d.join('\n  '));
+  else ok('loaded federation deep-digest identical to ' + REF + ' (' + lean.counts.elements + ' elements)');
+  if (old.pixels.hash !== lean.pixels.hash) fail('rendered frame differs from ' + REF + ': ' + JSON.stringify(old.pixels) + ' vs ' + JSON.stringify(lean.pixels));
   else if (!(lean.pixels.len > 20000)) fail('rendered frame looks empty: ' + JSON.stringify(lean.pixels));
-  else ok('rendered frame pixel-identical to -leanMemory (' + lean.counts.batches + ' BatchedMesh)');
+  else ok('rendered frame pixel-identical to ' + REF + ' (' + lean.counts.batches + ' BatchedMesh)');
   const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
   if (!(lean.det.rows.length > 100)) fail('fixture too small: ' + lean.det.rows.length + ' clashes');
-  if (!same(old.det.rows, lean.det.rows)) fail('clash list differs from -leanMemory (' + old.det.rows.length + ' vs ' + lean.det.rows.length + ' rows)');
-  else ok('clash list identical to -leanMemory (' + lean.det.rows.length + ' clashes)');
+  if (!same(old.det.rows, lean.det.rows)) fail('clash list differs from ' + REF + ' (' + old.det.rows.length + ' vs ' + lean.det.rows.length + ' rows)');
+  else ok('clash list identical to ' + REF + ' (' + lean.det.rows.length + ' clashes)');
   // 3. byte cap
   if (!(lean.capped.cache.byteEvictions > 0)) fail('the tiny byte cap evicted nothing: ' + JSON.stringify(lean.capped.cache));
   else if (!same(lean.capped.rows, lean.det.rows)) fail('clash list differs under a ' + lean.capped.capMB + ' MB cache byte cap');
@@ -246,7 +268,7 @@ try {
   if (BUDGET_LOAD && BUDGET_PEAK) {
     if (!(lean.afterLoadMB <= BUDGET_LOAD)) fail('heap after load ' + mb(lean.afterLoadMB) + ' > budget ' + BUDGET_LOAD + ' MB');
     if (!(lean.detectPeakMB <= BUDGET_PEAK)) fail('detection peak ' + mb(lean.detectPeakMB) + ' > budget ' + BUDGET_PEAK + ' MB');
-    if (!(old.afterLoadMB > BUDGET_LOAD) || !(old.detectPeakMB > BUDGET_PEAK)) fail('-leanMemory stays within the budgets — the federation is too small to mean anything');
+    if (!(old.afterLoadMB > BUDGET_LOAD) || !(old.detectPeakMB > BUDGET_PEAK)) fail(REF + ' stays within the budgets (after load ' + mb(old.afterLoadMB) + ', detection peak ' + mb(old.detectPeakMB) + ') — the federation is too small to mean anything');
     if (!failed) ok('heap budgets: after load ' + mb(lean.afterLoadMB) + ' <= ' + BUDGET_LOAD + ' MB (old ' + mb(old.afterLoadMB) + '), detection peak ' + mb(lean.detectPeakMB) + ' <= ' + BUDGET_PEAK + ' MB (old ' + mb(old.detectPeakMB) + ')');
   } else console.log('note: MEM_BUDGET_LOAD_MB / MEM_BUDGET_PEAK_MB unset — budgets not asserted');
 
@@ -271,5 +293,6 @@ try {
 } finally {
   await browser.close();
   server.close();
+  if (refServer) refServer.close();
 }
 if (!failed) console.log('MEMORY-FEDERATION OK — all cases');
