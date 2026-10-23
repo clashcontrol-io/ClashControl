@@ -59,6 +59,8 @@ IFC file blobs and parsed geometry caches are stored in IndexedDB for instant pr
 
 The geometry cache uses quantized 16-bit positions and 8-bit normals to reduce storage size.
 
+**Metadata without reading data (DB v4):** each store has a `cc_meta` index whose key holds the record's size stamp and age (`ifcFiles`: `[bytes, savedAt, projectId, name]`, `geoCache`: `[bytes, savedAt]`, `projects`: `[bytes]`), and `ifcFiles` a `projectId` index. `_ccReadIdbInventory` (storage report, budget check, eviction planning) walks those indexes with `openKeyCursor`, so it never deserialises a stored IFC buffer or geometry cache; only records missing from the index (unstamped legacy) are read one by one. `idbGetProjectFiles` reads one project's files through the `projectId` index, orphan cleanup reads keys only, and `_openIDB` keeps one shared connection. The geometry-cache size stamp is estimated from an even sample of its long arrays (`_ccEstimateBytesFast`). Covered by `tests/browser/storage-metadata.mjs` (fails on the pre-index code).
+
 ## 7. IFC Loader
 
 **Code section:** `// ── IFC Loader (web-ifc, lazy) ──`

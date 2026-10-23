@@ -2810,24 +2810,67 @@ function startApp() {
     } catch (_) {}
     return 0;
   }
+  // Budget-grade size of a large record without walking every entry: long
+  // arrays one level down (geometry cache meshData/elData) are estimated
+  // from an even sample of 128 entries; everything else is walked.
+  function _ccEstimateBytesFast(v) {
+    if (!v || typeof v !== 'object' || ArrayBuffer.isView(v) || v instanceof ArrayBuffer) return _ccEstimateBytes(v);
+    var total = 0;
+    Object.keys(v).forEach(function(k) {
+      var x = v[k];
+      total += k.length + 2;
+      if (Array.isArray(x) && x.length > 512) {
+        var step = x.length / 128, sum = 0, n = 0;
+        for (var i = 0; i < x.length; i += step) { sum += _ccEstimateBytes(x[Math.floor(i)]); n++; }
+        total += n ? Math.round(sum / n * x.length) : 0;
+      } else total += _ccEstimateBytes(x);
+    });
+    return total;
+  }
   var IDB_NAME = 'ClashControlFiles';
   var IDB_STORE = 'ifcFiles';
   var IDB_PROJSTORE = 'projects';
   var IDB_GEOCACHE = 'geoCache';
-  var IDB_VERSION = 3;
+  var IDB_VERSION = 4;
 
+  // v4 adds key-only indexes so size/age/project questions never read the
+  // stored buffers or geometry: 'cc_meta' (compound [bytes, savedAt, …],
+  // walked with openKeyCursor by _ccReadIdbInventory) and 'projectId' on
+  // ifcFiles (idbGetProjectFiles reads one project's files, not all).
+  var _CC_IDB_META = {};
+  _CC_IDB_META[IDB_STORE] = ['bytes', 'savedAt', 'projectId', 'name'];
+  _CC_IDB_META[IDB_GEOCACHE] = ['bytes', 'savedAt'];
+  _CC_IDB_META[IDB_PROJSTORE] = ['bytes'];
+  // One shared connection (reopened after a versionchange/close) instead of
+  // a fresh indexedDB.open() per read/write.
+  var _ccIdbConn = null;
   function _openIDB() {
-    return new Promise(function(resolve, reject) {
+    if (_ccIdbConn) return _ccIdbConn;
+    var p = new Promise(function(resolve, reject) {
       var req = indexedDB.open(IDB_NAME, IDB_VERSION);
       req.onupgradeneeded = function(e) {
-        var db = e.target.result;
+        var db = e.target.result, tx = e.target.transaction;
         if(!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE, {keyPath:'id'});
         if(!db.objectStoreNames.contains(IDB_PROJSTORE)) db.createObjectStore(IDB_PROJSTORE, {keyPath:'id'});
         if(!db.objectStoreNames.contains(IDB_GEOCACHE)) db.createObjectStore(IDB_GEOCACHE, {keyPath:'id'});
+        Object.keys(_CC_IDB_META).forEach(function(name) {
+          var st = tx.objectStore(name);
+          if (!st.indexNames.contains('cc_meta')) st.createIndex('cc_meta', _CC_IDB_META[name]);
+        });
+        var ifc = tx.objectStore(IDB_STORE);
+        if (!ifc.indexNames.contains('projectId')) ifc.createIndex('projectId', 'projectId');
       };
-      req.onsuccess = function(e) { resolve(e.target.result); };
-      req.onerror = function(e) { reject(e.target.error); };
+      req.onsuccess = function(e) {
+        var db = e.target.result;
+        db.onversionchange = function() { try { db.close(); } catch (_) {} _ccIdbConn = null; };
+        db.onclose = function() { _ccIdbConn = null; };
+        resolve(db);
+      };
+      req.onerror = function(e) { _ccIdbConn = null; reject(e.target.error); };
+      req.onblocked = function() { console.warn('[storage] database upgrade waiting for another ClashControl tab to close'); };
     });
+    _ccIdbConn = p;
+    return p;
   }
 
   function _ccIsQuotaError(e) {
@@ -2898,7 +2941,9 @@ function startApp() {
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
         var tx = db.transaction(IDB_STORE, 'readonly');
-        var req = tx.objectStore(IDB_STORE).getAll();
+        var st = tx.objectStore(IDB_STORE);
+        // Only this project's records (projectId index), never every stored model.
+        var req = st.indexNames.contains('projectId') ? st.index('projectId').getAll(projectId||'default') : st.getAll();
         req.onsuccess = function() {
           var all = req.result||[];
           resolve(all.filter(function(f){ return f.projectId===(projectId||'default'); }));
@@ -3317,13 +3362,14 @@ function startApp() {
   function idbSaveGeoCache(fileId, data) {
     var candidate = _ccGeoCacheV8Enabled();
     var cacheKey = _ccGeoCacheKey(fileId, candidate);
+    var _bytes = _ccEstimateBytesFast(data) + 64;
     function attempt() {
       return _openIDB().then(function(db) {
         return new Promise(function(resolve, reject) {
           var tx = db.transaction(IDB_GEOCACHE, 'readwrite');
           var record = candidate ? {id:cacheKey, sourceId:fileId, schema:8,
             data:data, savedAt:Date.now()} : {id:fileId, data:data, savedAt:Date.now()};
-          record.bytes = _ccEstimateBytes(record);
+          record.bytes = _bytes;
           tx.objectStore(IDB_GEOCACHE).put(record);
           tx.oncomplete = function() { resolve(); };
           tx.onerror = function(e) { reject(e.target.error); };
@@ -3334,7 +3380,7 @@ function startApp() {
       // Quota pressure: evict older cache entries and retry once. Failure
       // stays non-fatal — the cache is an optimization, not source data.
       if (!_ccIsQuotaError(e)) throw e;
-      return _ccEvictGeoCacheBytes(_ccEstimateBytes(data) * 2 || 20 * 1024 * 1024).then(function(freed) {
+      return _ccEvictGeoCacheBytes(_bytes * 2 || 20 * 1024 * 1024).then(function(freed) {
         if (!freed) throw e;
         return attempt();
       });
@@ -3386,8 +3432,8 @@ function startApp() {
     _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
         var tx = db.transaction(IDB_STORE, 'readonly');
-        var req = tx.objectStore(IDB_STORE).getAll();
-        req.onsuccess = function() { resolve((req.result||[]).map(function(f){ return f.id; })); };
+        var req = tx.objectStore(IDB_STORE).getAllKeys();
+        req.onsuccess = function() { resolve(req.result||[]); };
         req.onerror = function() { resolve([]); };
       }).then(function(validIds) {
         var validSet = {};
@@ -3418,30 +3464,64 @@ function startApp() {
   // to {id, bytes, savedAt, …} immediately so they don't outlive this
   // tick. Old records predate `bytes` stamping — estimated on the fly.
   function _ccReadIdbInventory() {
-    function readAll(db, storeName) {
+    // Metadata only: the 'cc_meta' index is walked with openKeyCursor (index
+    // key = [bytes, savedAt, ...], primary key = id), which never
+    // deserialises a record. Records missing from the index (written before
+    // v4 without those fields) are read individually, once per call.
+    function readMeta(db, storeName) {
       return new Promise(function(resolve) {
         try {
           var tx = db.transaction(storeName, 'readonly');
-          var req = tx.objectStore(storeName).getAll();
-          req.onsuccess = function() { resolve(req.result || []); };
-          req.onerror = function() { resolve([]); };
+          var st = tx.objectStore(storeName);
+          var meta = {}, keys = null, legacy = [];
+          var kr = st.getAllKeys();
+          kr.onsuccess = function() { keys = kr.result || []; };
+          if (st.indexNames.contains('cc_meta')) {
+            var cr = st.index('cc_meta').openKeyCursor();
+            cr.onsuccess = function() {
+              var c = cr.result;
+              if (!c) return;
+              meta[c.primaryKey] = c.key;
+              c.continue();
+            };
+          }
+          tx.oncomplete = function() {
+            var out = [];
+            (keys || []).forEach(function(k) {
+              var m = meta[k];
+              if (m) out.push({ id: k, bytes: m[0], savedAt: m[1], projectId: m[2], name: m[3] });
+              else legacy.push(k);
+            });
+            if (!legacy.length) { resolve(out); return; }
+            var tx2 = db.transaction(storeName, 'readonly'), st2 = tx2.objectStore(storeName);
+            legacy.forEach(function(k) {
+              var g = st2.get(k);
+              g.onsuccess = function() {
+                var r = g.result;
+                if (r) out.push({ id: r.id, bytes: r.bytes || _ccEstimateBytes(r), savedAt: r.savedAt || 0, projectId: r.projectId, name: r.name, sourceId: r.sourceId });
+              };
+            });
+            tx2.oncomplete = function() { resolve(out); };
+            tx2.onerror = function() { resolve(out); };
+          };
+          tx.onerror = function() { resolve([]); };
         } catch (e) { resolve([]); }
       });
     }
     return _openIDB().then(function(db) {
-      return Promise.all([readAll(db, IDB_STORE), readAll(db, IDB_GEOCACHE), readAll(db, IDB_PROJSTORE)]);
+      return Promise.all([readMeta(db, IDB_STORE), readMeta(db, IDB_GEOCACHE), readMeta(db, IDB_PROJSTORE)]);
     }).then(function(stores) {
       return {
         ifcFiles: stores[0].map(function(f) {
           return { id: f.id, name: f.name, projectId: f.projectId || 'default',
-            savedAt: f.savedAt || 0, bytes: f.bytes || _ccEstimateBytes(f) };
+            savedAt: f.savedAt || 0, bytes: f.bytes || 0 };
         }),
         geoCache: stores[1].map(function(g) {
-          return { id: g.id, sourceId: g.sourceId, savedAt: g.savedAt || 0,
-            bytes: g.bytes || _ccEstimateBytes(g) };
+          var sid = g.sourceId != null ? g.sourceId : (typeof g.id === 'string' && g.id.indexOf('v8:') === 0 ? g.id.slice(3) : g.id);
+          return { id: g.id, sourceId: sid, savedAt: g.savedAt || 0, bytes: g.bytes || 0 };
         }),
         projects: stores[2].map(function(p) {
-          return { id: p.id, bytes: p.bytes || _ccEstimateBytes(p) };
+          return { id: p.id, bytes: p.bytes || 0 };
         })
       };
     });
