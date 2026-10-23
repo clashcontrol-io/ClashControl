@@ -6013,7 +6013,7 @@ function startApp() {
         // Placement-flat arrays (index = running placement counter across
         // ALL elements, sized by summing pkGeoCounts):
         //   pkPlacementGeoIds, pkPlacementHasColor, pkPlacementColors (4
-        //     floats/placement), pkPlacementTransforms (16 floats/placement,
+        //     floats/placement), pkPlacementTransforms (16 doubles/placement,
         //     fed straight into THREE.Matrix4.fromArray(arr, offset) on
         //     decode — no per-placement slice/copy needed).
         // Quantities/psets are deliberately NOT encoded: on this worker path
@@ -6179,7 +6179,12 @@ function startApp() {
           placementGeoIds: new Uint32Array(pkPlacementGeoIds),
           placementHasColor: new Uint8Array(pkPlacementHasColor),
           placementColors: new Float32Array(pkPlacementColors),
-          placementTransforms: new Float32Array(pkPlacementTransforms),
+          // Float64: web-ifc's flatTransformation is f64 and the main-thread
+          // fallback applies it unrounded. Float32 here moved georeferenced
+          // models (placements ~100 km from the origin) by up to ~4 mm per
+          // element — flush contacts turned into hard clashes / gaps, and the
+          // worker and fallback loaders disagreed on the same file.
+          placementTransforms: new Float64Array(pkPlacementTransforms),
           stringTable: pkStringTable
         };
         xfer.push(packedEls.expressIds.buffer, packedEls.geoCounts.buffer,
@@ -9028,7 +9033,10 @@ function startApp() {
     // g === Infinity: no surface within the seeded search radius (or an empty
     // mesh, for which _ccContainment finds nothing) — a nested solid can still
     // sit far from the outer surface, so containment is checked regardless.
-    if (!o.hard && !(g <= 0)) {
+    // A hard clash demoted by minOverlapVolM3 takes the same path: a demoted
+    // CONTAINED pair must become a 0 mm clearance like a demoted crossing, not
+    // vanish because its surfaces happen to be further apart than the gap.
+    if ((!o.hard || res.demoted) && !(g <= 0)) {
       var c2 = containment();
       if (c2) { g = 0; for (var k = 0; k < 3; k++) { pairBuf[k] = c2.pt[k]; pairBuf[k+3] = c2.pt[k]; } res.contained = true; }
     }
@@ -12101,6 +12109,15 @@ function startApp() {
       if (it.globalIdA && _compGuids.indexOf(it.globalIdA)<0) _compGuids.push(it.globalIdA);
       if (it.globalIdB && _compGuids.indexOf(it.globalIdB)<0) _compGuids.push(it.globalIdB);
       if (it.globalId && _compGuids.indexOf(it.globalId)<0) _compGuids.push(it.globalId);
+      // No camera to synthesize (the elements' model is parked or no longer
+      // loaded): still write a camera-less viewpoint (cameras are optional in
+      // both visinfo schemas) so the topic keeps its components — otherwise
+      // the element identity silently drops out of the BCF.
+      if (!vp && _compGuids.length) {
+        vp = { camera: null, snapshot: null };
+        vpGuid = guid();
+        if (v3) vpGuid = String(vpGuid).toLowerCase();
+      }
 
       // ── Collect label strings (cc:* round-trip payload) ─────────
       // 2.1 emits repeated <Labels>; 3.0 wraps them as <Labels><Label>.
@@ -12342,29 +12359,31 @@ function startApp() {
         // Captured by _captureViewpoint whenever the ortho-view toggle
         // (_ccToggleOrtho) was active; legacy viewpoints predate this and
         // have neither field, so they fall through to PerspectiveCamera.
-        var _vpIsOrtho = !!(vp.camera && vp.camera.isOrtho);
-        vpXml += _vpIsOrtho ? '  <OrthogonalCamera>\n' : '  <PerspectiveCamera>\n';
-        // BCF-XML camera vectors are IFC-space (Z-up); vp.camera is always
-        // scene-space (Y-up) — see _bcfSceneToIfc.
-        var _bcfPos = _bcfSceneToIfc({x:vp.camera.px, y:vp.camera.py, z:vp.camera.pz});
-        var _bcfDir = _bcfSceneToIfc({x:vp.camera.dx, y:vp.camera.dy, z:vp.camera.dz});
-        var _bcfUp  = _bcfSceneToIfc({x:vp.camera.ux, y:vp.camera.uy, z:vp.camera.uz});
-        vpXml += '    <CameraViewPoint><X>'+_bcfPos.x.toFixed(6)+'</X><Y>'+_bcfPos.y.toFixed(6)+'</Y><Z>'+_bcfPos.z.toFixed(6)+'</Z></CameraViewPoint>\n';
-        vpXml += '    <CameraDirection><X>'+_bcfDir.x.toFixed(6)+'</X><Y>'+_bcfDir.y.toFixed(6)+'</Y><Z>'+_bcfDir.z.toFixed(6)+'</Z></CameraDirection>\n';
-        vpXml += '    <CameraUpVector><X>'+_bcfUp.x.toFixed(6)+'</X><Y>'+_bcfUp.y.toFixed(6)+'</Y><Z>'+_bcfUp.z.toFixed(6)+'</Z></CameraUpVector>\n';
-        if (_vpIsOrtho) {
-          vpXml += '    <ViewToWorldScale>'+vp.camera.viewToWorldScale.toFixed(6)+'</ViewToWorldScale>\n';
-        } else {
-          var _vpFov = (vp.camera && vp.camera.fov) || 55; // legacy viewpoints predate fov capture — 55 is the app default
-          vpXml += '    <FieldOfView>'+_vpFov+'</FieldOfView>\n';
+        if (vp.camera) {
+          var _vpIsOrtho = !!(vp.camera && vp.camera.isOrtho);
+          vpXml += _vpIsOrtho ? '  <OrthogonalCamera>\n' : '  <PerspectiveCamera>\n';
+          // BCF-XML camera vectors are IFC-space (Z-up); vp.camera is always
+          // scene-space (Y-up) — see _bcfSceneToIfc.
+          var _bcfPos = _bcfSceneToIfc({x:vp.camera.px, y:vp.camera.py, z:vp.camera.pz});
+          var _bcfDir = _bcfSceneToIfc({x:vp.camera.dx, y:vp.camera.dy, z:vp.camera.dz});
+          var _bcfUp  = _bcfSceneToIfc({x:vp.camera.ux, y:vp.camera.uy, z:vp.camera.uz});
+          vpXml += '    <CameraViewPoint><X>'+_bcfPos.x.toFixed(6)+'</X><Y>'+_bcfPos.y.toFixed(6)+'</Y><Z>'+_bcfPos.z.toFixed(6)+'</Z></CameraViewPoint>\n';
+          vpXml += '    <CameraDirection><X>'+_bcfDir.x.toFixed(6)+'</X><Y>'+_bcfDir.y.toFixed(6)+'</Y><Z>'+_bcfDir.z.toFixed(6)+'</Z></CameraDirection>\n';
+          vpXml += '    <CameraUpVector><X>'+_bcfUp.x.toFixed(6)+'</X><Y>'+_bcfUp.y.toFixed(6)+'</Y><Z>'+_bcfUp.z.toFixed(6)+'</Z></CameraUpVector>\n';
+          if (_vpIsOrtho) {
+            vpXml += '    <ViewToWorldScale>'+vp.camera.viewToWorldScale.toFixed(6)+'</ViewToWorldScale>\n';
+          } else {
+            var _vpFov = (vp.camera && vp.camera.fov) || 55; // legacy viewpoints predate fov capture — 55 is the app default
+            vpXml += '    <FieldOfView>'+_vpFov+'</FieldOfView>\n';
+          }
+          if (v3) {
+            // 3.0 added a required AspectRatio to both camera types.
+            var _ar = 16/9;
+            try { var _cam = window._ccViewport && window._ccViewport.getCamera && window._ccViewport.getCamera(); if (_cam && _cam.aspect > 0) _ar = _cam.aspect; } catch(_) {}
+            vpXml += '    <AspectRatio>'+_ar.toFixed(6)+'</AspectRatio>\n';
+          }
+          vpXml += _vpIsOrtho ? '  </OrthogonalCamera>\n' : '  </PerspectiveCamera>\n';
         }
-        if (v3) {
-          // 3.0 added a required AspectRatio to both camera types.
-          var _ar = 16/9;
-          try { var _cam = window._ccViewport && window._ccViewport.getCamera && window._ccViewport.getCamera(); if (_cam && _cam.aspect > 0) _ar = _cam.aspect; } catch(_) {}
-          vpXml += '    <AspectRatio>'+_ar.toFixed(6)+'</AspectRatio>\n';
-        }
-        vpXml += _vpIsOrtho ? '  </OrthogonalCamera>\n' : '  </PerspectiveCamera>\n';
         vpXml += '</VisualizationInfo>';
         f.file(vpGuid+'.bcfv', vpXml);
 
@@ -24198,6 +24217,10 @@ function startApp() {
 
     function processFiles(files) {
       setErr('');
+      // Cancel (window._ccAbortLoading) bumps _ccLoadGeneration: it must stop
+      // the WHOLE batch — files queued behind the one being parsed, and a file
+      // still being read when Cancel was pressed — not only the in-flight worker.
+      var _batchGen = _ccLoadGeneration;
       // Route Gaussian Splat files to the splat addon. Must run BEFORE the
       // point-cloud filter because .ply is shared between the two — splat
       // files happen to use the same extension. The splat addon detects
@@ -24681,6 +24704,7 @@ function startApp() {
         var job = _mkIfcJob(f);
         if (_parallel) _ifcJobs.push(job);
         chain = chain.then(function() {
+          if (_batchGen !== _ccLoadGeneration) return; // batch cancelled
           setLoading(true);
           setLoadMsg(totalIfc > 1 ? f.name + ' (' + (doneIfc + 1) + '/' + totalIfc + ')…' : 'Loading ' + f.name + '…');
           // Sequential mode starts the parse here, exactly as before; in
@@ -38022,7 +38046,7 @@ function startApp() {
             idxCopy=srcIdx instanceof Uint16Array ? new Uint16Array(srcIdx.length) : new Uint32Array(srcIdx.length);
             idxCopy.set(srcIdx);
           }
-          var matCopy=new Float32Array(mesh.matrixWorld.elements);
+          var matCopy=new Float64Array(mesh.matrixWorld.elements); // f64: georeferenced placements lose mm in Float32
           meshData.push({pos:posCopy, idx:idxCopy, mat:matCopy});
           transferList.push(posCopy.buffer, matCopy.buffer);
           if(idxCopy) transferList.push(idxCopy.buffer);
@@ -38032,7 +38056,11 @@ function startApp() {
     if(!meshData.length) return;
 
     var jobId=(S._sectionCutJobId=(S._sectionCutJobId||0)+1);
-    var worker=_getSectionCutWorker();
+    // Worker creation can fail (worker limit, CSP, a broken Worker shim): the
+    // section outline/hatch is cosmetic, so skip it rather than throw an
+    // uncaught error out of the render effect (pressure-test I15).
+    var worker;
+    try { worker=_getSectionCutWorker(); } catch(_wErr) { console.warn('[Section] section cut lines worker unavailable:', _wErr && _wErr.message || _wErr); return; }
     worker.onmessage=function(e){
       if(e.data.id!==jobId) return; // stale result from a superseded job
       _ccDisposeSectionCutLines(S);
@@ -38120,7 +38148,7 @@ function startApp() {
           var posCopy=new Float32Array(srcPos.length); posCopy.set(srcPos);
           var idxCopy=null;
           if(geo.index){ var srcIdx=geo.index.array; idxCopy=srcIdx instanceof Uint16Array?new Uint16Array(srcIdx.length):new Uint32Array(srcIdx.length); idxCopy.set(srcIdx); }
-          var matCopy=new Float32Array(mesh.matrixWorld.elements);
+          var matCopy=new Float64Array(mesh.matrixWorld.elements); // f64: georeferenced placements lose mm in Float32
           meshData.push({pos:posCopy,idx:idxCopy,mat:matCopy});
           transferList.push(posCopy.buffer,matCopy.buffer);
           if(idxCopy) transferList.push(idxCopy.buffer);
@@ -38129,7 +38157,11 @@ function startApp() {
     });
     if(!meshData.length) return;
     var jobId=(S._sectionHatchJobId=(S._sectionHatchJobId||0)+1);
-    var worker=_getSectionHatchWorker();
+    // Worker creation can fail (worker limit, CSP, a broken Worker shim): the
+    // section outline/hatch is cosmetic, so skip it rather than throw an
+    // uncaught error out of the render effect (pressure-test I15).
+    var worker;
+    try { worker=_getSectionHatchWorker(); } catch(_wErr) { console.warn('[Section] section hatch worker unavailable:', _wErr && _wErr.message || _wErr); return; }
     worker.onmessage=function(e){
       if(e.data.id!==jobId) return;
       if(S._sectionHatchMesh){S.scene.remove(S._sectionHatchMesh);S._sectionHatchMesh.geometry.dispose();S._sectionHatchMesh.material.dispose();S._sectionHatchMesh=null;}

@@ -119,3 +119,9 @@ test('dispatch failures stop restoration at the same action boundary', () => {
   assert.equal(emitted.length, 2);
   assert.deepEqual(emitted.map((action)=>action.v.id), ['a','b']);
 });
+
+test('serializeProject keeps parked models as model stubs (found by the pressure-test harness)', () => {
+  const data = codec.serializeProject(state({parkedModels:[{id:'p',name:'Parked',discipline:'architectural',color:'#abcdef',tag:''}]}), '1', 't');
+  assert.deepEqual(data.models.map((m)=>m.id), ['m','p']);
+  assert.equal(data.models[1].name, 'Parked');
+});

@@ -160,6 +160,12 @@ function generateBuilding(opts) {
   const seed = opts.seed != null ? opts.seed : 4242;
   const georef = opts.georef || 'local';
   const planted = opts.planted !== false;
+  // Opt-in reductions for shrinking a failing pressure-test combo
+  // (tests/pressure/shrink.mjs): `cases` keeps only the listed planted case
+  // ids (positions stay where they are; later GUIDs shift), `background:false`
+  // drops the background building. Defaults leave the output byte-identical.
+  const keepCases = Array.isArray(opts.cases) ? new Set(opts.cases) : null;
+  const background = opts.background !== false;
   const lay = mulberry32(seed);
   const ctx = { guids: new Set() };
   let uniqCounter = 0;
@@ -280,7 +286,7 @@ function generateBuilding(opts) {
   // ═════ Background building ═════
   const nX = scale.baysX, nY = scale.baysY;
   const corridorX = gx[Math.floor(nX / 2)];
-  A.storeys.forEach((st, k) => {
+  if (background) A.storeys.forEach((st, k) => {
     const h = levels[k + 1] - levels[k];
     const wallH = h - SLAB_T;
     // exterior walls per bay segment (200..240 mm), with windows
@@ -372,7 +378,7 @@ function generateBuilding(opts) {
     }
   });
 
-  S.storeys.forEach((st, k) => {
+  if (background) S.storeys.forEach((st, k) => {
     const h = levels[k + 1] - levels[k];
     // slab at the top of the storey, per bay (arbitrary L-shaped profile in some bays)
     for (let i = 0; i < nX; i++) for (let j = 0; j < nY; j++) {
@@ -430,7 +436,7 @@ function generateBuilding(opts) {
     }
   });
 
-  M.storeys.forEach((st, k) => {
+  if (background) M.storeys.forEach((st, k) => {
     const h = levels[k + 1] - levels[k];
     const ductZ = h - SLAB_T - 0.75; // under the beams, partly crossing the deeper ones
     // main supply duct along Y at the corridor + cable tray beside it
@@ -499,8 +505,10 @@ function generateBuilding(opts) {
     const ref = (key, el) => ({ model: mdl[key].file, globalId: el.guid, ifcType: el.cls, name: el.name });
     function plant(def) {
       const ox = x00 + 4 * idx++;
+      const id = 'P' + String(idx).padStart(2, '0');
+      if (keepCases && !keepCases.has(id)) return;
       const out = def(ox);
-      manifest.cases.push(Object.assign({ id: 'P' + String(idx).padStart(2, '0') }, out, { a: ref(out.a[0], out.a[1]), b: ref(out.b[0], out.b[1]) }));
+      manifest.cases.push(Object.assign({ id }, out, { a: ref(out.a[0], out.a[1]), b: ref(out.b[0], out.b[1]) }));
     }
     const vb = (key, cls, name, x0, x1, y0, y1, z0, z1, o) => [key, vbox(mdl[key], cls, name, st[key], x0, x1, y0, y1, z0, z1, o)];
     const hr = (key, cls, name, along, x, y, zc, len, w, hh, o) => [key, hrun(mdl[key], cls, name, st[key], along, x, y, zc, len, w, hh, o)];

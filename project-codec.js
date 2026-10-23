@@ -11,7 +11,10 @@
       _cc: 'ClashControl', _v: version,
       savedAt: savedAt,
       rules: state.rules,
-      models: state.models.map(function(model) {
+      // Parked models (memory relief, PARK_MODEL) are still part of the
+      // project: their clashes/issues reference them by id, so they are saved
+      // as model stubs exactly like loaded ones.
+      models: state.models.concat(state.parkedModels || []).map(function(model) {
         return {id:model.id,name:model.name,discipline:model.discipline,color:model.color,visible:model.visible,tag:model.tag||''};
       }),
       clashes: state.clashes,
