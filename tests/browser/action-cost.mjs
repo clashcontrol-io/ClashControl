@@ -273,8 +273,9 @@ try {
   // collapse the first group from its header
   const coll = await page.evaluate(async () => {
     const sc = document.querySelector('.cc-issue-panel .cc-issue-scroll'); sc.scrollTop = 0; sc.dispatchEvent(new Event('scroll'));
-    await new Promise((r) => setTimeout(r, 200));
-    const hdr = document.querySelector('.cc-issue-panel [data-element-group-key]');
+    let hdr = null;
+    for (let t = 0; t < 30 && !hdr; t++) { await new Promise((r) => setTimeout(r, 100)); hdr = document.querySelector('.cc-issue-panel [data-element-group-key]'); }
+    if (!hdr) return { error: 'no group header mounted at the top of the list' };
     const key = hdr.getAttribute('data-element-group-key');
     const sm = window.ClashControl.review.summary();
     const grp = sm.items.find((it) => it.key === key);
