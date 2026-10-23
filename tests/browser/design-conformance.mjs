@@ -25,6 +25,8 @@
 //                  (a destructive button may use the danger tokens — S_BTN Danger)
 //   tap-target     a control under 44 × 44 px on the phone viewport
 //   overflow       horizontal scroll on the page or a panel root
+//   untranslated   (non-English locale) common English UI words on controls
+//                  and headings — a mixed-language UI
 //   diagnostics    "No diagnostics in the main UI": percentages, IFC class
 //                  names, file sizes / timings in the model card and the
 //                  inspector
@@ -238,6 +240,14 @@ function inPageChecker() {
           const r = el.getBoundingClientRect();
           if (r.height < 43.5) add('tap-target', el, Math.round(r.width) + '×' + Math.round(r.height));
         }
+        // untranslated chrome: with a non-English UI, a control or heading
+        // that still carries common English UI words is a mixed-language UI.
+        // Data (names in a [title], clash cards, [data-cc-data]) is exempt;
+        // words that are also plain Dutch ("details", "model") are not listed.
+        if (opts.uiLang && txt && el.matches('button,[role=tab],[role=menuitem],summary,label,th,h1,h2,h3,h4,legend,[role=status]') && !el.closest('[data-cc-card-idx],[data-cc-data]') && el.getAttribute('title') !== txt) {
+          const hit = txt.match(/\b(the|and|show|hide|all on|all off|add|clear|run|export|import|settings|remove|close|save|load|select|none|levels?|rules|view|from|with|not drawn|use|enter|more|less|reset|apply|cancel|delete|edit|warnings?|search|placement)\b/i);
+          if (hit) add('untranslated', el, 'English word "' + hit[0] + '" in a ' + opts.uiLang + ' UI');
+        }
         // diagnostics in the default model card / inspector
         if (txt && el.closest('[data-cc-plain]')) {
           if (/\d\s?%|\bIfc[A-Z][A-Za-z]+|\b\d+(\.\d+)?\s?(MB|KB|GB)\b|\b\d+\.\d+\s?s\b|\b\d+\s?meshes\b/.test(txt) || /\b(stated|inferred|provenance|confidence|evidence)\b/i.test(txt)) add('diagnostics', el, txt.slice(0, 80));
@@ -296,6 +306,8 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function surface(page, variant, name, selectors, opts) {
   await pause(350);
+  // let hover/press transitions settle (a colour mid-transition is not a token)
+  await page.evaluate(() => Promise.race([Promise.all(document.getAnimations().filter((a) => { const t = a.effect && a.effect.getTiming && a.effect.getTiming(); return !(t && t.iterations === Infinity); }).map((a) => a.finished.catch(() => {}))), new Promise((r) => setTimeout(r, 1500))]));
   const v = await page.evaluate(([sel, o]) => window.__ccDesignCheck(sel, o), [selectors, opts || {}]);
   const shot = join(OUT, variant + '-' + name + '.png');
   await page.screenshot({ path: shot });
@@ -323,7 +335,7 @@ async function pickElement(page, pred) {
 
 async function runVariant(variant, viewport, theme, mobile) {
   const page = await newPage(viewport, theme);
-  const o = { mobile };
+  const o = { mobile, uiLang: /^en/i.test(LOCALE) ? '' : LOCALE };
   await load(page);
   const LEFT = mobile ? ['.cc-left-panel', '.cc-mobile-nav', '.cc-header'] : ['.cc-left-panel', '.cc-desktop-topbar', '.cc-top-toolbar', '.cc-left-rail'];
   const MODELS = mobile ? LEFT : LEFT.concat(['.cc-ai-panel']);
