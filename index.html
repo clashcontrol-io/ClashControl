@@ -8135,6 +8135,47 @@ function startApp() {
   // triangle's split key, (v0+v1)+v2 along `axis` in f64 — exactly the sum the
   // sort comparator used to recompute on every comparison, so the comparator
   // returns the same numbers and the sort (hence the tree) is unchanged.
+  // Stable ascending sort of indices[lo..hi) by keys[i*3+axis] — the same
+  // permutation as the comparator sort it replaces (a - b on finite keys is a
+  // consistent total preorder, so every STABLE sort yields the one result;
+  // TypedArray#sort is stable), ~2x faster on big elements: no comparator
+  // call per comparison, keys copied next to the indices, insertion-sorted
+  // runs of 16 then bottom-up merges taking the left run on ties. Keys with a
+  // NaN (comparator answers inconsistent) keep the original comparator sort.
+  function _bvhStableSort(indices, lo, hi, keys, axis) {
+    if (keys.nan) {
+      indices.subarray(lo, hi).sort(function(a,b){ return keys[a*3+axis] - keys[b*3+axis]; });
+      return;
+    }
+    var n = hi - lo, i, j, k, sc = _bvhStableSort._s;
+    if (!sc || sc.si.length < n) {
+      var cap = Math.max(n, 1024);
+      sc = _bvhStableSort._s = { si: new Int32Array(cap), sk: new Float64Array(cap), di: new Int32Array(cap), dk: new Float64Array(cap) };
+    }
+    var si = sc.si, sk = sc.sk, di = sc.di, dk = sc.dk, t;
+    for (i = 0; i < n; i++) { var v = indices[lo+i]; si[i] = v; sk[i] = keys[v*3+axis]; }
+    for (var r = 0; r < n; r += 16) {
+      var re = Math.min(r + 16, n);
+      for (i = r + 1; i < re; i++) {
+        var vi = si[i], kv = sk[i];
+        for (j = i - 1; j >= r && sk[j] > kv; j--) { si[j+1] = si[j]; sk[j+1] = sk[j]; }
+        si[j+1] = vi; sk[j+1] = kv;
+      }
+    }
+    for (var w = 16; w < n; w *= 2) {
+      for (var a = 0; a < n; a += 2*w) {
+        var m = Math.min(a + w, n), b = Math.min(a + 2*w, n);
+        i = a; j = m; k = a;
+        while (i < m && j < b) {
+          if (sk[j] < sk[i]) { di[k] = si[j]; dk[k++] = sk[j++]; } else { di[k] = si[i]; dk[k++] = sk[i++]; }
+        }
+        while (i < m) { di[k] = si[i]; dk[k++] = sk[i++]; }
+        while (j < b) { di[k] = si[j]; dk[k++] = sk[j++]; }
+      }
+      t = si; si = di; di = t; t = sk; sk = dk; dk = t;
+    }
+    for (i = 0; i < n; i++) indices[lo+i] = si[i];
+  }
   function _buildBVHNode(tris, indices, lo, hi, keys) {
     if (!keys) {
       var nk = (tris.length / 9) | 0;
@@ -8145,6 +8186,7 @@ function startApp() {
         keys[k*3+1] = tris[ko+1] + tris[ko+4] + tris[ko+7];
         keys[k*3+2] = tris[ko+2] + tris[ko+5] + tris[ko+8];
       }
+      for (var kn = 0; kn < keys.length; kn++) if (keys[kn] !== keys[kn]) { keys.nan = true; break; }
     }
     var mnx=Infinity,mny=Infinity,mnz=Infinity;
     var mxx=-Infinity,mxy=-Infinity,mxz=-Infinity;
@@ -8161,11 +8203,9 @@ function startApp() {
     if (hi-lo <= 4) { node.lo=lo; node.hi=hi; node.idx=indices; return node; } // leaf
     var dx=mxx-mnx, dy=mxy-mny, dz=mxz-mnz;
     var axis = (dx>=dy&&dx>=dz) ? 0 : (dy>=dz) ? 1 : 2;
-    // In-place subrange sort — a subarray is a view, so no per-node
+    // In-place subrange sort (stable, see _bvhStableSort) — no per-node
     // slice/copy-back allocations (they dominated build time on big elements).
-    indices.subarray(lo, hi).sort(function(a,b){
-      return keys[a*3+axis] - keys[b*3+axis];
-    });
+    _bvhStableSort(indices, lo, hi, keys, axis);
     var mid=(lo+hi)>>1;
     node.cnt=hi-lo;
     node.left =_buildBVHNode(tris,indices,lo,mid,keys);
@@ -8727,7 +8767,7 @@ function startApp() {
   var _NP_REC = 17; // floats per worker pair record (layout: _ccNarrowWorkerMain)
   function _ccBuildNarrowWorkerSource() {
     var fns = [
-      _triTriTest, _buildBVHNode, _buildBVHForTris, _bvhTraverseAll,
+      _triTriTest, _bvhStableSort, _buildBVHNode, _buildBVHForTris, _bvhTraverseAll,
       _pointInBothBoxes, _postProcessIntersectPoints, _jsIntersectBVH,
       _closestPtOnTri, _segSegDistSq, _triTriDistSq, _aabbAabbDistSq, _bvhMinDistTraverse,
       _jsMinDistBVH,
