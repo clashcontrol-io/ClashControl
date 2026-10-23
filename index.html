@@ -32051,6 +32051,7 @@ function startApp() {
   // row-height guess. Deliberately does NOT touch groupAndSort/_groupKeyFor —
   // grouping/sorting/filtering semantics stay byte-identical to legacy.
   var CC_WINDOWED_AUTO_MIN = 2000; // results above this always render windowed (VirtualList)
+  var CC_WINDOWED_GROUPED_MIN = 50; // grouped results above this render windowed
   var CC_WINDOW_DEFAULT_HEIGHTS = { header: 32, clusterHeader: 62, item: ROW_HEIGHT, more: 34 };
   function _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup) {
     window._ccListPerfCounters.buildConflictRows++;
@@ -32126,6 +32127,183 @@ function startApp() {
   var _CC_RENDER_COUNT = (function(){ try { return /[?&]ccRenderCount=1(&|$)/.test(location.search); } catch(e) { return false; } })();
   if (_CC_RENDER_COUNT) window.__ccRenderCount = { rows: 0, headers: 0, cards: 0 };
   function _ccCountRender(k) { if (_CC_RENDER_COUNT) window.__ccRenderCount[k]++; }
+  // One group header of the clash/issue list (root-cause "By element" card,
+  // AI cluster card or the plain header of any other grouping). Memoised on
+  // stable props (the group object is reused by VirtualList while its items
+  // are unchanged), so an unrelated state change re-renders no header.
+  var _CC_VL_SEV_COLOR = {critical:'var(--color-danger)',major:'var(--color-warning)',hard:'var(--color-danger)',soft:'var(--color-warning)',minor:'var(--text-muted)',duplicate:'#8558ec',info:'var(--text-faint)'};
+  var _CC_VL_STATUS_COLORS = {open:'var(--color-danger)',in_progress:'var(--color-warning)',resolved:'var(--color-success)',closed:'var(--text-muted)',hard:'var(--color-danger)',soft:'var(--color-warning)',duplicate:'#8b5cf6'};
+  function ConflictGroupHeader(props) {
+    var g = props.g, d = props.d, isClash = props.isClash, models = props.models || [], storeyLabel = props.storeyLabel;
+    var elemSummary = useMemo(function(){
+      return props.mode === 'element' && g.items.length > 1 ? _ccElementGroupSummary(g.items, {storey: storeyLabel, extentLabel: function(k){ return _ccFacetValueLabel('extent', k); }}) : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the summary reads exactly the group's items, the mode and the storey normaliser
+    }, [g.items, props.mode, storeyLabel]);
+    // A group of exactly one clash adds noise, not structure — render it
+    // as a plain row with no header at all (matches how Solibri/BIMcollab/
+    // Revizto/Dalux only show a group card once there's actually more
+    // than one thing under it).
+    if (g.items.length === 1) return null;
+    _ccCountRender('headers');
+    var isOpen = props.isOpen;
+    if (props.mode === 'element') {
+      // ── "By element" (root-cause) header ──
+      // Worst severity (word + colour), extent summary ("3 through · 1
+      // partial"), normalised storey, and group actions that go through
+      // BATCH_UPD_CLASH with explicit ids (undoable). The toggle is its
+      // own button so the actions are not nested inside it.
+      var summary = elemSummary || {};
+      var sevCol2 = _CC_VL_SEV_COLOR[summary.severity] || 'var(--text-muted)';
+      var openItems2 = g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed'&&it.status!=='denied';});
+      var openCount2 = openItems2.length;
+      var resolved2 = g.items.length - openCount2;
+      var sevPill = _ccSeverityPillStyle(summary.severity);
+      var gIds = g.items.map(function(it){ return it.id; });
+      return html`<div key=${g.label} data-element-group-key=${g.label}
+        style=${{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'var(--space-1) var(--space-2)',padding:'var(--space-2) var(--space-2) var(--space-2) var(--space-1)',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}>
+        <button aria-expanded=${isOpen?'true':'false'} onClick=${function(){props.onToggle(g.label)}}
+          style=${{...S_BTN,flex:'1 1 100%',minWidth:0,display:'flex',alignItems:'flex-start',gap:'var(--space-2)',padding:0,background:'none',textAlign:'left',color:'inherit'}}>
+          <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)',paddingTop:'2px'}}>${_ccChevron(isOpen)}</span>
+          <span style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'2px'}}>
+            <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${summary.title}</span>
+            <span style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
+              <span class="cc-status-pill" data-cc-group-sev=${summary.severity} style=${sevPill}>${_ccFacetValueLabel('severity', summary.severity)}</span>
+              ${summary.extentSummary && html`<span data-cc-group-extent="1" style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>${summary.extentSummary}</span>`}
+              ${summary.subtitle && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>${summary.subtitle}</span>`}
+              ${summary.storey && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${summary.storey}</span>`}
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${openCount2} open${resolved2?(' · '+resolved2+' resolved'):''}</span>
+            </span>
+          </span>
+        </button>
+        <span style=${{flex:1}}></span>
+        ${isClash && openCount2 > 0 && html`<button data-cc-group-accept="1" title=${_cc_t('vlist.acceptAllTip','Accept every open clash in this group (flag for a later check) — undo with Ctrl+Z')}
+          onClick=${function(e){ e.stopPropagation(); d({t:A.BATCH_UPD_CLASH, ids:openItems2.map(function(it){ return it.id; }), u:{status:'accepted_needs_check'}}); }}
+          style=${{...S_BTN_SECONDARY_SM,whiteSpace:'nowrap'}}>${_cc_t('vlist.acceptAll','Accept all')}</button>`}
+        ${isClash && html`<select data-cc-group-status="1" aria-label=${_cc_t('vlist.setGroupStatus','Set status of all {n} clashes in this group',{n:g.items.length})}
+          onClick=${function(e){ e.stopPropagation(); }}
+          onChange=${function(e){ var v = e.target.value; e.target.value = ''; if (v) d({t:A.BATCH_UPD_CLASH, ids:gIds, u:{status:v}}); }}
+          style=${{fontSize:'var(--text-2xs)',padding:'1px var(--space-1)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',maxWidth:88}}>
+          <option value="">${_cc_t('vlist.setStatus','Set status…')}</option>
+          ${['open','in_progress','accepted_needs_check','confirmed','resolved','denied'].map(function(st){ return html`<option key=${st} value=${st}>${(STAT[st] && STAT[st].label) || st}</option>`; })}
+        </select>`}
+        <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)',background:'var(--bg-secondary)',padding:'1px var(--space-2)',borderRadius:'var(--radius-pill)',fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
+      </div>`;
+    }
+    if (props.mode === 'cluster') {
+      // ── Sentry/Linear-style cluster card ──
+      var sev = window._ccClusterSeverity(g.items);
+      var sevCol = _CC_VL_SEV_COLOR[sev] || 'var(--text-muted)';
+      var label = window._ccClusterDisplay[g.label];
+      var c0 = g.items[0]||{};
+      var storey = c0.elemAStorey || c0.elemBStorey || '';
+      var mA = null, mB = null; models.forEach(function(m){ if (m.id === c0.modelAId) mA = m; if (m.id === c0.modelBId) mB = m; });
+      // Every group repeating the same "office-architecture ↔ office-mep"
+      // chip is noise when there are only 2 models loaded (it's the same
+      // pair every time) — only worth a chip once there's real ambiguity
+      // about which models are involved (>2 loaded).
+      var modelPair = (models.length > 2 && (mA||mB)) ? ((mA?mA.name:'?') + ' ↔ ' + (mB?mB.name:'?')) : '';
+      var crossModel = mA && mB && mA.id !== mB.id;
+      var openCount = g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}).length;
+      var resolved = g.items.length - openCount;
+      var triage = props.triage || null;
+      var triageLoading = !!(triage && triage.loading);
+      var triageResult = triage && triage.result;
+      var triageError = triage && triage.error;
+      return html`<div key=${g.label} data-cluster-key=${g.label}>
+        <div onClick=${function(){props.onToggle(g.label)}}
+          style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-2) var(--space-2) var(--space-2) var(--space-1)',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}
+          onMouseEnter=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='1';}}
+          onMouseLeave=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='0';}}>
+          <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)'}}>${_ccChevron(isOpen)}</span>
+          <div style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'2px'}}>
+            <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${label}</span>
+            <div style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
+              ${storey && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${storey}</span>`}
+              ${modelPair && html`<span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${modelPair}</span>`}
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${openCount} open${resolved?(' · '+resolved+' resolved'):''}</span>
+            </div>
+          </div>
+          <div class="cc-cluster-actions" style=${{opacity:triageLoading?1:0,display:'flex',gap:'var(--space-1)',transition:'opacity var(--duration-fast) var(--ease-standard)'}}>
+            <button aria-label=${_cc_t('vlist.triageClusterAria','Triage cluster with AI')} title=${_cc_t('vlist.triageClusterTitle','Triage with AI (T) — sends cluster to /api/triage')}
+              disabled=${triageLoading}
+              onClick=${function(e){e.stopPropagation(); window._ccTriageCluster(g.items, d, g.label);}}
+              style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--accent-subtle)',background:'var(--accent-bg)',color:'var(--accent-subtle)',fontWeight:'var(--weight-semibold)',opacity:triageLoading?0.6:1}}>${triageLoading?_cc_t('vlist.triaging','Triaging…'):(triageResult?_cc_t('vlist.reTriage','Re-triage'):_cc_t('vlist.triage','Triage'))}</button>
+            <button aria-label=${_cc_t('vlist.resolveAllGroupAria','Resolve all clashes in this group')} title=${_cc_t('vlist.resolveAllGroupTitle','Resolve all in this group (R)')}
+              onClick=${function(e){e.stopPropagation(); if (openCount===0 || confirm(_cc_t('vlist.resolveAllOpenInGroup','Resolve all {n} open clashes in this group?',{n:openCount}))) window._ccResolveCluster(g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}), d);}}
+              style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)'}}>${_cc_t('vlist.resolveAll','Resolve all')}</button>
+          </div>
+          <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'1px var(--space-2)',borderRadius:'var(--radius-pill)',fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
+        </div>
+        ${(triageResult || triageError) && html`<div style=${{padding:'var(--space-2) var(--space-3)',background:'var(--bg-secondary)',borderBottom:'1px solid var(--border-subtle)'}}>
+          ${triageError
+            ? html`<div style=${{fontSize:'var(--text-xs)',color:'var(--color-danger)'}}>Triage failed: ${triageError}</div>`
+            : html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-2)'}}>
+                <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexWrap:'wrap'}}>
+                  ${triageResult.severity && html`<span class="cc-status-pill" style=${{background:_CC_VL_SEV_COLOR[triageResult.severity]||'var(--text-muted)',color:'#fff'}}>${triageResult.severity}</span>`}
+                  ${triageResult.discipline_conflict && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${triageResult.discipline_conflict}</span>`}
+                  ${triageResult.false_positive_likelihood && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>false-positive: ${triageResult.false_positive_likelihood}</span>`}
+                </div>
+                ${triageResult.title && html`<div style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',lineHeight:'var(--leading-tight)'}}>${triageResult.title}</div>`}
+                ${triageResult.explanation && html`<div style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-base)'}}>${triageResult.explanation}</div>`}
+                ${Array.isArray(triageResult.resolution_options) && triageResult.resolution_options.length>0 && html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
+                  <div style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-bold)',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--text-muted)'}}>${_cc_t('vlist.resolutionOptions','Resolution options')}</div>
+                  ${triageResult.resolution_options.map(function(opt, idx){return html`<div key=${idx} style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-tertiary)',borderRadius:'var(--radius-xs)',borderLeft:'2px solid var(--accent-subtle)'}}>
+                    <div style=${{color:'var(--text-primary)',fontWeight:'var(--weight-medium)'}}>${idx+1}. ${opt.option}</div>
+                    ${opt.tradeoff && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginTop:'2px'}}>Tradeoff: ${opt.tradeoff}${opt.cost_impact?(' · cost: '+opt.cost_impact):''}</div>`}
+                  </div>`;})}
+                </div>`}
+                ${(function(){
+                  // Feedback row: cluster-level 👍/👎 dispatched as A.AI_FEEDBACK
+                  // for every clash in the cluster. Lights up the active choice
+                  // so it doesn't look like clicking did nothing on re-renders.
+                  var fb0 = (g.items[0] && g.items[0].aiFeedback) || null;
+                  var btn = function(label, val, on){return html`<button onClick=${function(e){
+                      e.stopPropagation();
+                      g.items.forEach(function(it){ d({t:A.AI_FEEDBACK, id:it.id, v:val}); });
+                      if (window._ccToast) window._ccToast(_cc_t('toast.thanksFeedbackRecorded','Thanks — feedback recorded'));
+                    }}
+                    title=${val==='real_clash'?_cc_t('vlist.markRealClash','Mark cluster as a real clash'):val==='false_positive'?_cc_t('vlist.markFalsePositive','Mark cluster as a false positive'):_cc_t('vlist.clearFeedback','Clear feedback')}
+                    style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid '+(on?'var(--accent-subtle)':'var(--border)'),background:on?'var(--accent-bg)':'var(--bg-secondary)',color:on?'var(--accent-subtle)':'var(--text-secondary)',fontWeight:on?'var(--weight-semibold)':'var(--weight-regular)'}}>${label}</button>`;};
+                  return html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',paddingTop:'var(--space-1)',borderTop:'1px dashed var(--border-subtle)'}}>
+                    <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginRight:'var(--space-1)'}}>${_cc_t('virtualList.wasThisUseful','Was this useful?')}</span>
+                    ${btn('👍 Real clash', 'real_clash', fb0==='real_clash')}
+                    ${btn('👎 False positive', 'false_positive', fb0==='false_positive')}
+                  </div>`;
+                })()}
+              </div>`}
+        </div>`}
+      </div>`;
+    }
+    // ── Non-cluster grouping (storey/severity/discipline/etc): keep the lean original header ──
+    var dotColor = _CC_VL_STATUS_COLORS[g.label] || 'var(--accent-light)';
+    return html`<div key=${g.label}
+      onClick=${function(){props.onToggle(g.label)}}
+      style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',padding:'var(--space-1) var(--space-2)',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}>
+      <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)'}}>${_ccChevron(isOpen)}</span>
+      <span data-cc-status="1" style=${{width:8,height:8,borderRadius:'50%',background:dotColor,flexShrink:0}}></span>
+      <span style=${{fontSize:'var(--text-xs)',fontWeight:600,color:'var(--text-primary)',flex:1}}>${g.label}</span>
+      <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'2px var(--space-1)',borderRadius:'var(--radius-md)'}}>${g.items.length}</span>
+    </div>`;
+  }
+  ConflictGroupHeader = React.memo(ConflictGroupHeader);
+
+  // Reuse the previous group objects whose label and member objects are the
+  // same; the whole previous array when nothing changed.
+  function _ccStabilizeGroups(prev, next) {
+    if (!prev || !next) return next;
+    var byLabel = {};
+    for (var i = 0; i < prev.length; i++) byLabel[prev[i].label] = prev[i];
+    var same = prev.length === next.length;
+    var out = next.map(function(g, gi) {
+      var p = byLabel[g.label], keep = !!p && p.items.length === g.items.length;
+      for (var k = 0; keep && k < g.items.length; k++) if (p.items[k] !== g.items[k]) keep = false;
+      var r = keep ? p : g;
+      if (r !== prev[gi]) same = false;
+      return r;
+    });
+    return same ? prev : out;
+  }
+  window._ccStabilizeGroups = _ccStabilizeGroups;
   var _VL_NO_MODELS = []; // shared empty fallback so `props.models||[]` doesn't mint a new array (and bust the groups memo) every render
   function VirtualList(props) {
     var rawItemsProp=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs, models=props.models||_VL_NO_MODELS;
@@ -32137,16 +32315,34 @@ function startApp() {
     var sortBy = props.sortBy || 'none';
     var selectMode=props.selectMode, selected=props.selected||{};
     var trainingMode=props.trainingMode;
+    // rows get the two prefs they use as booleans, not the prefs object, so a
+    // prefs change that doesn't touch them re-renders no row
+    var autoHighlight = !prefs || prefs.autoHighlight !== false, autoFlyTo = !prefs || prefs.autoFlyTo !== false;
     var scrollRef = useRef(null);
     var _st = useState(0), scrollTop=_st[0], setScrollTop=_st[1];
     var coll = useState({}), collapsed=coll[0], setCollapsed=coll[1];
+    // stable identity: the memoised group headers take it as a prop
+    var toggleGroup = useCallback(function(label) {
+      setCollapsed(function(prev) {
+        var n = Object.assign({}, prev);
+        n[label] = !n[label];
+        return n;
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setCollapsed is a useState setter (stable identity)
+    }, []);
     var grpLimits = useState({}), groupLimits=grpLimits[0], setGroupLimits=grpLimits[1];
 
     // ── ccUiWindowedConflicts state (hooks always called — Rules of Hooks —
     // only the render branch below is conditional on the flag) ──
     // Grouping is always on now, so big results (more rows than the legacy
     // fully-mounted path handles well) always use the windowed renderer.
-    var windowedOn = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiWindowedConflicts')) || rawItemsProp.length > CC_WINDOWED_AUTO_MIN;
+    // A grouped list (the clash list is always grouped by root-cause
+    // element) is windowed from CC_WINDOWED_GROUPED_MIN items on: fully
+    // mounted, every group with every row was ~10k DOM nodes on a ~2k-clash
+    // review set and every state change re-rendered all of them.
+    var hasGrouping = Array.isArray(groupBy) ? groupBy.some(function(g){ return g && g !== 'none'; }) : (!!groupBy && groupBy !== 'none');
+    var windowedOn = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiWindowedConflicts')) || rawItemsProp.length > CC_WINDOWED_AUTO_MIN
+      || (hasGrouping && rawItemsProp.length > CC_WINDOWED_GROUPED_MIN);
     // ── ccUiEmptyStates: model-loading subscription (same window._ccModelLoading
     // + 'cc-model-loading' event pattern already used elsewhere, e.g. the
     // welcome-card/toolbar loading indicators) ──
@@ -32234,8 +32430,15 @@ function startApp() {
     // change on a real data or grouping change (see the s.clashGroupBy /
     // s.issueGroupBy call site), so this is a safe, real memoization, not
     // just a relocated one.
+    // Group objects whose members are unchanged keep their identity across a
+    // regroup (_ccStabilizeGroups), so a single clash's change re-renders
+    // only its own header/row and the row table below is rebuilt only when
+    // the grouping really changed.
+    var prevGroupsRef = useRef(null);
     var groups = useMemo(function(){
-      return groupAndSort(items, groupBy, sortBy, {models: models});
+      var next = _ccStabilizeGroups(prevGroupsRef.current, groupAndSort(items, groupBy, sortBy, {models: models}));
+      prevGroupsRef.current = next;
+      return next;
     }, [items, groupBy, sortBy, models]);
     var flatItems = useMemo(function(){
       if(!groups) return items;
@@ -32592,13 +32795,6 @@ function startApp() {
         ${_emptyNudge}
       </div>`;
     }
-    function toggleGroup(label) {
-      setCollapsed(function(prev) {
-        var n = Object.assign({}, prev);
-        n[label] = !n[label];
-        return n;
-      });
-    }
     function showMore(label) {
       setGroupLimits(function(prev) {
         var n = Object.assign({}, prev);
@@ -32606,11 +32802,6 @@ function startApp() {
         return n;
       });
     }
-    // Severity → semantic color token. Maps to --color-danger/warning/info/text-muted.
-    // 'duplicate' is purple (no token exists) — matches the existing inline-statusColors palette below for visual continuity.
-    var SEV_COLOR = {critical:'var(--color-danger)',major:'var(--color-warning)',hard:'var(--color-danger)',soft:'var(--color-warning)',minor:'var(--text-muted)',duplicate:'#8558ec',info:'var(--text-faint)'};
-    var statusColors = {open:'var(--color-danger)',in_progress:'var(--color-warning)',resolved:'var(--color-success)',closed:'var(--text-muted)',hard:'var(--color-danger)',soft:'var(--color-warning)',duplicate:'#8b5cf6'};
-    var modelById = {}; (models||[]).forEach(function(m){modelById[m.id]=m;});
     function isClusterGroup(g) { return !!(isClash && window._ccClusterDisplay && window._ccClusterDisplay[g.label]); }
 
     // Header JSX factored out of the per-group map loop so BOTH the legacy
@@ -32619,154 +32810,15 @@ function startApp() {
     // the header (+ cluster triage panel); items/"show more" are separate
     // rows so the windowed path can mount them independently.
     function renderHeaderRow(g) {
-      // A group of exactly one clash adds noise, not structure — render it
-      // as a plain row with no header at all (matches how Solibri/BIMcollab/
-      // Revizto/Dalux only show a group card once there's actually more
-      // than one thing under it).
       if (g.items.length === 1) return null;
-      _ccCountRender('headers');
-      var isOpen = !collapsed[g.label];
-      if (isElementGroupMode) {
-        // ── "By element" (root-cause) header ──
-        // Worst severity (word + colour), extent summary ("3 through · 1
-        // partial"), normalised storey, and group actions that go through
-        // BATCH_UPD_CLASH with explicit ids (undoable). The toggle is its
-        // own button so the actions are not nested inside it.
-        var summary = _ccElementGroupSummary(g.items, {storey: storeyLabel, extentLabel: function(k){ return _ccFacetValueLabel('extent', k); }}) || {};
-        var sevCol2 = SEV_COLOR[summary.severity] || 'var(--text-muted)';
-        var openItems2 = g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed'&&it.status!=='denied';});
-        var openCount2 = openItems2.length;
-        var resolved2 = g.items.length - openCount2;
-        var sevPill = _ccSeverityPillStyle(summary.severity);
-        var gIds = g.items.map(function(it){ return it.id; });
-        return html`<div key=${g.label} data-element-group-key=${g.label}
-          style=${{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'var(--space-1) var(--space-2)',padding:'var(--space-2) var(--space-2) var(--space-2) var(--space-1)',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}>
-          <button aria-expanded=${isOpen?'true':'false'} onClick=${function(){toggleGroup(g.label)}}
-            style=${{...S_BTN,flex:'1 1 100%',minWidth:0,display:'flex',alignItems:'flex-start',gap:'var(--space-2)',padding:0,background:'none',textAlign:'left',color:'inherit'}}>
-            <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)',paddingTop:'2px'}}>${_ccChevron(isOpen)}</span>
-            <span style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'2px'}}>
-              <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${summary.title}</span>
-              <span style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
-                <span class="cc-status-pill" data-cc-group-sev=${summary.severity} style=${sevPill}>${_ccFacetValueLabel('severity', summary.severity)}</span>
-                ${summary.extentSummary && html`<span data-cc-group-extent="1" style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>${summary.extentSummary}</span>`}
-                ${summary.subtitle && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>${summary.subtitle}</span>`}
-                ${summary.storey && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${summary.storey}</span>`}
-                <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${openCount2} open${resolved2?(' · '+resolved2+' resolved'):''}</span>
-              </span>
-            </span>
-          </button>
-          <span style=${{flex:1}}></span>
-          ${isClash && openCount2 > 0 && html`<button data-cc-group-accept="1" title=${_cc_t('vlist.acceptAllTip','Accept every open clash in this group (flag for a later check) — undo with Ctrl+Z')}
-            onClick=${function(e){ e.stopPropagation(); d({t:A.BATCH_UPD_CLASH, ids:openItems2.map(function(it){ return it.id; }), u:{status:'accepted_needs_check'}}); }}
-            style=${{...S_BTN_SECONDARY_SM,whiteSpace:'nowrap'}}>${_cc_t('vlist.acceptAll','Accept all')}</button>`}
-          ${isClash && html`<select data-cc-group-status="1" aria-label=${_cc_t('vlist.setGroupStatus','Set status of all {n} clashes in this group',{n:g.items.length})}
-            onClick=${function(e){ e.stopPropagation(); }}
-            onChange=${function(e){ var v = e.target.value; e.target.value = ''; if (v) d({t:A.BATCH_UPD_CLASH, ids:gIds, u:{status:v}}); }}
-            style=${{fontSize:'var(--text-2xs)',padding:'1px var(--space-1)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',maxWidth:88}}>
-            <option value="">${_cc_t('vlist.setStatus','Set status…')}</option>
-            ${['open','in_progress','accepted_needs_check','confirmed','resolved','denied'].map(function(st){ return html`<option key=${st} value=${st}>${(STAT[st] && STAT[st].label) || st}</option>`; })}
-          </select>`}
-          <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)',background:'var(--bg-secondary)',padding:'1px var(--space-2)',borderRadius:'var(--radius-pill)',fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
-        </div>`;
-      }
-      if (isClusterGroup(g)) {
-        // ── Sentry/Linear-style cluster card ──
-        var sev = window._ccClusterSeverity(g.items);
-        var sevCol = SEV_COLOR[sev] || 'var(--text-muted)';
-        var label = window._ccClusterDisplay[g.label];
-        var c0 = g.items[0]||{};
-        var storey = c0.elemAStorey || c0.elemBStorey || '';
-        var mA = modelById[c0.modelAId], mB = modelById[c0.modelBId];
-        // Every group repeating the same "office-architecture ↔ office-mep"
-        // chip is noise when there are only 2 models loaded (it's the same
-        // pair every time) — only worth a chip once there's real ambiguity
-        // about which models are involved (>2 loaded).
-        var modelPair = (models.length > 2 && (mA||mB)) ? ((mA?mA.name:'?') + ' ↔ ' + (mB?mB.name:'?')) : '';
-        var crossModel = mA && mB && mA.id !== mB.id;
-        var openCount = g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}).length;
-        var resolved = g.items.length - openCount;
-        var triage = (triageResults && triageResults[g.label]) || null;
-        var triageLoading = !!(triage && triage.loading);
-        var triageResult = triage && triage.result;
-        var triageError = triage && triage.error;
-        return html`<div key=${g.label} data-cluster-key=${g.label}>
-          <div onClick=${function(){toggleGroup(g.label)}}
-            style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-2) var(--space-2) var(--space-2) var(--space-1)',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}
-            onMouseEnter=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='1';}}
-            onMouseLeave=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='0';}}>
-            <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)'}}>${_ccChevron(isOpen)}</span>
-            <div style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'2px'}}>
-              <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${label}</span>
-              <div style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
-                ${storey && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${storey}</span>`}
-                ${modelPair && html`<span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${modelPair}</span>`}
-                <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${openCount} open${resolved?(' · '+resolved+' resolved'):''}</span>
-              </div>
-            </div>
-            <div class="cc-cluster-actions" style=${{opacity:triageLoading?1:0,display:'flex',gap:'var(--space-1)',transition:'opacity var(--duration-fast) var(--ease-standard)'}}>
-              <button aria-label=${_cc_t('vlist.triageClusterAria','Triage cluster with AI')} title=${_cc_t('vlist.triageClusterTitle','Triage with AI (T) — sends cluster to /api/triage')}
-                disabled=${triageLoading}
-                onClick=${function(e){e.stopPropagation(); window._ccTriageCluster(g.items, d, g.label);}}
-                style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--accent-subtle)',background:'var(--accent-bg)',color:'var(--accent-subtle)',fontWeight:'var(--weight-semibold)',opacity:triageLoading?0.6:1}}>${triageLoading?_cc_t('vlist.triaging','Triaging…'):(triageResult?_cc_t('vlist.reTriage','Re-triage'):_cc_t('vlist.triage','Triage'))}</button>
-              <button aria-label=${_cc_t('vlist.resolveAllGroupAria','Resolve all clashes in this group')} title=${_cc_t('vlist.resolveAllGroupTitle','Resolve all in this group (R)')}
-                onClick=${function(e){e.stopPropagation(); if (openCount===0 || confirm(_cc_t('vlist.resolveAllOpenInGroup','Resolve all {n} open clashes in this group?',{n:openCount}))) window._ccResolveCluster(g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}), d);}}
-                style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)'}}>${_cc_t('vlist.resolveAll','Resolve all')}</button>
-            </div>
-            <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'1px var(--space-2)',borderRadius:'var(--radius-pill)',fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
-          </div>
-          ${(triageResult || triageError) && html`<div style=${{padding:'var(--space-2) var(--space-3)',background:'var(--bg-secondary)',borderBottom:'1px solid var(--border-subtle)'}}>
-            ${triageError
-              ? html`<div style=${{fontSize:'var(--text-xs)',color:'var(--color-danger)'}}>Triage failed: ${triageError}</div>`
-              : html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-2)'}}>
-                  <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexWrap:'wrap'}}>
-                    ${triageResult.severity && html`<span class="cc-status-pill" style=${{background:SEV_COLOR[triageResult.severity]||'var(--text-muted)',color:'#fff'}}>${triageResult.severity}</span>`}
-                    ${triageResult.discipline_conflict && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${triageResult.discipline_conflict}</span>`}
-                    ${triageResult.false_positive_likelihood && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>false-positive: ${triageResult.false_positive_likelihood}</span>`}
-                  </div>
-                  ${triageResult.title && html`<div style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',lineHeight:'var(--leading-tight)'}}>${triageResult.title}</div>`}
-                  ${triageResult.explanation && html`<div style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-base)'}}>${triageResult.explanation}</div>`}
-                  ${Array.isArray(triageResult.resolution_options) && triageResult.resolution_options.length>0 && html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
-                    <div style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-bold)',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--text-muted)'}}>${_cc_t('vlist.resolutionOptions','Resolution options')}</div>
-                    ${triageResult.resolution_options.map(function(opt, idx){return html`<div key=${idx} style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-tertiary)',borderRadius:'var(--radius-xs)',borderLeft:'2px solid var(--accent-subtle)'}}>
-                      <div style=${{color:'var(--text-primary)',fontWeight:'var(--weight-medium)'}}>${idx+1}. ${opt.option}</div>
-                      ${opt.tradeoff && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginTop:'2px'}}>Tradeoff: ${opt.tradeoff}${opt.cost_impact?(' · cost: '+opt.cost_impact):''}</div>`}
-                    </div>`;})}
-                  </div>`}
-                  ${(function(){
-                    // Feedback row: cluster-level 👍/👎 dispatched as A.AI_FEEDBACK
-                    // for every clash in the cluster. Lights up the active choice
-                    // so it doesn't look like clicking did nothing on re-renders.
-                    var fb0 = (g.items[0] && g.items[0].aiFeedback) || null;
-                    var btn = function(label, val, on){return html`<button onClick=${function(e){
-                        e.stopPropagation();
-                        g.items.forEach(function(it){ d({t:A.AI_FEEDBACK, id:it.id, v:val}); });
-                        if (window._ccToast) window._ccToast(_cc_t('toast.thanksFeedbackRecorded','Thanks — feedback recorded'));
-                      }}
-                      title=${val==='real_clash'?_cc_t('vlist.markRealClash','Mark cluster as a real clash'):val==='false_positive'?_cc_t('vlist.markFalsePositive','Mark cluster as a false positive'):_cc_t('vlist.clearFeedback','Clear feedback')}
-                      style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid '+(on?'var(--accent-subtle)':'var(--border)'),background:on?'var(--accent-bg)':'var(--bg-secondary)',color:on?'var(--accent-subtle)':'var(--text-secondary)',fontWeight:on?'var(--weight-semibold)':'var(--weight-regular)'}}>${label}</button>`;};
-                    return html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',paddingTop:'var(--space-1)',borderTop:'1px dashed var(--border-subtle)'}}>
-                      <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginRight:'var(--space-1)'}}>${_cc_t('virtualList.wasThisUseful','Was this useful?')}</span>
-                      ${btn('👍 Real clash', 'real_clash', fb0==='real_clash')}
-                      ${btn('👎 False positive', 'false_positive', fb0==='false_positive')}
-                    </div>`;
-                  })()}
-                </div>`}
-          </div>`}
-        </div>`;
-      }
-      // ── Non-cluster grouping (storey/severity/discipline/etc): keep the lean original header ──
-      var dotColor = statusColors[g.label] || 'var(--accent-light)';
-      return html`<div key=${g.label}
-        onClick=${function(){toggleGroup(g.label)}}
-        style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',padding:'var(--space-1) var(--space-2)',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}>
-        <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)'}}>${_ccChevron(isOpen)}</span>
-        <span data-cc-status="1" style=${{width:8,height:8,borderRadius:'50%',background:dotColor,flexShrink:0}}></span>
-        <span style=${{fontSize:'var(--text-xs)',fontWeight:600,color:'var(--text-primary)',flex:1}}>${g.label}</span>
-        <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'2px var(--space-1)',borderRadius:'var(--radius-md)'}}>${g.items.length}</span>
-      </div>`;
+      return html`<${ConflictGroupHeader} key=${g.label} g=${g} isOpen=${!collapsed[g.label]}
+        mode=${isElementGroupMode ? 'element' : (isClusterGroup(g) ? 'cluster' : 'plain')}
+        isClash=${isClash} storeyLabel=${storeyLabel} d=${d} onToggle=${toggleGroup} models=${models}
+        triage=${(triageResults && triageResults[g.label]) || null} />`;
     }
+
     function renderItemRow(it) {
-      return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`;
+      return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} autoHighlight=${autoHighlight} autoFlyTo=${autoFlyTo} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`;
     }
     function renderMoreRow(g, limit) {
       return html`<button key=${'more:'+g.label} onClick=${function(e){e.stopPropagation();showMore(g.label);}}
@@ -33048,7 +33100,8 @@ function startApp() {
 
   function IssueRow(props) {
     _ccCountRender('rows');
-    var it=props.item, active=props.active, d=props.d, isClash=props.isClash, pr=props.prefs||{}; pr._models=props.models||[];
+    var it=props.item, active=props.active, d=props.d, isClash=props.isClash, rowModels=props.models||[];
+    var pr={autoHighlight:props.autoHighlight!==false, autoFlyTo:props.autoFlyTo!==false};
     var selectMode=props.selectMode, isSelected=props.isSelected;
     var trainingMode=props.trainingMode;
     // Occluder-reveal (Wave 2.2) — local to this row, not the reducer:
@@ -33262,7 +33315,7 @@ function startApp() {
           <button onClick=${function(e){e.stopPropagation();d({t:A.ACTIVE,id:null});if(_unghostAll)_unghostAll();if(window._ccRemoveActiveClashMarker)window._ccRemoveActiveClashMarker();}}
             title=${_cc_t('issueRow.collapse','Collapse')} aria-label=${_cc_t('issueRow.collapseDetailsAria','Collapse details')} style=${{...S_BTN,marginLeft:'auto',padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-base)',flexShrink:0}}>▲</button>
         </div>
-        ${html`<${ClashProps} item=${it} models=${pr._models||[]} isClash=${isClash} />`}
+        ${html`<${ClashProps} item=${it} models=${rowModels} isClash=${isClash} />`}
         <div style=${{display:'flex',gap:'var(--space-1)',alignItems:'center',marginTop:'var(--space-1)',marginBottom:'var(--space-1)'}}>
           <span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',flexShrink:0}}>${_cc_t('issueRow.assignLabel','Assign:')}</span>
           <input type="text" value=${it.assignee||''} placeholder=${_cc_t('issueRow.nameOrTeam','Name or team')}

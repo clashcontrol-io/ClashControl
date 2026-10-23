@@ -124,8 +124,22 @@ async function loadResult(page, size) {
 }
 
 // Runs fn (string action builder) REPS times, returns per-rep {ms, rows, headers}.
+// CC_ACTION_PROFILE=1 prints the top self-time functions of each action
+// (CPU profile over its repetitions) — for finding what an action costs.
+async function profileTop(cdp, prof) {
+  const nodes = prof.profile.nodes, self = new Map(), byId = new Map(nodes.map((n) => [n.id, n]));
+  const dt = prof.profile.timeDeltas, samples = prof.profile.samples;
+  for (let i = 0; i < samples.length; i++) {
+    const n = byId.get(samples[i]); const cf = n.callFrame;
+    const k = (cf.functionName || '(anon)') + ' ' + (cf.url || '').split('/').pop() + ':' + (cf.lineNumber + 1);
+    self.set(k, (self.get(k) || 0) + (dt[i] || 0) / 1000);
+  }
+  return [...self.entries()].filter(([k]) => !/^\((idle|program|garbage collector)\)/.test(k)).sort((a, b) => b[1] - a[1]).slice(0, 15).map(([k, v]) => v.toFixed(1) + ' ms  ' + k).join('\n    ');
+}
 async function measure(page, label, build) {
   const out = [];
+  const cdp = process.env.CC_ACTION_PROFILE === '1' ? await page.context().newCDPSession(page) : null;
+  if (cdp) { await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', { interval: 200 }); await cdp.send('Profiler.start'); }
   for (let i = 0; i < REPS; i++) {
     const r = await page.evaluate(async ([src, i]) => {
       const fn = new Function('i', src);
@@ -140,6 +154,7 @@ async function measure(page, label, build) {
     out.push(r);
     await page.waitForTimeout(60);
   }
+  if (cdp) { const prof = await cdp.send('Profiler.stop'); console.log('  profile ' + label + ':\n    ' + await profileTop(cdp, prof)); await cdp.detach(); }
   const res = { ms: median(out.map((o) => o.ms)), rows: Math.max(...out.map((o) => o.rows)), headers: Math.max(...out.map((o) => o.headers)) };
   console.log(`  ${label}: median ${res.ms.toFixed(1)} ms, max rows rendered ${res.rows}, max group headers rendered ${res.headers}`);
   return res;
