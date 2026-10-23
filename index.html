@@ -378,6 +378,7 @@
       --scene-floor:#f0f0f0;
       --grid-line:#e2e2e2;
       --grid-center:#c8c8c8;
+      --measure:#b8533a;      /* measure lines, dots, magnifier ring */
       --overlay-bg:rgba(255,255,255,.96);
       --overlay-bg-strong:#ffffff;
       --modal-bg:rgba(0,0,0,.35);
@@ -471,6 +472,7 @@
       --scene-floor:#1c1c1c;
       --grid-line:#272727;
       --grid-center:#404040;
+      --measure:#c8674d;
       --overlay-bg:rgba(20,20,20,.96);
       --overlay-bg-strong:#1f1f1f;
       --modal-bg:rgba(0,0,0,.6);
@@ -14183,6 +14185,7 @@ function startApp() {
       // Shared gizmo registry (viewer-gizmo-core.js): screen-constant handles,
       // DESIGN.md token colours, repainted on theme change.
       S.gz = window._ccViewerGizmo.create({THREE: THREE, observeTheme: true, onChange: function(){ invalidate(2); }});
+      function _measCol(){ return S.gz.color('--measure'); }
       window._ccState3d = S;
 
       /* Project a 3D point to viewport screen coordinates so DOM overlays
@@ -16312,8 +16315,8 @@ function startApp() {
       _previewGroup.name = '_cc_measure_preview';
       _previewGroup.renderOrder = 999;
       scene.add(_previewGroup);
-      var _previewLineMat = new THREE.LineDashedMaterial({color:0xb8533a, dashSize:0.15, gapSize:0.08, depthTest:false, transparent:true, opacity:0.95});
-      var _previewSnapMat = new THREE.MeshBasicMaterial({color:0xb8533a, depthTest:false, transparent:true, opacity:0.9});
+      var _previewLineMat = new THREE.LineDashedMaterial({color:_measCol(), dashSize:0.15, gapSize:0.08, depthTest:false, transparent:true, opacity:0.95});
+      var _previewSnapMat = new THREE.MeshBasicMaterial({color:_measCol(), depthTest:false, transparent:true, opacity:0.9});
       // Axis guide colours follow IFC/BIM convention: X=red, Y=green, Z=blue.
       // Three.js internal Y is the vertical axis (= IFC Z), so the Y material is
       // blue and the Z material is green. Labels in the chip are remapped the same way.
@@ -16383,7 +16386,7 @@ function startApp() {
         // are visible after each click and the rubber-band appears to restart from scratch
         // every time, making it look like the area context was lost.
         if (mode === 'area' && pts.length >= 2) {
-          var polyEdgeMat = new THREE.LineBasicMaterial({color:0xb8533a, linewidth:2, depthTest:false, transparent:true, opacity:0.9});
+          var polyEdgeMat = new THREE.LineBasicMaterial({color:_measCol(), linewidth:2, depthTest:false, transparent:true, opacity:0.9});
           // Sort placed points into non-crossing order for the preview polygon
           var _orderedPts = (window._ccOrderPolygon && pts.length >= 3) ? window._ccOrderPolygon(pts) : pts.slice();
           var polyEdgeGeo = new THREE.BufferGeometry().setFromPoints(_orderedPts);
@@ -16736,11 +16739,11 @@ function startApp() {
         }
         if (!bestPair) return;
         // Place the measurement
-        var lineMat = new THREE.LineBasicMaterial({color:0xb8533a, linewidth:2, depthTest:false, transparent:true, opacity:0.95});
+        var lineMat = new THREE.LineBasicMaterial({color:_measCol(), linewidth:2, depthTest:false, transparent:true, opacity:0.95});
         var line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(bestPair), lineMat); line.renderOrder=998;
         scene.add(line); measureObjsRef.current.push(line);
         [bestPair[0], bestPair[1]].forEach(function(p){
-          var dot = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 10), new THREE.MeshBasicMaterial({color:0xb8533a, depthTest:false, transparent:true, opacity:0.95}));
+          var dot = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 10), new THREE.MeshBasicMaterial({color:_measCol(), depthTest:false, transparent:true, opacity:0.95}));
           dot.position.copy(p); dot.renderOrder=999;
           scene.add(dot); measureObjsRef.current.push(dot);
         });
@@ -16995,7 +16998,7 @@ function startApp() {
         d({t:A.UPD_MEASUREMENT, id:id, u:{points:newPts, value:area, label:_ccFmtArea(area, st, true)}});
         var entry = _measureGeoMap[id]; if (!entry) return null;
         var refDot = entry.dots[0];
-        var dotColor = (refDot && refDot.material) ? refDot.material.color.getHex() : 0xb8533a;
+        var dotColor = (refDot && refDot.material) ? refDot.material.color.getHex() : _measCol();
         var dotGeo = new THREE.SphereGeometry(0.05, 10, 10);
         var dotMat = new THREE.MeshBasicMaterial({color:dotColor, depthTest:false});
         var newDot = new THREE.Mesh(dotGeo, dotMat);
@@ -17063,7 +17066,7 @@ function startApp() {
           if (edgeHit) {
             if (!_edgeGhost) {
               var gGeo = new THREE.SphereGeometry(0.05, 8, 8);
-              var gMat = new THREE.MeshBasicMaterial({color:0xb8533a, opacity:0.45, transparent:true, depthTest:false});
+              var gMat = new THREE.MeshBasicMaterial({color:_measCol(), opacity:0.45, transparent:true, depthTest:false});
               var gMesh = new THREE.Mesh(gGeo, gMat); gMesh.renderOrder = 1002;
               scene.add(gMesh);
               _edgeGhost = {mesh:gMesh};
@@ -17171,7 +17174,7 @@ function startApp() {
         _magCanvas.width  = 192; _magCanvas.height = 192;
         _magCanvas.style.cssText = [
           'position:fixed','width:96px','height:96px','border-radius:50%',
-          'border:2px solid #b8533a',
+          'border:2px solid var(--measure)',
           'box-shadow:0 4px 16px rgba(0,0,0,.35)',
           'pointer-events:none','z-index:var(--z-tooltip)','display:none','overflow:hidden'
         ].join(';');
@@ -17627,7 +17630,7 @@ function startApp() {
               [_seedA, _seedB].forEach(function(sv){
                 var _sd = new THREE.Mesh(
                   new THREE.SphereGeometry(0.09, 12, 12),
-                  new THREE.MeshBasicMaterial({color:0xb8533a, depthTest:false, transparent:true, opacity:0.98})
+                  new THREE.MeshBasicMaterial({color:_measCol(), depthTest:false, transparent:true, opacity:0.98})
                 );
                 _sd.position.copy(sv); _sd.renderOrder = 999;
                 scene.add(_sd); measureObjsRef.current.push(_sd);
@@ -17766,7 +17769,7 @@ function startApp() {
           // Persistent anchor sphere at the click point — the live snap marker
           // continues to track the cursor; this dot is the locked-in mate.
           var dotGeo = new THREE.SphereGeometry(0.09, 12, 12);
-          var dotMat = new THREE.MeshBasicMaterial({color:0xb8533a, depthTest:false, transparent:true, opacity:0.98});
+          var dotMat = new THREE.MeshBasicMaterial({color:_measCol(), depthTest:false, transparent:true, opacity:0.98});
           var dot = new THREE.Mesh(dotGeo, dotMat);
           dot.position.copy(hitPt); dot.renderOrder = 999;
           scene.add(dot);
@@ -17776,7 +17779,7 @@ function startApp() {
 
           if(mode==='length' && pts.length===2) {
             var _isTransient = !!window._ccPendingTransient;
-            var lineMat = new THREE.LineBasicMaterial({color: _isTransient ? 0x8a8a8a : 0xb8533a, linewidth:2, depthTest:false, transparent:true, opacity: _isTransient ? 0.7 : 0.95});
+            var lineMat = new THREE.LineBasicMaterial({color: S.gz.color(_isTransient ? '--text-muted' : '--measure'), linewidth:2, depthTest:false, transparent:true, opacity: _isTransient ? 0.7 : 0.95});
             var lineGeo = new THREE.BufferGeometry().setFromPoints([pts[0], pts[1]]);
             var line = new THREE.Line(lineGeo, lineMat); line.renderOrder = 998;
             scene.add(line);

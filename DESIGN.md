@@ -79,6 +79,7 @@ from a token.
 |-----------------------|----------------------------------------|
 | `--scene-bg`          | Three.js viewport background           |
 | `--grid-line` / `--grid-center` | Reference grid colors        |
+| `--measure`           | Measure lines, dots, magnifier ring    |
 | `--overlay-bg`        | Translucent viewer overlay (light)     |
 | `--overlay-bg-strong` | Translucent viewer overlay (strong)    |
 | `--modal-bg`          | Modal backdrop scrim                   |
