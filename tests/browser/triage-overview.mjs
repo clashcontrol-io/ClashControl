@@ -12,9 +12,14 @@
 //     invalidated when an element's geometry changes on a re-run
 //   * smart filters: live facet counts, suggested views, pills + reset,
 //     saved views round-trip through the project codec
+//   * severity: critical stays a small share (<= 20 %) and is only ever a MEP
+//     run through structure or two MEP trades crossing
+//   * layout: the first card row starts <= 240 px below the overview top at
+//     1440x900; the facets live in a Filters popover (Escape closes it before
+//     the overview); the visible cards get their pictures first
 //   * BCF "shown (N)" vs "all (M)" topic counts, review-item labels, snapshots
-//   * axe-core: 0 violations on the overview + filter UI in light, dark and a
-//     phone-sized viewport
+//   * axe-core: 0 violations on the overview + filter UI (popover open) in
+//     light, dark and a phone-sized viewport (popover = bottom sheet there)
 // Screenshots: $CC_TRIAGE_SHOTS (default <os.tmpdir()>/cc-triage-shots).
 //
 // Run: CC_CHROMIUM_EXECUTABLE=... CC_BROWSER_OFFLINE_DEPS=1 node tests/browser/triage-overview.mjs
@@ -60,6 +65,8 @@ const pageErrors = [];
 async function newPage(viewport) {
   const ctx = await browser.newContext({ viewport: viewport || { width: 1440, height: 900 }, acceptDownloads: true });
   await ctx.addInitScript(() => { try { localStorage.setItem('cc_consent_banner_seen', '1'); localStorage.setItem('cc_data_consent', 'denied'); localStorage.setItem('cc_data_consent_explicit', '1'); } catch (e) {} });
+  // order in which snapshot pictures land (visible-first check)
+  await ctx.addInitScript(() => { window.__snapOrder = []; window.addEventListener('cc-snapshot', (e) => { if (e && e.detail) window.__snapOrder.push(e.detail.key); }); });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => pageErrors.push(e.message));
   if (process.env.CC_BROWSER_OFFLINE_DEPS === '1') {
@@ -86,6 +93,11 @@ async function load(page) {
     window.ClashControl.loadFiles(fs);
   }, [gen.fileNames.architecture, gen.fileNames.structure, gen.fileNames.mep]);
   await page.waitForFunction(() => { const s = window._ccLatestState; return s && s.models.length === 3 && s.models.every((m) => (m.elements || []).length > 0) && window._ccModelLoading === false; }, null, { timeout: 240_000, polling: 500 });
+}
+async function openFilters(page) {
+  const open = await page.evaluate(() => { const b = document.querySelector('[data-cc-overview] [data-cc-filters-toggle]'); return b && b.getAttribute('aria-expanded') === 'true'; });
+  if (!open) await page.click('[data-cc-overview] [data-cc-filters-toggle]');
+  await page.waitForSelector('[data-cc-overview] [data-cc-facets-pop]', { timeout: 5000 });
 }
 async function axe(page, label, include) {
   await page.addScriptTag({ path: join(root, 'node_modules/axe-core/axe.min.js') }).catch(() => {});
@@ -144,6 +156,24 @@ try {
   }
   if (!plantedBad) ok(`all ${inReview} planted real clashes stay in 'review'; contacts / provided opening in their own buckets; separate + above-tolerance unreported`);
 
+  // ── severity: critical is rare and only MEP x structure / MEP x MEP across trades ──
+  const sevDist = await page.evaluate(() => {
+    const st = window._ccLatestState, core = window._ccClashClassificationCore;
+    const ctxT = { twice: core.findTwice(st.clashes), roleChoice: (g, r) => window._ccClashDisciplineCore.roleChoice(g, r) };
+    const review = st.clashes.filter((c) => core.reviewBucket(c, st.rules, ctxT) === 'review');
+    const dist = { critical: 0, major: 0, minor: 0, info: 0 }, classes = {};
+    review.forEach((c) => {
+      dist[c.aiSeverity] = (dist[c.aiSeverity] || 0) + 1;
+      if (c.aiSeverity === 'critical') { const k = core.severityClass(c); classes[k] = (classes[k] || 0) + 1; }
+    });
+    return { n: review.length, dist, classes };
+  });
+  const critShare = sevDist.dist.critical / Math.max(1, sevDist.n);
+  const badClasses = Object.keys(sevDist.classes).filter((k) => k !== 'struct-mep' && k !== 'mep-mep');
+  if (critShare > 0.2) fail(`critical share ${(critShare * 100).toFixed(1)} % > 20 %: ` + JSON.stringify(sevDist));
+  else if (badClasses.length) fail('critical outside MEP x structure / MEP x MEP: ' + JSON.stringify(sevDist.classes));
+  else ok(`severity of ${sevDist.n} review clashes: ${JSON.stringify(sevDist.dist)} — critical ${(critShare * 100).toFixed(1)} %, all ${JSON.stringify(sevDist.classes)}`);
+
   // ── overview opened by the interactive run, shows exactly the review set ──
   if (sum.reviewItems > 150) await page.click('[data-cc-overview-prompt] button');
   await page.waitForSelector('[data-cc-overview]', { timeout: 10_000 }).catch(() => fail('overview did not open after an interactive run'));
@@ -165,6 +195,34 @@ try {
   const t0 = Date.now();
   await page.waitForFunction(() => document.querySelectorAll('[data-cc-overview] [data-cc-snapshot]').length >= Math.min(6, document.querySelectorAll('[data-cc-card-key]').length), null, { timeout: 120_000, polling: 250 })
     .catch(() => fail('snapshots did not appear on the overview cards'));
+  // visible cards first: every card on screen got its picture before any
+  // card below the fold
+  const vf = await page.evaluate(() => {
+    const grid = document.querySelector('[data-cc-overview-grid]'), gr = grid.getBoundingClientRect();
+    const svc = window._ccClashSnapshots, st = window._ccLatestState, items = window.ClashControl.review.summary().items;
+    const keyOf = (i) => { const it = items[i]; const c = it && st.clashes.find((x) => x.id === it.ids[0]); return c ? svc.key(c) : null; };
+    const vis = [], off = [];
+    document.querySelectorAll('[data-cc-card-idx]').forEach((el) => {
+      const r = el.getBoundingClientRect(), i = +el.getAttribute('data-cc-card-idx');
+      (r.bottom > gr.top && r.top < gr.bottom ? vis : off).push(keyOf(i));
+    });
+    const order = window.__snapOrder.slice();
+    const first = vis.slice(0, 6).filter(Boolean);
+    const lastVisible = Math.max(...first.map((k) => order.indexOf(k)));
+    const firstOff = off.map((k) => order.indexOf(k)).filter((i) => i >= 0);
+    return { visible: vis.length, offscreen: off.length, firstVisibleAllDone: first.every((k) => order.includes(k)), lastVisible, firstOff: firstOff.length ? Math.min(...firstOff) : null, events: order.length };
+  });
+  if (!vf.firstVisibleAllDone || (vf.firstOff != null && vf.firstOff < vf.lastVisible)) fail('visible cards did not get their pictures first: ' + JSON.stringify(vf));
+  else ok(`visible-first pictures: the first ${Math.min(6, vf.visible)} visible cards rendered before any of the ${vf.offscreen} off-screen cards`);
+  const lay = await page.evaluate(() => {
+    const ov = document.querySelector('[data-cc-overview]').getBoundingClientRect();
+    const first = document.querySelector('[data-cc-card-idx="0"]').getBoundingClientRect();
+    return { top: Math.round(first.top - ov.top), sidebarFilters: document.querySelectorAll('[data-cc-triage-filters]').length, runDetailsOpen: !!document.querySelector('[data-cc-run-details][open]') };
+  });
+  if (lay.top > 240) fail('first card row starts ' + lay.top + ' px below the overview top (> 240)');
+  else ok('first card row starts ' + lay.top + ' px below the overview top (<= 240 at 1440x900)');
+  if (lay.sidebarFilters !== 1 || lay.runDetailsOpen) fail('one filter surface / Run details closed: ' + JSON.stringify(lay));
+  else ok('one filter surface while the overview is open; "Run details" closed by default');
   const snapStats = await page.evaluate(() => window._ccClashSnapshots.stats());
   ok(`snapshots rendered at idle: ${snapStats.rendered} in ${Date.now() - t0} ms wall, median ${snapStats.medianMs && snapStats.medianMs.toFixed(1)} ms / max ${snapStats.maxMs && snapStats.maxMs.toFixed(1)} ms per card, ${snapStats.busyDeferrals} busy deferrals`);
   const det = await page.evaluate(() => {
@@ -217,7 +275,13 @@ try {
   await page.waitForSelector('[data-cc-overview]');
 
   // ── smart filters ──
-  await page.evaluate(() => { document.querySelectorAll('[data-cc-facets]').forEach((d) => { d.open = true; }); });
+  await openFilters(page);
+  // Escape closes the popover, not the overview
+  await page.keyboard.press('Escape');
+  const esc = await page.evaluate(() => ({ pop: !!document.querySelector('[data-cc-facets-pop]'), ov: !!document.querySelector('[data-cc-overview]'), focus: document.activeElement && document.activeElement.getAttribute('data-cc-filters-toggle') }));
+  if (esc.pop || !esc.ov || esc.focus !== '1') fail('Escape in the Filters popover: ' + JSON.stringify(esc));
+  else ok('Escape closes the Filters popover (focus back on the button), the overview stays');
+  await openFilters(page);
   const facet = await page.evaluate(async () => {
     const root = document.querySelector('[data-cc-overview]');
     const chips = [...root.querySelectorAll('[data-cc-facet="severity"] [data-cc-chip]')];
@@ -306,17 +370,39 @@ try {
   // ── axe: light / dark (overview + clash panel filters) ──
   await page.evaluate(() => { window._ccDispatch({ t: 'TRIAGE_UPD', u: { view: 'overview' } }); window._ccDispatch({ t: 'UPD_PREFS', u: { theme: 'light' } }); });
   await page.waitForSelector('[data-cc-overview]');
-  await page.evaluate(() => { document.querySelectorAll('[data-cc-facets]').forEach((d) => { d.open = true; }); });
   await new Promise((r) => setTimeout(r, 400));
   await axe(page, 'light', ['[data-cc-overview]', '[data-cc-bucket-bar]', '[data-cc-triage-filters]']);
+  await openFilters(page);
+  await new Promise((r) => setTimeout(r, 300));
+  await axe(page, 'light, filters open', ['[data-cc-overview]', '[data-cc-bucket-bar]', '[data-cc-facets-pop]']);
   await page.screenshot({ path: join(SHOTS, 'overview-light-filters.png') });
+  await page.keyboard.press('Escape');
   await page.evaluate(() => window._ccDispatch({ t: 'UPD_PREFS', u: { theme: 'dark' } }));
   await new Promise((r) => setTimeout(r, 500));
   await axe(page, 'dark', ['[data-cc-overview]', '[data-cc-bucket-bar]', '[data-cc-triage-filters]']);
   await page.screenshot({ path: join(SHOTS, 'overview-dark.png') });
+  await openFilters(page);
+  await new Promise((r) => setTimeout(r, 300));
+  await axe(page, 'dark, filters open', ['[data-cc-overview]', '[data-cc-facets-pop]']);
+  await page.keyboard.press('Escape');
+  // empty states: facets that match nothing keep the overview open with a Reset
+  const emptyF = await page.evaluate(async () => {
+    window._ccDispatch({ t: 'TRIAGE_UPD', u: { facets: { severity: ['info'], extent: ['contact'] } } });
+    await new Promise((r) => setTimeout(r, 200));
+    const el = document.querySelector('[data-cc-overview-empty]');
+    const kind = el && el.getAttribute('data-cc-overview-empty');
+    if (el) el.querySelector('button').click();
+    await new Promise((r) => setTimeout(r, 200));
+    return { kind, cleared: JSON.stringify(window._ccLatestState.triage.facets), cards: document.querySelectorAll('[data-cc-card-key]').length };
+  });
+  if (emptyF.kind !== 'filtered' || emptyF.cleared !== '{}' || !emptyF.cards) fail('filtered-to-zero overview state: ' + JSON.stringify(emptyF));
+  else ok('filters matching nothing: the overview says so and Reset brings the cards back');
   await page.evaluate(() => window._ccDispatch({ t: 'TRIAGE_UPD', u: { view: 'list' } }));
   await new Promise((r) => setTimeout(r, 300));
   await page.screenshot({ path: join(SHOTS, 'list-dark.png') });
+  await page.evaluate(() => window._ccDispatch({ t: 'UPD_PREFS', u: { theme: 'light' } }));
+  await new Promise((r) => setTimeout(r, 300));
+  await page.screenshot({ path: join(SHOTS, 'list-light.png') });
   await page.context().close();
 
   // ── mobile viewport ──
@@ -331,6 +417,17 @@ try {
   if (overflow > 1) fail('overview scrolls sideways on a phone (' + overflow + ' px)'); else ok('no horizontal scroll in the overview on a 390 px phone');
   await axe(mob, 'mobile', ['[data-cc-overview]']);
   await mob.screenshot({ path: join(SHOTS, 'overview-mobile.png') });
+  const taps = await mob.evaluate(() => [...document.querySelectorAll('[data-cc-overview] .cc-tap, [data-cc-overview] [data-cc-bucket-bar] button')].filter((b) => b.offsetParent !== null)
+    .map((b) => ({ h: Math.round(b.getBoundingClientRect().height), t: (b.textContent || b.getAttribute('aria-label') || '').trim().slice(0, 30) })).filter((x) => x.h < 44));
+  if (taps.length) fail('tap targets under 44 px on a phone: ' + JSON.stringify(taps.slice(0, 5)));
+  else ok('overview controls are >= 44 px tall on a 390 px phone');
+  await openFilters(mob);
+  await new Promise((r) => setTimeout(r, 300));
+  const sheet = await mob.evaluate(() => { const r = document.querySelector('[data-cc-facets-pop]').getBoundingClientRect(); return { left: r.left, right: Math.round(window.innerWidth - r.right), bottomGap: Math.round(window.innerHeight - r.bottom) }; });
+  if (sheet.left > 1 || sheet.right > 1 || Math.abs(sheet.bottomGap - 56) > 2) fail('Filters is not a bottom sheet on a phone: ' + JSON.stringify(sheet));
+  else ok('Filters opens as a bottom sheet above the mobile nav');
+  await axe(mob, 'mobile, filters open', ['[data-cc-overview]', '[data-cc-facets-pop]']);
+  await mob.screenshot({ path: join(SHOTS, 'overview-mobile-filters.png') });
   await mob.context().close();
 
   if (pageErrors.length) fail('page errors: ' + pageErrors.slice(0, 5).join(' | '));

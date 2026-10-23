@@ -32,7 +32,8 @@ for (const name of ['DataQualityPanel', 'IDSValidationPanel', 'AccessibilityPane
 const CLASH_PANELS = ['ClashAISummary', 'ClashStatsBar', 'BulkActionBar', 'RunDetectionModal',
   'ClashRulesPanel', 'ModelClashMatrix', 'IssuePanel', 'StandardsPanel', 'PropDiffView',
   'ClashProps', 'VirtualList', 'ClashHistory', 'ClashToleranceEditor', 'IssueDetailEditor',
-  'IssueRow', 'ClashSetupCard', 'BucketBar', 'TriageFilterBar', 'ClashOverview', 'ClashViewToggle', 'ClashBcfScopeMenu'];
+  'IssueRow', 'ClashSetupCard', 'BucketBar', 'TriageFilterBar', 'ClashOverview', 'ClashViewToggle', 'ClashBcfScopeMenu',
+  'ClashOverviewCard', 'ClashOverviewSnapshot', 'ClashListActionsMenu'];
 const CATEGORICAL_OK = new Set(['#fff', '#ffffff', '#3b82f6', '#a855f7', '#8558ec', '#8b5cf6']);
 for (const name of CLASH_PANELS) {
   test(name + ' has no raw hex colour literals (status tokens only)', () => {
@@ -52,3 +53,16 @@ test('clash-panel status maps are tokenised', () => {
 test('data-quality severity map is tokenised', () => {
   assert.match(html, /var SEV = \{error:'var\(--color-danger-fg\)', warn:'var\(--color-warning-fg\)', info:'var\(--color-info-fg\)'\};/);
 });
+
+// The clash-review chrome (2026-10-23 design pass) also takes its sizes from
+// the type / spacing scale: no hand-picked rem/em values for font size,
+// padding, margin or gap (".69rem", ".15rem .4rem").
+const REVIEW_CHROME = ['BucketBar', 'TriageFilterBar', 'ClashOverview', 'ClashOverviewCard', 'ClashOverviewSnapshot',
+  'ClashViewToggle', 'ClashBcfScopeMenu', 'ClashListActionsMenu', 'BulkActionBar'];
+const RAW_SIZE = /\b(fontSize|padding|margin[A-Za-z]*|gap)\s*:\s*'[^']*\b\d*\.?\d+(rem|em)\b/g;
+for (const name of REVIEW_CHROME) {
+  test(name + ' uses the type / spacing tokens, not raw rem sizes', () => {
+    const hits = body(name).replace(/\/\/[^\n]*/g, '').match(RAW_SIZE) || [];
+    assert.deepStrictEqual(hits, []);
+  });
+}

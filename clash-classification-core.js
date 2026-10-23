@@ -281,27 +281,35 @@
   // Vocabulary matches aiSeverity exactly (critical / major / minor / info).
   // Inputs read from the clash object: type, distance (mm, negative =
   // penetration depth), clearanceMm (soft gap), requiredClearanceMm (the
-  // clearance the rule asked for; default 50), overlapVolM3 (AABB overlap
-  // volume from the engine), roleA/roleB (stamped at detection) with a
-  // fallback derived from elemAType/elemBType + disciplines for legacy clashes,
+  // clearance the rule asked for; default 50), roleA/roleB (stamped at
+  // detection) with a fallback derived from elemAType/elemBType + disciplines
+  // for legacy clashes, trades (per-side matrix key, 'mep.ventilation' …),
   // bboxA/bboxB (extent, above) and opening.
   //
-  // HARD clash, depth d (mm), pair criticality c = max(critA, critB):
-  //   d < 10                     -> minor (info when c == 0): tolerance/rounding floor
-  //   c = 3 (structural)         -> d >= 20 critical, d >= 10 major
-  //   c = 2 (MEP run / civil)    -> d >= 50 critical, d >= 10 major
-  //   c = 1 (terminal, arch ...) -> d >= 100 critical, d >= 10 major
-  //   c = 0 (finishes only)      -> never critical; d >= 50 major, else minor
-  //   overlap volume >= 0.05 m3 bumps minor/major one tier when c >= 2
-  // then, in this order:
-  //   extent 'through'/'through-thin' + structural     -> +1 tier
-  //   one side a finish (covering, furniture), c > 0  -> -1 tier
-  //   extent 'graze'                                  -> at most minor
-  //   opening 'partial' (opening too small)           -> at least major
+  // HARD clash: the PAIR CLASS (what the two elements are) x the EXTENT (how
+  // they overlap) — not an absolute depth. A column sitting 300 mm inside an
+  // architectural wall is embedment / double modelling, not compromised
+  // structure; a 100 mm duct cutting a beam is.
+  //   pair class (severityClass)               through   through-thin  partial
+  //   struct-mep  structure x MEP run              critical  major         major
+  //   mep-mep     MEP run x MEP run, other trade   critical  major         major
+  //   arch-mep    architecture x MEP run           major     major         minor
+  //   struct-arch structure x architecture         major     major         minor
+  //   other       anything x terminal / other …    major     major         minor
+  //   same        same role, same model            minor     minor         minor
+  // Critical needs a known extent: 'unknown' (no depth/size data, every
+  // local-engine clash — its depth is an AABB bound) uses the 'partial' tier,
+  // or the 'through' tier capped at major when the depth is >= 50 mm.
+  // Then, in this order:
+  //   depth < 10 mm                                  -> at most minor (info for finish x finish)
+  //   one side a finish (covering, furniture)        -> -1 tier (not below minor)
+  //   extent 'graze'                                 -> at most minor
+  //   opening 'partial' (opening too small)          -> at least major
   // SOFT clash, gap g vs required clearance r (ratio = g / r):
-  //   ratio <= 0.3 -> major (near miss), else minor;  c == 0 drops one tier
+  //   ratio <= 0.3 -> major (near miss), else minor;  finish x finish drops one tier
   // duplicate / contact (surfaces only touch) -> info;  visibility (sight-line) -> major.
   var TIERS = ['info', 'minor', 'major', 'critical'];
+  var NEAR_MISS_RATIO = 0.3, DEFAULT_REQUIRED_MM = 50;
   function _shift(sev, delta) {
     var i = TIERS.indexOf(sev) + delta;
     return TIERS[Math.max(0, Math.min(TIERS.length - 1, i))];
@@ -315,32 +323,79 @@
   function pairCriticality(c) {
     return Math.max(roleCriticality(_clashRole(c, 'A')), roleCriticality(_clashRole(c, 'B')));
   }
-  var HARD_THRESH = { 3:{major:10, critical:20}, 2:{major:10, critical:50}, 1:{major:10, critical:100}, 0:{major:50, critical:Infinity} };
+  // Two MEP trades that cannot both move ('mep.ventilation' x 'mep.plumbing').
+  // An unresolved pipe ('mep.piping') is the same trade as every pipe trade,
+  // a bare 'mep' (no sub-discipline) is unknown — neither counts as crossing
+  // trades (same rule as clash-discipline-core.js disciplinePairEnabled).
+  var TRADE_FAMILY = { ventilation: 'air', heating: 'pipe', plumbing: 'pipe', fire: 'pipe', piping: 'pipe', electrical: 'elec' };
+  function crossTrade(c) {
+    var t = c && c.trades;
+    if (!t || t.length < 2) return false;
+    var a = String(t[0] || ''), b = String(t[1] || '');
+    if (a.indexOf('mep.') !== 0 || b.indexOf('mep.') !== 0) return false;
+    var sa = a.slice(4), sb = b.slice(4);
+    if (!sa || !sb || sa === sb) return false;
+    if ((sa === 'piping' || sb === 'piping') && TRADE_FAMILY[sa] && TRADE_FAMILY[sa] === TRADE_FAMILY[sb]) return false;
+    return true;
+  }
+  function _sameModel(c) {
+    return !!c.selfClash || (c.modelAId != null && c.modelAId === c.modelBId);
+  }
+  // Pair class of a clash for severity (table above).
+  function severityClass(c) {
+    if (!c) return 'other';
+    var a = _clashRole(c, 'A'), b = _clashRole(c, 'B');
+    function has(r) { return a === r || b === r; }
+    if (has('structural') && has('mep-main')) return 'struct-mep';
+    if (a === 'mep-main' && b === 'mep-main' && crossTrade(c)) return 'mep-mep';
+    if (a === b && _sameModel(c)) return 'same';
+    if (has('architectural') && has('mep-main')) return 'arch-mep';
+    if (has('structural') && has('architectural')) return 'struct-arch';
+    return 'other';
+  }
+  var CLASS_TIERS = {
+    'struct-mep':  { through: 'critical', thin: 'major', partial: 'major' },
+    'mep-mep':     { through: 'critical', thin: 'major', partial: 'major' },
+    'arch-mep':    { through: 'major', thin: 'major', partial: 'minor' },
+    'struct-arch': { through: 'major', thin: 'major', partial: 'minor' },
+    other:         { through: 'major', thin: 'major', partial: 'minor' },
+    same:          { through: 'minor', thin: 'minor', partial: 'minor' }
+  };
+  // gap / required clearance of a soft clash (null when there is no gap data)
+  function clearanceRatio(c) {
+    if (!c) return null;
+    var gap = typeof c.clearanceMm === 'number' ? c.clearanceMm : (typeof c.distance === 'number' ? Math.abs(c.distance) : null);
+    if (gap == null || !isFinite(gap)) return null;
+    var req = (typeof c.requiredClearanceMm === 'number' && c.requiredClearanceMm > 0) ? c.requiredClearanceMm : DEFAULT_REQUIRED_MM;
+    return gap / req;
+  }
+  function isNearMiss(c) {
+    if (!c || c.type !== 'soft') return false;
+    var r = clearanceRatio(c);
+    return r != null && r <= NEAR_MISS_RATIO;
+  }
   function deterministicSeverity(c) {
     if (!c) return 'info';
     if (c.type === 'duplicate' || c.type === 'contact') return 'info';
     if (c.type === 'visibility') return 'major';
     var crit = pairCriticality(c);
     if (c.type !== 'hard') {
-      var gap = typeof c.clearanceMm === 'number' ? c.clearanceMm : (typeof c.distance === 'number' ? Math.abs(c.distance) : null);
-      var req = (typeof c.requiredClearanceMm === 'number' && c.requiredClearanceMm > 0) ? c.requiredClearanceMm : 50;
       // No gap data at all -> no signal to escalate on.
-      var soft = (gap != null && (gap / req) <= 0.3) ? 'major' : 'minor';
+      var soft = isNearMiss(c) ? 'major' : 'minor';
       return crit === 0 ? _shift(soft, -1) : soft;
     }
     var depth = (typeof c.distance === 'number' && c.distance < 0) ? -c.distance : 0;
-    var vol = typeof c.overlapVolM3 === 'number' ? c.overlapVolM3 : 0;
-    var th = HARD_THRESH[crit] || HARD_THRESH[1];
-    var sev;
-    if (depth < 10) sev = crit === 0 ? 'info' : 'minor';
-    else if (depth >= th.critical) sev = 'critical';
-    else if (depth >= th.major) sev = 'major';
-    else sev = 'minor';
-    if (crit >= 2 && vol >= 0.05 && (sev === 'minor' || sev === 'major')) sev = _shift(sev, 1);
     var roleA = _clashRole(c, 'A'), roleB = _clashRole(c, 'B');
+    var tiers = CLASS_TIERS[severityClass(c)] || CLASS_TIERS.other;
     var ext = clashExtent(c);
-    if ((ext === 'through' || ext === 'through-thin') && (roleA === 'structural' || roleB === 'structural')) sev = _shift(sev, 1);
-    if (crit > 0 && (roleA === 'finish' || roleB === 'finish')) sev = _shift(sev, -1);
+    var sev;
+    if (ext === 'through') sev = tiers.through;
+    else if (ext === 'through-thin') sev = tiers.thin;
+    else if (ext === 'unknown') sev = depth >= 50 && tiers.through !== 'minor' ? 'major' : tiers.partial;
+    else sev = tiers.partial;                      // partial, graze (capped below)
+    if (depth < 10) sev = crit === 0 ? 'info' : (TIERS.indexOf(sev) > 1 ? 'minor' : sev);
+    else if (crit > 0 && (roleA === 'finish' || roleB === 'finish')) sev = sev === 'minor' ? 'minor' : _shift(sev, -1);
+    else if (crit === 0) sev = _shift(sev, -1);
     if (ext === 'graze' && TIERS.indexOf(sev) > 1) sev = 'minor';
     if (c.opening === 'partial' && TIERS.indexOf(sev) < 2) sev = 'major';
     return sev;
@@ -618,8 +673,12 @@
   //   finish     finishes only (both sides covering / furniture) or movable
   //              furniture against anything
   //   graze      hard clash whose extent is 'graze' (barely overlaps)
+  //   adjacent   clearance-only finding between architectural / structural /
+  //              finish elements that sit next to each other by design
+  //              (wall-slab, wall-beam). Near misses (gap <= 30 % of the
+  //              required clearance) stay in review.
   //   review     everything else — the list a coordinator works through
-  var REVIEW_BUCKETS = ['review', 'contact', 'provided', 'provision', 'zone', 'twice', 'embedded', 'finish', 'graze', 'handled'];
+  var REVIEW_BUCKETS = ['review', 'contact', 'provided', 'provision', 'zone', 'twice', 'embedded', 'finish', 'graze', 'adjacent', 'handled'];
   var DEFAULT_HIDDEN_BUCKETS = REVIEW_BUCKETS.filter(function(b) { return b !== 'review'; });
   var ROLE_CHOICE_DEFAULTS = { provision: 'classify', zone: 'classify', space: 'exclude', duplicate: 'include', proxy: 'include' };
   var EMBEDDED_TYPES = { IfcReinforcingBar:1, IfcReinforcingMesh:1, IfcReinforcingElement:1, IfcTendon:1, IfcTendonAnchor:1,
@@ -646,6 +705,13 @@
     if (FURNITURE_TYPES[_ifc(c.elemAType)] || FURNITURE_TYPES[_ifc(c.elemBType)]) return true;
     return _clashRole(c, 'A') === 'finish' && _clashRole(c, 'B') === 'finish';
   }
+  var ADJACENT_ROLES = { structural: 1, architectural: 1, finish: 1 };
+  function isAdjacentByDesign(c) {
+    if (!c || c.type !== 'soft') return false;
+    if (!ADJACENT_ROLES[_clashRole(c, 'A')] || !ADJACENT_ROLES[_clashRole(c, 'B')]) return false;
+    var r = clearanceRatio(c);
+    return r != null && r > NEAR_MISS_RATIO;
+  }
   // ctx (optional): { twice: {clashId: true} } from findTwice, roleChoice(g, rules)
   function reviewBucket(c, rules, ctx) {
     if (!c) return 'review';
@@ -661,6 +727,7 @@
     if (isEmbedded(c)) return 'embedded';
     if (isFinishOnly(c)) return 'finish';
     if (clashExtent(c) === 'graze') return 'graze';
+    if (isAdjacentByDesign(c)) return 'adjacent';
     return 'review';
   }
   // Buckets hidden by the rules. rules.hideBuckets (array) wins; the legacy
@@ -749,7 +816,7 @@
   }
 
   return Object.freeze({
-    contractVersion: 3,
+    contractVersion: 4,
     clashExtent: clashExtent,
     REVIEW_BUCKETS: REVIEW_BUCKETS,
     DEFAULT_HIDDEN_BUCKETS: DEFAULT_HIDDEN_BUCKETS,
@@ -773,6 +840,12 @@
     loadBearingOf: loadBearingOf,
     pairCriticality: pairCriticality,
     deterministicSeverity: deterministicSeverity,
+    severityClass: severityClass,
+    crossTrade: crossTrade,
+    clearanceRatio: clearanceRatio,
+    isNearMiss: isNearMiss,
+    isAdjacentByDesign: isAdjacentByDesign,
+    NEAR_MISS_RATIO: NEAR_MISS_RATIO,
     OPENING_STRIDE: OPENING_STRIDE,
     obbFromLocalBox: obbFromLocalBox,
     obbContains: obbContains,

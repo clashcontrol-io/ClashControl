@@ -137,6 +137,13 @@
     if (sev === 'critical' && !c.assignee) tags.push('unassigned-critical');
     if (c.opening === 'partial' || c.provision === 'partial') tags.push('opening-too-small');
     if (c._delta === 'new') tags.push('new');
+    // near miss: a clearance finding whose gap is <= 30 % of the clearance
+    // the rule asked for (same ratio as the severity model's soft tier)
+    if (c.type === 'soft') {
+      var gap = typeof c.clearanceMm === 'number' ? c.clearanceMm : (typeof c.distance === 'number' ? Math.abs(c.distance) : null);
+      var req = (typeof c.requiredClearanceMm === 'number' && c.requiredClearanceMm > 0) ? c.requiredClearanceMm : 50;
+      if (gap != null && isFinite(gap) && gap / req <= 0.3) tags.push('near-miss');
+    }
     return {
       severity: sev,
       extent: ext,
@@ -205,7 +212,7 @@
   var ORDER = {
     severity: ['critical', 'major', 'minor', 'info'],
     extent: ['through', 'through-thin', 'partial', 'graze', 'unknown', 'clearance', 'contact', 'duplicate', 'visibility', 'other'],
-    bucket: ['review', 'contact', 'provided', 'provision', 'zone', 'twice', 'embedded', 'finish', 'graze', 'handled'],
+    bucket: ['review', 'contact', 'provided', 'provision', 'zone', 'twice', 'embedded', 'finish', 'graze', 'adjacent', 'handled'],
     status: ['open', 'in_progress', 'accepted_needs_check', 'confirmed', 'resolved', 'closed', 'denied']
   };
   function orderedValues(key, counts, storeyLabels) {
@@ -231,6 +238,7 @@
     { id: 'riser-through-slab', label: 'Risers through slabs', facets: { tag: ['riser-through-slab'] } },
     { id: 'unassigned-critical', label: 'Unassigned critical', facets: { tag: ['unassigned-critical'] } },
     { id: 'opening-too-small', label: 'Openings too small', facets: { tag: ['opening-too-small'] } },
+    { id: 'near-miss', label: 'Near misses', facets: { extent: ['clearance'], tag: ['near-miss'] } },
     { id: 'new', label: 'New since last run', facets: { tag: ['new'] } }
   ];
   // Returns [{id, label, facets, count}] — fixed views first, then up to

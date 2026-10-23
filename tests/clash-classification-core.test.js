@@ -6,12 +6,14 @@ const core = require('../clash-classification-core');
 function clash(id, extra) {
   return Object.assign({
     id, type:'hard', elemAType:'IfcDuctSegment', elemBType:'IfcBeam',
-    disciplines:['MEP','Structural'], point:[0,0,0], elemAStorey:'L1', distance:-30
+    disciplines:['MEP','Structural'], point:[0,0,0], elemAStorey:'L1',
+    // a 200 mm duct running 250 mm deep through a 300 mm beam: extent 'through'
+    distance:-250, bboxA:{dx:3000,dy:200,dz:200}, bboxB:{dx:300,dy:500,dz:5000}
   }, extra || {});
 }
 
 test('classification core is an immutable one-function contract', () => {
-  assert.equal(core.contractVersion, 3);
+  assert.equal(core.contractVersion, 4);
   assert.equal(Object.isFrozen(core), true);
   assert.equal(typeof core.classifyClashes, 'function');
   assert.equal(typeof core.deterministicSeverity, 'function');

@@ -38,18 +38,50 @@ test('extent is symmetric in A/B (both engines may call either side A)', () => {
 });
 
 // ── severity ─────────────────────────────────────────────────────────────
-test('severity: graze caps at minor, through structural +1, finish -1, opening partial >= major', () => {
+test('severity: pair class x extent; graze caps at minor, finish -1, opening partial >= major', () => {
   const sev = core.deterministicSeverity;
-  // structural pair, 15 mm deep: base major; as a graze -> minor
+  const pipe = bb(100, 100, 3000), beam = bb(300, 500, 6000), wall = bb(200, 3000, 3000);
+  // MEP run through a beam: critical; only partly into it: major
+  assert.equal(sev(hard(400, pipe, beam, { roleA: 'mep-main', roleB: 'structural' })), 'critical');
+  assert.equal(sev(hard(60, pipe, beam, { roleA: 'mep-main', roleB: 'structural' })), 'major');
+  // a hanger rod (through-thin) through structure is major, not critical
+  assert.equal(sev(hard(600, bb(6, 6, 1000), bb(4000, 4000, 250), { roleA: 'mep-main', roleB: 'structural' })), 'major');
+  // the same duct through an architectural wall needs builder's work: major
+  assert.equal(sev(hard(600, bb(3000, 600, 400), wall, { roleA: 'mep-main', roleB: 'architectural' })), 'major');
+  // a column 300 mm into an architectural wall is embedment, not compromised structure
+  assert.equal(sev(hard(300, bb(400, 3000, 400), wall, { elemAType: 'IfcColumn', roleA: 'structural', roleB: 'architectural' })), 'major');
+  assert.equal(sev(hard(60, bb(400, 3000, 400), wall, { elemAType: 'IfcColumn', roleA: 'structural', roleB: 'architectural' })), 'minor');
+  // two MEP runs of different trades: critical through; same trade, same model: minor
+  const trades = { roleA: 'mep-main', roleB: 'mep-main', trades: ['mep.ventilation', 'mep.plumbing'], modelBId: 'M' };
+  assert.equal(sev(hard(400, pipe, bb(3000, 600, 400), trades)), 'critical');
+  assert.equal(sev(hard(400, pipe, bb(3000, 600, 400), Object.assign({}, trades, { trades: ['mep.heating', 'mep.piping'] }))), 'minor', 'piping is the same trade as heating, same model');
+  // structural pair, 15 mm deep: a graze -> minor
   assert.equal(sev(hard(15, bb(400, 400, 3000), bb(300, 600, 6000), { roleA: 'structural', roleB: 'structural' })), 'minor');
-  // same depth without box sizes: base rule (major)
-  assert.equal(sev(hard(15, null, null, { roleA: 'structural', roleB: 'structural' })), 'major');
-  // thin MEP run (10 mm) through a structural element, 15 mm deep: through-thin, major -> critical
-  assert.equal(sev(hard(15, bb(10, 400, 3000), bb(12, 3000, 3000), { roleA: 'mep-main', roleB: 'structural' })), 'critical');
+  // unknown extent (no box sizes / local engine) never reaches critical
+  assert.equal(sev(hard(400, null, null, { roleA: 'mep-main', roleB: 'structural' })), 'major');
+  assert.equal(sev(hard(400, pipe, beam, { roleA: 'mep-main', roleB: 'structural', source: 'local_engine' })), 'major');
   // finish side: one tier down
-  assert.equal(sev(hard(60, bb(400, 400, 3000), bb(3000, 3000, 100), { roleA: 'mep-main', roleB: 'finish' })), 'major');
+  assert.equal(sev(hard(60, bb(400, 400, 3000), bb(3000, 3000, 100), { roleA: 'mep-main', roleB: 'finish' })), 'minor');
+  assert.equal(sev(hard(600, bb(400, 400, 3000), bb(3000, 3000, 100), { roleA: 'mep-main', roleB: 'finish' })), 'minor');
   // opening too small: at least major, even when shallow
   assert.equal(sev(hard(4, null, null, { roleA: 'mep-terminal', roleB: 'architectural', opening: 'partial' })), 'major');
+});
+
+test('severity class: only MEP x structure and MEP x MEP across trades can be critical', () => {
+  const C = core.severityClass;
+  assert.equal(C({ roleA: 'mep-main', roleB: 'structural' }), 'struct-mep');
+  assert.equal(C({ roleA: 'mep-main', roleB: 'mep-main', trades: ['mep.ventilation', 'mep.electrical'] }), 'mep-mep');
+  assert.equal(C({ roleA: 'mep-main', roleB: 'mep-main', trades: ['mep', 'mep'], modelAId: 'M', modelBId: 'N' }), 'other', 'unknown trades');
+  assert.equal(C({ roleA: 'mep-main', roleB: 'architectural' }), 'arch-mep');
+  assert.equal(C({ roleA: 'structural', roleB: 'architectural' }), 'struct-arch');
+  assert.equal(C({ roleA: 'structural', roleB: 'structural', modelAId: 'S', modelBId: 'S' }), 'same');
+  assert.equal(C({ roleA: 'mep-terminal', roleB: 'structural' }), 'other');
+  const roles = { 'arch-mep': ['mep-main', 'architectural'], 'struct-arch': ['structural', 'architectural'], other: ['mep-terminal', 'structural'], same: ['architectural', 'architectural'] };
+  for (const cls of Object.keys(roles)) {
+    const c = hard(2000, bb(100, 100, 3000), bb(300, 500, 6000), { roleA: roles[cls][0], roleB: roles[cls][1], modelBId: cls === 'same' ? 'M' : 'A' });
+    assert.equal(C(c), cls);
+    assert.notEqual(core.deterministicSeverity(c), 'critical', cls + ' never reaches critical');
+  }
 });
 
 test('the size-ratio rule is gone: a pipe through a slab is judged by depth x role', () => {
@@ -82,6 +114,11 @@ test('every bucket is reachable, first match wins', () => {
   assert.equal(R(hard(600, null, null, { elemAType: 'IfcCovering', elemBType: 'IfcColumn', roleA: 'finish', roleB: 'structural' }), rules), 'review', 'a covering against a column stays (planted P20)');
   assert.equal(R(hard(15, bb(400, 400, 3000), bb(300, 600, 6000)), rules), 'graze');
   assert.equal(R({ type: 'soft', clearanceMm: 49.9, status: 'open' }, rules), 'review', 'clearance near the limit is reviewed');
+  const archStruct = { type: 'soft', status: 'open', elemAType: 'IfcWall', elemBType: 'IfcSlab', roleA: 'architectural', roleB: 'structural' };
+  assert.equal(R(Object.assign({ clearanceMm: 30 }, archStruct), rules), 'adjacent', 'wall next to a slab by design');
+  assert.equal(R(Object.assign({ clearanceMm: 10 }, archStruct), rules), 'review', 'a near miss (<= 30 % of the required clearance) stays in review');
+  assert.equal(R(Object.assign({ clearanceMm: 30 }, archStruct, { roleB: 'mep-main', elemBType: 'IfcDuctSegment' }), rules), 'review', 'MEP clearance is reviewed');
+  assert.equal(R(Object.assign({}, archStruct), rules), 'review', 'no gap data: reviewed');
   assert.equal(R({ type: 'duplicate', status: 'open', elemAType: 'IfcCovering', elemBType: 'IfcCovering' }, rules), 'review', 'a duplicate element is a finding');
 });
 

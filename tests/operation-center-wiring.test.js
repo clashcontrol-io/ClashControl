@@ -37,6 +37,13 @@ test('cancel actions reuse the existing abort hooks, no new cancellation path', 
   assert.match(fnBody, /_revitDirectCancelExport/);
 });
 
+test('cancelling a load ends the open load batches (a terminated parse never releases its properties hold)', () => {
+  const at = html.indexOf('window._ccAbortLoading = function() {');
+  const abort = html.slice(at, at + 600);
+  assert.match(abort, /_ccOpenLoadBatches\.splice\(0\)\.forEach\(function\(b\) \{ try \{ b\.cancel\(\); \} catch \(_\) \{\} \}\);/);
+  assert.match(html, /_ccOpenLoadBatches\.push\(_loadBatch\);/);
+});
+
 test('load coordinator now emits cc-load-session events (Phase 5 depends on this)', () => {
   const idx = html.indexOf('createLoadCoordinator({');
   assert.ok(idx !== -1);
