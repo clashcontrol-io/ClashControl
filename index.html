@@ -10261,9 +10261,9 @@ function startApp() {
     var pool = {
       dead: false, reason: null, failed: false, ready: false, seedSq: seedSq,
       results: new Map(),          // candidate index -> Float64Array(_NP_REC) record
-      stats: { workers: nWorkers, jobs: 0, jobsDone: 0, pairs: 0, pairsDone: 0, wasmWorkers: 0, engineWorkers: 0, initMs: 0, copiedFloats: 0, reason: null, workerMs: [0, 0, 0] }
+      stats: { workers: nWorkers, jobs: 0, jobsDone: 0, pairs: 0, pairsDone: 0, wasmWorkers: 0, engineWorkers: 0, initMs: 0, copiedFloats: 0, uniqueFloats: 0, reason: null, workerMs: [0, 0, 0] }
     };
-    var slots = [], queue = [], openWindows = [], elIds = new Map(), nextElId = 1, nextJobId = 1, readyCount = 0;
+    var slots = [], queue = [], openWindows = [], elIds = new Map(), sentOnce = new Set(), nextElId = 1, nextJobId = 1, readyCount = 0;
     var resolveReady, initTimer = null;
     pool.readyP = new Promise(function(res) { resolveReady = res; });
 
@@ -10309,6 +10309,7 @@ function startApp() {
         slot.cache.set(id, { floats: copy.length });
         slot.floats += copy.length;
         pool.stats.copiedFloats += copy.length;
+        if (!sentOnce.has(id)) { sentOnce.add(id); pool.stats.uniqueFloats += copy.length; }
       });
       if (slot.floats > _NP_WORKER_FLOATS) {
         var keys = Array.from(slot.cache.keys());
@@ -10326,12 +10327,42 @@ function startApp() {
       xfer.push(pairs.buffer);
       return { msg: { t: 'job', id: job.id, drop: drop, add: add, pairs: pairs, seedSq: pool.seedSq }, xfer: xfer };
     }
+    // Element affinity: a free worker takes, among the queued jobs of the
+    // OLDEST open window (main waits for that whole window anyway, so the
+    // order inside it costs nothing), the one whose elements it already holds
+    // the most of (triangle floats) — ties go to the job least held by the
+    // other workers, then to the earliest. Every element a worker receives is
+    // copied, registered (WASM BVH) and refined (JS BVH, topology) there, so
+    // spreading one neighbourhood over all workers repeats that per worker.
+    // Pure scheduling: a job's answers do not depend on which worker runs it.
+    function cachedFloats(sl, job) {
+      var f = 0, seen = job.ids;
+      for (var i = 0; i < seen.length; i++) { var ent = sl.cache.get(seen[i]); if (ent) f += ent.floats; }
+      return f;
+    }
+    function pickJob(sl) {
+      var win = queue[0].win, best = 0, bestOwn = -1, bestOther = Infinity;
+      for (var q = 0; q < queue.length && queue[q].win === win; q++) {
+        var job = queue[q];
+        if (!job.ids) {
+          var u = new Set();
+          for (var k = 0; k < job.eA.length; k++) { u.add(idOf(job.eA[k])); u.add(idOf(job.eB[k])); }
+          job.ids = Array.from(u);
+        }
+        var own = cachedFloats(sl, job);
+        if (own < bestOwn) continue;
+        var other = 0;
+        for (var s2 = 0; s2 < slots.length; s2++) if (slots[s2] !== sl) other += cachedFloats(slots[s2], job);
+        if (own > bestOwn || other < bestOther) { best = q; bestOwn = own; bestOther = other; }
+      }
+      return queue.splice(best, 1)[0];
+    }
     function pump() {
       if (pool.dead) return;
       for (var i = 0; i < slots.length && queue.length; i++) {
         var sl = slots[i];
         if (sl.busy || !sl.ready) continue;
-        var job = queue.shift(), payload;
+        var job = pickJob(sl), payload;
         try { payload = buildPayload(sl, job); }
         catch (e) { pool.fail('payload: ' + ((e && e.message) || e)); return; }
         sl.busy = true; sl.job = job;
@@ -11733,7 +11764,7 @@ function startApp() {
       _np.terminate(reason);
       var st = _np.stats;
       _npStats = { used: true, workers: st.workers, jobs: st.jobs, jobsDone: st.jobsDone, pairs: st.pairs, pairsDone: st.pairsDone,
-        wasmWorkers: st.wasmWorkers, engineWorkers: st.engineWorkers, initMs: st.initMs, copiedMB: Math.round(st.copiedFloats * 4 / 1048576 * 10) / 10,
+        wasmWorkers: st.wasmWorkers, engineWorkers: st.engineWorkers, initMs: st.initMs, copiedMB: Math.round(st.copiedFloats * 4 / 1048576 * 10) / 10, uniqueMB: Math.round((st.uniqueFloats || 0) * 4 / 1048576 * 10) / 10,
         fellBack: _np.failed, reason: _np.reason, native: !!st.native,
         // summed over workers: ms in hard tests / clearance / hit refinement
         workerMs: st.workerMs ? { hard: Math.round(st.workerMs[0]), soft: Math.round(st.workerMs[1]), refine: Math.round(st.workerMs[2]) } : null };
