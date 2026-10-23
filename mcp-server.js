@@ -131,7 +131,7 @@ const TOOLS = [
       'same-discipline real problem), and AI severity/category. Stable element identity per side: ' +
       'uniqueIdA/uniqueIdB (Revit UniqueId — the most reliable cross-document join key; prefer this), ' +
       'globalIdA/globalIdB (IFC GlobalId), revitIdA/revitIdB (Revit ElementId, doc-local). Plus ' +
-      'classificationA/classificationB ({system, code} NL-SfB/Uniclass — the join key to finance/ERP & ' +
+      'classificationA/classificationB ({system, code} e.g. Uniclass or a national system — the join key to finance/ERP & ' +
       'specs) and modelAId/modelBId. Also gridBay — the nearest structural-grid bay (e.g. "A-3") for ' +
       'the clash point when grids are loaded via the Revit bridge, for "near grid A-3" queries. ' +
       'Filter by status and limit results.',

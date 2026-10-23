@@ -892,17 +892,29 @@
   }
 
   // Discipline from a Revit model name + element category mix. Returns a
-  // discipline id or null (caller falls back to the IFC-type detector). Keyword
-  // lists cover EN + NL (the common Revit UI languages here).
+  // discipline id or null (caller falls back to the IFC-type detector).
+  // English name fragments here; every registered country pack adds the ones
+  // its Revit UI language uses (naming.revitDisciplineHints).
+  var _REVIT_NAME_HINTS = {
+    mep: ['installat', 'mep', 'hvac', 'mechanic', 'electric', 'plumb', 'ventilat'],
+    structural: ['structur', 'struct', 'construct'],
+    architectural: ['architect', 'arch']
+  };
+  function _revitNameHints(key) {
+    var list = _REVIT_NAME_HINTS[key].slice();
+    var packs = (typeof window._ccGetCountryPacks === 'function' && window._ccGetCountryPacks()) || [];
+    packs.forEach(function(pk) {
+      var h = pk && pk.naming && pk.naming.revitDisciplineHints && pk.naming.revitDisciplineHints[key];
+      (h || []).forEach(function(t) { t = String(t).toLowerCase(); if (list.indexOf(t) < 0) list.push(t); });
+    });
+    return list;
+  }
   function _revitDiscipline(name, elements) {
     var n = (name || '').toLowerCase();
-    var STRUCT_N = ['structur', 'struct', 'construct', 'constructie', 'constructief', 'draag'];
-    var MEP_N = ['installat', 'mep', 'hvac', 'mechanic', 'electric', 'elektr', 'plumb', 'sanitair', 'leiding', 'kanaal', 'ventilat', 'cv', 'w-install', 'e-install'];
-    var ARCH_N = ['architect', 'bouwkund', 'arch', 'interieur'];
     function hit(list) { for (var i = 0; i < list.length; i++) if (n.indexOf(list[i]) >= 0) return true; return false; }
-    if (hit(MEP_N)) return 'mep';
-    if (hit(STRUCT_N)) return 'structural';
-    if (hit(ARCH_N)) return 'architectural';
+    if (hit(_revitNameHints('mep'))) return 'mep';
+    if (hit(_revitNameHints('structural'))) return 'structural';
+    if (hit(_revitNameHints('architectural'))) return 'architectural';
     // Name inconclusive — vote on Revit category keywords across the elements.
     var STRUCT_C = ['beam', 'column', 'footing', 'foundation', 'framing', 'truss', 'rebar', 'brace', 'pile', 'structural'];
     var MEP_C = ['pipe', 'duct', 'cable', 'conduit', 'mechanical', 'electrical', 'plumbing', 'sprinkler', 'lighting fixture', 'air terminal', 'hvac'];

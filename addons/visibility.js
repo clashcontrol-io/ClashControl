@@ -527,11 +527,19 @@
 
     // Preset library — these are starting points coordinators can run
     // directly. Tied to recognised conventions / regulations.
+    //
+    // Name filters are word lists, not regexes: English words here, plus the
+    // words every registered country pack lists for the same term group
+    // (naming.visibilityTerms — model names follow the authoring language,
+    // not the user's region). Country-specific presets (e.g. a national
+    // workplace rule) live in a pack's engines.visibility.presets and are
+    // offered while that pack is the active regional code.
+    function _w(words, group) { return { words: words, group: group || null }; }
     var PRESETS = {
       'exit-signs-generic': {
         sampleId: 'exit-signs-generic',
         viewer:  { types:['IfcSpace'], sampling:{mode:'grid', eyeHeight:1.65, stride:3.0} },
-        target:  { types:['IfcSign','IfcLightFixture'], namePattern:'exit|uitgang|sortie|notausgang' },
+        target:  { types:['IfcSign','IfcLightFixture'], name: _w(['exit'], 'exit') },
         obstructer: { excludeTypes:['IfcFurnishingElement'] },
         maxRange: 25.0,
         mode: 'obstruction'
@@ -542,7 +550,7 @@
       'exit-signs-EN-1838': {
         sampleId: 'exit-signs-EN-1838',
         viewer:  { types:['IfcSpace'], sampling:{mode:'grid', eyeHeight:1.65, stride:2.0} },
-        target:  { types:['IfcSign','IfcLightFixture'], namePattern:'exit|escape|emergency|notausgang' },
+        target:  { types:['IfcSign','IfcLightFixture'], name: _w(['exit','escape','emergency'], 'exit') },
         obstructer: { excludeTypes:[] },
         maxRange: 25.0,
         mode: 'obstruction'
@@ -552,23 +560,15 @@
       'exit-signs-BS-5499': {
         sampleId: 'exit-signs-BS-5499',
         viewer:  { types:['IfcSpace'], sampling:{mode:'grid', eyeHeight:1.65, stride:2.0} },
-        target:  { types:['IfcSign'], namePattern:'exit|escape' },
+        target:  { types:['IfcSign'], name: _w(['exit','escape']) },
         obstructer: { excludeTypes:[] },
         maxRange: 25.0,
         mode: 'obstruction'
       },
-      'workplace-window-view-NL': {
-        sampleId: 'workplace-view-NL',
-        viewer:  { types:['IfcFurnishingElement'], namePattern:'desk|werkplek|workstation', sampling:{mode:'centroid', eyeHeight:1.20} },
-        target:  { types:['IfcWindow'] },
-        obstructer: { excludeTypes:['IfcFurnishingElement','IfcDoor'] },
-        maxRange: 6.0,
-        mode: 'obstruction'
-      },
       'nurse-station-LOS': {
         sampleId: 'nurse-station-LOS',
-        viewer:  { types:['IfcFurnishingElement'], namePattern:'nurse|verpleeg|station', sampling:{mode:'centroid', eyeHeight:1.20} },
-        target:  { types:['IfcSpace'], namePattern:'bed|patient|kamer|room' },
+        viewer:  { types:['IfcFurnishingElement'], name: _w(['nurse','station'], 'nurse'), sampling:{mode:'centroid', eyeHeight:1.20} },
+        target:  { types:['IfcSpace'], name: _w(['bed','patient','room'], 'patientRoom') },
         obstructer: { excludeTypes:[] },
         maxRange: 25.0,
         mode: 'obstruction'
@@ -576,7 +576,7 @@
       'wheelchair-exit-signs-1200': {
         sampleId: 'wheelchair-exit-signs',
         viewer:  { types:['IfcSpace'], sampling:{mode:'grid', eyeHeight:1.20, stride:3.0} },
-        target:  { types:['IfcSign','IfcLightFixture'], namePattern:'exit|uitgang|sortie' },
+        target:  { types:['IfcSign','IfcLightFixture'], name: _w(['exit'], 'exit') },
         obstructer: { excludeTypes:['IfcFurnishingElement'] },
         maxRange: 25.0,
         mode: 'obstruction'
@@ -586,8 +586,8 @@
       // standing screens that designers add after the fact.
       'reception-front-door-LOS': {
         sampleId: 'reception-LOS',
-        viewer:  { types:['IfcFurnishingElement'], namePattern:'reception|balie|receptie', sampling:{mode:'centroid', eyeHeight:1.20} },
-        target:  { types:['IfcDoor'], namePattern:'entrance|main|hoofdingang' },
+        viewer:  { types:['IfcFurnishingElement'], name: _w(['reception'], 'reception'), sampling:{mode:'centroid', eyeHeight:1.20} },
+        target:  { types:['IfcDoor'], name: _w(['entrance','main'], 'entrance') },
         obstructer: { excludeTypes:[] },
         maxRange: 30.0,
         mode: 'obstruction'
@@ -596,7 +596,7 @@
       'surveillance-camera-coverage': {
         sampleId: 'cam-coverage',
         viewer:  { types:['IfcSpace'], sampling:{mode:'grid', eyeHeight:1.50, stride:2.0} },
-        target:  { types:['IfcFlowTerminal','IfcSensor','IfcAudioVisualAppliance'], namePattern:'camera|cctv|surveillance' },
+        target:  { types:['IfcFlowTerminal','IfcSensor','IfcAudioVisualAppliance'], name: _w(['camera','cctv','surveillance'], 'camera') },
         obstructer: { excludeTypes:[] },
         maxRange: 15.0,
         mode: 'coverage'
@@ -604,23 +604,61 @@
       'smoke-detector-coverage': {
         sampleId: 'smoke-coverage',
         viewer:  { types:['IfcSpace'], sampling:{mode:'grid', eyeHeight:2.20, stride:2.0} },
-        target:  { types:['IfcSensor','IfcFlowTerminal'], namePattern:'smoke|rook|detector' },
+        target:  { types:['IfcSensor','IfcFlowTerminal'], name: _w(['smoke','detector'], 'smoke') },
         obstructer: { excludeTypes:[] },
         maxRange: 8.0,
         mode: 'coverage'
       },
       'patient-bay-nurse-observation': {
         sampleId: 'patient-observ',
-        viewer:  { types:['IfcSpace'], namePattern:'bed|patient|kamer', sampling:{mode:'centroid', eyeHeight:1.0} },
-        target:  { types:['IfcFurnishingElement'], namePattern:'nurse|verpleeg|station' },
+        viewer:  { types:['IfcSpace'], name: _w(['bed','patient'], 'patientRoom'), sampling:{mode:'centroid', eyeHeight:1.0} },
+        target:  { types:['IfcFurnishingElement'], name: _w(['nurse','station'], 'nurse') },
         obstructer: { excludeTypes:[] },
         maxRange: 25.0,
         mode: 'coverage'
       }
     };
-    window._ccVisibilityPresets = function() { return Object.keys(PRESETS).map(function(k){ return Object.assign({key:k}, PRESETS[k]); }); };
+    function _packs() { return (typeof window._ccGetCountryPacks === 'function' && window._ccGetCountryPacks()) || []; }
+    function _packWords(group) {
+      var out = [];
+      if (!group) return out;
+      _packs().forEach(function(pk) {
+        var t = pk && pk.naming && pk.naming.visibilityTerms && pk.naming.visibilityTerms[group];
+        (t || []).forEach(function(w) { if (out.indexOf(w) < 0) out.push(w); });
+      });
+      return out;
+    }
+    function _namePattern(n) {
+      var words = n.words.slice();
+      _packWords(n.group).forEach(function(w) { if (words.indexOf(w) < 0) words.push(w); });
+      var core = window._ccCountryPackCore;
+      return core ? core.wordsPattern(words) : words.join('|');
+    }
+    function _resolveSide(side) {
+      if (!side) return side;
+      var out = Object.assign({}, side);
+      if (side.name) { out.namePattern = _namePattern(side.name); delete out.name; }
+      return out;
+    }
+    // {key: preset} with name filters compiled, plus the active pack's presets.
+    function _allPresets() {
+      var out = {};
+      Object.keys(PRESETS).forEach(function(k) {
+        var p = PRESETS[k];
+        out[k] = Object.assign({}, p, { viewer: _resolveSide(p.viewer), target: _resolveSide(p.target) });
+      });
+      var pk = (typeof window._ccGetCountryPack === 'function') ? window._ccGetCountryPack() : null;
+      var vp = pk && pk.engines && pk.engines.visibility && pk.engines.visibility.presets;
+      if (vp) Object.keys(vp).forEach(function(k) {
+        if (out[k]) return;
+        var p = vp[k];
+        out[k] = Object.assign({ sampleId: k, obstructer: { excludeTypes: [] } }, p, { region: pk.region });
+      });
+      return out;
+    }
+    window._ccVisibilityPresets = function() { var all = _allPresets(); return Object.keys(all).map(function(k){ return Object.assign({key:k}, all[k]); }); };
     window._ccVisibilityRunPreset = function(key) {
-      var p = PRESETS[key];
+      var p = _allPresets()[key];
       if (!p) return Promise.reject(new Error('Unknown visibility preset: ' + key));
       return p.mode === 'coverage' ? window._ccDetectCoverage(p) : window._ccDetectVisibility(p);
     };

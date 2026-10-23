@@ -335,25 +335,47 @@
 
   var handlers = {};
 
-  // Extract a classification code (NL-SfB / Uniclass / assembly / OmniClass) from
-  // an element's nested property sets. Self-contained (no cross-addon import) — the
-  // key list mirrors the data-quality addon. Classification is the join key to
-  // non-model sources (finance/ERP, spec) that GUID can't reach. Returns
-  // { system, code } or null.
+  // Extract a classification code (Uniclass / OmniClass / Uniformat / assembly
+  // code, plus any national system a country pack names) from an element's
+  // nested property sets. Self-contained (no cross-addon import). Classification
+  // is the join key to non-model sources (finance/ERP, spec) that GUID can't
+  // reach. Returns { system, code } or null.
+  // National systems are country-pack data (naming.classificationKeys:
+  // {system, keys[], objectTypePatterns[]}; naming.codeKeys), read from EVERY
+  // registered pack — a model's property names say which system it uses.
+  function _packNaming() {
+    var packs = (typeof window._ccGetCountryPacks === 'function' && window._ccGetCountryPacks()) || [];
+    var systems = [], codeKeys = [];
+    packs.forEach(function(pk) {
+      var n = pk && pk.naming;
+      if (!n) return;
+      (n.classificationKeys || []).forEach(function(c) { systems.push(c); });
+      (n.codeKeys || []).forEach(function(k) { codeKeys.push(String(k).toLowerCase().replace(/[\s_\/-]/g, '')); });
+    });
+    return { systems: systems, codeKeys: codeKeys };
+  }
   function _classSysOf(key) {
     var kl = String(key).toLowerCase().replace(/[\s_\/-]/g, '');
-    return kl.indexOf('nlsfb') >= 0 || kl.indexOf('sfb') >= 0 ? 'NL-SfB'
-         : kl.indexOf('uniclass') >= 0 ? 'Uniclass'
+    var sys = _packNaming().systems;
+    for (var i = 0; i < sys.length; i++) {
+      var keys = sys[i].keys || [];
+      for (var j = 0; j < keys.length; j++) {
+        var pk = String(keys[j]).toLowerCase().replace(/[\s_\/-]/g, '');
+        if (pk && kl.indexOf(pk) >= 0) return sys[i].system;
+      }
+    }
+    return kl.indexOf('uniclass') >= 0 ? 'Uniclass'
          : kl.indexOf('omniclass') >= 0 ? 'OmniClass'
          : kl.indexOf('uniformat') >= 0 ? 'Uniformat'
          : (kl === 'assemblycode' || kl.indexOf('classification') >= 0 || kl === 'classificationcode') ? 'Classification'
          : null;
   }
   // Generic "this field holds the code" key names (used when the SYSTEM is carried
-  // by the pset/group name instead, e.g. a pset "NL-SfB" with a key "Code").
+  // by the pset/group name instead, e.g. a pset named after the system with a key
+  // "Code"); packs add the words their language uses.
   function _isGenericCodeKey(key) {
     var kl = String(key).toLowerCase().replace(/[\s_\/-]/g, '');
-    return kl === 'code' || kl === 'value' || kl === 'elementcode' || kl === 'nummer' || kl === 'number';
+    return kl === 'code' || kl === 'value' || kl === 'elementcode' || kl === 'number' || _packNaming().codeKeys.indexOf(kl) >= 0;
   }
   function _classOf(props) {
     var ps = props && props.psets;
@@ -369,8 +391,8 @@
           Object.keys(grp).forEach(function(k) {
             if (hit) return;
             // System from the key, else from the group name when the key is a
-            // generic code field (mirrors the DQ addon's _extractNLSfB breadth —
-            // catches a "NL-SfB"/"Classification" pset whose key is just "Code").
+            // generic code field (catches a pset named after the system, or
+            // "Classification", whose key is just "Code").
             var sys = _classSysOf(k) || (psetSys && _isGenericCodeKey(k) ? psetSys : null);
             if (!sys) return;
             var v = grp[k];
@@ -383,11 +405,19 @@
         }
       });
     }
-    // Fallback: NL-SfB often lives in ObjectType as "(NN)" or "NN.xx ..." (the DQ
-    // addon does the same). Only used when no explicit classification field found.
+    // Fallback: some national systems are written into ObjectType (e.g. "(21)
+    // Buitenwand"); the pack says how (objectTypePatterns, compiled through the
+    // core's safeRegex). Only used when no explicit classification field found.
     if (!hit && props && props.objectType) {
-      var m = /\((\d{2}(?:\.\d{1,2})*)\)/.exec(props.objectType) || /^(\d{2}(?:\.\d{1,2})*)[\.\-\s]/.exec(props.objectType);
-      if (m) hit = { system: 'NL-SfB', code: m[1] };
+      var core = window._ccCountryPackCore;
+      _packNaming().systems.some(function(sys) {
+        return (sys.objectTypePatterns || []).some(function(src) {
+          var re = core ? core.safeRegex(src) : null;
+          var m = re && re.exec(props.objectType);
+          if (m) hit = { system: sys.system, code: m[1] != null ? m[1] : m[0] };
+          return !!hit;
+        });
+      });
     }
     return hit;
   }
@@ -545,7 +575,7 @@
           revitIdA: c.revitIdA != null ? c.revitIdA : null,
           revitIdB: c.revitIdB != null ? c.revitIdB : null,
           uniqueIdA: c.uniqueIdA || null, uniqueIdB: c.uniqueIdB || null,
-          // Classification (NL-SfB/Uniclass/...) — the join key to finance/spec
+          // Classification (Uniclass / national systems from country packs) — the join key to finance/spec
           // sources that IFC GUID can't reach. storey is the spatial (zone) bucket.
           classificationA: classFor(c.modelAId, c.elemA),
           classificationB: classFor(c.modelBId, c.elemB),
@@ -1758,7 +1788,7 @@
 
   var _TOOL_MANIFEST = [
     { name:'get_status',          description:'Snapshot of the current session: models (with source, version, lastSync and a coarse revision stamp per model — use to check sync with another live tool), clash/issue counts, detection rules, active tab, walk mode, theme. Includes connector:{state(receiving|ready|disconnected),ingesting,percent,elementCount} — when connector.ingesting is true the Revit model is still streaming in, so DO NOT act on model/clash data until state==="ready". Also detecting/detectionProgress and lastDetectionError.' },
-    { name:'get_clashes',         description:'Detected clash pairs: status, priority, severity, storey, types/names, distance (mm), elevation (m), gridBay (nearest structural-grid bay e.g. "A-3" when grids loaded via the Revit bridge), disciplines (arch×structural vs same-discipline), and stable identity per side — uniqueIdA/B (Revit UniqueId, most reliable cross-doc key; prefer it), globalIdA/B (IFC GlobalId), revitIdA/B (ElementId, doc-local) — plus classificationA/B ({system,code} NL-SfB/Uniclass) and modelAId/B.',
+    { name:'get_clashes',         description:'Detected clash pairs: status, priority, severity, storey, types/names, distance (mm), elevation (m), gridBay (nearest structural-grid bay e.g. "A-3" when grids loaded via the Revit bridge), disciplines (arch×structural vs same-discipline), and stable identity per side — uniqueIdA/B (Revit UniqueId, most reliable cross-doc key; prefer it), globalIdA/B (IFC GlobalId), revitIdA/B (ElementId, doc-local) — plus classificationA/B ({system,code} e.g. Uniclass or a national system) and modelAId/B.',
       params:{ status:{type:'string',enum:['all','open','resolved','approved','expected','closed'],opt:1}, category:{type:'string',opt:1}, limit:{type:'number',opt:1}, offset:{type:'number',opt:1} } },
     { name:'get_clash_summary',   description:'Aggregate profile of the WHOLE clash set without paging it: total/open, and counts byStatus, byCategory (AI), byDiscipline (pair), byTypePair (top N), byStorey. Use to find the few root causes behind a large count.',
       params:{ topN:{type:'number',opt:1} } },
