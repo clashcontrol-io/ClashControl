@@ -560,6 +560,19 @@ Walks every mesh on every loaded element and reports whether `_instKey` is set, 
 
 Model names are NEVER included in diagnostic reports — privacy by design. Model names often expose client/project identifiers ("669001A_..._BWK_..."). The opt-in checkbox has been removed; the `includeNames = false` constant survives so the report-generator branch remains unchanged.
 
+### 21.45 Clash review — an action costs what it changes
+
+**Code reference:** `VirtualList` (`CC_WINDOWED_GROUPED_MIN`, `_ccStabilizeGroups`, `_ccPatchElementGroups`), `ConflictGroupHeader`, `_ccTriageIncremental`, `_ccListItemPasses` (`_ccPassCache`), `_ccReviewModel` (`_ccGroupSummaryCached`, `_ccReviewItemCache`), `_ccCloneListCached`, `storage-core.js estimateRecordBytes(v, sizeCache)`; test `tests/browser/action-cost.mjs`.
+
+Rule: a small state change must not recompute or re-render everything.
+- **Bounded DOM.** A grouped list above 50 items always renders windowed (only visible headers/rows + overscan are mounted), independent of the clash count. Headers are a memoised component with a stable toggle; rows get `autoHighlight`/`autoFlyTo` booleans, not the prefs object.
+- **Identity is the cache key.** Clashes are immutable state (an edit makes a new object), so per-clash work is cached in WeakMaps keyed by the clash object: element keys, the filter verdict (+ filters/visibility/rules/facet row), the search text, the save clone and its byte size. Group objects keep their identity while their members are unchanged, so header summaries, review items and overview cards are reused.
+- **Incremental paths.** One status/assignee edit: the triage model refiles only the replaced clashes (falls back to a full rebuild when a copy-detection input — type, element ids, boxes, overlap volume — changed or > 256 clashes changed); root-cause groups swap the new objects in when grouping and in-group order are unaffected (element keys/types, severity, depth).
+- **UI-only state never persists.** Filters/search, hover, selection, scroll and expanded groups are not autosave inputs; autosave is debounced 2 s and run at idle, and clones/sizes only what changed.
+- **Closed means not built.** "Run details" and the filter dropdown lists are computed only while open.
+- Anyone mutating a clash object in place after it is in state breaks these caches — make a new object instead.
+- Render counts for tests: `?ccRenderCount=1` exposes `window.__ccRenderCount` ({rows, headers, cards}).
+
 ## 22. Companion-app port & protocol registry
 
 One place for every localhost contract. The service worker deliberately

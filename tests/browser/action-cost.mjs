@@ -79,7 +79,7 @@ async function newPage() {
     // MessageChannel tasks), then force style + layout so DOM cost counts.
     // ids of the clash rows fully inside the list's viewport (not overscan)
     window.__onScreenIds = function () {
-      const sc = document.querySelector('.cc-issue-panel .cc-issue-scroll'); const b = sc.getBoundingClientRect();
+      const sc = document.querySelector('.cc-issue-panel .cc-issue-scroll') || document.querySelector('.cc-issue-panel'); const b = sc.getBoundingClientRect();
       return [...sc.querySelectorAll('[data-item-id]')].filter((e) => { const r = e.getBoundingClientRect(); return r.top >= b.top && r.bottom <= b.bottom; }).map((e) => e.getAttribute('data-item-id'));
     };
     window.__settle = async function (t0) {
