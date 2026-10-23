@@ -195,6 +195,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 - **Scoped/partial loads never write the geo-cache.** `_ccReloadModelFull` sets `_ccSkipScopeCheckOnce`, otherwise `maybeScopeThenProcess` re-opens the picker. Chain auto-reload triggers on the `idbSaveFile` promise.
 - **`_mergeLazyProps`** must patch the geoCache `hasPsets` even when the model has been parked before Phase-2 props arrive. Otherwise every restore cold-parses (this was the 3.91x→1.44x heap-ratio bug).
 - **Park/Restore guarantees:** the geoCache is preserved, restore reuses the same id, and it fails closed on non-restorable models (revit-live, or no cache+file). Any memory-reclaim work must keep all three.
+- **Smart re-run cost (2026-10-23):** the element hash caches the vertex sample per position attribute (keyed by attribute + `version`) — an in-place vertex edit must set `needsUpdate` (bumps the version) or it is not seen as a change. An unchanged re-run spawns no workers and reuses the previous classification (`_ccClassifyMemo` on the result); see docs/INTERNALS.md §21.19.
 - **The old `_pairResultCache` LRU is gone** (it stored objects later mutated by merge/classify). Smart re-runs use the run memo (`_ccRunMemo`: signature + element hashes + snapshots); committed only by a complete run, cleared on model delete/replace, project switch and local-engine runs. `rules.changeAware` is a no-op legacy key. The `TRAINING_MODE` localStorage value stays in its raw `'1'`/`'0'` format.
 - **Large-model performance:**
   - Measure with `stats.phases`/`stats.sceneSub` (including `transferGap`) read off the loaded model, not by parsing `console.table`.
@@ -238,6 +239,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ---
 
 ## Recently completed (details in git history)
+- **2026-10-23 — re-run cost:** unchanged re-run on the large generated structure+MEP federation 508 → ~110–130 ms (2.5–5 % of the first run, was 33 %), one moved element recomputes only its own pairs (`pairs_recomputed`), identical results (`tests/browser/rerun-cost.mjs`).
 - **2026-10-23 — action cost (branch `action-cost`):** the always-grouped clash list mounted every row (~24k DOM nodes on a 2k-clash synthetic review set) and recomputed grouping/triage/filters on every dispatch. Now windowed above 50 grouped items, memoised headers/rows/cards, per-clash WeakMap caches, incremental triage + regroup on edits, lazy Run details, idle autosave that clones/sizes only changed clashes. `tests/browser/action-cost.mjs` (synthetic, two sizes): DOM 24k → ~0.7k; no-op prefs 241 → ~11 ms, status edit 225 → ~30–45 ms, select 74 → ~10 ms, keystroke 65 → ~35 ms, autosave long task 394 → < 50 ms (headless SwiftShader medians). See INTERNALS §21.45.
 - **2026-10-23 — viewer zoom + measure snap:** zoom-out always escapes near surfaces and zoom-in stops in front of them (`viewer-camera-core.js` `dollyStep`, wheel + pinch); measure snap works on BatchedMesh, snaps to real edges/midpoints, never to section-clipped geometry (`viewer-pick-core.js`; `tests/browser/measure-snap.mjs`).
 - **2026-10-23 — country packs:** `country-pack-core.js` (validation, safeRegex, resolver, CRS/UTM), `_ccResolveCountry` + auto-activation without saving, IfcPostalAddress.Country in both loaders, generic DQ standards engine (ILS/RVB → nl.json), accessibility without built-in numbers, CRS/3D-tiles/visibility/Revit/Smart-Bridge name data from packs; nl parity golden.
@@ -295,6 +297,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- ~~2026-10-23: re-run cost proportional to the change (branch `rerun-cost`): cached vertex-sample/props hashes, pool + chunk loop sized by pairs to test (unchanged / tiny edits = one synchronous pass, no workers), classification reused when nothing was recomputed, one history write per run; `tests/browser/rerun-cost.mjs`.~~ (2026-10-23)
 - ~~2026-10-23: action cost — clash list windowed when grouped, memoised rows/headers/cards, incremental triage/grouping on edits, autosave off the interaction path (branch `action-cost`, `tests/browser/action-cost.mjs`).~~ (2026-10-23)
 
 - ~~2026-10-23: pressure harness B5 (adapters: sharded load, role leave-out, bucket filter, BVH cap/evict, autosave gate, status undo) + B6 (CI fast tier, nightly workflow) on branch `pressure-b5b6-v2`.~~ (2026-10-23)

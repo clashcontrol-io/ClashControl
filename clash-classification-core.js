@@ -106,12 +106,14 @@
     // wall on large federations (≈2.2 billion iterations / ~130s at 47k clashes).
     var CLUSTER_DIST_SQ = 0.5 * 0.5; // 500mm in meters squared
     var CELL = 0.5;
-    function _cKey(pair, storey, cx, cy, cz){ return pair + '|' + storey + '|' + cx + ',' + cy + ',' + cz; }
+    // key = '<typeA>:<typeB>|<storey>|<cx>,<cy>,<cz>'; the '<pair>|<storey>|'
+    // prefix is built once per clash and reused for its 27 neighbour lookups.
+    function _cPrefix(c){ return (c.elemAType||'') + ':' + (c.elemBType||'') + '|' + (c.elemAStorey||c.elemBStorey||'') + '|'; }
     var buckets = {};
+    var prefixes = new Array(clashes.length);
     for (var bi = 0; bi < clashes.length; bi++) {
       var cb = clashes[bi], pb = cb.point || [0,0,0];
-      var kb = _cKey((cb.elemAType||'')+':'+(cb.elemBType||''), cb.elemAStorey||cb.elemBStorey||'',
-        Math.floor(pb[0]/CELL), Math.floor(pb[1]/CELL), Math.floor(pb[2]/CELL));
+      var kb = (prefixes[bi] = _cPrefix(cb)) + Math.floor(pb[0]/CELL) + ',' + Math.floor(pb[1]/CELL) + ',' + Math.floor(pb[2]/CELL);
       (buckets[kb] || (buckets[kb] = [])).push(bi);
     }
     var groupId = 0;
@@ -120,12 +122,11 @@
       if (assigned[i]) continue;
       var ci = clashes[i];
       var pi = ci.point || [0,0,0];
-      var pairI = (ci.elemAType || '') + ':' + (ci.elemBType || '');
-      var storeyI = ci.elemAStorey || ci.elemBStorey || '';
+      var preI = prefixes[i];
       var cix = Math.floor(pi[0]/CELL), ciy = Math.floor(pi[1]/CELL), ciz = Math.floor(pi[2]/CELL);
       var cluster = [i];
       for (var dx = -1; dx <= 1; dx++) for (var dy = -1; dy <= 1; dy++) for (var dz = -1; dz <= 1; dz++) {
-        var bucket = buckets[_cKey(pairI, storeyI, cix+dx, ciy+dy, ciz+dz)];
+        var bucket = buckets[preI + (cix+dx) + ',' + (ciy+dy) + ',' + (ciz+dz)];
         if (!bucket) continue;
         for (var bj = 0; bj < bucket.length; bj++) {
           var j = bucket[bj];
@@ -538,9 +539,20 @@
   //   "Supply duct L0 through Corridor wall L0 — opening too small"
   //   "Sprinkler main crosses Beam B-12 (L1)"
   //   "Duct segment too close to Slab"           (no meaningful names, soft)
+  // Pure per type string, called for every clash title / row: memoised (the
+  // vocabulary of IFC types is small; the cache is capped all the same).
+  /** @type {Object<string, string>} */
+  var _typeLabelCache = Object.create(null);
+  var _typeLabelCacheN = 0;
   function niceTypeLabel(t) {
     if (!t) return 'Element';
-    return String(t).replace(/^Ifc/i, '').replace(/([a-z])([A-Z])/g, '$1 $2') || 'Element';
+    var k = String(t);
+    var hit = _typeLabelCache[k];
+    if (hit !== undefined) return hit;
+    var label = k.replace(/^Ifc/i, '').replace(/([a-z])([A-Z])/g, '$1 $2') || 'Element';
+    if (_typeLabelCacheN >= 2000) { _typeLabelCache = Object.create(null); _typeLabelCacheN = 0; }
+    _typeLabelCache[k] = label; _typeLabelCacheN++;
+    return label;
   }
   // The pre-2026-09-29 default ("Wall × Pipe Segment"): kept as the secondary
   // line / tooltip, and to recognise an untouched legacy default title.
