@@ -122,3 +122,20 @@ test('CRS: built-ins, pack entries and the generic UTM builder', () => {
   assert.equal(core.resolveCrs([], 'EPSG:28992'), null);
   assert.equal(core.resolveCrs(PACKS, 'Some Local Grid'), null);
 });
+
+test('siteLocationCheck: authoring-tool default site locations are not offered as the building', () => {
+  const byAddress = { region: 'nl', reason: 'address', detail: 'Nederland' };
+  const byCrs = { region: 'nl', reason: 'crs', detail: 'EPSG:28992' };
+  const bySite = { region: 'nl', reason: 'site', detail: '' };
+  assert.deepStrictEqual(core.siteLocationCheck(PACKS, 52.37, 4.89, byAddress), { ok: true });
+  assert.deepStrictEqual(core.siteLocationCheck(PACKS, 0, 0, null), { ok: false, reason: 'null-island' });
+  assert.deepStrictEqual(core.siteLocationCheck(PACKS, 0.004, -0.003, byCrs), { ok: false, reason: 'null-island' });
+  // The file names the Netherlands (address or CRS) but the site is on another continent.
+  assert.deepStrictEqual(core.siteLocationCheck(PACKS, 40.71, -74.0, byAddress), { ok: false, reason: 'outside-country', region: 'nl' });
+  assert.deepStrictEqual(core.siteLocationCheck(PACKS, 40.71, -74.0, byCrs), { ok: false, reason: 'outside-country', region: 'nl' });
+  // A country resolved from the site itself, or no country at all: no opinion.
+  assert.deepStrictEqual(core.siteLocationCheck(PACKS, 52.37, 4.89, bySite), { ok: true });
+  assert.deepStrictEqual(core.siteLocationCheck(PACKS, 40.71, -74.0, null), { ok: true });
+  assert.deepStrictEqual(core.siteLocationCheck(PACKS, NaN, 4.89, null), { ok: false, reason: 'missing' });
+  assert.deepStrictEqual(core.siteLocationCheck(PACKS, 95, 4.89, null), { ok: false, reason: 'missing' });
+});

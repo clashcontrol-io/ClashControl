@@ -79,6 +79,17 @@
   // at all, auto-detect from navigator.languages and activate WITHOUT
   // persisting (the user never chose it). '' saved = user explicitly picked
   // English — never override that.
+  // A pack is auto-activated from the browser language only when it covers
+  // at least AUTO_MIN of the UI strings (manifest `coverage`, kept honest by
+  // scripts/locale-coverage.js + tests/locale-coverage.test.js): a partial
+  // pack would give a mixed-language UI. Partial packs are still offered in
+  // Settings, and a saved (explicit) choice always loads.
+  var AUTO_MIN = 0.95;
+  function autoEligible(entry) {
+    return !!entry && typeof entry.coverage === 'number' && entry.coverage >= AUTO_MIN;
+  }
+  window._ccLocaleAutoMin = AUTO_MIN;
+
   function restoreOrDetect() {
     var saved = null;
     try { saved = window.localStorage.getItem('cc_locale'); } catch (e) {}
@@ -89,7 +100,8 @@
       if (saved) pick = langs.indexOf(saved) >= 0 ? saved : null;
       else {
         var nav = window.navigator || {};
-        pick = matchBrowserLanguage(langs, (nav.languages && nav.languages.length) ? nav.languages : [nav.language]);
+        var complete = (list || []).filter(autoEligible).map(function (p) { return p.lang; });
+        pick = matchBrowserLanguage(complete, (nav.languages && nav.languages.length) ? nav.languages : [nav.language]);
       }
       if (!pick) return;
       return window._ccLoadLocalePack(pick).then(function () {

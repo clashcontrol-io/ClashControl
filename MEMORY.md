@@ -24,7 +24,7 @@
 - **Navigator:** search, model-scoped selection sets (with a resolver for legacy ambiguous entries), search sets, property diff, breadcrumb.
 - **AI / integrations:** Groq NL (`/api/nl`, deliberately basic) + own-LLM Smart Bridge Connector (MCP/REST); Revit connector; OpenAEC bridge.
 - **Collaboration:** shared projects (Neon, CAS PUT, `conflicts[]`, edit-key-gated DELETE), folder sync.
-- **Other:** walk mode, section planes/box, PWA, i18n (`_cc_t`, `locales/ja.json`, browser-language auto-detect that is never persisted), country packs (nl + geo-only be/ch/gb), WCAG-AA tokens (axe: 0 violations light/dark/mobile on the main screens).
+- **Other:** walk mode, section planes/box, PWA, i18n (`_cc_t`, `locales/nl.json` complete + `ja.json` starter, browser-language auto-detect that is never persisted and only for packs with manifest `coverage` ≥ 0.95), country packs (nl + geo-only be/ch/gb), WCAG-AA tokens (axe: 0 violations light/dark/mobile on the main screens).
 
 **Addons (`addons/`):** accessibility, align, data-quality, geoplace, local-engine, openaec-bridge, pointcloud, pwa, revit-bridge, shared-project, smart-bridge, splat, tiles, tauri-bridge (desktop only, inert in the browser), training-data, visibility, wasm-engine (+ `wasm-engine-pkg/`).
 
@@ -292,7 +292,9 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
-- 2026-10-23: section plane / section box gizmos — one screen-constant plane gizmo at the cut, outline clipped to the model, calm box tabs + corner arc, token colours (`viewer-gizmo-core.js`, branch `viewer-gizmos`). Strict DESIGN.md pass on new UI (branch `design-pass`).
+- 2026-10-23: section plane / section box gizmos — one screen-constant plane gizmo at the cut, outline clipped to the model, calm box tabs + corner arc, token colours (`viewer-gizmo-core.js`, branch `viewer-gizmos`).
+
+- ~~2026-10-23: strict DESIGN.md pass (branch `design-pass`) — `tests/browser/design-conformance.mjs` checks the rendered UI (light/dark/390 px, nl-NL by default): tokens, type/spacing/radius scales, caps, tap targets, clipped/overlapping controls, untranslated words, diagnostics in plain surfaces. No load times/sizes/counts/provenance in the UI; complete Dutch pack; packs auto-activate from the browser language only at ≥95 % coverage (`scripts/locale-coverage.js --write` keeps `coverage` in `locales/manifest.json`).~~ (2026-10-23)
 
 - ~~2026-10-23: rooms written in their storey's frame (footprint in storey coordinates + own placement → doubled offset) land in their walls — `ccSpacePlacementFix` in both loaders, geo cache `sp:2`; storey-frame fixture in `tests/browser/spaces.mjs`.~~ (2026-10-23)
 

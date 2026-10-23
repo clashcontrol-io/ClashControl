@@ -10,7 +10,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'locales', 'loader.js'), 'utf8');
-const MANIFEST = [{ lang: 'ja', file: 'ja.json' }, { lang: 'pt-BR', file: 'pt-BR.json' }];
+const MANIFEST = [{ lang: 'ja', file: 'ja.json', coverage: 1 }, { lang: 'pt-BR', file: 'pt-BR.json', coverage: 0.97 }, { lang: 'de', file: 'de.json', coverage: 0.6 }];
 
 function run({ saved, languages }) {
   const store = new Map();
@@ -49,7 +49,19 @@ test('first visit: English ranked first wins over a later pack language', async 
 });
 
 test('first visit: no matching pack stays English', async () => {
-  assert.deepStrictEqual(await run({ languages: ['de-DE', 'fr'] }), []);
+  assert.deepStrictEqual(await run({ languages: ['fr-FR', 'it'] }), []);
+});
+
+test('first visit: a partial pack (below 95 % coverage) is never auto-activated', async () => {
+  assert.deepStrictEqual(await run({ languages: ['de-DE', 'en-US'] }), []);
+});
+
+test('first visit: a partial pack is skipped for the next complete preference', async () => {
+  assert.deepStrictEqual((await run({ languages: ['de-DE', 'ja'] })).at(-1), ['set', 'ja', { persist: false }]);
+});
+
+test('an explicit (saved) choice of a partial pack still loads', async () => {
+  assert.deepStrictEqual(await run({ saved: 'de', languages: ['en-US'] }), [['register', 'de'], ['set', 'de', { persist: true }]]);
 });
 
 test('saved language is loaded at startup and stays persisted', async () => {

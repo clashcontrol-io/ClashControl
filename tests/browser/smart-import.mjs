@@ -254,9 +254,9 @@ try {
     setTimeout(() => r(document.body.innerText), 600);
   }, 200)));
   check(/2 inside provisions \/ reservations/.test(ui), 'clash list hides them behind a "2 inside provisions" count', ui.slice(0, 0));
-  check(new RegExp(zoneClashes.length + '× zones / compartments').test(ui), 'classified zone clashes are hidden behind a count', ui.slice(0, 0));
+  check(new RegExp(zoneClashes.length + '× zones and compartments').test(ui), 'classified zone clashes are hidden behind a count', ui.slice(0, 0));
 
-  // Inspector: discipline & role card with provenance, room adjacency; model card mix.
+  // Inspector: discipline & role card (plain, no provenance), room adjacency; model card mix.
   const insp = await page.evaluate(async () => {
     window._ccDispatch({ t: 'SET_WORKSPACE', v: 'coordinate' });
     // Pin the selection (the viewer re-publishes its own selection on every
@@ -276,7 +276,7 @@ try {
     return { roomTxt, riserTxt };
   });
   check(/Bounded by \(5\)/.test(insp.roomTxt), 'inspector lists what bounds a room (5 elements)');
-  check(/MEP · Ventilation/.test(insp.riserTxt) && /stated · system/.test(insp.riserTxt), 'inspector shows sub-discipline with its provenance',
+  check(/MEP · Ventilation/.test(insp.riserTxt) && !/\b(stated|inferred)\b/.test(insp.riserTxt), 'inspector shows the sub-discipline plainly (no stated/inferred provenance)',
     (insp.riserTxt.match(/DISCIPLINE & ROLE[\s\S]{0,300}/i) || [insp.riserTxt.slice(0, 400)])[0]);
 
   // Legacy matrix (top-level keys only) for contrast: every MEP × MEP pair skipped.
@@ -300,7 +300,7 @@ try {
     'invariant: reported (' + visible + ') + classified (' + hidden + ') + excluded (' + zoneOut + ') == raw (' + raw.length + ')');
   check(st.excluded && st.excluded.zone === 2, 'left-out zones are reported with the result (state.lastRunExcluded)', st.excluded);
   const banner = await page.evaluate(() => new Promise((r) => { window._ccDispatch({ t: 'TAB', v: 'clashes' }); setTimeout(() => { const b = document.querySelector('[data-cc-excluded]'); r(b ? b.innerText : JSON.stringify({ tab: window._ccLatestState.tab, ws: window._ccLatestState.workspace })); }, 700); }));
-  check(banner && /2 zones \/ compartments/.test(banner) && /include and re-run/.test(banner), 'results header shows what was left out, with "include and re-run"', banner);
+  check(banner && /2 zones and compartments/.test(banner) && /Include and run again/.test(banner), 'results header shows what was left out, with "Include and run again"', banner);
 
   // ── Pre-run suggestions panel (interactive entry point) ──
   await page.evaluate(() => window._ccDispatch({ t: 'UPD_RULES', u: { roleChoices: {}, roleChoicesRemembered: false } }));

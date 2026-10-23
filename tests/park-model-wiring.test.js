@@ -72,7 +72,7 @@ test('a concurrent restore of the same model dedupes on a single promise', () =>
 });
 
 test('the sidebar Park button is hidden for live Revit-direct models', () => {
-  assert.match(html, /!\(m\.stats&&m\.stats\.source==='revit-direct'\) && html`<button onClick=\$\{function\(e\)\{e\.stopPropagation\(\);if\(window\._ccParkModel\)window\._ccParkModel\(m\.id\);/);
+  assert.match(html, /!\(m\.stats&&m\.stats\.source==='revit-direct'\) && html`<button onClick=\$\{function\(\)\{if\(window\._ccParkModel\)window\._ccParkModel\(m\.id\);/);
 });
 
 test('a Parked section renders stubs with a Restore action', () => {

@@ -14,7 +14,7 @@ function makeSandbox() {
   fs.mkdirSync(path.join(root, 'scripts'));
   fs.mkdirSync(path.join(root, 'locales'));
   fs.mkdirSync(path.join(root, 'regulations'));
-  ['apply-contributed-pack.js', 'validate-locale.js', 'validate-regulation.js'].forEach((f) => {
+  ['apply-contributed-pack.js', 'validate-locale.js', 'validate-regulation.js', 'locale-coverage.js'].forEach((f) => {
     fs.copyFileSync(path.join(__dirname, '..', 'scripts', f), path.join(root, 'scripts', f));
   });
   // The validators share their discipline-hint / classification-table
@@ -25,6 +25,9 @@ function makeSandbox() {
   });
   fs.writeFileSync(path.join(root, 'locales', 'manifest.json'), '[]\n');
   fs.writeFileSync(path.join(root, 'regulations', 'manifest.json'), '[]\n');
+  // A tiny UI string set so a new locale pack gets its manifest `coverage`.
+  fs.mkdirSync(path.join(root, 'addons'));
+  fs.writeFileSync(path.join(root, 'index.html'), "_cc_t('toolbar.open', 'Open'); _cc_t('toolbar.save', 'Save');\n");
   return root;
 }
 
@@ -44,6 +47,11 @@ test('apply-contributed-pack creates a new locale pack + manifest entry', () => 
   assert.equal(written.lang, 'de');
 
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'locales', 'manifest.json'), 'utf8'));
+  // coverage: 1 of the UI keys (two in index.html + the run-time keys) —
+  // a starter pack, so it is offered in Settings but never auto-activated.
+  assert.equal(typeof manifest[0].coverage, 'number');
+  assert.ok(manifest[0].coverage > 0 && manifest[0].coverage < 0.95, String(manifest[0].coverage));
+  delete manifest[0].coverage;
   assert.deepEqual(manifest, [{ lang: 'de', file: 'de.json', name: 'Deutsch', contributor: 'tester' }]);
 });
 

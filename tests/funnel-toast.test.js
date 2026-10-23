@@ -1,8 +1,7 @@
 'use strict';
-// Locks _showFunnelToast (index.html) — Wave 1.7. A one-line "raw pairs →
-// filtered by matrix → clashes found" summary shown after every browser-
-// engine detection run, so the matrix/tolerance filtering is visible without
-// opening the diagnostics profile panel (off by default for most users).
+// Locks _showFunnelToast (index.html): after every browser-engine run, one
+// plain line with the result ("47 clashes found"). The funnel numbers behind
+// it (pairs checked, matrix-filtered) stay in the profile, not in the toast.
 // Extracted the same way tests/ifc-units.test.js pulls a slice out of the
 // inline script; window._ccDetectProfile/_ccToast are mocked since the real
 // function only reads/calls them, never THREE.js or the DOM.
@@ -26,21 +25,14 @@ function run(profile) {
   return toasts;
 }
 
-test('reports the full funnel when the matrix skipped pairs', () => {
-  const toasts = run({ candidates: 4200, matrix_skipped: 380, clashes_found: 47 });
-  assert.deepEqual(toasts, ['4200 pairs checked → 380 filtered by discipline matrix → 47 clashes found']);
+test('says only the result: no pair counts, matrix or opening diagnostics', () => {
+  const toasts = run({ candidates: 4200, matrix_skipped: 380, clashes_found: 47, provided_openings: 3, smart_rerun: true, changed_elements: 2 });
+  assert.deepEqual(toasts, ['47 clashes found']);
 });
 
-test('omits the matrix clause entirely when nothing was skipped by it', () => {
-  const toasts = run({ candidates: 100, matrix_skipped: 0, clashes_found: 12 });
-  assert.deepEqual(toasts, ['100 pairs checked → 12 clashes found']);
-});
-
-test('pluralizes pair/pairs and clash/clashes correctly at the boundary (1 vs many)', () => {
-  assert.deepEqual(run({ candidates: 1, matrix_skipped: 0, clashes_found: 1 }),
-    ['1 pair checked → 1 clash found']);
-  assert.deepEqual(run({ candidates: 2, matrix_skipped: 0, clashes_found: 0 }),
-    ['2 pairs checked → 0 clashes found']);
+test('clash/clashes at the boundary (1 vs many)', () => {
+  assert.deepEqual(run({ candidates: 1, matrix_skipped: 0, clashes_found: 1 }), ['1 clash found']);
+  assert.deepEqual(run({ candidates: 2, matrix_skipped: 0, clashes_found: 0 }), ['0 clashes found']);
 });
 
 test('does nothing when there is no profile yet (no detection has run)', () => {

@@ -23,7 +23,12 @@ translate the `strings` values, add yourself to `manifest.json`, open a PR.
    primary subtag).
 2. Fill in `name` (the language's own name for itself), your `contributor`
    credit, and as many `strings` entries as you can.
-3. Add an entry to `manifest.json`: `{"lang": "...", "file": "...", "name": "...", "contributor": "..."}`.
+3. Add an entry to `manifest.json`: `{"lang": "...", "file": "...", "name": "...", "contributor": "..."}`,
+   then run `node scripts/locale-coverage.js --write` to fill in its
+   `coverage` (`--missing <lang>` lists what is still untranslated). A pack
+   is offered in Settings at any coverage, but only switched on
+   automatically from the browser language at 95 % or more, so nobody gets
+   a half-translated UI they did not pick.
 4. Open a PR. If you'd rather not use git directly, see the repo's
    "Contribute a translation" issue template instead — attach your file and
    a maintainer will open the PR for you.
