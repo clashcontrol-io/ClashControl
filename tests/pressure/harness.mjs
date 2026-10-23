@@ -414,7 +414,7 @@ function installHelpers() {
         const f = st().filters || {};
         const hidden = core.hiddenBuckets(st().rules);
         const leg = { provided: 'showProvided', provision: 'showProvisions', zone: 'showRoleGroups', contact: 'showContacts', handled: 'showHandled' };
-        return Object.keys(sum.buckets).filter((b) => b === 'review' || (f.showBuckets || []).includes(b) || (leg[b] && f[leg[b]]) || !hidden.includes(b));
+        return Object.keys(sum.buckets).filter((b) => b === 'review' || (!(f.hideBuckets || []).includes(b) && ((f.showBuckets || []).includes(b) || (leg[b] && f[leg[b]]) || !hidden.includes(b))));
       };
       const expectNow = () => shownSet().reduce((a, b) => a + (sum.buckets[b] || 0), 0);
       const steps = [];
@@ -445,7 +445,7 @@ function installHelpers() {
           if (all2) { all2.click(); await sleep(60); await check('show all / review only (back)'); }
         }
       }
-      d({ t: 'UPD_FILTERS', u: { showBuckets: [] } });
+      d({ t: 'UPD_FILTERS', u: { showBuckets: [], hideBuckets: [] } });
       return { buckets: sum.buckets, buttons: btns.map((b) => b.getAttribute('data-cc-bucket')), clicked, steps, ok: steps.every((x) => x.ok) };
     },
     // ── storage=autosave-gate: what the debounced project autosave left in

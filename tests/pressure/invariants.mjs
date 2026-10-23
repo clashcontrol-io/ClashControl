@@ -459,7 +459,6 @@ export async function executeCombo(h, combo, env) {
   await h.clearErrors(P);
   await P.ev(installChecks, env.oracleSrc);
   const storage = dims.storage;
-  if (storage === 'autosave-gate') ck('I14.autosave-flag', await P.ev(() => window.__ccH.setFlag('storageAutosaveGate')), 'storageAutosaveGate did not switch on');
   const fx = await env.fixtures.get(dims, env.extraGen || {});
   const files = filesFor(fx, dims);
   if (!files.length) throw new InfraError('no fixture files for subset ' + dims['models.subset']);
@@ -476,6 +475,9 @@ export async function executeCombo(h, combo, env) {
     ck('I8.abort-load', !r.loading && !r.grewAfterAbort, 'after aborting the load (' + when + '): loading=' + r.loading + ', models kept appearing=' + r.grewAfterAbort + ' (' + r.settledModels + '; msg ' + JSON.stringify(r.loadMsg) + '; live workers ' + JSON.stringify(r.workers) + ')');
     await P.ev(() => window.__ccH.reset());
   }
+
+  // (after the abort-load step: its reset() restores the boot flags)
+  if (storage === 'autosave-gate') ck('I14.autosave-flag', await P.ev(() => window.__ccH.setFlag('storageAutosaveGate')), 'storageAutosaveGate did not switch on');
 
   trace('load');
   // ── load ──
