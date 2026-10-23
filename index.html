@@ -28149,6 +28149,7 @@ function startApp() {
     </span>`;
   }
   function ClashOverviewCard(props) {
+    _ccCountRender('cards');
     var it = props.it, i = props.i, tm = props.tm, c = it.lead, sum = it.summary;
     var sev = sum ? sum.severity : (c.aiSeverity || _ccDeterministicSeverity(c));
     var row = tm.rowById.get(c.id), v = row ? row.v : {};
@@ -32118,6 +32119,13 @@ function startApp() {
   window._ccComputeRowOffsets = _ccComputeRowOffsets;
   window._ccComputeVisibleRowWindow = _ccComputeVisibleRowWindow;
 
+  // Test-only render counters (?ccRenderCount=1): how many clash rows / group
+  // headers / overview cards rendered since the last reset — the primary
+  // signal of tests/browser/action-cost.mjs ("an action costs what it
+  // changes"). Absent (and free) without the URL flag.
+  var _CC_RENDER_COUNT = (function(){ try { return /[?&]ccRenderCount=1(&|$)/.test(location.search); } catch(e) { return false; } })();
+  if (_CC_RENDER_COUNT) window.__ccRenderCount = { rows: 0, headers: 0, cards: 0 };
+  function _ccCountRender(k) { if (_CC_RENDER_COUNT) window.__ccRenderCount[k]++; }
   var _VL_NO_MODELS = []; // shared empty fallback so `props.models||[]` doesn't mint a new array (and bust the groups memo) every render
   function VirtualList(props) {
     var rawItemsProp=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs, models=props.models||_VL_NO_MODELS;
@@ -32616,6 +32624,7 @@ function startApp() {
       // Revizto/Dalux only show a group card once there's actually more
       // than one thing under it).
       if (g.items.length === 1) return null;
+      _ccCountRender('headers');
       var isOpen = !collapsed[g.label];
       if (isElementGroupMode) {
         // ── "By element" (root-cause) header ──
@@ -33038,6 +33047,7 @@ function startApp() {
   }
 
   function IssueRow(props) {
+    _ccCountRender('rows');
     var it=props.item, active=props.active, d=props.d, isClash=props.isClash, pr=props.prefs||{}; pr._models=props.models||[];
     var selectMode=props.selectMode, isSelected=props.isSelected;
     var trainingMode=props.trainingMode;
