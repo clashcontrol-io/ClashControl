@@ -35,6 +35,14 @@ function generateSyntheticIfc(opts) {
   // IfcRelAggregates, like real authoring tools write it). Its height is
   // storeyHeight - 0.1 so it never touches the next storey's walls.
   const withSpaces = !!opts.withSpaces;
+  // offsetX: shifts every wall (and room) along X inside the storey frame —
+  // a building drawn far from its storey origin.
+  const offsetX = +opts.offsetX || 0;
+  // spaceFrame: 'parent' writes each room the way some exporters do: its
+  // footprint in the STOREY's coordinates while the room also gets its own
+  // placement near that footprint, so applying both doubles the offset.
+  // The room is meant to sit exactly where the default writing puts it.
+  const spaceFrame = opts.spaceFrame === 'parent' ? 'parent' : 'own';
 
   let id = 0;
   const next = () => ++id;
@@ -138,12 +146,15 @@ function generateSyntheticIfc(opts) {
       const extrudeId = next();
       const wallGuid = ('1SynthWall' + wallId).padEnd(22, '0').slice(0, 22);
       // Offset each wall along X so they don't all perfectly coincide.
-      lines.push(`#${wallOriginId}=IFCCARTESIANPOINT((${(w * 5).toFixed(1)},0.,0.));`);
+      lines.push(`#${wallOriginId}=IFCCARTESIANPOINT((${(offsetX + w * 5).toFixed(1)},0.,0.));`);
       lines.push(`#${wallAxisId}=IFCAXIS2PLACEMENT3D(#${wallOriginId},$,$);`);
       lines.push(`#${wallPlacementId}=IFCLOCALPLACEMENT(#${storeyPlacementId},#${wallAxisId});`);
       lines.push(`#${shapeId}=IFCPRODUCTDEFINITIONSHAPE($,$,(#${repId}));`);
       lines.push(`#${repId}=IFCSHAPEREPRESENTATION(#${geomCtxId},'Body','SweptSolid',(#${extrudeId}));`);
-      lines.push(`#${extrudeId}=IFCEXTRUDEDAREASOLID(#${profileId},#${wallAxisId},#${extrudeDirId},${storeyHeight}.);`);
+      // (the extrusion reuses the placement axis, so walls land at 2·w·5 —
+      // kept for existing fixtures; with offsetX the solid sits at the
+      // placement itself so the walls stay where offsetX puts them)
+      lines.push(`#${extrudeId}=IFCEXTRUDEDAREASOLID(#${profileId},#${offsetX ? axisId : wallAxisId},#${extrudeDirId},${storeyHeight}.);`);
       lines.push(`#${wallId}=IFCWALL('${wallGuid}',$,'Wall S${s}W${w}',$,$,#${wallPlacementId},#${shapeId},$,$);`);
       wallIds.push(wallId);
       if (withQuantities) {
@@ -172,11 +183,21 @@ function generateSyntheticIfc(opts) {
       const spaceGuid = ('7SynthSpace' + spaceId).padEnd(22, '0').slice(0, 22);
       const cx = ((wallsPerStorey - 1) * 5) / 2;
       const len = wallsPerStorey * 5;
-      lines.push(`#${spOriginId}=IFCCARTESIANPOINT((${cx.toFixed(1)},0.,0.));`);
+      // own frame: placement at the room centre, footprint centred on it.
+      // parent frame: placement at the room's min corner, footprint centre
+      // written in storey coordinates.
+      const spPl = spaceFrame === 'parent' ? [offsetX + cx - len / 2, -3] : [offsetX + cx, 0];
+      lines.push(`#${spOriginId}=IFCCARTESIANPOINT((${spPl[0].toFixed(1)},${spPl[1].toFixed(1)},0.));`);
       lines.push(`#${spAxisId}=IFCAXIS2PLACEMENT3D(#${spOriginId},$,$);`);
       lines.push(`#${spPlacementId}=IFCLOCALPLACEMENT(#${storeyPlacementId},#${spAxisId});`);
       lines.push(`#${spProfileId}=IFCRECTANGLEPROFILEDEF(.AREA.,$,#${spProfilePlacementId},${len.toFixed(1)},6.);`);
-      lines.push(`#${spProfilePlacementId}=IFCAXIS2PLACEMENT2D(#${profileOriginId},$);`);
+      if (spaceFrame === 'parent') {
+        const spFootId = next();
+        lines.push(`#${spFootId}=IFCCARTESIANPOINT((${(offsetX + cx).toFixed(1)},0.));`);
+        lines.push(`#${spProfilePlacementId}=IFCAXIS2PLACEMENT2D(#${spFootId},$);`);
+      } else {
+        lines.push(`#${spProfilePlacementId}=IFCAXIS2PLACEMENT2D(#${profileOriginId},$);`);
+      }
       lines.push(`#${spExtrudeId}=IFCEXTRUDEDAREASOLID(#${spProfileId},#${axisId},#${extrudeDirId},${(storeyHeight - 0.1).toFixed(1)});`);
       lines.push(`#${spRepId}=IFCSHAPEREPRESENTATION(#${geomCtxId},'Body','SweptSolid',(#${spExtrudeId}));`);
       lines.push(`#${spShapeId}=IFCPRODUCTDEFINITIONSHAPE($,$,(#${spRepId}));`);

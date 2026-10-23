@@ -815,6 +815,8 @@
 <script src="cc-runtime.js" defer></script>
 <script src="safety-migrations.js" defer></script>
 <script src="section-clipping.js" defer></script>
+<script src="viewer-camera-core.js" defer></script>
+<script src="viewer-pick-core.js" defer></script>
 <script src="occlusion-core.js" defer></script>
 <script src="renderer-contract.js" defer></script>
 <script src="clash-discipline-core.js" defer></script>
@@ -3686,14 +3688,15 @@ function startApp() {
         props: el.props
       };
     });
-    // sp:1 — written by a loader that keeps IfcSpace geometry. Caches without
-    // it predate that (rooms have no volume, or are missing entirely on the
-    // worker path) and are re-parsed once from the stored IFC on restore —
-    // see _ccGeoCacheLacksSpaces.
+    // sp:2 — written by a loader that keeps IfcSpace geometry AND places
+    // rooms written in their storey's frame correctly (ccSpacePlacementFix).
+    // Older caches (sp missing: rooms without volume or missing; sp:1: such
+    // rooms doubled away from their walls) are re-parsed once from the
+    // stored IFC on restore — see _ccGeoCacheLacksSpaces.
     // sem:1 — written by a loader that extracts discipline/role evidence
     // (props.typeObject/groups/classification/predefinedType) and space
     // boundaries; older caches are refreshed once like sp:1 ones.
-    return {v:_ccGeoCacheV8Enabled()?8:7, sp:1, sem:1, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, spaceBoundaries:result.spaceBoundaries||null, stats:result.stats};
+    return {v:_ccGeoCacheV8Enabled()?8:7, sp:2, sem:1, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, spaceBoundaries:result.spaceBoundaries||null, stats:result.stats};
   }
 
 
@@ -3807,13 +3810,13 @@ function startApp() {
     return {meshes:meshes, elements:elements, storeys:cached.storeys, storeyData:cached.storeyData, spatialHierarchy:cached.spatialHierarchy||{}, relatedPairs:cached.relatedPairs||{}, spaceBoundaries:cached.spaceBoundaries||null, stats:cached.stats};
   }
 
-  // A geo cache written before IfcSpace geometry was kept (no sp:1 marker)
-  // would restore rooms without volume — or, for worker-path loads, without
+  // A geo cache written before the current room handling (sp !== 2) would
+  // restore rooms without volume, displaced, — or, for worker-path loads, without
   // the room elements at all — forever. When the source IFC is stored, treat
   // such a cache as stale so the restore cold-parses once and re-saves a
   // current cache; with no source bytes the old cache is still the best we have.
   function _ccGeoCacheLacksSpaces(cached, entry) {
-    return !!(cached && (cached.sp !== 1 || cached.sem !== 1) && entry && entry.buffer);
+    return !!(cached && (cached.sp !== 2 || cached.sem !== 1) && entry && entry.buffer);
   }
 
   function _ccRestoredGeoMatchesCache(cached, result) {
@@ -4601,6 +4604,97 @@ function startApp() {
       }
     }
     return n;
+  }
+
+  // Some IFC exporters write an IfcSpace's footprint in its PARENT's frame
+  // (storey coordinates) while also giving the space its own placement near
+  // that footprint — so every reader that follows the IFC placement rules
+  // applies the room's offset twice and the room lands away from the walls
+  // that bound it. Detected per placed room geometry, from the file itself:
+  // in the space's own frame the geometry sits within one room diagonal of
+  // the space's own placement point, and that point is more than two room
+  // diagonals from the parent origin. (A correctly authored room has its
+  // geometry near its own origin, so it never matches.) The fix removes the
+  // space's own placement step once, keeping its vertical offset:
+  //   tf' = C · Mp · T(0,0,lz) · L^-1 · Mp^-1 · C^-1 · tf
+  // (C = web-ifc's unit scale + Z-up→Y-up, Mp = parent placement, L = the
+  // space's own relative placement). Returns tf unchanged when nothing
+  // applies. box = [minx,miny,minz,maxx,maxy,maxz] of the geometry's
+  // vertices; memo = per-model cache object. Shared by the worker and the
+  // main-thread fallback (worker source is built from .toString()).
+  function ccSpacePlacementFix(api, modelID, spaceId, box, tf, memo) {
+    if (!api || !box || box.length < 6 || !tf || !(box[3] >= box[0])) return tf;
+    memo = memo || {};
+    var plMemo = memo.pl || (memo.pl = {});
+    function rv(x) { return x && typeof x === 'object' && x.value != null ? x.value : x; }
+    function line(id) { try { return id == null ? null : api.GetLine(modelID, id); } catch (e) { return null; } }
+    function num(x) { x = rv(x); return typeof x === 'number' ? x : +x; }
+    function norm(v) { var l = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); return l > 1e-12 ? [v[0] / l, v[1] / l, v[2] / l] : null; }
+    function dirOf(id) { var d = line(rv(id)); var r = d && d.DirectionRatios; return r ? norm([num(r[0]) || 0, num(r[1]) || 0, r.length > 2 ? (num(r[2]) || 0) : 0]) : null; }
+    function axisMatrix(apId) {
+      var a = line(rv(apId));
+      if (!a) return null;
+      var pt = line(rv(a.Location)), c = pt && pt.Coordinates;
+      var o = c ? [num(c[0]) || 0, num(c[1]) || 0, c.length > 2 ? (num(c[2]) || 0) : 0] : [0, 0, 0];
+      var z = (a.Axis ? dirOf(a.Axis) : null) || [0, 0, 1];
+      var x = (a.RefDirection ? dirOf(a.RefDirection) : null) || (Math.abs(z[0]) > 0.9 ? [0, 1, 0] : [1, 0, 0]);
+      var d = x[0] * z[0] + x[1] * z[1] + x[2] * z[2];
+      x = norm([x[0] - d * z[0], x[1] - d * z[1], x[2] - d * z[2]]) || [1, 0, 0];
+      var y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
+      return [x[0], x[1], x[2], 0, y[0], y[1], y[2], 0, z[0], z[1], z[2], 0, o[0], o[1], o[2], 1];
+    }
+    function mul(A, B) {
+      var C = new Array(16);
+      for (var c = 0; c < 4; c++) for (var r = 0; r < 4; r++) {
+        C[c * 4 + r] = A[r] * B[c * 4] + A[4 + r] * B[c * 4 + 1] + A[8 + r] * B[c * 4 + 2] + A[12 + r] * B[c * 4 + 3];
+      }
+      return C;
+    }
+    function invRigid(M) { // orthonormal rotation + translation
+      var t = [M[12], M[13], M[14]];
+      return [M[0], M[4], M[8], 0, M[1], M[5], M[9], 0, M[2], M[6], M[10], 0,
+        -(M[0] * t[0] + M[1] * t[1] + M[2] * t[2]), -(M[4] * t[0] + M[5] * t[1] + M[6] * t[2]), -(M[8] * t[0] + M[9] * t[1] + M[10] * t[2]), 1];
+    }
+    function apply(M, p) { return [M[0] * p[0] + M[4] * p[1] + M[8] * p[2] + M[12], M[1] * p[0] + M[5] * p[1] + M[9] * p[2] + M[13], M[2] * p[0] + M[6] * p[1] + M[10] * p[2] + M[14]]; }
+    var I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    function placement(plId, depth) {
+      if (plId == null || (depth || 0) > 32) return null;
+      if (plMemo[plId]) return plMemo[plId];
+      var pl = line(plId);
+      if (!pl) return null;
+      var local = axisMatrix(pl.RelativePlacement) || I;
+      var parent = pl.PlacementRelTo ? placement(rv(pl.PlacementRelTo), (depth || 0) + 1) : null;
+      return (plMemo[plId] = parent ? mul(parent, local) : local);
+    }
+    var sp = line(spaceId), plId = sp ? rv(sp.ObjectPlacement) : null, pl = line(plId);
+    var L = pl ? axisMatrix(pl.RelativePlacement) : null;
+    if (!L) return tf;
+    var lh = Math.sqrt(L[12] * L[12] + L[13] * L[13]);
+    if (!(lh > 0)) return tf;
+    var Ms = placement(plId, 0);
+    var Mp = pl.PlacementRelTo ? placement(rv(pl.PlacementRelTo), 0) : I;
+    if (!Ms || !Mp) return tf;
+    // web-ifc's unit scale (tf's linear part is s·rotation)
+    var det = tf[0] * (tf[5] * tf[10] - tf[9] * tf[6]) - tf[4] * (tf[1] * tf[10] - tf[9] * tf[2]) + tf[8] * (tf[1] * tf[6] - tf[5] * tf[2]);
+    var s = Math.cbrt(Math.abs(det));
+    if (!(s > 0) || !isFinite(s)) return tf;
+    var C = [s, 0, 0, 0, 0, 0, -s, 0, 0, s, 0, 0, 0, 0, 0, 1];          // IFC (Z up) -> web-ifc (Y up)
+    var Ci = [1 / s, 0, 0, 0, 0, 0, 1 / s, 0, 0, -1 / s, 0, 0, 0, 0, 0, 1];
+    // geometry box in the space's own frame (file units)
+    var toLocal = mul(invRigid(Ms), mul(Ci, Array.prototype.slice.call(tf)));
+    var mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+    for (var k = 0; k < 8; k++) {
+      var q = apply(toLocal, [box[k & 1 ? 3 : 0], box[k & 2 ? 4 : 1], box[k & 4 ? 5 : 2]]);
+      for (var a = 0; a < 3; a++) { if (q[a] < mn[a]) mn[a] = q[a]; if (q[a] > mx[a]) mx[a] = q[a]; }
+    }
+    var dx = mx[0] - mn[0], dy = mx[1] - mn[1], dz = mx[2] - mn[2];
+    var diag = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    var ex = (mn[0] + mx[0]) / 2 - L[12], ey = (mn[1] + mx[1]) / 2 - L[13];
+    if (!(diag > 0 && lh > 2 * diag && Math.sqrt(ex * ex + ey * ey) <= diag)) return tf;
+    var D = mul(Mp, mul([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, L[14], 1], mul(invRigid(L), invRigid(Mp))));
+    var out = mul(C, mul(D, mul(Ci, Array.prototype.slice.call(tf))));
+    memo.fixed = (memo.fixed || 0) + 1;
+    return out;
   }
 
   // Structured "not drawn" loader report, shared by the worker and the
@@ -5596,6 +5690,7 @@ function startApp() {
       var _streamCount = 0;
       var _spaceGeoEids = {}; // IfcSpace elements that got geometry (see the space pass below)
       var _streamed = {}, _notDrawn = createNotDrawnReport(api, modelID); // not-drawn report (same helper as the worker)
+      var _spaceFixMemo = {}; // ccSpacePlacementFix cache (placement chains, fixed count)
       // isSpace: called from the separate IfcSpace pass — web-ifc's
       // StreamAllMeshes never yields IfcSpace, so rooms are streamed by id
       // afterwards (mirrored exactly in _ifcWorkerMain).
@@ -5642,7 +5737,13 @@ function startApp() {
             else { var _fb = new THREE.Color(fallbackColor); col = { r:_fb.r, g:_fb.g, b:_fb.b }; }
             var mat = _ccGetSharedPhongMat(col.r, col.g, col.b, c ? c.w : 1);
             var mesh = new THREE.Mesh(geo, mat);
-            mesh.applyMatrix4(_tmpMtx4.fromArray(placed.flatTransformation));
+            var _tfm = placed.flatTransformation;
+            if (isSpace) {
+              if (!geo.boundingBox) geo.computeBoundingBox();
+              var _gb = geo.boundingBox;
+              _tfm = ccSpacePlacementFix(api, modelID, expressID, [_gb.min.x, _gb.min.y, _gb.min.z, _gb.max.x, _gb.max.y, _gb.max.z], _tfm, _spaceFixMemo);
+            }
+            mesh.applyMatrix4(_tmpMtx4.fromArray(_tfm));
             mesh.userData.expressId = expressID;
             mesh.userData._ifcMaterial = matMap[expressID] || '';
             // Stash the source geometryExpressID so the cache serializer
@@ -6088,6 +6189,8 @@ function startApp() {
 
         var xfer = [];
         var _geoTable = {}; // geometryExpressID → {pos, nrm, idx} (dedup)
+        var _spaceGeoBox = {}; // geoExpId -> [minx,miny,minz,maxx,maxy,maxz] of IfcSpace geometry (ccSpacePlacementFix)
+        var _spaceFixMemo = {}; // ccSpacePlacementFix cache (placement chains, fixed count)
         var _geoReused = 0;
         var _geoNV = {};    // geometryExpressID → vertex count (survives transfer)
         var _streamed = {}; // expressIDs the stream callback saw (not-drawn report)
@@ -6234,6 +6337,16 @@ function startApp() {
               _nTris += _geoNV[geoExpId] || 0;
               var c = placed.color;
               var tf = placed.flatTransformation;
+              if (isSpace) {
+                // the geometry buffer may already have been transferred with a
+                // preview batch, so the room fix reads a kept 2-corner box
+                if (!_spaceGeoBox[geoExpId] && _geoTable[geoExpId] && _geoTable[geoExpId].pos.length) {
+                  var _sp = _geoTable[geoExpId].pos, _b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+                  for (var _si = 0; _si < _sp.length; _si += 3) for (var _sa = 0; _sa < 3; _sa++) { var _sv = _sp[_si + _sa]; if (_sv < _b[_sa]) _b[_sa] = _sv; if (_sv > _b[3 + _sa]) _b[3 + _sa] = _sv; }
+                  _spaceGeoBox[geoExpId] = _b;
+                }
+                tf = ccSpacePlacementFix(api, modelID, eid, _spaceGeoBox[geoExpId] || null, tf, _spaceFixMemo);
+              }
               if (!isSpace && c && c.w < 0.05) _alphaSkip++; // the decode drops these (see its colour filter)
               // Preview placement (display only): same filters the decode
               // applies — rooms (hidden by default) and ~transparent styles
@@ -6396,6 +6509,7 @@ function startApp() {
       + 'var extractSemanticRecords=' + extractSemanticRecords.toString() + ';\n'
       + 'var extractSpaceBoundaryRecords=' + extractSpaceBoundaryRecords.toString() + ';\n'
       + 'var createNotDrawnReport=' + createNotDrawnReport.toString() + ';\n'
+      + 'var ccSpacePlacementFix=' + ccSpacePlacementFix.toString() + ';\n'
       + 'var extractStoreys=' + extractStoreys.toString() + ';\n'
       + 'var extractSpatialHierarchy=' + extractSpatialHierarchy.toString() + ';\n'
       + 'var resolveMaterialName=' + resolveMaterialName.toString() + ';\n'
@@ -13280,108 +13394,12 @@ function startApp() {
   var _ORBIT_POLE_EPS = 0.0005;
 
   // ── Pure orbit-navigation math ──────────────────────────────────────────
-  // Kept outside makeOrbit's THREE-bound closure (plain {x,y,z} objects, no
-  // THREE dependency) so it is directly unit-testable — see
-  // tests/orbit-math.test.js, which extracts this region by marker.
-  // ORBIT_MATH_START
-
-  // Rotates vector v by `angle` radians around the unit axis (ax,ay,az)
-  // (Rodrigues' rotation formula).
-  function _ccRotateAroundAxis(v, ax, ay, az, angle) {
-    var cos = Math.cos(angle), sin = Math.sin(angle);
-    var dot = v.x*ax + v.y*ay + v.z*az;
-    var crossX = ay*v.z - az*v.y, crossY = az*v.x - ax*v.z, crossZ = ax*v.y - ay*v.x;
-    return {
-      x: v.x*cos + crossX*sin + ax*dot*(1-cos),
-      y: v.y*cos + crossY*sin + ay*dot*(1-cos),
-      z: v.z*cos + crossZ*sin + az*dot*(1-cos)
-    };
-  }
-
-  // Orbit-drag step: rotates the camera position around a fixed pivot point
-  // AND the camera's actual current VIEW DIRECTION (its forward unit
-  // vector — not the orbit `target`, which the caller may have set
-  // somewhere the camera wasn't yet looking, e.g. a just-clicked element's
-  // bbox centre) by the identical (yaw, pitch) rotation derived from a
-  // (dx,dy) pixel delta, then applies a soft polar clamp so the view can
-  // approach the pole smoothly instead of freezing dead.
-  //
-  // This is a rigid rotation of the camera (as a physical object: position
-  // + orientation) about the pivot. For any fixed point P, its camera-local
-  // (view-space) coordinates are provably unchanged by such a rotation
-  // regardless of whether the camera was originally looking at P — so the
-  // pivot stays exactly fixed on screen, AND the view direction changes
-  // smoothly by exactly the drag's rotation, with no snap. The old code
-  // instead rotated the orbit `target` and re-derived orientation via
-  // camera.lookAt(target); when `target` had just been moved off the
-  // camera's actual view ray (e.g. by a click-to-select pivot shift) that
-  // lookAt() itself performed a hard reorientation — measured at ~18° for a
-  // single 2px drag right after such a shift. Operating on the true current
-  // forward vector instead of `target` fixes this at the source: the
-  // caller reconstructs `target` afterwards from the corrected forward
-  // vector, so it's always consistent with what lookAt() will reproduce.
-  function _ccOrbitDragStep(camPos, forward, pivot, dx, dy, sens, minPhi, maxPhi) {
-    sens = sens == null ? 0.007 : sens;
-    minPhi = minPhi == null ? 0.05 : minPhi;
-    maxPhi = maxPhi == null ? Math.PI - 0.05 : maxPhi;
-    var yaw = -dx * sens, pitch = -dy * sens;
-    var offset = { x: camPos.x-pivot.x, y: camPos.y-pivot.y, z: camPos.z-pivot.z };
-    var fwd = { x: forward.x, y: forward.y, z: forward.z };
-    function rotBoth(ax, ay, az, angle) {
-      offset = _ccRotateAroundAxis(offset, ax, ay, az, angle);
-      fwd = _ccRotateAroundAxis(fwd, ax, ay, az, angle);
-    }
-    // Yaw around world up.
-    rotBoth(0, 1, 0, yaw);
-    // Pitch around the current horizontal "right" axis (forward × up).
-    var flen = Math.sqrt(fwd.x*fwd.x+fwd.y*fwd.y+fwd.z*fwd.z) || 1;
-    var fx = fwd.x/flen, fy = fwd.y/flen, fz = fwd.z/flen;
-    var rx = fy*0-fz*1, ry = fz*0-fx*0, rz = fx*1-fy*0; // forward × (0,1,0)
-    var rlen = Math.sqrt(rx*rx+ry*ry+rz*rz);
-    if (rlen < 1e-8) { rx=1; ry=0; rz=0; } else { rx/=rlen; ry/=rlen; rz/=rlen; }
-    rotBoth(rx, ry, rz, pitch);
-    // Soft polar clamp: phi = angle of the camera→target direction (-forward)
-    // from +Y, matching the original sph.phi semantics, kept in [minPhi,maxPhi].
-    var flen2 = Math.sqrt(fwd.x*fwd.x+fwd.y*fwd.y+fwd.z*fwd.z) || 1;
-    var ny = fwd.y/flen2;
-    var phi = Math.acos(Math.max(-1, Math.min(1, -ny)));
-    if (phi < minPhi || phi > maxPhi) {
-      var clamped = Math.max(minPhi, Math.min(maxPhi, phi));
-      var horiz = Math.sqrt(Math.max(0, flen2*flen2 - fwd.y*fwd.y));
-      var hx = horiz > 1e-6 ? fwd.x/horiz : 1, hz = horiz > 1e-6 ? fwd.z/horiz : 0;
-      var newNy = -Math.cos(clamped);
-      var newHoriz = Math.sqrt(Math.max(0, 1 - newNy*newNy));
-      fwd = { x: hx*newHoriz, y: newNy, z: hz*newHoriz };
-    } else {
-      fwd = { x: fwd.x/flen2, y: fwd.y/flen2, z: fwd.z/flen2 };
-    }
-    return { camPos: { x: pivot.x+offset.x, y: pivot.y+offset.y, z: pivot.z+offset.z }, forward: fwd };
-  }
-
-  // Uniformly scales camPos & target toward/away from `anchor` by `factor`.
-  // Because BOTH points move toward the same anchor by the same factor, the
-  // anchor point itself never moves — dollying "along the ray through the
-  // cursor" — and the operation is exactly reversible: applying `factor`
-  // then `1/factor` returns both points to their exact starting values (up
-  // to floating point), unlike the old camera-forward-advance approach
-  // (whose in/out steps used different formulas and drifted).
-  function _ccZoomDollyStep(camPos, tgt, anchor, factor) {
-    return {
-      camPos: { x: anchor.x+(camPos.x-anchor.x)*factor, y: anchor.y+(camPos.y-anchor.y)*factor, z: anchor.z+(camPos.z-anchor.z)*factor },
-      tgt:    { x: anchor.x+(tgt.x-anchor.x)*factor,    y: anchor.y+(tgt.y-anchor.y)*factor,    z: anchor.z+(tgt.z-anchor.z)*factor }
-    };
-  }
-
-  // World units per screen pixel at a given depth (perspective camera
-  // vertical FOV), used so a pan drag keeps the grabbed point under the
-  // cursor regardless of zoom level, instead of the old flat
-  // `sph.r * 0.0008` approximation (which under/over-panned depending on
-  // how far `r` was from the actual depth of the thing being panned).
-  function _ccPanWorldPerPixel(depth, viewportHeightPx, vFovDeg) {
-    var vFovRad = vFovDeg * Math.PI / 180;
-    return 2 * depth * Math.tan(vFovRad / 2) / Math.max(1, viewportHeightPx);
-  }
-  // ORBIT_MATH_END
+  // Lives in viewer-camera-core.js (plain {x,y,z}, no THREE) so it is unit-
+  // testable — tests/orbit-math.test.js, tests/viewer-camera-core.test.js.
+  // Required core module (loaded with defer before this script).
+  var _ccViewerCam = window._ccViewerCamera;
+  var _ccOrbitDragStep = _ccViewerCam.orbitDragStep;
+  var _ccPanWorldPerPixel = _ccViewerCam.panWorldPerPixel;
 
   function makeOrbit(camera, el, _wlAdd) {
     var target = new THREE.Vector3();
@@ -13402,9 +13420,11 @@ function startApp() {
     }
 
     // Nearest VISIBLE surface point under the cursor. Honours active section
-    // clipping planes (Raycaster ignores clipping on its own) so we never
-    // pick geometry the section has hidden, and skips ghosted meshes. Used
-    // for zoom-to-cursor, the rotate-drag pivot, and the pan grab depth.
+    // clipping (window._ccActivePlanes — clipping is per-material, so the
+    // renderer's own clippingPlanes list is always empty; Raycaster ignores
+    // clipping on its own), skips ghosted and hidden meshes. Same filter as
+    // the measure snap (viewer-pick-core.js firstVisibleHit). Used for
+    // zoom-to-cursor, the rotate-drag pivot, and the pan grab depth.
     // Null over empty space / no model.
     function _pickSurfacePoint(e){
       var S = window._ccState3d;
@@ -13414,21 +13434,20 @@ function startApp() {
       var ny = -((e.clientY-rect.top)/rect.height)*2+1;
       _zoomRay.setFromCamera({x:nx,y:ny}, camera);
       var hits = _zoomRay.intersectObjects(S.mg.children, true);
-      var planes = (S.renderer && S.renderer.clippingPlanes) || null;
-      for (var i=0;i<hits.length;i++){
-        var h = hits[i];
-        if (!h.object || !h.object.visible) continue;
-        if (S._isGhostMat && S._isGhostMat(h.object.material)) continue;
-        if (planes && planes.length){
-          var clipped = false;
-          // Small tolerance: triangles straddling the cut plane can have their hit
-          // point land fractionally past the boundary — don't falsely filter them.
-          for (var p=0;p<planes.length;p++){ if (planes[p].distanceToPoint(h.point) < -0.01){ clipped = true; break; } }
-          if (clipped) continue;
-        }
-        return h.point.clone();
+      var h = window._ccViewerPick.firstVisibleHit(hits, {planes: window._ccActivePlanes, isGhost: S._isGhostMat});
+      return h ? h.point.clone() : null;
+    }
+    // Scene diagonal for the zoom-out step floor, recomputed only when the
+    // model list changes (window._ccElemsBBox is O(elements)).
+    var _diagModels = null, _diagVal = 0;
+    function _sceneDiag(){
+      var st = window._ccLatestState, ms = st && st.models;
+      if (ms !== _diagModels && typeof window._ccElemsBBox === 'function') {
+        _diagModels = ms;
+        var b = window._ccElemsBBox();
+        _diagVal = (b && !b.isEmpty()) ? b.getSize(new THREE.Vector3()).length() : 0;
       }
-      return null;
+      return _diagVal;
     }
     var _zoomPickPoint = _pickSurfacePoint; // kept alias — same helper, used at the wheel call sites below
 
@@ -13633,16 +13652,16 @@ function startApp() {
         // Dolly along the ray through the cursor: scale BOTH camera.position
         // and target toward the same anchor point by the same factor, so the
         // anchor never moves on screen and the step is exactly reversible.
-        var anchor = _zoomPickPoint(e) || _rayPlaneAnchor(e);
-        var clampedFactor = zoomFactor;
-        var newR = sph.r * zoomFactor;
-        if (newR < 0.5) clampedFactor = 0.5 / sph.r;
-        else if (newR > 5000) clampedFactor = 5000 / sph.r;
-        var dollied = _ccZoomDollyStep(
+        // dollyStep bounds it: zooming out always escapes (step floor), zooming
+        // in toward a picked surface stops in front of it (never through it).
+        var surfaceHit = _zoomPickPoint(e);
+        var anchor = surfaceHit || _rayPlaneAnchor(e);
+        var dollied = _ccViewerCam.dollyStep(
           {x:camera.position.x,y:camera.position.y,z:camera.position.z},
           {x:target.x,y:target.y,z:target.z},
           {x:anchor.x,y:anchor.y,z:anchor.z},
-          clampedFactor
+          zoomFactor,
+          {surface: !!surfaceHit, sceneDiag: _sceneDiag(), near: camera.near}
         );
         camera.position.set(dollied.camPos.x, dollied.camPos.y, dollied.camPos.z);
         target.set(dollied.tgt.x, dollied.tgt.y, dollied.tgt.z);
@@ -13716,7 +13735,14 @@ function startApp() {
         target.addScaledVector(_tmpUp,pdy*spT);
         if(touchState.dist>0) {
           var scale=touchState.dist/d;
-          sph.r*=scale;
+          if(orbit.camera.isOrthographicCamera) sph.r*=scale;
+          else {
+            // Same bounded step as the wheel (anchor = orbit target).
+            // Only the distance matters here: anchor = target, camera sph.r away.
+            var tp = {x:0,y:0,z:0};
+            sph.r = _ccViewerCam.dollyStep({x:sph.r,y:0,z:0}, tp, tp, scale,
+              {sceneDiag: _sceneDiag(), near: camera.near}).dist;
+          }
           if(orbit.camera.isOrthographicCamera) {
             orbit.camera.zoom=Math.max(0.01,orbit.camera.zoom/scale);
             orbit.camera.updateProjectionMatrix();
@@ -16216,8 +16242,15 @@ function startApp() {
       };
 
       // ── Snap engine + live measurement preview ──  See docs/INTERNALS.md § 21.29
-      var _SNAP_PX = 18;
+      // Snapping itself lives in viewer-pick-core.js (pure, node-tested):
+      // vertex > midpoint > edge > face from the hit element's feature edges,
+      // BatchedMesh/InstancedMesh instance matrices applied, clipped points
+      // rejected. This wrapper only supplies the camera projection, the clip
+      // planes and a self-occlusion ray.
+      var _SNAP_PX = 12;
       var _proj = new THREE.Vector3();
+      var _snapRay = new THREE.Raycaster();
+      var _snapDir = new THREE.Vector3();
       function _projectToPx(p3, w, h){
         _proj.copy(p3).project(S.camera);
         return {x: (_proj.x*0.5+0.5)*w, y: (-_proj.y*0.5+0.5)*h, z:_proj.z};
@@ -16225,46 +16258,37 @@ function startApp() {
       function _ccComputeSnap(hit, screenX, screenY){
         if(!hit || !hit.point) return null;
         var rect = renderer.domElement.getBoundingClientRect();
-        var w = rect.width, h = rect.height;
-        var sx = screenX - rect.left, sy = screenY - rect.top;
-        var face = hit.face, geom = hit.object && hit.object.geometry;
-        var best = {point: hit.point.clone(), type:'face', normal:(hit.face&&hit.face.normal)?hit.face.normal.clone():new THREE.Vector3(0,1,0), dist:_SNAP_PX, srcObj:hit.object};
-        // Apply the mesh's world matrix to all candidate vertices
-        var wm = hit.object && hit.object.matrixWorld;
-        function _consider(localPt, type){
-          if(!localPt) return;
-          var wp = localPt.clone();
-          if (wm) wp.applyMatrix4(wm);
-          var p2 = _projectToPx(wp, w, h);
-          if (p2.z < -1 || p2.z > 1) return;
-          var dx = p2.x - sx, dy = p2.y - sy;
-          var d = Math.sqrt(dx*dx + dy*dy);
-          // Priority weighting: vertex < midpoint < center < edge — smaller weight wins
-          var pri = type==='vertex'?0:(type==='midpoint'?2:(type==='center'?3:4));
-          var weighted = d + pri;
-          if (weighted < best.dist) { best.dist = weighted; best.point = wp; best.type = type; }
+        var w = rect.width, h = rect.height, cam = S.camera;
+        var best = {point: hit.point.clone(), type:'face', normal:_ccHitWorldNormal(hit), srcObj:hit.object};
+        var VP = window._ccViewerPick;
+        if (VP) {
+          var persp = !cam.isOrthographicCamera;
+          var depth = hit.distance || cam.position.distanceTo(hit.point);
+          var wpp = persp ? _ccPanWorldPerPixel(depth, h, cam.fov||55) : ((cam.top-cam.bottom)/(cam.zoom||1))/Math.max(1,h);
+          var planes = window._ccActivePlanes;
+          var res = VP.snap({
+            hit: hit, cursor: {x: screenX-rect.left, y: screenY-rect.top}, tolPx: _SNAP_PX,
+            worldRadius: _SNAP_PX * wpp * 3, planes: planes,
+            project: function(p){
+              _proj.set(p.x, p.y, p.z).applyMatrix4(cam.matrixWorldInverse);
+              var vw = persp ? -_proj.z : 1;
+              if (persp && vw <= 0) return null;
+              _proj.applyMatrix4(cam.projectionMatrix);
+              if (_proj.z < -1 || _proj.z > 1) return null;
+              return {x: (_proj.x*0.5+0.5)*w, y: (-_proj.y*0.5+0.5)*h, w: vw};
+            },
+            // Hidden behind the hit element itself (e.g. the back corner of a
+            // wall seen almost head-on)? One ray against that object only.
+            isOccluded: function(p){
+              var tp = new THREE.Vector3(p.x, p.y, p.z), dist;
+              if (persp) { _snapDir.copy(tp).sub(cam.position); dist = _snapDir.length(); _snapDir.divideScalar(dist || 1); _snapRay.set(cam.position, _snapDir); }
+              else { cam.getWorldDirection(_snapDir); dist = 1e4; _snapRay.set(tp.clone().addScaledVector(_snapDir, -dist), _snapDir); }
+              var oh = VP.firstVisibleHit(_snapRay.intersectObject(hit.object, false), {planes: planes, isGhost: _isGhostMat});
+              return !!oh && oh.distance < dist - Math.max(0.005, dist*0.002);
+            }
+          });
+          if (res && res.type !== 'face') { best.point = new THREE.Vector3(res.point.x, res.point.y, res.point.z); best.type = res.type; }
         }
-        if (face && geom && geom.attributes && geom.attributes.position) {
-          var posAttr = geom.attributes.position;
-          var idxAttr = geom.index;
-          var aIdx = face.a, bIdx = face.b, cIdx = face.c;
-          // BufferGeometry index lookup
-          if (idxAttr) { /* face.{a,b,c} are already vertex indices for indexed geom */ }
-          var vA = new THREE.Vector3().fromBufferAttribute(posAttr, aIdx);
-          var vB = new THREE.Vector3().fromBufferAttribute(posAttr, bIdx);
-          var vC = new THREE.Vector3().fromBufferAttribute(posAttr, cIdx);
-          // For instanced meshes, also apply the instance matrix
-          if (hit.object && hit.object.isInstancedMesh && hit.instanceId != null) {
-            var im = new THREE.Matrix4(); hit.object.getMatrixAt(hit.instanceId, im);
-            vA.applyMatrix4(im); vB.applyMatrix4(im); vC.applyMatrix4(im);
-          }
-          _consider(vA, 'vertex'); _consider(vB, 'vertex'); _consider(vC, 'vertex');
-          _consider(new THREE.Vector3().addVectors(vA,vB).multiplyScalar(0.5), 'midpoint');
-          _consider(new THREE.Vector3().addVectors(vB,vC).multiplyScalar(0.5), 'midpoint');
-          _consider(new THREE.Vector3().addVectors(vC,vA).multiplyScalar(0.5), 'midpoint');
-          _consider(new THREE.Vector3().addVectors(vA,vB).add(vC).multiplyScalar(1/3), 'center');
-        }
-        // Re-project final to record screen coords
         var projF = _projectToPx(best.point, w, h);
         best.screenX = projF.x + rect.left;
         best.screenY = projF.y + rect.top;
@@ -17090,9 +17114,10 @@ function startApp() {
           (_measureGeoMap[k].dots||[]).forEach(function(d){allDots.push(d);});
           (_measureGeoMap[k].lines||[]).forEach(function(l){allLines.push(l);});
         }
-        var hits = _dragRaycaster.intersectObjects(S.mg.children, true).filter(function(h){
-          return h.object && h.object.visible && allDots.indexOf(h.object) < 0 && allLines.indexOf(h.object) < 0;
-        });
+        var _dh = window._ccViewerPick.firstVisibleHit(_dragRaycaster.intersectObjects(S.mg.children, true).filter(function(h){
+          return h.object && allDots.indexOf(h.object) < 0 && allLines.indexOf(h.object) < 0;
+        }), {planes: window._ccActivePlanes, isGhost: _isGhostMat});
+        var hits = _dh ? [_dh] : [];
         if (!hits.length) return;
         var snap = _ccComputeSnap(hits[0], e.clientX, e.clientY) || {point:hits[0].point.clone(), type:'face'};
         window._ccHoverSnap = {point:snap.point, type:snap.type, screenX:e.clientX, screenY:e.clientY, srcObj:snap.srcObj||hits[0].object};
@@ -17199,6 +17224,9 @@ function startApp() {
         hoverMouse.y = -((e.clientY-rect.top)/rect.height)*2+1;
         hoverRaycaster.setFromCamera(hoverMouse, S.camera);
         var hits = hoverRaycaster.intersectObjects(S.mg.children, true);
+        // Measure/Alt snap only from geometry the user can actually see (not
+        // cut away by a section plane/box, not ghosted or hidden).
+        var _snapHit = _wantSnap ? window._ccViewerPick.firstVisibleHit(hits, {planes: window._ccActivePlanes, isGhost: _isGhostMat}) : null;
         // Pre-check: when a measure tool is active and nothing is in progress, test
         // endpoint dots BEFORE evaluating model hits. Dots live in scene directly (not
         // S.mg), so the model raycaster misses them. Without this, model geometry under
@@ -17215,12 +17243,12 @@ function startApp() {
           window._ccHoverSnap = {point:_preEpHit.mesh.position.clone(), type:'alt-endpoint', screenX:e.clientX, screenY:e.clientY};
           if(window._ccHoverCoordTick) window._ccHoverCoordTick();
           invalidate();
-        } else if (_wantSnap && hits.length > 0 && hits[0].point) {
+        } else if (_wantSnap && _snapHit && _snapHit.point) {
           window._ccAltEndpointHit = null;
-          var snap = _ccComputeSnap(hits[0], e.clientX, e.clientY) || {point:hits[0].point.clone(), type:'face'};
+          var snap = _ccComputeSnap(_snapHit, e.clientX, e.clientY) || {point:_snapHit.point.clone(), type:'face'};
           var hp = snap.point;
           window._ccHoverPoint = {x:hp.x, y:hp.y, z:hp.z, screenX:e.clientX, screenY:e.clientY};
-          window._ccHoverSnap = {point:hp, type:snap.type, screenX:snap.screenX||e.clientX, screenY:snap.screenY||e.clientY, srcObj:snap.srcObj||hits[0].object};
+          window._ccHoverSnap = {point:hp, type:snap.type, screenX:snap.screenX||e.clientX, screenY:snap.screenY||e.clientY, srcObj:snap.srcObj||_snapHit.object};
           if(window._ccHoverCoordTick) window._ccHoverCoordTick();
           if((measureModeRef.current && measurePtsRef.current && measurePtsRef.current.length > 0) || (window._ccAltHeld && window._ccAltHoverFrom)) {
             _ccUpdateMeasurePreview();
@@ -19991,12 +20019,12 @@ function startApp() {
             if (glyphEl) {
               var t = snap.type;
               var svg = '';
-              if (t === 'vertex')           svg = '<circle cx="9" cy="9" r="4" fill="#b8533a" stroke="#fff" stroke-width="1.5"/>';
-              else if (t === 'midpoint')    svg = '<rect x="4.5" y="4.5" width="9" height="9" fill="#b8533a" stroke="#fff" stroke-width="1.5" transform="rotate(45 9 9)"/>';
-              else if (t === 'center')      svg = '<circle cx="9" cy="9" r="6" fill="none" stroke="#b8533a" stroke-width="1.5"/><circle cx="9" cy="9" r="2" fill="#b8533a"/>';
-              else if (t === 'edge')        svg = '<line x1="3" y1="9" x2="15" y2="9" stroke="#b8533a" stroke-width="2.5" stroke-linecap="round"/>';
-              else if (t === 'alt-endpoint') svg = '<polygon points="9,3 15,14 3,14" fill="none" stroke="#b8533a" stroke-width="1.5" stroke-linejoin="round"/><circle cx="9" cy="9" r="2" fill="#b8533a"/>';
-              else                           svg = '<circle cx="9" cy="9" r="5" fill="#fff" stroke="#b8533a" stroke-width="2"/>';
+              if (t === 'vertex')           svg = '<circle cx="9" cy="9" r="4" fill="currentColor" style="stroke:var(--accent-contrast)" stroke-width="1.5"/>';
+              else if (t === 'midpoint')    svg = '<rect x="4.5" y="4.5" width="9" height="9" fill="currentColor" style="stroke:var(--accent-contrast)" stroke-width="1.5" transform="rotate(45 9 9)"/>';
+              else if (t === 'center')      svg = '<circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="9" cy="9" r="2" fill="currentColor"/>';
+              else if (t === 'edge')        svg = '<line x1="3" y1="9" x2="15" y2="9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>';
+              else if (t === 'alt-endpoint') svg = '<polygon points="9,3 15,14 3,14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="9" cy="9" r="2" fill="currentColor"/>';
+              else                           svg = '<circle cx="9" cy="9" r="5" style="fill:var(--accent-contrast)" stroke="currentColor" stroke-width="2"/>';
               if (glyphEl._lastSvg !== svg) { glyphEl.innerHTML = svg; glyphEl._lastSvg = svg; }
             }
             // Type label (Endpoint / Midpoint / Centre / Edge / Surface)
@@ -22096,7 +22124,7 @@ function startApp() {
             Updated each frame inside the renderer tick (see ~line 8040). When no snap
             is found, the cursor itself is the only indicator — no overlapping markers. */ ''}
       <div id="cc-snap-marker" style=${{position:'fixed',left:0,top:0,width:0,height:0,pointerEvents:'none',zIndex:'var(--z-tooltip)',display:'none'}}>
-        <svg id="cc-snap-glyph" width="18" height="18" viewBox="0 0 18 18" style=${{position:'absolute',left:-9,top:-9,overflow:'visible',filter:'drop-shadow(0 1px 2px rgba(0,0,0,.35))'}}></svg>
+        <svg id="cc-snap-glyph" width="18" height="18" viewBox="0 0 18 18" style=${{color:'var(--accent)',position:'absolute',left:-9,top:-9,overflow:'visible',filter:'drop-shadow(0 1px 2px rgba(0,0,0,.35))'}}></svg>
         <span id="cc-snap-typelabel" style=${{position:'absolute',left:14,top:-10,fontSize:'var(--text-2xs)',color:'var(--accent)',background:'var(--bg-primary)',border:'1px solid var(--accent)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',boxShadow:'var(--shadow-sm)',whiteSpace:'nowrap',fontWeight:'var(--weight-semibold)',letterSpacing:'.02em',display:'none'}}></span>
         <span id="cc-snap-chip" style=${{position:'absolute',left:14,top:8,fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',color:'var(--text-primary)',background:'var(--bg-primary)',border:'1px solid var(--border)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',boxShadow:'var(--shadow-sm)',whiteSpace:'nowrap',display:'none'}}></span>
       </div>

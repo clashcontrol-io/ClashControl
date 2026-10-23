@@ -63,8 +63,9 @@ test('candidate semantic mismatch also cold-parses instead of accepting geometry
 });
 
 // IfcSpace geometry (2026-10-22): caches written before rooms kept their
-// volume carry no `sp:1` marker; with the source IFC stored they are
-// re-parsed once instead of restoring rooms without geometry forever.
+// volume carry no `sp` marker, and `sp:1` caches predate the storey-frame
+// room placement fix (`sp:2`); with the source IFC stored they are re-parsed
+// once instead of restoring missing or displaced rooms forever.
 function realLacksSpaces() {
   const start = source.indexOf('  function _ccGeoCacheLacksSpaces(cached, entry) {');
   const end = source.indexOf('\n  }\n', start) + 4;
@@ -84,18 +85,21 @@ test('pre-spaces cache (no sp marker) cold-parses once when the source IFC is st
   assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, { v: 7, hasPsets: true }), 'cold');
   assert.equal(h.coldParses, 1);
   assert.equal(deserializes, 0);
-  // sp:1 without sem:1 (written before discipline evidence / space
+  // sp:2 without sem:1 (written before discipline evidence / space
   // boundaries were extracted) is refreshed the same way.
-  assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, { v: 7, sp: 1, hasPsets: true }), 'cold');
+  assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, { v: 7, sp: 2, hasPsets: true }), 'cold');
   assert.equal(h.coldParses, 2);
-  assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, { v: 7, sp: 1, sem: 1, hasPsets: true }), 'legacy');
+  // sp:1 (rooms written in their storey's frame were still doubled) too.
+  assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, { v: 7, sp: 1, sem: 1, hasPsets: true }), 'cold');
+  assert.equal(h.coldParses, 3);
+  assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, { v: 7, sp: 2, sem: 1, hasPsets: true }), 'legacy');
   // No source bytes: the old cache is still the only geometry there is.
   assert.equal(await h.context.restore({ id: 'm' }, { v: 7, hasPsets: true }), 'legacy');
-  assert.equal(h.coldParses, 2);
+  assert.equal(h.coldParses, 3);
 });
 
-test('the serializer stamps sp:1 and both restore policies check it first', () => {
-  assert.match(source, /return \{v:_ccGeoCacheV8Enabled\(\)\?8:7, sp:1, sem:1, hasPsets:hasPsets/);
+test('the serializer stamps sp:2 and both restore policies check it first', () => {
+  assert.match(source, /return \{v:_ccGeoCacheV8Enabled\(\)\?8:7, sp:2, sem:1, hasPsets:hasPsets/);
   assert.match(source, /if \(_ccGeoCacheLacksSpaces\(cached, entry\)\) return _ccColdParseParkedEntry\(entry\);/);
   assert.match(source, /if \(_ccGeoCacheLacksSpaces\(cached, entry\)\) return _coldParseAndCache\(entry\);/);
 });
