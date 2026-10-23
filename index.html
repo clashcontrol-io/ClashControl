@@ -516,6 +516,29 @@
        panel sheet on phones. */
     .cc-overview{position:absolute;top:0;bottom:0;left:var(--cc-ov-left,0px);right:var(--cc-ov-right,0px);z-index:5}
     @media(max-width:768px){.cc-overview{position:fixed;top:0;left:0;right:0;bottom:56px;z-index:calc(var(--z-panel) + 3)}}
+    /* Review overview chrome: snapshot skeleton (shimmer, off under reduced
+       motion), the Filters popover (bottom sheet on phones) and the
+       suggested-view chip strip (one swipeable row on phones). */
+    .cc-sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
+    .cc-skeleton{position:absolute;inset:0;display:block;background:linear-gradient(100deg,var(--bg-tertiary) 30%,var(--bg-secondary) 50%,var(--bg-tertiary) 70%);background-size:300% 100%;animation:ccSkeleton 1.2s var(--ease-standard) infinite}
+    @keyframes ccSkeleton{from{background-position:100% 0}to{background-position:0 0}}
+    .cc-snap-img{opacity:0;animation:ccSnapIn var(--duration-base) var(--ease-decelerate) forwards}
+    @keyframes ccSnapIn{to{opacity:1}}
+    .cc-facet-pop{position:absolute;top:calc(100% - var(--space-1));right:var(--space-4);width:min(560px,calc(100% - var(--space-8)));max-height:60vh;overflow-y:auto;z-index:var(--z-dropdown);background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius-md);box-shadow:var(--shadow-md);padding:var(--space-3)}
+    .cc-chip-strip{display:flex;flex-wrap:wrap;gap:var(--space-1);align-items:center;min-width:0}
+    .cc-overview-grid{grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr))}
+    .cc-tap{min-height:28px}
+    .cc-ov-mobile-only{display:none}
+    @media(max-width:768px){
+      .cc-facet-pop{position:fixed;top:auto;left:0;right:0;bottom:56px;width:auto;max-height:70vh;border-radius:var(--radius-lg) var(--radius-lg) 0 0;z-index:calc(var(--z-panel) + 4)}
+      .cc-chip-strip{flex-wrap:nowrap;overflow-x:auto;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;padding-bottom:var(--space-1)}
+      .cc-chip-strip>*{flex-shrink:0;scroll-snap-align:start}
+      .cc-overview-grid{grid-template-columns:1fr}
+      .cc-overview [data-cc-bucket-bar]{flex-wrap:nowrap!important;overflow-x:auto;scroll-snap-type:x proximity}
+      .cc-overview [data-cc-bucket-bar]>*{flex-shrink:0;white-space:nowrap;scroll-snap-align:start}
+      .cc-overview .cc-tap,.cc-overview [data-cc-bucket-bar] button{min-height:44px}
+      .cc-ov-mobile-only{display:block}
+    }
     body{background:var(--bg-primary);color:var(--text-primary);font-family:var(--font-body);overflow:hidden;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
     .cc-display{font-family:var(--font-display);letter-spacing:-.01em}
     .cc-mono{font-family:var(--font-mono)}
@@ -19298,7 +19321,7 @@ function startApp() {
       // re-run that changes either element invalidates the picture.
       var _SNAP_VER = 'v1', _SNAP_W = 320, _SNAP_H = 200, _SNAP_CTX_MAX_ELEMS = 300, _SNAP_CTX_MAX_TRIS = 400000;
       var _snap = {
-        mem: new Map(), byIdent: new Map(), queue: [], queued: {}, waiting: {}, timer: 0, db: null, dbFailed: false, writes: 0,
+        mem: new Map(), byIdent: new Map(), queue: [], queued: {}, waiting: {}, failed: {}, cancelled: {}, timer: 0, db: null, dbFailed: false, writes: 0,
         sliceBudgetMs: 40, memMax: 400,
         stats: { rendered: 0, memHits: 0, idbHits: 0, busyDeferrals: 0, invalidated: 0, renderedWhileDetecting: 0, ms: [] }
       };
@@ -19544,7 +19567,9 @@ function startApp() {
           if (_snap.mem.has(job.key)) continue;
           var res = null;
           try { res = _snapRender(job.c); } catch (err) { console.warn('[snapshot] render failed:', err && err.message || err); }
-          if (!res) continue;
+          // no geometry to draw (or the render threw): the card says so and
+          // the clash is never queued again for this key
+          if (!res) { _snap.failed[job.key] = true; _snapNotify(job.key); continue; }
           var rec = { key: job.key, url: res.url, hash: res.hash, at: Date.now(), bytes: res.url.length, ms: Math.round(res.ms) };
           _snapRemember(job.key, _snapIdent(job.c), rec);
           _snapIdbPut(rec);
@@ -19552,11 +19577,20 @@ function startApp() {
         }
         if (_snap.queue.length) _snapSchedule(60);
       }
+      // Move a queued job to the front (a card scrolled into view).
+      function _snapPromote(key) {
+        for (var i = 0; i < _snap.queue.length; i++) {
+          if (_snap.queue[i].key === key) { if (i) _snap.queue.unshift(_snap.queue.splice(i, 1)[0]); return; }
+        }
+      }
       function _snapRequest(c, front) {
         var key = _snapKey(c);
         if (!key) return null;
         if (_snap.mem.has(key)) { _snap.stats.memHits++; return key; }
-        if (_snap.queued[key] || _snap.waiting[key]) return key;
+        if (_snap.failed[key]) return key;
+        delete _snap.cancelled[key];
+        if (_snap.queued[key]) { if (front) _snapPromote(key); _snapSchedule(); return key; }
+        if (_snap.waiting[key]) return key;
         _snap.waiting[key] = true;
         _snapIdbGet(key).then(function(rec) {
           delete _snap.waiting[key];
@@ -19569,6 +19603,8 @@ function startApp() {
             return;
           }
           if (_snap.queued[key] || _snap.mem.has(key)) return;
+          // the card left the screen while IndexedDB answered
+          if (_snap.cancelled[key]) { delete _snap.cancelled[key]; return; }
           _snap.queued[key] = true;
           if (front) _snap.queue.unshift({ key: key, c: c }); else _snap.queue.push({ key: key, c: c });
           _snapSchedule();
@@ -19584,6 +19620,19 @@ function startApp() {
         request: function(c, opts) { return _snapRequest(c, !!(opts && opts.front)); },
         // render right now, ignoring the queue and caches (tests, determinism checks)
         renderNow: function(c) { return _snapRender(c); },
+        // drop a queued (not yet rendered) request — a card left the screen
+        cancel: function(c) {
+          var k = typeof c === 'string' ? c : _snapKey(c);
+          if (!k) return false;
+          if (_snap.waiting[k]) _snap.cancelled[k] = true;
+          if (!_snap.queued[k]) return false;
+          delete _snap.queued[k];
+          _snap.queue = _snap.queue.filter(function(j) { return j.key !== k; });
+          return true;
+        },
+        // true when no picture can be made: no elements / geometry, or the
+        // render returned nothing (never retried for the same key)
+        failed: function(c) { var k = _snapKey(c); return !k || !!_snap.failed[k]; },
         pending: function() { return _snap.queue.length + Object.keys(_snap.waiting).length; },
         stats: function() {
           var ms = _snap.stats.ms.slice().sort(function(a, b) { return a - b; });
@@ -26554,6 +26603,25 @@ function startApp() {
     </span>`;
   }
 
+  // "149 clashes · 149 open · 0 resolved" — the run's one-line summary
+  // (validation rows are not clashes and are not counted).
+  function _ccStatsSummaryLine(items, isClash) {
+    var total = 0, open = 0, inProg = 0, resolved = 0;
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      if (isClash && it._idsValidation) continue;
+      total++;
+      if (it.status === 'open') open++;
+      else if (it.status === 'in_progress') inProg++;
+      else if (it.status === 'resolved' || it.status === 'closed') resolved++;
+    }
+    var noun = isClash ? _cc_t('statsBar.clash','clash') : _cc_t('statsBar.issue','issue');
+    var nounPl = isClash ? _cc_t('statsBar.clashes','clashes') : _cc_t('statsBar.issues','issues');
+    return total + ' ' + (total===1?noun:nounPl)
+      + ' · ' + open + ' ' + _cc_t('statsBar.open','open')
+      + (inProg>0 ? (' · ' + inProg + ' ' + _cc_t('statsBar.inProgress','in progress')) : '')
+      + ' · ' + resolved + ' ' + _cc_t('statsBar.resolved','resolved');
+  }
   function ClashStatsBar(props) {
     var items = props.items, isClash = props.isClash, delta = props.delta;
     var handledHiddenCount = props.handledHiddenCount || 0, showHandled = !!props.showHandled, d = props.d;
@@ -26603,9 +26671,9 @@ function startApp() {
       + (inProg>0 ? (' · ' + inProg + ' ' + _cc_t('statsBar.inProgress','in progress')) : '')
       + ' · ' + resolved + ' ' + _cc_t('statsBar.resolved','resolved');
     return html`<div style=${{padding:'.35rem .5rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-tertiary)'}}>
-      <!-- Summary line -->
+      <!-- Summary line (shown as the caption under the bucket bar on the clash tab) -->
       <div style=${{display:'flex',alignItems:'center',gap:'.5rem',marginBottom:'.25rem',flexWrap:'wrap'}}>
-        <span style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-primary)'}}>${summaryLine}</span>
+        ${!props.noSummary && html`<span style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-primary)'}}>${summaryLine}</span>`}
         ${isClash && handledHiddenCount > 0 && html`<label style=${{display:'flex',alignItems:'center',gap:'.25rem',fontSize:'0.65rem',color:'var(--text-faint)',whiteSpace:'nowrap',cursor:'pointer',marginLeft:'auto'}}>
           <input type="checkbox" checked=${showHandled}
             onChange=${function(e){ if (d) d({t:A.UPD_FILTERS,u:{showHandled:e.target.checked}}); }}
@@ -26668,97 +26736,122 @@ function startApp() {
   }
 
   // ── Bulk Action Bar ──────────────────────────────────────────
+  // B2: Triage focus — ghost everything that isn't involved in an open
+  // clash. Pure visual; no memory change. Toggle state lives on window so a
+  // re-render keeps the highlight intact.
+  function _ccToggleTriageFocus() {
+    if (window._ccTriageFocusActive) {
+      if (window._unghostAll) window._unghostAll();
+      window._ccTriageFocusActive = false;
+      if (window._ccToast) window._ccToast(_cc_t('clashResults.triageFocusOff','Triage focus off'));
+      return;
+    }
+    // Collect refs (Mesh objects + instance refs) for every element involved
+    // in an open clash, across both sides.
+    var s2 = window._ccLatestState;
+    if (!s2 || !s2.clashes || !s2.clashes.length || !window._ghostOthers) return;
+    var modelMap = {};
+    (s2.models||[]).forEach(function(m){ modelMap[m.id] = m; });
+    var refs = [], seen = {};
+    s2.clashes.forEach(function(c){
+      if (c.status === 'resolved' || c.status === 'closed' || c.status === 'denied') return;
+      [['modelAId','elemA'], ['modelBId','elemB']].forEach(function(pair){
+        var mid = c[pair[0]], eid = c[pair[1]];
+        var k = mid + ':' + eid; if (seen[k]) return; seen[k] = 1;
+        var mm = modelMap[mid]; if (!mm) return;
+        var els = mm.elements || [];
+        for (var i=0; i<els.length; i++) {
+          if (els[i].expressId === eid) { (els[i].meshes||[]).forEach(function(mesh){ refs.push(mesh); }); break; }
+        }
+      });
+    });
+    if (!refs.length) { if (window._ccToast) window._ccToast(_cc_t('clashResults.noOpenClashesToFocus','No open clashes to focus on')); return; }
+    window._ghostOthers(refs);
+    window._ccTriageFocusActive = true;
+    if (window._ccToast) window._ccToast(_cc_t('clashResults.focusingOnNElements','Focusing on {n} element{s} in open clashes',{n:Object.keys(seen).length,s:Object.keys(seen).length===1?'':'s'}));
+  }
+  function _ccClearAllClashes(d, totalCount) {
+    if (!confirm(_cc_t('clashResults.clearAllConfirm','Clear all {n} clash{es}? This frees their markers and memory but does not unload any models. You can re-run detection any time.',{n:totalCount,es:totalCount===1?'':'es'}))) return;
+    d({t:A.SET_CLASHES, v:[]});
+    if (window._unghostAll && window._ccTriageFocusActive) { window._unghostAll(); window._ccTriageFocusActive = false; }
+    if (window._ccToast) window._ccToast(_cc_t('clashResults.clearedNClashes','Cleared {n} clashes',{n:totalCount}));
+  }
+  // The clash list's rarely-used actions (select several, triage focus,
+  // clear all) behind one "⋯" button in the grouping row.
+  function ClashListActionsMenu(props) {
+    var d = props.d, totalCount = props.totalCount || 0;
+    var op = useState(false), open = op[0], setOpen = op[1];
+    var ref = useRef(null), btnRef = useRef(null);
+    useEffect(function(){
+      if (!open) return;
+      function out(e){ if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+      document.addEventListener('mousedown', out);
+      var t = setTimeout(function(){ var f = ref.current && ref.current.querySelector('[role="menuitem"]'); if (f) f.focus(); }, 0);
+      return function(){ document.removeEventListener('mousedown', out); clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setOpen is a useState setter (stable identity)
+    }, [open]);
+    function close(refocus){ setOpen(false); if (refocus && btnRef.current) btnRef.current.focus(); }
+    function onKey(e){
+      if (!open) return;
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        var items = Array.prototype.slice.call(ref.current.querySelectorAll('[role="menuitem"]'));
+        var i = items.indexOf(document.activeElement);
+        var n = e.key === 'ArrowDown' ? (i + 1) % items.length : (i - 1 + items.length) % items.length;
+        if (items[n]) { e.preventDefault(); items[n].focus(); }
+      }
+    }
+    var focusOn = !!window._ccTriageFocusActive;
+    var ITEM = {...S_BTN, display:'block', width:'100%', textAlign:'left', padding:'var(--space-2) var(--space-3)', fontSize:'var(--text-xs)', background:'none', color:'var(--text-primary)', borderRadius:0, whiteSpace:'nowrap'};
+    function act(fn){ return function(){ close(true); fn(); }; }
+    return html`<span ref=${ref} onKeyDown=${onKey} style=${{position:'relative',display:'inline-flex',flexShrink:0}}>
+      <button ref=${btnRef} data-cc-list-actions="1" aria-label=${_cc_t('clashResults.moreActions','More list actions')} aria-haspopup="menu" aria-expanded=${open?'true':'false'}
+        onClick=${function(){ setOpen(!open); }}
+        style=${{...S_BTN,padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-xs)',lineHeight:1,background:open?'var(--bg-secondary)':'none',color:'var(--text-secondary)',border:'1px solid '+(open?'var(--border)':'transparent'),borderRadius:'var(--radius-xs)'}}>
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+      </button>
+      ${open && html`<div role="menu" aria-label=${_cc_t('clashResults.moreActions','More list actions')} style=${{position:'absolute',top:'calc(100% + var(--space-1))',right:0,zIndex:'var(--z-dropdown)',minWidth:180,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',overflow:'hidden'}}>
+        <button role="menuitem" data-cc-select-mode="1" onClick=${act(function(){ d({t:A.SELECT_MODE,v:true}); })} style=${ITEM}>${_cc_t('bulkAction.selectMultiple','Select multiple')}</button>
+        ${totalCount > 0 && html`<button role="menuitem" aria-pressed=${focusOn?'true':'false'} title=${_cc_t('clashResults.hideGeometryTitle','Hide all geometry except elements involved in open clashes. Pure visual — toggle off to restore.')}
+          onClick=${act(_ccToggleTriageFocus)} style=${ITEM}>${focusOn ? _cc_t('clashResults.triageFocusStop','Stop triage focus') : _cc_t('clashResults.triageFocus','Triage focus')}</button>`}
+        ${totalCount > 0 && html`<button role="menuitem" title=${_cc_t('clashResults.removeAllResults','Remove all clash results (models stay loaded)')}
+          onClick=${act(function(){ _ccClearAllClashes(d, totalCount); })} style=${{...ITEM,color:'var(--color-danger-fg)',borderTop:'1px solid var(--border-subtle)'}}>${_cc_t('clashResults.clearAllBtn','Clear all')}</button>`}
+      </div>`}
+    </span>`;
+  }
   function BulkActionBar(props) {
     var s = props.s, d = props.d, items = props.items, isClash = props.isClash;
     var sel = s.selected;
     var count = Object.keys(sel).length;
     if (!s.selectMode) {
-      var totalCount = (items||[]).length;
-      return html`<div style=${{padding:'.25rem .5rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+      // clash list: these live in the grouping row's ⋯ menu (ClashListActionsMenu)
+      if (isClash) return null;
+      return html`<div style=${{padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
         <button onClick=${function(){d({t:A.SELECT_MODE,v:true})}}
-          style=${{...S_BTN,fontSize:'0.67rem',padding:'.15rem .4rem',background:'none',color:'var(--text-faint)',border:'1px solid var(--border)'}}>
-          Select Multiple
+          style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'none',color:'var(--text-muted)',border:'1px solid var(--border)'}}>
+          ${_cc_t('bulkAction.selectMultiple','Select multiple')}
         </button>
-        ${isClash && totalCount > 0 && html`<div style=${{display:'flex',gap:'.3rem'}}>
-          ${(function(){
-            // ── B2: Triage focus — ghost everything that isn't involved in
-            // an open clash. Pure visual; no memory change, no consumer
-            // audit risk. Toggle by tracking active state in window so a
-            // re-render keeps the highlight intact.
-            var focusOn = !!window._ccTriageFocusActive;
-            return html`<button onClick=${function(){
-                if (focusOn) {
-                  if (window._unghostAll) window._unghostAll();
-                  window._ccTriageFocusActive = false;
-                  if (window._ccToast) window._ccToast(_cc_t('clashResults.triageFocusOff','Triage focus off'));
-                } else {
-                  // Collect refs (Mesh objects + instance refs) for every
-                  // element involved in an open clash, across both sides.
-                  var s2 = window._ccLatestState;
-                  if (!s2 || !s2.clashes || !s2.clashes.length || !window._ghostOthers) return;
-                  var modelMap = {};
-                  (s2.models||[]).forEach(function(m){ modelMap[m.id] = m; });
-                  var refs = [];
-                  var seen = {};
-                  s2.clashes.forEach(function(c){
-                    if (c.status === 'resolved' || c.status === 'closed' || c.status === 'denied') return;
-                    [['modelAId','elemA'], ['modelBId','elemB']].forEach(function(pair){
-                      var mid = c[pair[0]], eid = c[pair[1]];
-                      var k = mid + ':' + eid; if (seen[k]) return; seen[k] = 1;
-                      var mm = modelMap[mid]; if (!mm) return;
-                      var els = mm.elements || [];
-                      for (var i=0; i<els.length; i++) {
-                        if (els[i].expressId === eid) {
-                          (els[i].meshes||[]).forEach(function(mesh){ refs.push(mesh); });
-                          break;
-                        }
-                      }
-                    });
-                  });
-                  if (!refs.length) { if (window._ccToast) window._ccToast(_cc_t('clashResults.noOpenClashesToFocus','No open clashes to focus on')); return; }
-                  window._ghostOthers(refs);
-                  window._ccTriageFocusActive = true;
-                  if (window._ccToast) window._ccToast(_cc_t('clashResults.focusingOnNElements','Focusing on {n} element{s} in open clashes',{n:Object.keys(seen).length,s:Object.keys(seen).length===1?'':'s'}));
-                }
-              }}
-              title=${_cc_t('clashResults.hideGeometryTitle','Hide all geometry except elements involved in open clashes. Pure visual — toggle off to restore.')}
-              style=${{...S_BTN,fontSize:'0.67rem',padding:'.15rem .4rem',background:focusOn?'var(--accent)':'none',color:focusOn?'var(--accent-contrast)':'var(--accent)',border:'1px solid '+(focusOn?'var(--accent)':'var(--accent-subtle)'),fontWeight:focusOn?'var(--weight-semibold)':'var(--weight-regular)'}}>
-              ${focusOn ? _cc_t('clashResults.focusOn','Focus on') : _cc_t('clashResults.triageFocus','Triage focus')}
-            </button>`;
-          })()}
-          <button onClick=${function(){
-              if (confirm(_cc_t('clashResults.clearAllConfirm','Clear all {n} clash{es}? This frees their markers and memory but does not unload any models. You can re-run detection any time.',{n:totalCount,es:totalCount===1?'':'es'}))) {
-                d({t:A.SET_CLASHES, v:[]});
-                if (window._unghostAll && window._ccTriageFocusActive) { window._unghostAll(); window._ccTriageFocusActive = false; }
-                if (window._ccToast) window._ccToast(_cc_t('clashResults.clearedNClashes','Cleared {n} clashes',{n:totalCount}));
-              }
-            }}
-            title=${_cc_t('clashResults.removeAllResults','Remove all clash results (models stay loaded)')}
-            style=${{...S_BTN,fontSize:'0.67rem',padding:'.15rem .4rem',background:'none',color:'var(--color-danger)',border:'1px solid var(--border)'}}>
-            ${_cc_t('clashResults.clearAllBtn','Clear all')}
-          </button>
-        </div>`}
       </div>`;
     }
-    return html`<div style=${{padding:'.35rem .5rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--accent-bg)'}}>
-      <div style=${{display:'flex',alignItems:'center',gap:'.3rem',marginBottom:count>0?'.3rem':0}}>
+    return html`<div style=${{padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--accent-bg)'}}>
+      <div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',marginBottom:count>0?'var(--space-1)':0}}>
         <button onClick=${function(){var ids=items.map(function(i){return i.id;}); d({t:A.SELECT_ALL,ids:ids})}}
-          style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--accent)',color:'var(--accent-contrast)'}}>${_cc_t('bulkAction.all','All')}</button>
+          style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--accent)',color:'var(--accent-contrast)'}}>${_cc_t('bulkAction.all','All')}</button>
         <button onClick=${function(){d({t:A.SELECT_NONE})}}
-          style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .3rem',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>${_cc_t('bulkAction.none','None')}</button>
-        <span style=${{flex:1,fontSize:'0.71rem',color:'var(--accent-subtle)',fontWeight:600}}>${count} selected</span>
+          style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>${_cc_t('bulkAction.none','None')}</button>
+        <span style=${{flex:1,fontSize:'var(--text-xs)',color:'var(--text-primary)',fontWeight:'var(--weight-semibold)'}}>${_cc_t('bulkAction.nSelected','{n} selected',{n:count})}</span>
         <button onClick=${function(){d({t:A.SELECT_MODE,v:false})}}
-          style=${{...S_BTN,fontSize:'0.63rem',padding:'.15rem .3rem',background:'none',color:'var(--text-muted)'}}>${_cc_t('bulkAction.cancel','Cancel')}</button>
+          style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'none',color:'var(--text-muted)'}}>${_cc_t('bulkAction.cancel','Cancel')}</button>
       </div>
-      ${count > 0 && html`<div style=${{display:'flex',gap:'.25rem',flexWrap:'wrap'}}>
-        <select onChange=${function(e){if(!e.target.value)return;d({t:isClash?'BATCH_UPD_CLASH':'BATCH_UPD_ISSUE',u:{status:e.target.value}});e.target.value='';}}
-          style=${{...S_INPUT,fontSize:'0.69rem',padding:'.15rem .25rem',width:'auto',flex:1}}>
+      ${count > 0 && html`<div style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap'}}>
+        <select aria-label=${_cc_t('bulkAction.setStatusAria','Set the status of the selected items')} onChange=${function(e){if(!e.target.value)return;d({t:isClash?'BATCH_UPD_CLASH':'BATCH_UPD_ISSUE',u:{status:e.target.value}});e.target.value='';}}
+          style=${{...S_INPUT,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-1)',width:'auto',flex:1}}>
           <option value="">${_cc_t('bulkAction.setStatus','Set status...')}</option>
           ${Object.keys(STAT).map(function(k){return html`<option key=${k} value=${k}>${STAT[k].label}</option>`})}
         </select>
         ${!isClash && html`<input type="text" placeholder=${_cc_t('issue.assignToPlaceholder','Assign to...')} onKeyDown=${function(e){
             if(e.key==='Enter'&&e.target.value.trim()){d({t:A.BATCH_UPD_ISSUE,u:{assignee:e.target.value.trim()}});e.target.value='';}
-          }} style=${{...S_INPUT,fontSize:'0.69rem',padding:'.15rem .25rem',width:'auto',flex:1}} />`}
+          }} style=${{...S_INPUT,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-1)',width:'auto',flex:1}} />`}
       </div>`}
     </div>`;
   }
@@ -27930,6 +28023,12 @@ function startApp() {
   }
   /* eslint-enable react-hooks/rules-of-hooks */
 
+  // Disclosure chevron (same glyph as ModelClashMatrix): points right when
+  // closed, down when open.
+  function _ccChevron(open) {
+    return html`<svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+      style=${{transform:open?'rotate(90deg)':'none',transition:'transform var(--duration-fast) var(--ease-standard)'}}><path d="M9 6l6 6-6 6"/></svg>`;
+  }
   // Severity as a pill: the word carries the meaning, the colour only backs it.
   function _ccSeverityPillStyle(sev) {
     var m = { critical: ['var(--color-danger-bg)', 'var(--color-danger-fg)'], major: ['var(--color-warning-bg)', 'var(--color-warning-fg)'],
@@ -28090,13 +28189,23 @@ function startApp() {
   // Smart filters: suggested views (only non-empty ones), active-filter
   // pills + reset, saved views (named facet sets + search, stored in the
   // project) and the facet chips with live counts. Every control is a
-  // button (Tab + Enter/Space); the facet panel is a native <details>.
+  // button (Tab + Enter/Space).
+  //   sidebar (default): the facet panel is a native <details>
+  //   compact (overview header): one chip strip (Suggested, max 6 + "+N
+  //     more", saved views), one action row, and the facets in a Filters
+  //     popover (bottom sheet on phones) — Escape closes the popover before
+  //     the overview.
+  var CC_SUGGESTED_MAX = 6;
   function TriageFilterBar(props) {
     var s = props.s, d = props.d, triage = props.triage, itemsPre = props.itemsPre || _VL_NO_MODELS, shown = props.shown, total = props.total;
+    var compact = !!props.compact;
     var tcore = window._ccClashTriageCore;
     var tr = s.triage || {}, facets = tr.facets || {}, search = (s.filters && s.filters.search) || '';
     var sv = useState(null), saveName = sv[0], setSaveName = sv[1];
     var ex = useState({}), expanded = ex[0], setExpanded = ex[1];
+    var po = useState(false), popOpen = po[0], setPopOpen = po[1];
+    var sm = useState(false), sugAll = sm[0], setSugAll = sm[1];
+    var rootRef = useRef(null), popRef = useRef(null), btnRef = useRef(null);
     var rows = useMemo(function(){
       if (!triage || !tcore) return [];
       var out = [];
@@ -28108,17 +28217,33 @@ function startApp() {
     var fc = useMemo(function(){ return tcore ? tcore.facetCounts(rows, facets) : {}; }, [rows, facets]);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- tcore is a frozen module
     var suggested = useMemo(function(){ return tcore ? tcore.suggestedViews(rows) : []; }, [rows]);
+    // popover: outside click closes; opening moves focus into it
+    useEffect(function(){
+      if (!popOpen) return;
+      function out(e){ if (rootRef.current && !rootRef.current.contains(e.target)) setPopOpen(false); }
+      document.addEventListener('mousedown', out);
+      var t = setTimeout(function(){ var f = popRef.current && popRef.current.querySelector('[data-cc-chip],button'); if (f) f.focus(); }, 0);
+      return function(){ document.removeEventListener('mousedown', out); clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setPopOpen is a useState setter (stable identity)
+    }, [popOpen]);
     if (!tcore) return null;
     function setFacets(nf, viewId) { d({t:A.TRIAGE_UPD, u:{facets:nf, activeViewId:viewId || null}}); }
+    function closePop(refocus) {
+      // focus moves back to the Filters button BEFORE the popover unmounts
+      // (focus inside a removed node would drop to <body>)
+      if (refocus && btnRef.current) btnRef.current.focus();
+      setPopOpen(false);
+    }
     var activePills = [];
     Object.keys(facets).forEach(function(k){ (facets[k] || []).forEach(function(v){ activePills.push({k:k, v:v}); }); });
     var anyActive = activePills.length > 0 || !!search;
     var saved = tr.savedViews || [];
-    var CHIP = function(on){ return {...S_BTN, display:'inline-flex', alignItems:'center', gap:'var(--space-1)', padding:'0 var(--space-2)', minHeight:24, fontSize:'var(--text-xs)', borderRadius:'var(--radius-pill)',
+    var CHIP = function(on){ return {...S_BTN, display:'inline-flex', alignItems:'center', gap:'var(--space-1)', padding:'0 var(--space-2)', minHeight:compact ? undefined : 24, fontSize:'var(--text-xs)', borderRadius:'var(--radius-pill)', whiteSpace:'nowrap',
       background:on?'var(--accent-bg-deep)':'var(--bg-secondary)', color:on?'var(--text-primary)':'var(--text-secondary)', border:on?'1px solid var(--accent)':'1px solid var(--border)'}; };
     var CNT = {fontFamily:'var(--font-mono)', fontSize:'var(--text-2xs)', color:'var(--text-muted)'};
     var LBL = {fontSize:'var(--text-2xs)', fontWeight:'var(--weight-bold)', textTransform:'uppercase', letterSpacing:'.08em', color:'var(--text-muted)'};
-    var LINK = {...S_BTN,padding:'0 var(--space-1)',fontSize:'var(--text-xs)',background:'none',color:'var(--text-secondary)',textDecoration:'underline',textUnderlineOffset:2};
+    var LINK = {...S_BTN,padding:'0 var(--space-1)',fontSize:'var(--text-xs)',background:'none',color:'var(--text-secondary)',textDecoration:'underline',textUnderlineOffset:2,whiteSpace:'nowrap'};
+    var TAP = compact ? 'cc-tap' : undefined;
     function saveView() {
       var name = String(saveName || '').trim();
       if (!name) return;
@@ -28131,99 +28256,147 @@ function startApp() {
       d({t:A.TRIAGE_UPD, u:{facets:tcore.normaliseFacets(v.facets), activeViewId:v.id}});
       d({t:A.UPD_FILTERS, u:{search:v.search || ''}});
     }
-    return html`<div data-cc-triage-filters="1" style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
-      ${suggested.length > 0 && html`<div role="group" aria-label=${_cc_t('triage.suggestedAria','Suggested views')} style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)',alignItems:'center'}}>
-        <span style=${LBL}>${_cc_t('triage.suggested','Suggested')}</span>
-        ${suggested.map(function(v){
-          var on = tcore.sameFacets(facets, v.facets);
-          return html`<button key=${v.id} data-cc-suggested=${v.id} aria-pressed=${on?'true':'false'} onClick=${function(){ setFacets(on ? {} : v.facets, null); }} style=${CHIP(on)}>
-            ${v.perStorey ? (_cc_t('facet.storey','Storey') + ' ' + v.label) : _ccSuggestedLabel(v.id, v.label)} <span style=${CNT}>${v.count}</span>
-          </button>`;
-        })}
-      </div>`}
-      ${saved.length > 0 && html`<div role="group" aria-label=${_cc_t('triage.savedAria','Saved views')} style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)',alignItems:'center'}}>
-        <span style=${LBL}>${_cc_t('triage.saved','Saved')}</span>
-        ${saved.map(function(v){
-          var on = tr.activeViewId === v.id;
-          return html`<span key=${v.id} style=${{display:'inline-flex',alignItems:'center'}}>
-            <button data-cc-saved-view=${v.name} aria-pressed=${on?'true':'false'} onClick=${function(){ applyView(v); }} style=${{...CHIP(on),borderTopRightRadius:0,borderBottomRightRadius:0}}>${v.name}</button>
-            <button aria-label=${_cc_t('triage.deleteView','Delete saved view {name}',{name:v.name})} onClick=${function(){ d({t:A.TRIAGE_UPD, u:{savedViews:saved.filter(function(x){ return x.id !== v.id; }), activeViewId: on ? null : tr.activeViewId}}); }}
-              style=${{...CHIP(on),borderLeft:'none',borderTopLeftRadius:0,borderBottomLeftRadius:0,padding:'0 var(--space-1)'}}>×</button>
-          </span>`;
-        })}
-      </div>`}
-      <div style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)',alignItems:'center'}}>
-        <span data-cc-shown-total="1" role="status" aria-live="polite" style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',color:shown<total?'var(--text-primary)':'var(--text-muted)'}}>${_cc_t('triage.shownOfTotal','{shown} shown / {total} total',{shown:shown,total:total})}</span>
-        ${activePills.map(function(p){
-          return html`<button key=${p.k + ':' + p.v} data-cc-pill=${p.k} aria-label=${_cc_t('triage.removeFilter','Remove filter {name}',{name:_ccFacetTitle(p.k) + ': ' + _ccFacetValueLabel(p.k, p.v)})}
-            onClick=${function(){ setFacets(_ccToggleFacet(facets, p.k, p.v), null); }} style=${CHIP(true)}>
-            ${_ccFacetTitle(p.k)}: ${_ccFacetValueLabel(p.k, p.v)} <span aria-hidden="true">×</span>
-          </button>`;
-        })}
-        ${search && html`<button data-cc-pill="search" aria-label=${_cc_t('triage.removeSearch','Remove search "{q}"',{q:search})} onClick=${function(){ d({t:A.UPD_FILTERS,u:{search:''}}); }} style=${CHIP(true)}>“${search}” <span aria-hidden="true">×</span></button>`}
-        ${anyActive && html`<button data-cc-reset="1" onClick=${function(){ setFacets({}, null); d({t:A.UPD_FILTERS,u:{search:''}}); }} style=${LINK}>${_cc_t('triage.reset','Reset')}</button>`}
-        ${anyActive && saveName == null && html`<button data-cc-save-view="1" onClick=${function(){ setSaveName(''); }} style=${LINK}>${_cc_t('triage.saveView','Save view…')}</button>`}
-        ${props.shownItems && html`<${ClashBcfScopeMenu} s=${s} shown=${props.shownItems} />`}
-        ${saveName != null && html`<form onSubmit=${function(e){ e.preventDefault(); saveView(); }} style=${{display:'inline-flex',gap:'var(--space-1)',alignItems:'center'}}>
-          <input data-cc-save-view-name="1" aria-label=${_cc_t('triage.viewName','View name')} value=${saveName} autoFocus onInput=${function(e){ setSaveName(e.target.value); }}
-            onKeyDown=${function(e){ if (e.key === 'Escape') { e.stopPropagation(); setSaveName(null); } }}
-            placeholder=${_cc_t('triage.viewName','View name')} style=${{...S_INPUT,width:140,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)'}} />
-          <button type="submit" disabled=${!String(saveName).trim()} style=${{...S_BTN,padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-xs)',background:'var(--accent)',color:'var(--accent-contrast)'}}>${_cc_t('triage.save','Save')}</button>
-          <button type="button" onClick=${function(){ setSaveName(null); }} style=${{...S_BTN,padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-xs)',background:'none',color:'var(--text-secondary)'}}>${_cc_t('common.cancel','Cancel')}</button>
-        </form>`}
-      </div>
-      <details data-cc-facets="1">
-        <summary style=${{cursor:'pointer',fontSize:'var(--text-xs)',color:'var(--text-secondary)',padding:'var(--space-1) 0'}}>${_cc_t('triage.refine','Filter by severity, extent, storey, models, trades …')}</summary>
-        <div style=${{display:'flex',flexDirection:'column',gap:'var(--space-2)',paddingBottom:'var(--space-2)'}}>
-          ${tcore.FACETS.map(function(k){
-            var counts = fc[k] || {};
-            var vals = tcore.orderedValues(k, counts, triage && triage.storeyNorm ? triage.storeyNorm.labels : []);
-            (facets[k] || []).forEach(function(v){ if (vals.indexOf(v) === -1) vals.push(v); });
-            if (!vals.length) return null;
-            var limit = expanded[k] ? vals.length : 8;
-            return html`<div key=${k} role="group" aria-label=${_ccFacetTitle(k)} data-cc-facet=${k} style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)',alignItems:'center'}}>
-              <span style=${{...LBL,minWidth:72}}>${_ccFacetTitle(k)}</span>
-              ${vals.slice(0, limit).map(function(v){
-                var on = (facets[k] || []).indexOf(v) !== -1;
-                return html`<button key=${v} data-cc-chip=${k + '=' + v} aria-pressed=${on?'true':'false'} onClick=${function(){ setFacets(_ccToggleFacet(facets, k, v), null); }} style=${CHIP(on)}>
-                  ${_ccFacetValueLabel(k, v)} <span style=${CNT}>${counts[v] || 0}</span>
-                </button>`;
-              })}
-              ${vals.length > limit && html`<button onClick=${function(){ var n = Object.assign({}, expanded); n[k] = true; setExpanded(n); }} style=${LINK}>${_cc_t('triage.more','+{n} more',{n:vals.length - limit})}</button>`}
-            </div>`;
+    var sugShown = compact && !sugAll ? suggested.slice(0, CC_SUGGESTED_MAX) : suggested;
+    var suggestedChips = sugShown.map(function(v){
+      var on = tcore.sameFacets(facets, v.facets);
+      return html`<button key=${v.id} class=${TAP} data-cc-suggested=${v.id} aria-pressed=${on?'true':'false'} onClick=${function(){ setFacets(on ? {} : v.facets, null); }} style=${CHIP(on)}>
+        ${v.perStorey ? (_cc_t('facet.storey','Storey') + ' ' + v.label) : _ccSuggestedLabel(v.id, v.label)} <span style=${CNT}>${v.count}</span>
+      </button>`;
+    });
+    var savedChips = saved.map(function(v){
+      var on = tr.activeViewId === v.id;
+      return html`<span key=${v.id} style=${{display:'inline-flex',alignItems:'center'}}>
+        <button class=${TAP} data-cc-saved-view=${v.name} aria-pressed=${on?'true':'false'} onClick=${function(){ applyView(v); }} style=${{...CHIP(on),borderTopRightRadius:0,borderBottomRightRadius:0}}>${v.name}</button>
+        <button class=${TAP} aria-label=${_cc_t('triage.deleteView','Delete saved view {name}',{name:v.name})} onClick=${function(){ d({t:A.TRIAGE_UPD, u:{savedViews:saved.filter(function(x){ return x.id !== v.id; }), activeViewId: on ? null : tr.activeViewId}}); }}
+          style=${{...CHIP(on),borderLeft:'none',borderTopLeftRadius:0,borderBottomLeftRadius:0,padding:'0 var(--space-1)'}}>×</button>
+      </span>`;
+    });
+    var statusEl = html`<span data-cc-shown-total="1" role="status" aria-live="polite" style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',color:shown<total?'var(--text-primary)':'var(--text-muted)',whiteSpace:'nowrap'}}>${_cc_t('triage.shownOfTotal','{shown} shown / {total} total',{shown:shown,total:total})}</span>`;
+    var pillEls = activePills.map(function(p){
+      return html`<button key=${p.k + ':' + p.v} class=${TAP} data-cc-pill=${p.k} aria-label=${_cc_t('triage.removeFilter','Remove filter {name}',{name:_ccFacetTitle(p.k) + ': ' + _ccFacetValueLabel(p.k, p.v)})}
+        onClick=${function(){ setFacets(_ccToggleFacet(facets, p.k, p.v), null); }} style=${CHIP(true)}>
+        ${_ccFacetTitle(p.k)}: ${_ccFacetValueLabel(p.k, p.v)} <span aria-hidden="true">×</span>
+      </button>`;
+    });
+    var actionEls = html`
+      ${search && html`<button data-cc-pill="search" class=${TAP} aria-label=${_cc_t('triage.removeSearch','Remove search "{q}"',{q:search})} onClick=${function(){ d({t:A.UPD_FILTERS,u:{search:''}}); }} style=${CHIP(true)}>“${search}” <span aria-hidden="true">×</span></button>`}
+      ${anyActive && html`<button data-cc-reset="1" class=${TAP} onClick=${function(){ setFacets({}, null); d({t:A.UPD_FILTERS,u:{search:''}}); }} style=${LINK}>${_cc_t('triage.reset','Reset')}</button>`}
+      ${anyActive && saveName == null && html`<button data-cc-save-view="1" class=${TAP} onClick=${function(){ setSaveName(''); }} style=${LINK}>${_cc_t('triage.saveView','Save view…')}</button>`}
+      ${saveName != null && html`<form onSubmit=${function(e){ e.preventDefault(); saveView(); }} style=${{display:'inline-flex',gap:'var(--space-1)',alignItems:'center'}}>
+        <input data-cc-save-view-name="1" aria-label=${_cc_t('triage.viewName','View name')} value=${saveName} autoFocus onInput=${function(e){ setSaveName(e.target.value); }}
+          onKeyDown=${function(e){ if (e.key === 'Escape') { e.stopPropagation(); setSaveName(null); } }}
+          placeholder=${_cc_t('triage.viewName','View name')} style=${{...S_INPUT,width:140,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)'}} />
+        <button type="submit" disabled=${!String(saveName).trim()} style=${{...S_BTN,padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-xs)',background:'var(--accent)',color:'var(--accent-contrast)'}}>${_cc_t('triage.save','Save')}</button>
+        <button type="button" onClick=${function(){ setSaveName(null); }} style=${{...S_BTN,padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-xs)',background:'none',color:'var(--text-secondary)'}}>${_cc_t('common.cancel','Cancel')}</button>
+      </form>`}`;
+    var facetGroups = html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-2)',paddingBottom:compact ? 0 : 'var(--space-2)'}}>
+      ${tcore.FACETS.map(function(k){
+        var counts = fc[k] || {};
+        var vals = tcore.orderedValues(k, counts, triage && triage.storeyNorm ? triage.storeyNorm.labels : []);
+        (facets[k] || []).forEach(function(v){ if (vals.indexOf(v) === -1) vals.push(v); });
+        if (!vals.length) return null;
+        var limit = expanded[k] ? vals.length : 8;
+        return html`<div key=${k} role="group" aria-label=${_ccFacetTitle(k)} data-cc-facet=${k} style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)',alignItems:'center'}}>
+          <span style=${{...LBL,minWidth:72}}>${_ccFacetTitle(k)}</span>
+          ${vals.slice(0, limit).map(function(v){
+            var on = (facets[k] || []).indexOf(v) !== -1;
+            return html`<button key=${v} class=${TAP} data-cc-chip=${k + '=' + v} aria-pressed=${on?'true':'false'} onClick=${function(){ setFacets(_ccToggleFacet(facets, k, v), null); }} style=${CHIP(on)}>
+              ${_ccFacetValueLabel(k, v)} <span style=${CNT}>${counts[v] || 0}</span>
+            </button>`;
           })}
+          ${vals.length > limit && html`<button class=${TAP} onClick=${function(){ var n = Object.assign({}, expanded); n[k] = true; setExpanded(n); }} style=${LINK}>${_cc_t('triage.more','+{n} more',{n:vals.length - limit})}</button>`}
+        </div>`;
+      })}
+    </div>`;
+
+    if (!compact) {
+      return html`<div data-cc-triage-filters="1" style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
+        ${suggested.length > 0 && html`<div role="group" aria-label=${_cc_t('triage.suggestedAria','Suggested views')} style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)',alignItems:'center'}}>
+          <span style=${LBL}>${_cc_t('triage.suggested','Suggested')}</span>
+          ${suggestedChips}
+        </div>`}
+        ${saved.length > 0 && html`<div role="group" aria-label=${_cc_t('triage.savedAria','Saved views')} style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)',alignItems:'center'}}>
+          <span style=${LBL}>${_cc_t('triage.saved','Saved')}</span>
+          ${savedChips}
+        </div>`}
+        <div style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)',alignItems:'center'}}>
+          ${statusEl}
+          ${pillEls}
+          ${actionEls}
+          ${props.shownItems && html`<${ClashBcfScopeMenu} s=${s} shown=${props.shownItems} />`}
         </div>
-      </details>
+        <details data-cc-facets="1">
+          <summary style=${{cursor:'pointer',fontSize:'var(--text-xs)',color:'var(--text-secondary)',padding:'var(--space-1) 0'}}>${_cc_t('triage.refine','Filter by severity, extent, storey, models, trades …')}</summary>
+          ${facetGroups}
+        </details>
+      </div>`;
+    }
+    var popId = 'cc-facets-pop', nActive = activePills.length;
+    return html`<div ref=${rootRef} data-cc-triage-filters="1" data-cc-compact="1"
+      onKeyDown=${function(e){ if (e.key === 'Escape' && popOpen) { e.preventDefault(); e.stopPropagation(); closePop(true); } }}
+      style=${{position:'relative',display:'flex',flexDirection:'column',gap:'var(--space-2)',padding:'var(--space-2) var(--space-4)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
+      ${(suggested.length > 0 || saved.length > 0) && html`<div class="cc-chip-strip" role="group" aria-label=${_cc_t('triage.suggestedAria','Suggested views')}>
+        ${suggested.length > 0 && html`<span style=${LBL}>${_cc_t('triage.suggested','Suggested')}</span>`}
+        ${suggestedChips}
+        ${suggested.length > CC_SUGGESTED_MAX && html`<button class=${TAP} data-cc-suggested-more="1" aria-expanded=${sugAll?'true':'false'} onClick=${function(){ setSugAll(!sugAll); }} style=${LINK}>${sugAll ? _cc_t('triage.fewer','Fewer') : _cc_t('triage.more','+{n} more',{n:suggested.length - CC_SUGGESTED_MAX})}</button>`}
+        ${saved.length > 0 && html`<span style=${{...LBL,marginLeft:'var(--space-2)'}}>${_cc_t('triage.saved','Saved')}</span>`}
+        ${savedChips}
+      </div>`}
+      <div style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1) var(--space-2)',alignItems:'center'}}>
+        <button ref=${btnRef} class=${TAP} data-cc-filters-toggle="1" aria-expanded=${popOpen?'true':'false'} aria-controls=${popId} aria-haspopup="dialog"
+          onClick=${function(){ setPopOpen(!popOpen); }}
+          style=${{...CHIP(popOpen || nActive > 0),borderRadius:'var(--radius-sm)',gap:'var(--space-1)'}}>
+          <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>
+          ${_cc_t('triage.filters','Filters')}
+          ${nActive > 0 && html`<span data-cc-filters-count="1" style=${{...CNT,color:'var(--text-primary)',background:'var(--bg-tertiary)',borderRadius:'var(--radius-pill)',padding:'0 var(--space-1)'}}>${nActive}</span>`}
+        </button>
+        ${pillEls}
+        ${actionEls}
+        <span style=${{flex:1}}></span>
+        ${statusEl}
+        ${props.shownItems && html`<${ClashBcfScopeMenu} s=${s} shown=${props.shownItems} />`}
+      </div>
+      ${popOpen && html`<div ref=${popRef} id=${popId} class="cc-facet-pop" data-cc-facets-pop="1" role="dialog" aria-labelledby="cc-facets-pop-title">
+        <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',marginBottom:'var(--space-2)'}}>
+          <h3 id="cc-facets-pop-title" style=${{margin:0,flex:1,fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)'}}>${_cc_t('triage.filterTitle','Filter the review items')}</h3>
+          ${nActive > 0 && html`<button class=${TAP} onClick=${function(){ setFacets({}, null); }} style=${LINK}>${_cc_t('triage.clearFacets','Clear filters')}</button>`}
+          <button class=${TAP} data-cc-facets-close="1" aria-label=${_cc_t('triage.closeFilters','Close filters')} onClick=${function(){ closePop(true); }}
+            style=${{...S_BTN,padding:'0 var(--space-2)',background:'none',color:'var(--text-secondary)',fontSize:'var(--text-lg)',lineHeight:1}}>×</button>
+        </div>
+        ${facetGroups}
+      </div>`}
     </div>`;
   }
 
   // ── Overview (card grid of the review items) ────────────────────────
   // 'auto' opens the overview after an INTERACTIVE run (Run button, presets,
   // palette — never automation) when the review set is small enough to scan
-  // as cards; bigger sets open on the list with a prompt.
+  // as cards; bigger sets open on the list with a prompt. Opened explicitly
+  // it stays open when filters (or the buckets) leave nothing to review, so
+  // it can say why and offer the way back.
   var CC_OVERVIEW_AUTO_MAX = 150;
   function _ccOverviewVisible(s, rm) {
-    if (!s || s.tab !== 'clashes' || !rm || !rm.items.length) return false;
+    if (!s || s.tab !== 'clashes' || !rm) return false;
     var tr = s.triage || {};
-    if (tr.view === 'overview') return true;
-    return tr.view === 'auto' && !!tr.autoOpen && rm.items.length <= CC_OVERVIEW_AUTO_MAX;
+    if (tr.view === 'overview') return !!(s.clashes && s.clashes.length);
+    return tr.view === 'auto' && !!tr.autoOpen && rm.items.length > 0 && rm.items.length <= CC_OVERVIEW_AUTO_MAX;
   }
   function _ccOverviewPrompt(s, rm) {
     var tr = (s && s.triage) || {};
     return !!(rm && tr.view === 'auto' && tr.autoOpen && rm.items.length > CC_OVERVIEW_AUTO_MAX);
   }
   function ClashViewToggle(props) {
-    var s = props.s, d = props.d, n = props.reviewCount || 0;
-    var rm = n ? _ccReviewModel(s) : null;
+    var s = props.s, d = props.d, n = props.reviewCount || 0, any = (s.clashes || []).length > 0;
+    var rm = any ? _ccReviewModel(s) : null;
     var ov = _ccOverviewVisible(s, rm);
     var SEG = function(on){ return {...S_BTN, padding:'var(--space-1) var(--space-2)', fontSize:'var(--text-xs)', borderRadius:0, whiteSpace:'nowrap',
       background:on?'var(--accent-bg-deep)':'var(--bg-secondary)', color:on?'var(--text-primary)':'var(--text-secondary)', border:'1px solid '+(on?'var(--accent)':'var(--border)')}; };
     return html`<div role="group" aria-label=${_cc_t('overview.viewAria','Clash view')} style=${{display:'inline-flex',flexShrink:0}}>
       <button data-cc-view="list" aria-pressed=${ov?'false':'true'} onClick=${function(){ d({t:A.TRIAGE_UPD,u:{view:'list'}}); }}
         style=${{...SEG(!ov),borderTopLeftRadius:'var(--radius-sm)',borderBottomLeftRadius:'var(--radius-sm)'}}>${_cc_t('overview.list','List')}</button>
-      <button data-cc-view="overview" aria-pressed=${ov?'true':'false'} disabled=${!n} title=${n ? _cc_t('overview.tip','Cards of the {n} review items',{n:n}) : _cc_t('overview.none','Nothing to review')}
+      <button data-cc-view="overview" aria-pressed=${ov?'true':'false'} disabled=${!any} title=${n ? _cc_t('overview.tip','Cards of the {n} review items',{n:n}) : _cc_t('overview.none','Nothing to review')}
         onClick=${function(){ d({t:A.TRIAGE_UPD,u:{view:'overview'}}); }}
-        style=${{...SEG(ov),borderLeft:'none',borderTopRightRadius:'var(--radius-sm)',borderBottomRightRadius:'var(--radius-sm)',opacity:n?1:0.6}}>${_cc_t('overview.overview','Overview')} <span style=${{fontFamily:'var(--font-mono)'}}>${n}</span></button>
+        style=${{...SEG(ov),borderLeft:'none',borderTopRightRadius:'var(--radius-sm)',borderBottomRightRadius:'var(--radius-sm)',opacity:any?1:0.6}}>${_cc_t('overview.overview','Overview')} <span style=${{fontFamily:'var(--font-mono)'}}>${n}</span></button>
     </div>`;
   }
   // Fly to a review item and make it the active clash (same sequence the
@@ -28250,12 +28423,68 @@ function startApp() {
     if (!_ccOverviewVisible(s, rm)) return null;
     return html`<${ClashOverview} s=${s} d=${props.d} />`;
   }
+  // The snapshot area of one card: the picture once it exists (fades in), a
+  // shimmering skeleton while it is pending, a plain note when the clash has
+  // nothing to draw. Subscribes to 'cc-snapshot' for ITS key only, so a
+  // picture landing re-renders one card, not the grid.
+  function ClashOverviewSnapshot(props) {
+    var c = props.c, svc = window._ccClashSnapshots;
+    var key = svc ? svc.key(c) : null;
+    var tk = useState(0), setTick = tk[1];
+    useEffect(function(){
+      if (!key) return;
+      function on(e){ if (!e || !e.detail || e.detail.key === key) setTick(function(t){ return t + 1; }); }
+      window.addEventListener('cc-snapshot', on);
+      return function(){ window.removeEventListener('cc-snapshot', on); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setTick is a useState setter (stable identity)
+    }, [key]);
+    var url = svc ? svc.get(c) : null;
+    var failed = !url && (!svc || svc.failed(c));
+    return html`<span style=${{display:'block',position:'relative',width:'100%',aspectRatio:'320 / 200',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',overflow:'hidden'}}>
+      ${url ? html`\x3Cimg src=${url} class="cc-snap-img" alt=${_cc_t('overview.snapshotAlt','Snapshot of {title}',{title:props.title})} data-cc-snapshot="1" width="320" height="200" style=${{display:'block',width:'100%',height:'100%',objectFit:'cover'}} />`
+        : failed ? html`<span data-cc-snapshot-none="1" style=${{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',padding:'var(--space-3)',textAlign:'center',fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${_cc_t('overview.noPicture','No picture — element has no geometry')}</span>`
+        : html`<span data-cc-snapshot-pending="1"><span class="cc-skeleton" aria-hidden="true"></span><span class="cc-sr-only">${_cc_t('overview.rendering','Picture pending')}</span></span>`}
+      ${props.children}
+    </span>`;
+  }
+  function ClashOverviewCard(props) {
+    var it = props.it, i = props.i, tm = props.tm, c = it.lead, sum = it.summary;
+    var sev = sum ? sum.severity : (c.aiSeverity || _ccDeterministicSeverity(c));
+    var row = tm.rowById.get(c.id), v = row ? row.v : {};
+    // second line: what kind of overlap ("1 through · 2 partial", "Clearance")
+    var ext = sum ? sum.extentSummary : _ccFacetValueLabel('extent', v.extent || '');
+    var storey = sum ? sum.storey : (v.storey || '');
+    var modelName = tm.fctx.modelName;
+    // model pair only when it tells something (> 2 models loaded) — same rule
+    // as the list's cluster header
+    var pair = props.manyModels ? (modelName(c.modelAId) === modelName(c.modelBId || c.modelAId) ? modelName(c.modelAId) : (modelName(c.modelAId) + ' ↔ ' + modelName(c.modelBId))) : '';
+    var open2 = it.items.filter(function(x){ return x.status !== 'resolved' && x.status !== 'closed' && x.status !== 'denied'; }).length;
+    var assignees = {}; it.items.forEach(function(x){ if (x.assignee) assignees[x.assignee] = 1; });
+    var asg = Object.keys(assignees);
+    var meta = [storey, pair].filter(Boolean).join(' · ');
+    var foot = _cc_t('overview.openCount','{n} open',{n:open2}) + (asg.length ? (' · ' + asg.join(', ')) : (' · ' + _cc_t('facet.unassigned','Unassigned')));
+    return html`<div role="listitem" style=${{minWidth:0}}>
+      <button ref=${props.cardRef} data-cc-card-idx=${i} data-cc-card-key=${it.key} tabIndex=${props.focused ? 0 : -1}
+        onFocus=${props.onFocus} onClick=${props.onOpen}
+        style=${{...S_BTN,width:'100%',height:'100%',display:'flex',flexDirection:'column',padding:0,textAlign:'left',background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-md)',overflow:'hidden',boxShadow:'var(--shadow-sm)'}}>
+        <${ClashOverviewSnapshot} c=${c} title=${it.title}>
+          <span class="cc-status-pill" style=${{position:'absolute',top:'var(--space-2)',left:'var(--space-2)',..._ccSeverityPillStyle(sev)}}>${_ccFacetValueLabel('severity', sev)}</span>
+          ${it.group && html`<span class="cc-status-pill" style=${{position:'absolute',top:'var(--space-2)',right:'var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-primary)',textTransform:'none',letterSpacing:0}}>${_cc_t('overview.members','{n} clashes',{n:it.items.length})}</span>`}
+        </${ClashOverviewSnapshot}>
+        <span style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)',padding:'var(--space-2) var(--space-3) var(--space-3)',minWidth:0,width:'100%'}}>
+          <span title=${it.title} style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',lineHeight:'var(--leading-tight)',overflow:'hidden',textOverflow:'ellipsis',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical'}}>${it.title}</span>
+          ${ext && html`<span data-cc-card-extent="1" style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${ext}</span>`}
+          ${meta && html`<span title=${meta} style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${meta}</span>`}
+          <span title=${foot} style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${foot}</span>
+        </span>
+      </button>
+    </div>`;
+  }
   function ClashOverview(props) {
     var s = props.s, d = props.d;
     var rm = _ccReviewModel(s), tm = _ccTriageModel(s);
     var cards = rm.items;
     var pg = useState(CC_OVERVIEW_PAGE), limit = pg[0], setLimit = pg[1];
-    var tk = useState(0), setTick = tk[1];
     var fi = useState(0), focusIdx = fi[0], setFocusIdx = fi[1];
     var gridRef = useRef(null), cardRefs = useRef([]), secRef = useRef(null);
     // keep clear of the floating left rail/panel and the right Details panel
@@ -28278,14 +28507,18 @@ function startApp() {
       var iv = setInterval(fit, 1000); // panels open/close without resizing the window
       return function(){ if (ro) ro.disconnect(); window.removeEventListener('resize', fit); clearInterval(iv); };
     }, []);
-    // re-render when a snapshot lands
+    // a bigger idle slice while the cards are on screen (the busy rules —
+    // detection, interaction, hidden tab — still gate every slice)
     useEffect(function(){
-      function on(){ setTick(function(t){ return t + 1; }); }
-      window.addEventListener('cc-snapshot', on);
-      return function(){ window.removeEventListener('cc-snapshot', on); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- setTick is a useState setter (stable identity)
+      var svc = window._ccClashSnapshots;
+      if (!svc) return;
+      var prev = svc.sliceBudgetMs;
+      svc.sliceBudgetMs = Math.max(prev, 60);
+      return function(){ svc.sliceBudgetMs = prev; };
     }, []);
-    // ask for the pictures of the cards on screen (idle-time render queue)
+    // pictures for the cards ON SCREEN, nearest the top first: a card that
+    // scrolls into view jumps the queue, one that leaves it is dropped from
+    // the queue (it asks again when it comes back)
     useEffect(function(){
       var svc = window._ccClashSnapshots;
       if (!svc || !gridRef.current) return;
@@ -28293,13 +28526,15 @@ function startApp() {
       var shown = cards.slice(0, limit);
       if (!IO) { shown.forEach(function(it){ svc.request(it.lead); }); return; }
       var io = new IO(function(entries){
+        var vis = [];
         entries.forEach(function(en){
-          if (!en.isIntersecting) return;
-          var i = +en.target.getAttribute('data-cc-card-idx');
-          if (shown[i]) svc.request(shown[i].lead);
-          io.unobserve(en.target);
+          var i = +en.target.getAttribute('data-cc-card-idx'), it = shown[i];
+          if (!it) return;
+          if (en.isIntersecting) vis.push(i); else svc.cancel(it.lead);
         });
-      }, { root: gridRef.current, rootMargin: '200px' });
+        // request bottom-up with front:true so the top card ends up first
+        vis.sort(function(a, b){ return b - a; }).forEach(function(i){ svc.request(shown[i].lead, {front:true}); });
+      }, { root: gridRef.current, rootMargin: '0px' });
       gridRef.current.querySelectorAll('[data-cc-card-idx]').forEach(function(el){ io.observe(el); });
       return function(){ io.disconnect(); };
     }, [cards, limit]);
@@ -28337,51 +28572,42 @@ function startApp() {
       else if (k === 'Home') { e.preventDefault(); focusCard(0); }
       else if (k === 'End') { e.preventDefault(); focusCard(cards.length - 1); }
     }
-    var svc = window._ccClashSnapshots;
-    var modelName = tm.fctx.modelName;
     var nClashes = rm.clashes.length;
+    var manyModels = (s.models || []).length > 2;
+    var facetsOn = !!(window._ccClashTriageCore && window._ccClashTriageCore.hasFacets((s.triage && s.triage.facets) || {}));
+    var filtered = facetsOn || !!(s.filters && s.filters.search);
+    var otherBuckets = Object.keys(tm.counts || {}).filter(function(b){ return b !== 'review' && tm.counts[b] > 0; });
+    var nOther = otherBuckets.reduce(function(a, b){ return a + tm.counts[b]; }, 0);
+    var EMPTY_BTN = {...S_BTN,background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)'};
+    var empty = null;
+    if (!cards.length) {
+      empty = filtered && rm.pre.length
+        ? html`<div data-cc-overview-empty="filtered" role="listitem" style=${{gridColumn:'1 / -1',display:'flex',flexDirection:'column',alignItems:'center',gap:'var(--space-3)',padding:'var(--space-8) var(--space-4)',textAlign:'center'}}>
+            <span style=${{fontSize:'var(--text-md)',color:'var(--text-primary)'}}>${_cc_t('overview.emptyFiltered','No review items match these filters')}</span>
+            <button class="cc-tap" onClick=${function(){ d({t:A.TRIAGE_UPD, u:{facets:{}, activeViewId:null}}); d({t:A.UPD_FILTERS, u:{search:''}}); }} style=${EMPTY_BTN}>${_cc_t('triage.reset','Reset')}</button>
+          </div>`
+        : html`<div data-cc-overview-empty="review" role="listitem" style=${{gridColumn:'1 / -1',display:'flex',flexDirection:'column',alignItems:'center',gap:'var(--space-3)',padding:'var(--space-8) var(--space-4)',textAlign:'center'}}>
+            <span style=${{fontSize:'var(--text-md)',color:'var(--text-primary)'}}>${_cc_t('overview.emptyReview','Nothing to review — {n} findings are filed in other buckets',{n:nOther})}</span>
+            ${nOther > 0 && html`<button class="cc-tap" onClick=${function(){ d({t:A.UPD_FILTERS, u:{showBuckets: otherBuckets.slice()}}); close(); setTimeout(function(){ var bb = document.querySelector('[data-cc-bucket-bar]'); if (bb && bb.focus) { bb.setAttribute('tabindex', '-1'); bb.focus(); } }, 50); }} style=${EMPTY_BTN}>${_cc_t('bucket.showAll','show all')}</button>`}
+          </div>`;
+    }
     return html`<section ref=${secRef} class="cc-overview" data-cc-overview="1" aria-labelledby="cc-overview-title" onKeyDown=${onKey}
       style=${{display:'flex',flexDirection:'column',background:'var(--bg-primary)',color:'var(--text-primary)',minHeight:0,borderLeft:'1px solid var(--border-subtle)'}}>
-      <div style=${{display:'flex',alignItems:'center',flexWrap:'wrap',gap:'var(--space-2)',padding:'var(--space-3) var(--space-4)',borderBottom:'1px solid var(--border)'}}>
+      <div style=${{display:'flex',alignItems:'center',flexWrap:'wrap',gap:'var(--space-1) var(--space-3)',padding:'var(--space-3) var(--space-4) var(--space-2)'}}>
         <h2 id="cc-overview-title" style=${{margin:0,fontSize:'var(--text-lg)',fontWeight:'var(--weight-semibold)',lineHeight:'var(--leading-tight)'}}>${_cc_t('overview.title','Review overview')}</h2>
         <span data-cc-overview-count="1" style=${{fontSize:'var(--text-sm)',color:'var(--text-secondary)'}}>${_cc_t('overview.count','{items} review items · {clashes} clashes · {total} found',{items:cards.length,clashes:nClashes,total:tm.total})}</span>
         <span style=${{flex:1}}></span>
-        <span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${_cc_t('overview.keys','J/K or arrows to move · Enter to open · Esc for the 3D view')}</span>
-        <button data-cc-overview-close="1" onClick=${close} style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)'}}>${_cc_t('overview.close','3D view')}</button>
+        <button class="cc-tap" data-cc-overview-close="1" onClick=${close} style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)'}}>${_cc_t('overview.close','3D view')}</button>
       </div>
-      <${TriageFilterBar} s=${s} d=${d} triage=${tm} itemsPre=${rm.pre} shownItems=${rm.clashes} shown=${nClashes} total=${tm.total} />
-      <div ref=${gridRef} data-cc-overview-grid="1" role="list" style=${{flex:1,overflowY:'auto',padding:'var(--space-4)',display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(min(100%, 240px), 1fr))',gap:'var(--space-3)',alignContent:'start'}}>
+      <div class="cc-ov-mobile-only"><${BucketBar} counts=${tm.counts} zoneGroups=${tm.zoneGroups} total=${tm.total} rules=${s.rules} f=${s.filters || {}} d=${d} /></div>
+      <${TriageFilterBar} compact=${true} s=${s} d=${d} triage=${tm} itemsPre=${rm.pre} shownItems=${rm.clashes} shown=${nClashes} total=${tm.total} />
+      <p id="cc-overview-keys" class="cc-sr-only">${_cc_t('overview.keys','J/K or arrows to move · Enter to open · Esc for the 3D view')}</p>
+      <div ref=${gridRef} data-cc-overview-grid="1" class="cc-overview-grid" role="list" aria-describedby="cc-overview-keys" style=${{flex:1,overflowY:'auto',padding:'var(--space-3) var(--space-4) var(--space-4)',display:'grid',gap:'var(--space-3)',alignContent:'start'}}>
+        ${empty}
         ${cards.slice(0, limit).map(function(it, i){
-          var c = it.lead, sum = it.summary;
-          var sev = sum ? sum.severity : (c.aiSeverity || _ccDeterministicSeverity(c));
-          var row = tm.rowById.get(c.id), v = row ? row.v : {};
-          var ext = sum ? sum.extentSummary : _ccFacetValueLabel('extent', v.extent || '');
-          var storey = sum ? sum.storey : (v.storey || '');
-          var pair = modelName(c.modelAId) === modelName(c.modelBId || c.modelAId) ? modelName(c.modelAId) : (modelName(c.modelAId) + ' ↔ ' + modelName(c.modelBId));
-          var url = svc ? svc.get(c) : null;
-          var open2 = it.items.filter(function(x){ return x.status !== 'resolved' && x.status !== 'closed' && x.status !== 'denied'; }).length;
-          var assignees = {}; it.items.forEach(function(x){ if (x.assignee) assignees[x.assignee] = 1; });
-          var asg = Object.keys(assignees);
-          return html`<div key=${it.key} role="listitem" style=${{minWidth:0}}>
-            <button ref=${function(el){ cardRefs.current[i] = el; }} data-cc-card-idx=${i} data-cc-card-key=${it.key} tabIndex=${i === focusIdx ? 0 : -1}
-              onFocus=${function(){ if (focusIdx !== i) setFocusIdx(i); }} onClick=${function(){ open(it); }}
-              style=${{...S_BTN,width:'100%',height:'100%',display:'flex',flexDirection:'column',padding:0,textAlign:'left',background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-md)',overflow:'hidden',boxShadow:'var(--shadow-sm)'}}>
-              <span style=${{display:'block',position:'relative',width:'100%',aspectRatio:'320 / 200',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)'}}>
-                ${url ? html`\x3Cimg src=${url} alt="" data-cc-snapshot="1" width="320" height="200" style=${{display:'block',width:'100%',height:'100%',objectFit:'cover'}} />`
-                  : html`<span data-cc-snapshot-pending="1" style=${{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${_cc_t('overview.rendering','Picture renders when the viewer is idle…')}</span>`}
-                <span class="cc-status-pill" style=${{position:'absolute',top:'var(--space-2)',left:'var(--space-2)',..._ccSeverityPillStyle(sev)}}>${_ccFacetValueLabel('severity', sev)}</span>
-                ${it.group && html`<span class="cc-status-pill" style=${{position:'absolute',top:'var(--space-2)',right:'var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-primary)',textTransform:'none',letterSpacing:0}}>${_cc_t('overview.members','{n} clashes',{n:it.items.length})}</span>`}
-              </span>
-              <span style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)',padding:'var(--space-2) var(--space-3) var(--space-3)',minWidth:0,width:'100%'}}>
-                <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',lineHeight:'var(--leading-tight)',overflow:'hidden',textOverflow:'ellipsis',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical'}}>${it.title}</span>
-                ${ext && html`<span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>${ext}</span>`}
-                <span style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
-                  ${storey && html`<span>${storey}</span>`}${storey && html`<span aria-hidden="true">·</span>`}<span style=${{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'100%'}}>${pair}</span>
-                </span>
-                <span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${_cc_t('overview.openCount','{n} open',{n:open2})}${asg.length ? (' · ' + asg.join(', ')) : (' · ' + _cc_t('facet.unassigned','Unassigned'))}</span>
-              </span>
-            </button>
-          </div>`;
+          return html`<${ClashOverviewCard} key=${it.key} it=${it} i=${i} tm=${tm} manyModels=${manyModels} focused=${i === focusIdx}
+            cardRef=${function(el){ cardRefs.current[i] = el; }}
+            onFocus=${function(){ if (focusIdx !== i) setFocusIdx(i); }} onOpen=${function(){ open(it); }} />`;
         })}
         ${cards.length > limit && html`<div role="listitem" style=${{gridColumn:'1 / -1',display:'flex',justifyContent:'center'}}>
           <button onClick=${function(){ setLimit(limit + CC_OVERVIEW_PAGE); }} style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)'}}>${_cc_t('overview.more','Show more ({n} of {total})',{n:limit,total:cards.length})}</button>
@@ -28642,6 +28868,7 @@ function startApp() {
       </div>`}
 
       ${isClashTab && triage && triage.total > 0 && html`<${BucketBar} counts=${triage.counts} zoneGroups=${triage.zoneGroups} total=${triage.total} rules=${s.rules} f=${f} d=${d} />`}
+      ${isClashTab && rawItems.length > 0 && html`<div data-cc-run-caption="1" style=${{padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-muted)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-tertiary)'}}>${_ccStatsSummaryLine(rawItems, true)}</div>`}
       ${isClashTab && s.lastRunExcluded && Object.keys(s.lastRunExcluded).length > 0 && html`<div data-cc-excluded="1" style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--color-warning-bg)',fontSize:'0.68rem',color:'var(--color-warning-fg)'}}>
         <span style=${{flex:1}}>${_cc_t('roles.leftOut','Left out of this run:')} ${Object.keys(s.lastRunExcluded).map(function(g){ return s.lastRunExcluded[g] + ' ' + _ccRoleGroupLabel(g, s.lastRunExcluded[g] !== 1); }).join(' · ')}</span>
         <button onClick=${function(){
@@ -28653,10 +28880,14 @@ function startApp() {
           }}
           style=${{...S_BTN,padding:'.1rem .4rem',fontSize:'0.68rem',color:'var(--color-warning-fg)',background:'none',border:'none',textDecoration:'underline',cursor:'pointer'}}>${_cc_t('roles.includeRerun','include and re-run')}</button>
       </div>`}
-      ${isClashTab && rawItems.length > 0 && rawItems.some(function(c){return c.aiSeverity;}) && html`<${ClashAISummary} items=${rawItems} />`}
-      ${!isExplorerTab && !isStandardsTab && rawItems.length > 0 && html`<${ClashStatsBar} items=${rawItems} isClash=${isClashTab} delta=${isClashTab ? s.lastDeltaSummary : null} history=${isClashTab ? (s.runHistory||null) : null}
-        handledHiddenCount=${isClashTab ? handledHiddenCount : 0} showHandled=${!!f.showHandled} d=${d} />`}
-      ${isClashTab && rawItems.length > 0 && (s.models||[]).length >= 2 && html`<${ModelClashMatrix} s=${s} d=${d} items=${rawItems} />`}
+      ${isClashTab && rawItems.length > 0 && html`<details data-cc-run-details="1" style=${{borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
+        <summary style=${{cursor:'pointer',padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>${_cc_t('panel.runDetails','Run details')}</summary>
+        ${rawItems.some(function(c){return c.aiSeverity;}) && html`<${ClashAISummary} items=${rawItems} />`}
+        <${ClashStatsBar} items=${rawItems} isClash=${true} noSummary=${true} delta=${s.lastDeltaSummary} history=${s.runHistory||null}
+          handledHiddenCount=${handledHiddenCount} showHandled=${!!f.showHandled} d=${d} />
+        ${(s.models||[]).length >= 2 && html`<${ModelClashMatrix} s=${s} d=${d} items=${rawItems} />`}
+      </details>`}
+      ${!isClashTab && !isExplorerTab && !isStandardsTab && rawItems.length > 0 && html`<${ClashStatsBar} items=${rawItems} isClash=${false} d=${d} />`}
 
       ${s.tab==='navigator' && html`<${NavigatorPanel} s=${s} d=${d} />`}
       ${isStandardsTab && html`<${StandardsPanel} s=${s} d=${d} />`}
@@ -28682,7 +28913,7 @@ function startApp() {
           </button>
         </div>
       </div>`}
-      ${isClashTab && triage && triage.total > 0 && html`<${TriageFilterBar} s=${s} d=${d} triage=${triage} itemsPre=${itemsPre} shownItems=${items} shown=${items.length} total=${triage.total} />`}
+      ${isClashTab && triage && triage.total > 0 && !_ccOverviewVisible(s, reviewModel) && html`<${TriageFilterBar} s=${s} d=${d} triage=${triage} itemsPre=${itemsPre} shownItems=${items} shown=${items.length} total=${triage.total} />`}
       ${isClashTab && reviewModel && _ccOverviewPrompt(s, reviewModel) && html`<div data-cc-overview-prompt="1" style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--color-info-bg)',fontSize:'var(--text-xs)',color:'var(--color-info-fg)'}}>
         <span style=${{flex:1}}>${_cc_t('overview.prompt','{n} review items — narrow them with the filters above, or open the overview anyway.',{n:reviewModel.items.length})}</span>
         <button onClick=${function(){ d({t:A.TRIAGE_UPD,u:{view:'overview'}}); }} style=${{...S_BTN,padding:'0 var(--space-2)',fontSize:'var(--text-xs)',background:'none',color:'var(--color-info-fg)',textDecoration:'underline',textUnderlineOffset:2}}>${_cc_t('overview.open','Open overview')}</button>
@@ -28923,6 +29154,7 @@ function startApp() {
                 ${sortOptsList.map(function(sv){return html`<option key=${sv[0]} value=${sv[0]}>${sv[1]}</option>`})}
               </select>
             </label>
+            <${ClashListActionsMenu} d=${d} totalCount=${(s.clashes||[]).length} />
           </div>`;
         }
         return html`<div style=${{padding:'.3rem .5rem',borderBottom:'1px solid var(--border-subtle)',display:'flex',gap:'.5rem',alignItems:'center',flexShrink:0}}>
@@ -32617,7 +32849,7 @@ function startApp() {
           style=${{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'var(--space-1) var(--space-2)',padding:'var(--space-2) var(--space-2) var(--space-2) var(--space-1)',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',borderLeft:'3px solid '+sevCol2,position:'sticky',top:0,zIndex:1}}>
           <button aria-expanded=${isOpen?'true':'false'} onClick=${function(){toggleGroup(g.label)}}
             style=${{...S_BTN,flex:'1 1 100%',minWidth:0,display:'flex',alignItems:'flex-start',gap:'var(--space-2)',padding:0,background:'none',textAlign:'left',color:'inherit'}}>
-            <span aria-hidden="true" style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',width:10,paddingTop:2}}>${isOpen?'▼':'▶'}</span>
+            <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)',paddingTop:2}}>${_ccChevron(isOpen)}</span>
             <span style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'2px'}}>
               <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${summary.title}</span>
               <span style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
@@ -32668,7 +32900,7 @@ function startApp() {
             style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-2) var(--space-2) var(--space-2) var(--space-1)',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',borderLeft:'3px solid '+sevCol,position:'sticky',top:0,zIndex:1}}
             onMouseEnter=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='1';}}
             onMouseLeave=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='0';}}>
-            <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',width:10}}>${isOpen?'▼':'▶'}</span>
+            <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)'}}>${_ccChevron(isOpen)}</span>
             <div style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'2px'}}>
               <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${label}</span>
               <div style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
@@ -32733,7 +32965,7 @@ function startApp() {
       return html`<div key=${g.label}
         onClick=${function(){toggleGroup(g.label)}}
         style=${{display:'flex',alignItems:'center',gap:'.3rem',padding:'.35rem .5rem',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}>
-        <span style=${{fontSize:'var(--text-xs)',color:'var(--text-faint)'}}>${isOpen?'▼':'▶'}</span>
+        <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)'}}>${_ccChevron(isOpen)}</span>
         <span style=${{width:8,height:8,borderRadius:'50%',background:dotColor,flexShrink:0}}></span>
         <span style=${{fontSize:'0.75rem',fontWeight:600,color:'var(--text-primary)',flex:1}}>${g.label}</span>
         <span style=${{fontSize:'0.69rem',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'.1rem .35rem',borderRadius:10}}>${g.items.length}</span>
@@ -35389,6 +35621,7 @@ function startApp() {
         ['Shift+R',     _cc_t('shortcuts.triage.resolveAll','Resolve all open clashes in the active group')],
         ['Shift+X',     _cc_t('shortcuts.triage.expandCollapse','Expand / collapse the active group')],
         ['/',           _cc_t('shortcuts.triage.focusFilter','Focus the filter box')],
+        ['J / K · Enter · Esc', _cc_t('shortcuts.triage.overview','Review overview: move between cards · open the clash · back to the 3D view')],
       ]},
       { title: _cc_t('shortcuts.section.walkMode','Walk mode'), rows: [
         ['W A S D',     _cc_t('shortcuts.walk.move','Move')],

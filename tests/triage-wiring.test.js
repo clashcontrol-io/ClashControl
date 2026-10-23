@@ -43,7 +43,28 @@ test('the overview auto-opens only after an interactive run, and only for a smal
   assert.match(inter, /\{t:A\.TRIAGE_UPD, u:\{autoOpen:true\}\}/);
   const api = src.slice(src.indexOf('window._ccRunDetection = function(rulesOverride) {'), src.indexOf('window._ccRunDetection = function(rulesOverride) {') + 4000);
   assert.ok(!/autoOpen/.test(api), 'automation never opens the overview');
-  assert.match(src, /return tr\.view === 'auto' && !!tr\.autoOpen && rm\.items\.length <= CC_OVERVIEW_AUTO_MAX;/);
+  assert.match(src, /return tr\.view === 'auto' && !!tr\.autoOpen && rm\.items\.length > 0 && rm\.items\.length <= CC_OVERVIEW_AUTO_MAX;/);
+});
+
+test('one filter surface: the overview owns the facets (Filters popover); the sidebar hides its copy meanwhile', () => {
+  assert.match(src, /<\$\{TriageFilterBar\} compact=\$\{true\} s=\$\{s\}/);
+  assert.match(src, /!_ccOverviewVisible\(s, reviewModel\) && html`<\$\{TriageFilterBar\} s=\$\{s\}/);
+  assert.match(src, /data-cc-filters-toggle="1" aria-expanded=\$\{popOpen\?'true':'false'\} aria-controls=\$\{popId\}/);
+  // Escape closes the popover first, without closing the overview
+  assert.match(src, /if \(e\.key === 'Escape' && popOpen\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); closePop\(true\); \}/);
+  // run statistics collapse into one closed "Run details" disclosure
+  assert.match(src, /<details data-cc-run-details="1"/);
+  assert.match(src, /_cc_t\('panel\.runDetails','Run details'\)/);
+});
+
+test('snapshots: visible cards first, cancelled when they leave, one card re-renders per picture', () => {
+  const ov = src.slice(src.indexOf('function ClashOverview(props) {'), src.indexOf("  // One list row's filter test"));
+  assert.match(ov, /if \(en\.isIntersecting\) vis\.push\(i\); else svc\.cancel\(it\.lead\);/);
+  assert.match(ov, /svc\.request\(shown\[i\]\.lead, \{front:true\}\)/);
+  assert.ok(!/setTick/.test(ov), 'the grid no longer re-renders on every snapshot');
+  const card = src.slice(src.indexOf('function ClashOverviewSnapshot(props) {'), src.indexOf('function ClashOverviewCard(props) {'));
+  assert.match(card, /e\.detail\.key === key/);
+  assert.match(src, /if \(!res\) \{ _snap\.failed\[job\.key\] = true; _snapNotify\(job\.key\); continue; \}/);
 });
 
 test('snapshots wait for an idle viewer and are keyed by identity + both geometry hashes', () => {
