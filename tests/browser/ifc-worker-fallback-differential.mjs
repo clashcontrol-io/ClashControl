@@ -35,7 +35,7 @@ import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { join, dirname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { generateSyntheticIfc, generateSemanticIfc } from '../fixtures/generate-synthetic-ifc.js';
+import { generateSyntheticIfc, generateSemanticIfc, generateShardIfc } from '../fixtures/generate-synthetic-ifc.js';
 import { deepModelDigest, diffDigests } from './model-digest.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -289,7 +289,7 @@ async function loadCancelReloadAndFingerprint(fixtureUrl) {
 // and drawn as a display-only preview). Every model must be identical
 // element-for-element: order, triangle/index/normal bytes, mesh matrices,
 // props (after the lazy psets merge) and float64 volume/area.
-async function loadSetDeep(query, urls) {
+async function loadSetDeep(query, urls, shardKnob) {
   const page = await browser.newPage();
   page.on('dialog', (d) => d.accept()); // duplicate-model overlap prompts between fixtures
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -317,6 +317,7 @@ async function loadSetDeep(query, urls) {
   }
   await page.goto(`http://127.0.0.1:${port}/${query}`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 60_000 });
+  if (shardKnob) await page.evaluate((n) => { window._ccIfcShard.minBytes = 0; window._ccIfcShard.maxShards = n; }, shardKnob);
   const meta = await page.evaluate(async (list) => {
     const files = [];
     for (let i = 0; i < list.length; i++) files.push(new File([await (await fetch(list[i])).arrayBuffer()], 'set' + i + '-' + list[i].split('/').pop()));
@@ -334,7 +335,8 @@ async function loadSetDeep(query, urls) {
     });
     clearInterval(iv);
     const pi = window._ccLoadPreview.info();
-    return { order: window._ccLatestState.models.map((m) => m.name), previewBatches, parallelPeak: window._ccLoadPreview.parallelPeak(),
+    return { order: window._ccLatestState.models.map((m) => m.name), previewBatches,
+      shards: window._ccLatestState.models.map((m) => (m.stats && m.stats.shards ? m.stats.shards.n : 1)), parallelPeak: window._ccLoadPreview.parallelPeak(),
       previewLeft: pi.live, previewInScene: pi.inScene,
       previewInState: window._ccLatestState.models.some((m) => (m.meshes || []).some((x) => x.userData && x.userData._ccLoadPreview)) };
   }, urls);
@@ -442,6 +444,22 @@ try {
       console.log('DIFFERENTIAL OK — [parallel+preview] ' + setUrls.length + ' files, ' + n + ' elements identical (triangles, matrices, props, volume/area; ' +
         par.meta.previewBatches + ' preview batches, ' + par.meta.parallelPeak + ' parses at once)');
     }
+  }
+
+  // Sharded single-file load (shardedLoad, threshold lowered through the
+  // _ccIfcShard knob): one file over 2 workers == the one-worker load, deep
+  // digest (order, bytes, colours, instancing, not-drawn, props). Full
+  // matrix incl. cancel / failing shard: tests/browser/shard-load.mjs.
+  {
+    const shardFile = join(generatedDir, 'sharded-load.ifc');
+    await writeFile(shardFile, generateShardIfc({ storeys: 3, perStorey: 200, seed: 21 }));
+    const urls = ['/tests/fixtures/_generated-differential/sharded-load.ifc'];
+    const one = await loadSetDeep('?ccSafety=-shardedLoad', urls);
+    const sh = await loadSetDeep('?ccSafety=shardedLoad', urls, 2);
+    const diffs = diffDigests(one.digest, sh.digest);
+    if (sh.meta.shards[0] !== 2) { fail('[sharded] the sharded path did not run (' + JSON.stringify(sh.meta.shards) + ')'); allOk = false; }
+    else if (diffs.length) { console.error(diffs.join('\n')); fail('[sharded] a 2-worker load differs from the one-worker load'); allOk = false; }
+    else console.log('DIFFERENTIAL OK — [sharded] one file over 2 workers is identical to the one-worker load (' + Object.values(one.digest)[0].elements + ' elements)');
   }
 
   // Cancellation case, run against the baseline fixture: a cancel-then-

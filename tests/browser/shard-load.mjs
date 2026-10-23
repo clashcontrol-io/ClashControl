@@ -64,7 +64,6 @@ async function openPage(query, opts = {}) {
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('console', (m) => { if (m.type() === 'error' && !/forced fallback/.test(m.text())) errors.push(m.text()); });
   page.on('dialog', (d) => d.accept());
-  if (process.env.SHARD_DEBUG) page.on('console', (m) => console.log('[page]', m.type(), m.text().slice(0, 300)));
   if (offlineDepsEnabled()) await routeOfflineDeps(page.context(), root);
   // Track every worker (shard accounting, termination on cancel).
   await page.addInitScript((failShard) => {
