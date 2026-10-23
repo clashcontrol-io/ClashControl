@@ -157,10 +157,11 @@ api/_lib.js                 — Shared serverless helpers (CORS allow-list, rate
 eslint.config.mjs           — ESLint 9 flat config used by `npm run lint:inline`
 scripts/lint-inline.js      — Extracts the main inline <script> from index.html (preserving line numbers) for ESLint
 clash-assignment-core.js    — Non-addon core module: assignment rules (discipline-pair × storey → assignee/priority)
-clash-classification-core.js — Non-addon core module: clash classification (spatial-hash clustering)
+clash-classification-core.js — Non-addon core module: clash classification (spatial-hash clustering), deterministic severity + extent (graze/through/partial), review buckets (`reviewBucket`, `findTwice`) shared by both engines
 clash-discipline-core.js    — Non-addon core module: discipline / MEP sub-discipline / role classification with provenance (stated before inferred), the trade-aware clash matrix, and the registries for pack data (locale `disciplineHints`, country `classifications`) — IFC-standard knowledge only, nothing language- or country-specific in code
 clash-identity-core.js      — Non-addon core module: stable clash identity across re-runs
 clash-reconciliation-core.js — Non-addon core module: merges new detection results with prior status/assignment
+clash-triage-core.js        — Non-addon core module: clash review smart filtering — storey normalisation across models, facets with live counts, suggested views, search, saved views (review buckets + severity/extent live in clash-classification-core.js)
 storage-core.js             — Non-addon core module: local storage registry, budget and GC (`ClashControl.storage.*`)
 project-codec.js            — Non-addon core module: project state encode/decode for persistence
 safety-migrations.js        — Non-addon core module: feature-flag gate + migration/self-check plumbing (`window._ccSafetyMigrations`)

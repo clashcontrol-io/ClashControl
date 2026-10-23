@@ -7023,13 +7023,14 @@ function startApp() {
       names[m.id] = m.name || m.id;
       (m.storeyData || []).forEach(function(st) { if (st && st.name) stE.push({ modelId: m.id, name: st.name, elevation: st.elevation }); });
     });
-    var bucketOf = new Map(), counts = {}, visible = [];
+    var bucketOf = new Map(), counts = {}, visible = [], zoneGroups = {};
     ((ccore && ccore.REVIEW_BUCKETS) || ['review']).forEach(function(b) { counts[b] = 0; });
     (s.clashes || []).forEach(function(c) {
       var b = _ccReviewBucket(c, s.rules, ctx);
       bucketOf.set(c.id, b);
       if ((c.modelAId && !vis[c.modelAId]) || (c.modelBId && !vis[c.modelBId])) return;
       counts[b] = (counts[b] || 0) + 1;
+      if (b === 'zone' && c.roleGroup) zoneGroups[c.roleGroup] = (zoneGroups[c.roleGroup] || 0) + 1;
       visible.push(c);
     });
     var norm = tcore ? tcore.buildStoreyNormaliser(stE) : { label: function(m, n) { return n || ''; }, labels: [] };
@@ -7044,7 +7045,7 @@ function startApp() {
     var rowById = new Map();
     index.forEach(function(r) { rowById.set(r.c.id, r); });
     var out = { bucketOf: bucketOf, counts: counts, total: visible.length, visible: visible, ctx: ctx, fctx: fctx,
-      storeyNorm: norm, index: index, rowById: rowById, visibleModels: vis };
+      storeyNorm: norm, index: index, rowById: rowById, visibleModels: vis, zoneGroups: zoneGroups };
     _ccTriageLast = { clashes: s.clashes, rules: s.rules, models: s.models, out: out };
     return out;
   }
@@ -27361,7 +27362,11 @@ function startApp() {
   }
   // ── Review bucket bar + smart filters (clash list and overview) ──────
   // Labels: plain counts sentence ("1243 inside provisions · 16 only touch").
-  function _ccBucketLabel(b, n) {
+  function _ccBucketLabel(b, n, zoneGroups) {
+    // classified groups say which ("3× zones / compartments · 2× proxies")
+    if (b === 'zone' && zoneGroups && Object.keys(zoneGroups).length) {
+      return Object.keys(zoneGroups).sort().map(function(g){ return zoneGroups[g] + '× ' + _ccRoleGroupLabel(g, true); }).join(' · ');
+    }
     var L = {
       review: _cc_t('bucket.review', '{n} to review', {n:n}),
       contact: n + ' ' + _cc_t('contact.only', 'only touch (contact)'),
@@ -27411,7 +27416,7 @@ function startApp() {
         return html`<button key=${b} data-cc-bucket=${b} aria-pressed=${shown ? 'true' : 'false'} title=${_ccBucketHint(b)}
           onClick=${function(){ toggle(b); }}
           style=${{...S_BTN,padding:'0 var(--space-1)',fontSize:'var(--text-xs)',background:shown?'var(--accent-bg)':'none',color:shown?'var(--text-primary)':'var(--text-secondary)',border:shown?'1px solid var(--accent)':'1px solid transparent',borderRadius:'var(--radius-xs)',textDecoration:shown?'none':'underline',textUnderlineOffset:2}}>
-          ${'· ' + _ccBucketLabel(b, counts[b])}${shown ? ' ✓' : ''}
+          ${'· ' + _ccBucketLabel(b, counts[b], b === 'zone' ? props.zoneGroups : null)}${shown ? ' ✓' : ''}
         </button>`;
       })}
       ${others.length > 1 && html`<button data-cc-bucket-all="1" onClick=${function(){
@@ -28058,7 +28063,7 @@ function startApp() {
           </button>`})}
       </div>`}
 
-      ${isClashTab && triage && triage.total > 0 && html`<${BucketBar} counts=${triage.counts} total=${triage.total} rules=${s.rules} f=${f} d=${d} />`}
+      ${isClashTab && triage && triage.total > 0 && html`<${BucketBar} counts=${triage.counts} zoneGroups=${triage.zoneGroups} total=${triage.total} rules=${s.rules} f=${f} d=${d} />`}
       ${isClashTab && s.lastRunExcluded && Object.keys(s.lastRunExcluded).length > 0 && html`<div data-cc-excluded="1" style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--color-warning-bg)',fontSize:'0.68rem',color:'var(--color-warning-fg)'}}>
         <span style=${{flex:1}}>${_cc_t('roles.leftOut','Left out of this run:')} ${Object.keys(s.lastRunExcluded).map(function(g){ return s.lastRunExcluded[g] + ' ' + _ccRoleGroupLabel(g, s.lastRunExcluded[g] !== 1); }).join(' · ')}</span>
         <button onClick=${function(){

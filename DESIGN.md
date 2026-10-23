@@ -266,6 +266,35 @@ border (horizontal). Inactive tabs use `var(--text-muted)`; active uses
 `var(--duration-base) var(--ease-standard)`. `role="switch"` with
 `aria-checked` and Enter/Space keyboard support.
 
+### Clash review: bucket bar, filter chips, overview cards
+
+- **Bucket bar** (`BucketBar`): one `--bg-tertiary` row under the clash
+  panel header — "149 to review" in `--text-primary`/semibold, then each
+  other bucket as an underlined text button ("· 79 only touch (contact)").
+  A shown bucket gets `--accent-bg` + a 1px `--accent` border and a ✓, and
+  `aria-pressed`. Never colour-only.
+- **Filter chips** (`TriageFilterBar`): pill buttons (`--radius-pill`,
+  `--text-xs`, `--bg-secondary` + `--border`; pressed = `--accent-bg-deep` +
+  `--accent` border, `aria-pressed`), each with its live count in
+  `--font-mono`/`--text-2xs`/`--text-muted`. Facet groups are `role="group"`
+  rows with a section-header label; the facet panel is a native
+  `<details>`. Active filters repeat as removable pills ("Severity:
+  Critical ×", `aria-label` "Remove filter …"); "shown / total" is a
+  `role="status"` live region.
+- **Overview cards** (`ClashOverview`): CSS grid
+  `repeat(auto-fill, minmax(min(100%, 240px), 1fr))`, `--space-3` gap; each
+  card is one `<button>` (`--bg-secondary`, `--border`, `--radius-md`,
+  `--shadow-sm`) with a 320×200 snapshot (`--bg-tertiary` placeholder),
+  a severity pill (`_ccSeverityPillStyle`: danger/warning/info/neutral
+  bg+fg token pairs — the word carries the meaning), a members pill, title
+  (`--text-sm` semibold, 2 lines), and `--text-xs` secondary lines. Roving
+  tabindex; J/K/arrows move, Enter opens, Escape returns to the 3D view.
+  `.cc-overview` sits between the floating panels on desktop and is a
+  fixed sheet above the panel on phones.
+- Snapshot pictures themselves are 3D renders, not chrome: the A/B pair
+  colours match the viewport's clash-focus colours, the context is a fixed
+  light ghost so a BCF/PDF picture looks the same in either theme.
+
 ---
 
 ### Iconography & button labels
