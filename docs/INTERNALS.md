@@ -428,13 +428,15 @@ Gathers a diagnostic breakdown of where the JS heap is going so a `[Memory]` rep
 
 Big suspects for heap >> file size: web-ifc WASM linear memory (grows to peak parse size, never shrinks — even after `CloseModel`), per-element retained CPU geometry + three-mesh-bvh boundsTrees (~2× the raw geometry), and material/geometry clones from render styles.
 
-### 21.24 Section-plane gizmo + section-box handles — constant on-screen size
+### 21.24 Section gizmos — viewer-gizmo-core.js (screen-constant, token colours)
 
-**Code reference:** the per-frame `_secHandleGroup.scale.setScalar(...)` block.
+**Code reference:** `viewer-gizmo-core.js` (`S.gz` = `create()`), `_sectionVisFit()`, the section-box effect (`S._sboxLayout`), `S.gz.update()` in the tick.
 
-The move arrow + rotation ring live in a sub-group anchored at the plane centre. Scaling it to a fixed pixel size each frame stops the handles from appearing to grow/shrink as the plane is dragged toward/away from the camera, and keeps the arrow compact so its tip no longer whips across the screen when orbiting. The plane rectangle itself stays world-sized (it represents the real cut extent).
+All section handles are built in PIXEL units (`buildArrow` / `buildTab` / `buildArc`) and registered with `S.gz.track()`; the tick calls `S.gz.update(camera, viewportHeight)`, which sets each tracked handle's scale to `pxScale()` = world length of 1 px at its depth (perspective: view-space depth · tan(fov/2); ortho: frustum height / zoom) and billboards the box tabs. Objects that leave the scene drop out of the registry, so there is nothing to unregister. Colours come only from DESIGN.md tokens through a cached `getComputedStyle` reader (`STYLES`: idle neutral, `--accent` on hover / drag only); a `MutationObserver` on `data-theme` repaints every tracked part. `tests/viewer-gizmo-core.test.js`, `tests/browser/section-gizmo.mjs`.
 
-Section-box face handles use the same idea: world scale `~maxDim*0.01` looks disproportionately large on big models and tiny on small ones, so they're re-scaled every frame to a target pixel footprint. Face arrows scale to geometry-relative size once per frame (box may be live-dragged); all other handles are sized at creation time relative to geometry — no camera-distance scaling.
+**Section plane:** ONE gizmo (arrow along the plane normal + rotate ring at its base); the former second gizmo (`TransformControls`, anchored at mid-height with a 1e6-long helper line) is gone. `_sectionVisFit(S, vis, n, p)` builds or refits the visual: the outline is the model box (building grid, `_ccPlanFrame`) cut by the plane (`planeOutline`: box-edge ∩ plane → in-plane extents along `planeBasis` u/v, +4 % per side growing with the cut-to-far-corner gap, capped at 1.2×), and the gizmo sits at its centre ON the plane. Axis, picked and rotated planes share this rule, so the sheet never hangs beside the model.
+
+**Section box:** 1 px edges, six flat 12 px face tabs (drag = closest-point face drag, §21.13) and a 28 px quarter arc on the top corner nearest the camera (drag = rotate about up). Built once per enable; `S._sboxLayout(sb)` re-positions them on every change, so hover / active states survive a drag.
 
 ### 21.25 Rendered lighting — original intensities (no ×π)
 
@@ -490,13 +492,11 @@ The reducer is the single serialization point, so a concurrent same-name (or sam
 
 **Code reference:** `_secPlaneLiveMove()`.
 
-Moves the section plane imperatively during a drag — updates the live clip plane (shared by reference with every model material) and the gizmo in place, then `invalidate()`. This is the orbit-drag pattern: dispatching to the reducer on every `mousemove` round-trips through a full gizmo rebuild + per-material clip reassignment, which made the drag lag behind the cursor. State is committed once on `mouseup`.
+Moves the section plane imperatively during a drag — the live clip plane (shared by reference with every model material), the outline and the gizmo together via `_sectionVisFit` — then `invalidate()`; state is committed once on `mouseup`. Dispatching on every `mousemove` round-trips through a full rebuild + per-material clip reassignment and lags behind the cursor. Rotation pivots on the gizmo (a point on the plane at the outline centre) with `pos` reset to 0.5, so rotating never shifts the plane.
 
 ### 21.34 Section-plane handle group — constant on-screen size
 
-**Code reference:** `_secHandleGroup` setup inside the plane gizmo.
-
-Arrow + ring live in a sub-group anchored at the plane centre. The tick loop scales this sub-group every frame to a constant on-screen size, so the handles no longer "grow/shrink" as the plane is dragged toward/away from the camera, and the long tip stops whipping across the screen when orbiting. The fill/border stay world-sized so the rectangle represents the real cut extent.
+Superseded by §21.24 (`S.gz.update`): the arrow group is a tracked pixel-unit handle; the outline stays world-sized (it is the real cut).
 
 ### 21.35 Section rotation ring — world-up reorient for vertical planes
 
@@ -514,7 +514,7 @@ Setting clip planes on each model mesh material instead of globally means gizmos
 
 **Code reference:** floor-plan drag handle build.
 
-Floor-plan handle uses the same geometry/colours as the section-plane gizmo so the two read as one family. `clippingPlanes:[]` on the materials is critical here — the floor-plan clipping plane removes everything above the cut, and the arrow extends UP from the cut elevation, so it would otherwise be entirely clipped away.
+The floor-plan arrow is the shared `buildArrow` (no ring), tracked by `S.gz` like the section gizmo, on a model-sized sheet (`outline` style). `clippingPlanes:[]` on its materials is critical — the floor-plan clipping plane removes everything above the cut and the arrow extends UP from it. Drag speed uses `S.gz.pxScale` so 1 px of mouse ≈ 1 px of motion.
 
 ### 21.38 cc-render-frame timing — before render(), not after
 
