@@ -11,6 +11,7 @@ export function deepModelDigest(nameFilter) {
   function fnv(h, u8) { for (let i = 0; i < u8.length; i++) { h ^= u8[i]; h = Math.imul(h, 16777619) >>> 0; } return h; }
   function hArr(h, a) { if (!a) return fnv(h, new Uint8Array([0])); return fnv(h, new Uint8Array(a.buffer, a.byteOffset, a.byteLength)); }
   const enc = new TextEncoder();
+  const matKey = (mt) => (mt && mt.color ? [mt.color.r, mt.color.g, mt.color.b, mt.opacity].map((v) => (+v).toFixed(3)).join(',') : '-');
   const out = {};
   for (const m of window._ccLatestState.models) {
     if (nameFilter && m.name.indexOf(nameFilter) !== 0) continue;
@@ -21,9 +22,12 @@ export function deepModelDigest(nameFilter) {
         const geo = me.geometry, p = geo.attributes.position.array, ix = geo.index ? geo.index.array : null;
         g = hArr(g, p); g = hArr(g, ix); g = hArr(g, geo.attributes.normal && geo.attributes.normal.array);
         const e = me.matrix.elements; g = hArr(g, new Float64Array(e));
-        // colour / opacity / instancing key of the mesh (shared materials)
-        const mt = me.material || {};
-        g = fnv(g, enc.encode((mt.color ? mt.color.getHexString() : '-') + '/' + mt.opacity + '/' + (me.userData && me.userData._instKey || '')));
+        // colour / opacity / instancing key of the mesh, at the resolution of
+        // the shared-material cache's key (3 decimals — one cached material
+        // serves a whole bucket, whichever exact colour created it), read
+        // from the loader's material, not a render-style swap applied later.
+        const mt = (me.userData && me.userData._origMaterial) || me._origMaterial || me.material || {}; // the loader's material, not a render-style swap
+        g = fnv(g, enc.encode(matKey(mt) + '/' + (me.userData && me.userData._instKey || '')));
         const n = ix ? ix.length : p.length / 3;
         const W = (k) => { const x = p[k * 3], y = p[k * 3 + 1], z = p[k * 3 + 2];
           return [e[0] * x + e[4] * y + e[8] * z + e[12], e[1] * x + e[5] * y + e[9] * z + e[13], e[2] * x + e[6] * y + e[10] * z + e[14]]; };
@@ -42,7 +46,7 @@ export function deepModelDigest(nameFilter) {
     // count, colour) and the loader's own report.
     const st = m.stats || {};
     const scene = m.meshes.map((x) => (x.isInstancedMesh ? 'I' + x.count : x.isBatchedMesh ? 'B' : 'M') + ':' +
-      (x.material && x.material.color ? x.material.color.getHexString() : '-'));
+      matKey((x.userData && x.userData._origMaterial) || x._origMaterial || x.material));
     rows.push(['model', fnv(2166136261, enc.encode(JSON.stringify({ scene, notDrawn: st.notDrawn || null, geoUnique: st.geoUnique, geoReused: st.geoReused,
       instancedGroups: st.instancedGroups, instancedElements: st.instancedElements, storeys: m.storeys, storeyData: m.storeyData,
       boundaries: m._ccBoundaries ? m._ccBoundaries.placed : null }))).toString(16)]);
