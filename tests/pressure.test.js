@@ -58,6 +58,18 @@ test('pressure dims: covering arrays are deterministic per seed and differ acros
   assert.deepEqual(D.combosFor('soak', 3, { count: 5 }), D.combosFor('soak', 3, { count: 5 }));
 });
 
+test('pressure dims: every fast-tier value (incl. every adapter-driven value) runs in at least one fast combo', async () => {
+  const D = await P('dims.mjs');
+  const adapterValues = D.DIMS.filter((d) => d.adapter).flatMap((d) => Object.keys(d.adapter).map((v) => d.name + '=' + v));
+  assert.deepEqual(adapterValues.sort(), ['display.filter=bucket', 'load.path=sharded', 'roles.exclusion=leave-out', 'storage=autosave-gate', 'storage=evict', 'storage=low-bvh-cap']);
+  for (let seed = 1; seed <= 30; seed++) {
+    const combos = D.combosFor('fast', seed);
+    for (const d of D.dimsForTier('fast')) for (const v of d.values) {
+      assert.ok(combos.some((c) => JSON.stringify(c.dims[d.name]) === JSON.stringify(v)), 'fast tier seed ' + seed + ' never runs ' + d.name + '=' + v);
+    }
+  }
+});
+
 test('pressure dims: a tiny exhaustive check — covering array of 3 binary dims has every pair', async () => {
   const D = await P('dims.mjs');
   const dims = [{ name: 'a', values: [0, 1] }, { name: 'b', values: [0, 1, 2] }, { name: 'c', values: [0, 1] }];
@@ -322,4 +334,13 @@ test('building generator: deterministic, default output pinned, cases/background
   assert.equal(pos(sub, 'P12'), pos(all, 'P12'));
   assert.ok(sub.stats.products < 10 && sub.stats.products > 0);
   assert.ok(all.files.mep.includes(all.manifest.cases[0].a.globalId) || all.files.mep.includes(all.manifest.cases[0].b.globalId));
+  // opt-in role strip: planted cases untouched, one member per suggestion group
+  // (+ the duplicate's twin), the same with a `cases` reduction
+  const r = generateBuilding({ roles: true });
+  assert.deepEqual(r.manifest.cases.map((c) => c.a.globalId + c.b.globalId), all.manifest.cases.map((c) => c.a.globalId + c.b.globalId));
+  assert.deepEqual(r.manifest.roleStrip.map((x) => x.group), ['duplicate', 'duplicate', 'proxy', 'provision', 'zone']);
+  assert.ok(r.manifest.roleStrip.every((x) => Object.values(r.files).some((f) => f.includes(x.globalId))));
+  const rs = generateBuilding({ roles: true, cases: ['P04'], background: false });
+  assert.equal(rs.manifest.roleStrip.length, 5);
+  assert.equal(all.manifest.roleStrip, undefined);
 });
