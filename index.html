@@ -9881,6 +9881,7 @@ function startApp() {
   // ── Async clash detection with chunked processing ─────────────── docs/INTERNALS.md §9
   var _DETECT_CHUNK_SIZE = 80; // candidates per chunk (progress / cancel / pressure-relief granularity)
   var _DETECT_SLICE_MS = 16;   // main-thread time slice before the chunk loop yields to the UI
+  var _DETECT_SMALL_WORK = 32; // smart re-run with at most this many pairs to test: one synchronous pass
   // Yield one macrotask without setTimeout's >= 4 ms nesting clamp (or its
   // 1 s background-tab throttling): FIFO over a MessageChannel.
   var _ccYieldTask = (function() {
@@ -11401,8 +11402,12 @@ function startApp() {
         if (_changedEls.has(_wc.eA) || _changedEls.has(_wc.eB)) _nWork++;
       }
     }
-    // (an all-carried run beyond 200k candidates still goes through the yielding loop, just without workers)
-    if (totalCandidates <= _DETECT_CHUNK_SIZE || !resolveAsync || (_nWork === 0 && totalCandidates <= 200000)) {
+    // A smart re-run with only a handful of pairs to test (an element or two
+    // edited) also runs in one pass: yielding to the UI every 16 ms would cost
+    // more than the work itself. (An all-carried run beyond 200k candidates
+    // still goes through the yielding loop, just without workers.)
+    var _smallSmartRun = !!_memo && _nWork <= _DETECT_SMALL_WORK && totalCandidates <= 200000;
+    if (totalCandidates <= _DETECT_CHUNK_SIZE || !resolveAsync || _smallSmartRun) {
       _chunkBatchCache = new Map();
       _warmChunkBatch(0, totalCandidates);
       for (var si=0; si<totalCandidates; si++) {
