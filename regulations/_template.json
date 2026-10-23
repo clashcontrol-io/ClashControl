@@ -3,7 +3,19 @@
   "name": "Country / region full name",
   "contributor": "Your GitHub handle or name",
   "verified": false,
-  "source": "URL or citation for the regulation text these thresholds are based on — REQUIRED, even for a draft/unverified pack",
+  "source": "URL or citation for the regulation text these values come from (REQUIRED, even for a draft/unverified pack). Every section below is optional: delete what you can't cite.",
+  "geo": {
+    "countryNames": ["Country name in English", "Country name in its own language", "XXX"],
+    "bounds": [[10.0, 20.0, 12.0, 23.0]],
+    "crs": {
+      "32634": {
+        "label": "WGS 84 / UTM 34N (example: replace with the national grid)",
+        "def": "+proj=utm +zone=34 +datum=WGS84 +units=m +no_defs",
+        "aliases": ["national grid name as written in IfcProjectedCRS.Name"]
+      }
+    },
+    "defaultCrs": "32634"
+  },
   "engines": {
     "accessibility": {
       "doorClearWidth": 0.85,
@@ -12,5 +24,30 @@
       "thresholdHeight": 0.02,
       "rampSlope": 0.0833
     }
+  },
+  "dataQuality": {
+    "standards": [
+      {
+        "id": "example",
+        "label": "National BIM standard",
+        "title": "National BIM standard v1",
+        "source": "Citation of the published standard (REQUIRED)",
+        "scope": "elements",
+        "headline": "never",
+        "elementTypes": ["IfcWall", "IfcDoor"],
+        "checks": [
+          { "id": "doorNaming", "kind": "elementName", "ifcTypes": ["IfcDoor"], "pattern": "^D\\d{3}$", "emptyDetail": "(empty)", "label": "Door name format D###", "sev": "info", "cat": "naming" },
+          { "id": "fireRating", "kind": "requiredProps", "props": { "IfcWall": ["FireRating"] }, "label": "Wall without FireRating", "sev": "warn", "cat": "properties" }
+        ]
+      }
+    ]
+  },
+  "naming": {
+    "spaceRoles": {
+      "corridor": "corridor|hallway|local word for corridor",
+      "sanitary": "toilet|\\bwc\\b|local word for bathroom"
+    },
+    "visibilityTerms": { "exit": ["local word for exit"] },
+    "revitDisciplineHints": { "mep": ["local fragment for building services"] }
   }
 }

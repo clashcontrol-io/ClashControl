@@ -1,22 +1,27 @@
-name: "Contribute a regulation pack"
-description: "Add regional building-code thresholds (e.g. door width, ramp slope) for the Accessibility panel."
-title: "[regulations] Add <region> building-code thresholds"
+name: "Contribute a country pack"
+description: "Add a country's building-code thresholds, national data standard, coordinate system or name words (regulations/*.json)."
+title: "[regulations] Add <region> country pack"
 labels: ["contribution", "type:regulation"]
 body:
   - type: markdown
     attributes:
       value: |
-        These numbers are safety-relevant (door widths, ramp slopes, turning clearances), so this
-        contribution path is deliberately stricter than a translation:
+        A country pack is pure JSON: building-code thresholds (`engines`), a national data
+        standard (`dataQuality`), coordinate systems / 3D tiles (`geo`), name words (`naming`) and
+        classification tables (`classifications`) — every section is optional. Thresholds are
+        safety-relevant (door widths, ramp slopes, turning clearances), so this contribution path is
+        deliberately stricter than a translation:
 
-        - A **source citation** is required — the specific regulation text/article your thresholds
-          come from, not just "the building code."
+        - A **source citation** is required — the specific regulation text/article your values
+          come from, not just "the building code." Data standards and tables cite their own source.
         - Every submitted pack starts `verified: false` and shows an "(unverified)" label in the app
           until a maintainer or a domain-knowledgeable reviewer confirms the values.
-        - Only include values you can actually cite — leave a threshold out rather than guess.
+        - Only include values you can actually cite — leave a section or key out rather than guess.
+        - Patterns are plain strings (max 200 characters, no nested quantifiers, backreferences or
+          lookbehind); URLs must be https on the allow-list in `country-pack-core.js`.
 
-        1. Copy [`regulations/_template.json`](../../blob/main/regulations/_template.json) and fill
-           in your region's thresholds.
+        1. Copy [`regulations/_template.json`](../../blob/main/regulations/_template.json), delete
+           the sections you can't cite and fill in the rest.
         2. Fill in the fields below and drag your finished `.json` file into the "Your regulation
            pack file" box.
         3. See [`regulations/README.md`](../../blob/main/regulations/README.md) for the full format
@@ -47,13 +52,13 @@ body:
     id: source
     attributes:
       label: "Source citation"
-      description: "The specific regulation text/article these thresholds come from — must match the `source` field in your file."
+      description: "The specific regulation text/article your values come from — must match the `source` field in your file."
     validations:
       required: true
   - type: textarea
     id: file
     attributes:
-      label: "Your regulation pack file"
+      label: "Your country pack file"
       description: "Drag and drop your `<region>.json` file directly into this box — do not paste it as text."
     validations:
       required: true

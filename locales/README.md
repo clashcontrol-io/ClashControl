@@ -11,6 +11,10 @@ translate the `strings` values, add yourself to `manifest.json`, open a PR.
 - Do not include HTML tags, `<script`, `javascript:`, or `on*=` attributes in
   any string value — these are rendered as plain text in the UI and will be
   rejected by CI if present.
+- Check labels of a country pack's national data standard (written in that
+  country's language in `regulations/<region>.json`) can be translated here
+  under `country.<region>.<standard id>.<check id>`, e.g.
+  `"country.nl.ils.noName": "No element name"`.
 
 ## Adding a pack
 
