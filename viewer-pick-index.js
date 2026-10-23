@@ -164,7 +164,7 @@
     var BatchRaycast = THREE.BatchedMesh && THREE.BatchedMesh.prototype.raycast;
     var NoopRaycast = THREE.Object3D.prototype.raycast;
 
-    // Private helpers mirroring three's module-level ones.
+    // Module-local helpers mirroring three's module-level ones.
     var _iMesh = new THREE.Mesh();
     var _iLocal = new THREE.Matrix4(), _iWorld = new THREE.Matrix4();
     var _iSphere = new THREE.Sphere();
