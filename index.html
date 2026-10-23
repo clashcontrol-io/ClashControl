@@ -8835,7 +8835,7 @@ function startApp() {
       _closestPtTriDistSq, _pointToAABBDistSq, _bvhClosestDistSq, _closestDistToBVH, _bvhClosestWithin, _ccFartherThan, _ccAnyVertexInBox,
       _ccContactTol, _ccMeshTopo, _ccFaceAxes, _ccLineInterval, _ccCoplanarOverlapWidth,
       _ccTriDeep, _ccRefineTraverse, _ccVertexDeepInside, _ccTouchVerdict, _ccBoxIn,
-      _ccContainment, _estimatePenetrationDepthM, _ccTrisFinite, _ccBvhFromFlat, _ccBvhFlatten
+      _ccContainment, _ccProjExtent, _ccOwnExtents, _estimatePenetrationDepthM, _ccTrisFinite, _ccBvhFromFlat, _ccBvhFlatten
     ];
     return [
       'var _ttIvalA=new Float64Array(8),_ttIvalB=new Float64Array(8);',
@@ -9340,7 +9340,12 @@ function startApp() {
       var ax = Math.abs(nx), ay = Math.abs(ny), az = Math.abs(nz);
       var s = (ax >= ay && ax >= az) ? nx : (ay >= az ? ny : nz);
       if (s < 0) { nx = -nx; ny = -ny; nz = -nz; }
-      var k = Math.round(nx*1e5) + ',' + Math.round(ny*1e5) + ',' + Math.round(nz*1e5);
+      // Group key: the three rounded components. Packed into one number (each
+      // in [-1e5, 1e5], so exact below 2^53) — the same grouping as the
+      // former 'x,y,z' string key (incl. -0 == 0) without building a string
+      // per triangle; a non-finite component keeps the string key.
+      var rx = Math.round(nx*1e5), ry = Math.round(ny*1e5), rz = Math.round(nz*1e5);
+      var k = (rx - rx === 0 && ry - ry === 0 && rz - rz === 0) ? ((rx + 100001) * 200003 + (ry + 100001)) * 200003 + (rz + 100001) : rx + ',' + ry + ',' + rz;
       var cur = acc.get(k);
       if (cur) cur[3] += l; else acc.set(k, [nx, ny, nz, l]);
     }
@@ -9566,17 +9571,46 @@ function startApp() {
   // the true MTD for non-convex shapes or edge-edge minima). Contained
   // elements get the distance to push the inner one out. Only called on
   // crossing / contained pairs; contacts are never given a depth.
+  // Projection extent [min, max] of a mesh's welded vertices on axis u —
+  // the loop _estimatePenetrationDepthM always ran, factored out.
+  function _ccProjExtent(v, ux, uy, uz, out, o) {
+    var mn = Infinity, mx = -Infinity, d;
+    for (var i = 0; i < v.length; i += 3) { d = ux*v[i]+uy*v[i+1]+uz*v[i+2]; if (d < mn) mn = d; if (d > mx) mx = d; }
+    out[o] = mn; out[o + 1] = mx;
+  }
+  // A mesh's extents on the three box axes and on its own face axes depend
+  // on that mesh alone: cached on its topology (per triangle array), so a
+  // pair only projects each mesh on the OTHER mesh's face axes.
+  function _ccOwnExtents(topo) {
+    if (topo.ext) return topo.ext;
+    var own = _ccFaceAxes(topo), ext = new Float64Array(2 * (3 + own.length));
+    _ccProjExtent(topo.verts, 1, 0, 0, ext, 0);
+    _ccProjExtent(topo.verts, 0, 1, 0, ext, 2);
+    _ccProjExtent(topo.verts, 0, 0, 1, ext, 4);
+    for (var a = 0; a < own.length; a++) _ccProjExtent(topo.verts, own[a][0], own[a][1], own[a][2], ext, 6 + 2 * a);
+    topo.ext = ext;
+    return ext;
+  }
+  // best = min over axes of the projection overlap: the same per-axis values
+  // as before (each extent is the same loop over the same vertices), and the
+  // minimum of a set of doubles does not depend on the order it is taken in.
   function _estimatePenetrationDepthM(elA, elB) {
     var tA = _ccMeshTopo(elA), tB = _ccMeshTopo(elB);
     if (!tA.nv || !tB.nv) return null;
-    var axes = [[1,0,0],[0,1,0],[0,0,1]].concat(_ccFaceAxes(tA), _ccFaceAxes(tB));
-    var vA = tA.verts, vB = tB.verts, best = Infinity;
-    for (var a = 0; a < axes.length; a++) {
-      var ux = axes[a][0], uy = axes[a][1], uz = axes[a][2];
-      var mnA = Infinity, mxA = -Infinity, mnB = Infinity, mxB = -Infinity, i, d;
-      for (i = 0; i < vA.length; i += 3) { d = ux*vA[i]+uy*vA[i+1]+uz*vA[i+2]; if (d < mnA) mnA = d; if (d > mxA) mxA = d; }
-      for (i = 0; i < vB.length; i += 3) { d = ux*vB[i]+uy*vB[i+1]+uz*vB[i+2]; if (d < mnB) mnB = d; if (d > mxB) mxB = d; }
-      var ov = Math.min(mxA - mnB, mxB - mnA);
+    var axA = _ccFaceAxes(tA), axB = _ccFaceAxes(tB), eA = _ccOwnExtents(tA), eB = _ccOwnExtents(tB);
+    var best = Infinity, ov, a, q = [0, 0];
+    for (a = 0; a < 3; a++) {
+      ov = Math.min(eA[2*a+1] - eB[2*a], eB[2*a+1] - eA[2*a]);
+      if (ov < best) best = ov;
+    }
+    for (a = 0; a < axA.length; a++) {
+      _ccProjExtent(tB.verts, axA[a][0], axA[a][1], axA[a][2], q, 0);
+      ov = Math.min(eA[6+2*a+1] - q[0], q[1] - eA[6+2*a]);
+      if (ov < best) best = ov;
+    }
+    for (a = 0; a < axB.length; a++) {
+      _ccProjExtent(tA.verts, axB[a][0], axB[a][1], axB[a][2], q, 0);
+      ov = Math.min(q[1] - eB[6+2*a], eB[6+2*a+1] - q[0]);
       if (ov < best) best = ov;
     }
     return best > 0 ? best : 0;
