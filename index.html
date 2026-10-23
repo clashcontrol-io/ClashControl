@@ -711,6 +711,8 @@
        discoverability, MEMORY.md. */
     .cc-btn-text-label{display:none}
     @media(min-width:1100px){ .cc-btn-text-label{display:inline} }
+    /* secondary words in the toolbar ("Search", "Engine") only where they fit */
+    @media(max-width:1599px){ .cc-tb-wide{display:none} }
     /* ── Mobile floating theme toggle ── */
     .cc-mobile-theme{display:none!important}
     body[data-presenting="1"] .cc-mobile-theme{display:none!important}
@@ -22501,7 +22503,7 @@ function startApp() {
         if(newKey === vc.hoveredKey) return;
         vc.hoveredKey = newKey;
         // Names the target — needed when it's an edge-on side behind the border.
-        canvas.title = zone ? _cc_t('viewcube.goTo', 'View {face}', {face: FACES[zone.faces[0]].label}) : '';
+        canvas.title = zone ? _cc_t('viewcube.goTo', 'View {face}', {face: _cc_t('viewCube.' + FACES[zone.faces[0]].label.toLowerCase(), FACES[zone.faces[0]].label.charAt(0) + FACES[zone.faces[0]].label.slice(1).toLowerCase())}) : '';
         var hovSet = {};
         if(zone) zone.faces.forEach(function(f){ hovSet[f]=true; });
         vc.materials.forEach(function(mat, boxIdx) {
@@ -22564,6 +22566,13 @@ function startApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only cube setup: FACES/BOX_FACE_MAP/CUBE_SIZE are constants, state3d is a ref, and theme-dependent helpers read themeRef.current (theme changes are re-applied by the [theme] effect below)
     }, []);
 
+    // Face words follow the UI language: a pack that loads after mount repaints them.
+    var locTickSt = useState(0), locTick = locTickSt[0], setLocTick = locTickSt[1];
+    useEffect(function(){
+      function onLocale(){ setLocTick(function(n){ return n + 1; }); }
+      window.addEventListener('cc-locale-changed', onLocale);
+      return function(){ window.removeEventListener('cc-locale-changed', onLocale); };
+    }, [setLocTick]);
     useEffect(function(){
       var vc = vcState.current; if(!vc) return;
       var light = theme==='light';
@@ -22580,8 +22589,8 @@ function startApp() {
       // Update edge color
       if(vc.edgeLines) vc.edgeLines.material.color.setHex(light ? 0x64748b : 0x94a3b8);
       vc.dirty = true;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- theme-keyed recolour; BOX_FACE_MAP/FACES are constants and makeFaceTexture reads themeRef.current
-    }, [theme]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- theme/locale-keyed repaint; BOX_FACE_MAP/FACES are constants and makeFaceTexture reads themeRef.current
+    }, [theme, locTick]);
 
     return html`<div class="cc-viewcube-wrap" style=${{position:'absolute',top:'1rem',
       right:'calc(1rem + '+panelOff+'px)',pointerEvents:'auto',width:CUBE_SIZE,height:CUBE_SIZE,overflow:'visible'}}>
@@ -45827,7 +45836,7 @@ function startApp() {
     }
     /* Vertical 1-px hairline divider between clusters */
     function div(){
-      return html`<span aria-hidden="true" style=${{display:'inline-block',width:1,height:18,background:'var(--hairline-strong)',margin:'0 var(--space-1)'}}></span>`;
+      return html`<span aria-hidden="true" style=${{display:'inline-block',flexShrink:0,width:1,height:18,background:'var(--hairline-strong)',margin:'0 var(--space-1)'}}></span>`;
     }
 
     var I = {
@@ -46065,17 +46074,18 @@ function startApp() {
                   }
                 }})}
         ${(function(){
-          // Rendered unconditionally (space reserved) so activating/clearing a
-          // section doesn't shift the rest of the toolbar — only visibility toggles.
+          // Rendered unconditionally so activating/clearing a section doesn't
+          // shift the rest of the toolbar — idle it is dimmed and inert.
           var _sectionActive = !!(s.sectionAxis||s.sectionCustom||(s.sectionBox&&s.sectionBox.enabled));
           return btn({k:'sclear', title:_cc_t('toolbar.clearSectionEsc','Clear Section (Esc)'),  label:_cc_t('toolbar.clearSection','Clear Section'), icon:I.clear,
-                extraStyle:_sectionActive?{}:{opacity:0,pointerEvents:'none'},
+                // idle: shown dimmed, not invisible — an invisible button reads as a gap
+                extraStyle:_sectionActive?{}:{opacity:.35,pointerEvents:'none'},
                 onClick:function(){ window._ccSectionPickPending=false; setPickOn(false); d({t:A.SECTION,axis:null}); d({t:A.SECTION_CUSTOM,v:null}); d({t:A.SECTION_BOX,v:null}); }});
         })()}
         ${div()}
         <!-- MEASURE — one button + caret popover (Trimble / FreeCAD pattern) -->
         ${(function(){
-          var modeLabel = s.measureMode==='length'?'Distance':s.measureMode==='angle'?'Angle':s.measureMode==='area'?'Area':s.measureMode==='element'?'Element':s.measureMode==='clearance'?'Clearance':'Measure';
+          var modeLabel = s.measureMode==='length'?_cc_t('topToolbar.distance','Distance'):s.measureMode==='angle'?_cc_t('topToolbar.angle','Angle'):s.measureMode==='area'?_cc_t('topToolbar.area','Area'):s.measureMode==='element'?_cc_t('topToolbar.elementQuantities','Element quantities'):s.measureMode==='clearance'?_cc_t('topToolbar.clearance','Clearance'):_cc_t('topToolbar.measure','Measure');
           var modeIcon = s.measureMode==='angle'?I.angle:s.measureMode==='area'?I.area:s.measureMode==='element'?I.cubeq:s.measureMode==='clearance'?I.clear2:I.ruler;
           return html`<div style=${{position:'relative',display:'flex',alignItems:'center',gap:0}}>
             ${btn({k:'measure', active:activeMode==='measure', title:_cc_t('toolbar.measureTip','Measure (M) · click for distance, caret for sub-modes'), label:modeLabel, icon:modeIcon,
@@ -46127,13 +46137,13 @@ function startApp() {
                 onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
                 onMouseLeave=${function(e){e.currentTarget.style.background=s.measureMode==='element'?'var(--accent-bg)':'transparent';}}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:I.cubeq}}></svg>
-                <span style=${{flex:1}}>Element <span style=${{color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>· read Qto_*</span></span></div>`}
+                <span style=${{flex:1}}>${_cc_t('topToolbar.elementQuantities','Element quantities')}</span></div>`}
               ${(s.workspace==='coordinate'||s.workspace==='review') && html`<div onClick=${function(){clearAllModes({sectionBox:true, sectionAxis:true, sectionCustom:true});d({t:A.MEASURE_MODE,v:'clearance'});setMeasurePopOpen(false);window._ccClearancePickA=null;}}
                 style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:s.measureMode==='clearance'?'var(--accent)':'var(--text-primary)',background:s.measureMode==='clearance'?'var(--accent-bg)':'transparent'}}
                 onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
                 onMouseLeave=${function(e){e.currentTarget.style.background=s.measureMode==='clearance'?'var(--accent-bg)':'transparent';}}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{__html:I.clear2}}></svg>
-                <span style=${{flex:1}}>Clearance <span style=${{color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>${_cc_t('topToolbar.minBetweenTwoElements','· min between two elements')}</span></span></div>`}
+                <span style=${{flex:1}}>${_cc_t('topToolbar.clearance','Clearance')} <span style=${{color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}>${_cc_t('topToolbar.minBetweenTwoElements','· min between two elements')}</span></span></div>`}
               <div style=${{height:1,background:'var(--border-subtle)',margin:'var(--space-1) var(--space-1)'}}></div>
               <div onClick=${function(){if(window._ccClearAllMeasurementGeo)window._ccClearAllMeasurementGeo();d({t:A.CLEAR_MEASUREMENTS});setMeasurePopOpen(false);}}
                 style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-secondary)'}}
@@ -46214,10 +46224,10 @@ function startApp() {
             if(le.active && le.available){ lbl=_cc_t('engine.local','Local'); dot='var(--color-success)'; hint=_cc_t('engine.localTip','Local engine on this computer (faster on large models). Click to use the browser engine.'); click=function(){if(window._ccDeactivateAddon)window._ccDeactivateAddon('local-engine');}; }
             else if(we.active){ lbl=_cc_t('engine.fast','Fast'); dot='var(--color-success)'; hint=_cc_t('engine.fastTip','Accelerated engine in the browser. Click to try the local engine.'); click=function(){if(window._ccActivateAddon)window._ccActivateAddon('local-engine');}; }
             else { lbl=_cc_t('engine.browser','Browser'); dot='var(--text-faint)'; hint=_cc_t('engine.browserTip','Built-in engine. Click to use the local engine (needs the ClashControl Engine app running).'); click=function(){if(window._ccActivateAddon)window._ccActivateAddon('local-engine');}; }
-            return html`<button onClick=${click} title=${hint}
-              style=${{height:30,padding:'0 var(--space-2)',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'var(--font-body)',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',display:'inline-flex',alignItems:'center',gap:'var(--space-1)',whiteSpace:'nowrap'}}>
+            return html`<button onClick=${click} title=${hint} aria-label=${_cc_t('topToolbar.engine','Engine') + ': ' + lbl}
+              style=${{flexShrink:0,height:30,padding:'0 var(--space-2)',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'var(--font-body)',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',display:'inline-flex',alignItems:'center',gap:'var(--space-1)',whiteSpace:'nowrap'}}>
               <span data-cc-status="1" aria-hidden="true" style=${{width:8,height:8,borderRadius:'50%',background:dot,flexShrink:0}}></span>
-              <span style=${{color:'var(--text-muted)',fontSize:'var(--text-xs)'}}>${_cc_t('topToolbar.engine','Engine')}</span>
+              <span class="cc-tb-wide" style=${{color:'var(--text-muted)',fontSize:'var(--text-xs)'}}>${_cc_t('topToolbar.engine','Engine')}</span>
               <span style=${{fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',fontSize:'var(--text-xs)'}}>${lbl}</span>
             </button>`;
           })()}
@@ -46267,7 +46277,7 @@ function startApp() {
           aria-label=${_cc_t('cmdk.openPaletteAria','Open command palette')}
           data-tour="cmdk-search"
           style=${{
-            display:'inline-flex',alignItems:'center',gap:'var(--space-2)',height:36,padding:'0 var(--space-2) 0 var(--space-3)',
+            display:'inline-flex',flexShrink:0,alignItems:'center',gap:'var(--space-2)',height:36,padding:'0 var(--space-2) 0 var(--space-3)',
             background:'none',border:'1px solid var(--hairline-strong)',
             borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'var(--font-body)',
             fontSize:'var(--text-xs)',color:'var(--ink-secondary)',letterSpacing:'-.005em',marginRight:'var(--space-2)'
@@ -46275,7 +46285,7 @@ function startApp() {
           onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';e.currentTarget.style.color='var(--ink-primary)';}}
           onMouseLeave=${function(e){e.currentTarget.style.background='none';e.currentTarget.style.color='var(--ink-secondary)';}}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <span style=${{color:'var(--ink-primary)',fontWeight:500}}>${_cc_t('topToolbar.search','Search')}</span>
+          <span class="cc-tb-wide" style=${{color:'var(--ink-primary)',fontWeight:500}}>${_cc_t('topToolbar.search','Search')}</span>
           <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-muted)',padding:'1px var(--space-1)',border:'1px solid var(--hairline)',borderRadius:'var(--radius-xs)',marginLeft:'var(--space-1)'}}>⌘K</span>
         </button>
 
@@ -46283,7 +46293,7 @@ function startApp() {
         <button onClick=${function(){if(window._ccUndo)window._ccUndo();}} disabled=${!undoInfo.canUndo}
           title=${_cc_t('toolbar.undoTip','Undo (Ctrl/Cmd+Z)')} aria-label=${_cc_t('toolbar.undoAria','Undo')}
           style=${{
-            display:'inline-flex',alignItems:'center',justifyContent:'center',width:32,height:36,padding:0,
+            display:'inline-flex',flexShrink:0,alignItems:'center',justifyContent:'center',width:32,height:36,padding:0,
             background:'none',border:'1px solid var(--hairline-strong)',borderRadius:'var(--radius-sm)',
             cursor:undoInfo.canUndo?'pointer':'not-allowed',color:undoInfo.canUndo?'var(--ink-secondary)':'var(--ink-faint)',
             opacity:undoInfo.canUndo?1:.5,marginRight:'var(--space-1)'
@@ -46293,7 +46303,7 @@ function startApp() {
         <button onClick=${function(){if(window._ccRedo)window._ccRedo();}} disabled=${!undoInfo.canRedo}
           title=${_cc_t('toolbar.redoTip','Redo (Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y)')} aria-label=${_cc_t('toolbar.redoAria','Redo')}
           style=${{
-            display:'inline-flex',alignItems:'center',justifyContent:'center',width:32,height:36,padding:0,
+            display:'inline-flex',flexShrink:0,alignItems:'center',justifyContent:'center',width:32,height:36,padding:0,
             background:'none',border:'1px solid var(--hairline-strong)',borderRadius:'var(--radius-sm)',
             cursor:undoInfo.canRedo?'pointer':'not-allowed',color:undoInfo.canRedo?'var(--ink-secondary)':'var(--ink-faint)',
             opacity:undoInfo.canRedo?1:.5,marginRight:'var(--space-2)'
@@ -46302,7 +46312,7 @@ function startApp() {
         </button>
 
         <!-- STYLE popover (visible button — never hotkey-only) -->
-        <div style=${{position:'relative'}}>
+        <div style=${{position:'relative',flexShrink:0}}>
           <button ref=${styleRef} onClick=${function(){setStyleOpen(!styleOpen);}}
             aria-haspopup="menu" aria-expanded=${styleOpen}
             style=${{
@@ -46311,7 +46321,7 @@ function startApp() {
               borderRadius:'var(--radius-sm)',cursor:'pointer',fontFamily:'var(--font-body)',
               fontSize:'var(--text-xs)',color:'var(--ink-secondary)',letterSpacing:'-.005em'
             }}>
-            <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',color:'var(--ink-muted)',letterSpacing:'.08em',textTransform:'uppercase',fontWeight:'var(--weight-bold)'}}>${_cc_t('topToolbar.style','Style')}</span>
+            <span style=${{fontSize:'var(--text-xs)',color:'var(--ink-muted)'}}>${_cc_t('topToolbar.style','Style')}</span>
             <span style=${{color:'var(--ink-primary)',fontWeight:500}}>${curStyleLabel}</span>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 9l6 6 6-6"/></svg>
           </button>
