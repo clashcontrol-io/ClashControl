@@ -6288,8 +6288,15 @@ function startApp() {
   // existing "cancelled by a newer load" path), so the load chain finishes
   // cleanly instead of stalling.
   var _ccActiveLoads = [];
+  // Load batches (load coordinator) open at the time of a cancel. A parse
+  // that is terminated never sends its properties, so the batch's
+  // 'ifc-properties' hold would never be released: the batch stayed active
+  // and the coordinator never went idle — the NEXT load then finished with
+  // the loading flag stuck on. Cancelling ends those batches explicitly.
+  var _ccOpenLoadBatches = [];
   window._ccAbortLoading = function() {
     _ccLoadGeneration++; // invalidates main-thread fallback loads at their gen checkpoints
+    _ccOpenLoadBatches.splice(0).forEach(function(b) { try { b.cancel(); } catch (_) {} });
     try { _ccLoadPreview.endSession(); } catch (_) {} // display-only previews go with the loads
     _ccActiveLoads.splice(0).forEach(function(l) {
       try { l.worker.terminate(); } catch(_) {}
@@ -24315,6 +24322,11 @@ function startApp() {
       var totalIfc = 0, doneIfc = 0;
       var _batchMeta = {files:files.length, delayMs:0};
       var _loadBatch = loadCoordinatorRef.current ? loadCoordinatorRef.current.begin(_batchMeta) : null;
+      if (_loadBatch) {
+        // finished batches drop out here (they end on their own; only open ones need a cancel)
+        for (var _ob = _ccOpenLoadBatches.length - 1; _ob >= 0; _ob--) { try { if (_ccOpenLoadBatches[_ob].snapshot().state !== 'active') _ccOpenLoadBatches.splice(_ob, 1); } catch (_) {} }
+        _ccOpenLoadBatches.push(_loadBatch);
+      }
 
       // ── Group files by base name to detect GLB+IFC pairs ──
       var byBase = {}; // baseName → {glb, ifc, ifcmeta, ifcprops}
