@@ -44,10 +44,19 @@ impl BvhNode {
     pub fn build(tris: &[f32]) -> BvhNode {
         let n = tris.len() / 9;
         let mut indices: Vec<usize> = (0..n).collect();
-        Self::build_recursive(tris, &mut indices, 0, n)
+        // Split keys computed once (like JS `keys`), not on every comparison:
+        // the same f64 sum, so the comparator returns the same orderings and
+        // the stable sort (hence the tree) is unchanged.
+        let mut keys = vec![0.0f64; n * 3];
+        for t in 0..n {
+            for axis in 0..3 {
+                keys[t * 3 + axis] = tris[t * 9 + axis] as f64 + tris[t * 9 + 3 + axis] as f64 + tris[t * 9 + 6 + axis] as f64;
+            }
+        }
+        Self::build_recursive(tris, &keys, &mut indices, 0, n)
     }
 
-    fn build_recursive(tris: &[f32], indices: &mut [usize], lo: usize, hi: usize) -> BvhNode {
+    fn build_recursive(tris: &[f32], keys: &[f64], indices: &mut [usize], lo: usize, hi: usize) -> BvhNode {
         // Compute AABB
         let mut mn = [f32::INFINITY; 3];
         let mut mx = [f32::NEG_INFINITY; 3];
@@ -94,18 +103,14 @@ impl BvhNode {
         // that ties (equal centroid sum) preserve incoming order exactly
         // as the JS reference's `indices.subarray(lo, hi).sort(...)` does.
         let sub = &mut indices[lo..hi];
-        sub.sort_by(|&a, &b| {
-            // f64 sum (JS adds Float32-derived doubles). Summing in f32 rounds
-            // each partial sum, turning strictly ordered centroids into ties
-            // (or reversing them) — a different partition than the JS BVH.
-            let ca = tris[a * 9 + axis] as f64 + tris[a * 9 + 3 + axis] as f64 + tris[a * 9 + 6 + axis] as f64;
-            let cb = tris[b * 9 + axis] as f64 + tris[b * 9 + 3 + axis] as f64 + tris[b * 9 + 6 + axis] as f64;
-            ca.partial_cmp(&cb).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // Keys are f64 sums (JS adds Float32-derived doubles). Summing in f32
+        // rounds each partial sum, turning strictly ordered centroids into
+        // ties (or reversing them) — a different partition than the JS BVH.
+        sub.sort_by(|&a, &b| keys[a * 3 + axis].partial_cmp(&keys[b * 3 + axis]).unwrap_or(std::cmp::Ordering::Equal));
 
         let mid = (lo + hi) / 2;
-        let left = Self::build_recursive(tris, indices, lo, mid);
-        let right = Self::build_recursive(tris, indices, mid, hi);
+        let left = Self::build_recursive(tris, keys, indices, lo, mid);
+        let right = Self::build_recursive(tris, keys, indices, mid, hi);
 
         BvhNode {
             mn,

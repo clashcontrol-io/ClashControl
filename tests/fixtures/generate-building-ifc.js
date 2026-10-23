@@ -71,6 +71,27 @@ function R(v) {
   return s;
 }
 
+const DENSE_CIRCLE_SEGMENTS = 32;
+// Ear clipping of a simple CCW polygon -> CCW index triangles (dense prisms' caps).
+function earClip(P) {
+  const idx = P.map((_, i) => i), out = [];
+  const cross = (a, b, c) => (P[b][0] - P[a][0]) * (P[c][1] - P[a][1]) - (P[b][1] - P[a][1]) * (P[c][0] - P[a][0]);
+  const inside = (p, a, b, c) => cross(a, b, p) >= 0 && cross(b, c, p) >= 0 && cross(c, a, p) >= 0;
+  let guard = 0;
+  while (idx.length > 3 && guard++ < 100000) {
+    let cut = false;
+    for (let k = 0; k < idx.length; k++) {
+      const a = idx[(k + idx.length - 1) % idx.length], b = idx[k], c = idx[(k + 1) % idx.length];
+      if (cross(a, b, c) <= 0) continue;
+      if (idx.some((q) => q !== a && q !== b && q !== c && inside(q, a, b, c))) continue;
+      out.push([a, b, c]); idx.splice(k, 1); cut = true; break;
+    }
+    if (!cut) { const [a, b, c] = idx; out.push([a, b, c]); idx.splice(1, 1); } // degenerate remainder
+  }
+  if (idx.length === 3) out.push([idx[0], idx[1], idx[2]]);
+  return out;
+}
+
 const GUID_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$';
 
 class Model {
@@ -97,15 +118,44 @@ class Model {
   lp(rel, ax) { return this.add(`IFCLOCALPLACEMENT(${rel ? '#' + rel : '$'},#${ax})`); }
   // ── profiles / solids ──
   prof2d() { return this.add(`IFCAXIS2PLACEMENT2D(#${this.pt2(0, 0)},$)`); }
-  rect(xd, yd) { return this.add(`IFCRECTANGLEPROFILEDEF(.AREA.,$,#${this.prof2d()},${R(xd)},${R(yd)})`); }
-  circ(r) { return this.add(`IFCCIRCLEPROFILEDEF(.AREA.,$,#${this.prof2d()},${R(r)})`); }
-  ishape(w, d, tw, tf) { return this.add(`IFCISHAPEPROFILEDEF(.AREA.,$,#${this.prof2d()},${R(w)},${R(d)},${R(tw)},${R(tf)},$,$,$)`); }
+  // Opt-in `dense` (ctx.dense > 0): profiles remember their outline so
+  // extrude() can write a finely tessellated prism instead (see extrude).
+  prof(id, pts) { if (this.ctx.dense) (this.profPts || (this.profPts = new Map())).set(id, pts); return id; }
+  rect(xd, yd) { return this.prof(this.add(`IFCRECTANGLEPROFILEDEF(.AREA.,$,#${this.prof2d()},${R(xd)},${R(yd)})`), [[-xd / 2, -yd / 2], [xd / 2, -yd / 2], [xd / 2, yd / 2], [-xd / 2, yd / 2]]); }
+  circ(r) {
+    const pts = [];
+    for (let i = 0; i < DENSE_CIRCLE_SEGMENTS; i++) pts.push([r * Math.cos(i * 2 * Math.PI / DENSE_CIRCLE_SEGMENTS), r * Math.sin(i * 2 * Math.PI / DENSE_CIRCLE_SEGMENTS)]);
+    return this.prof(this.add(`IFCCIRCLEPROFILEDEF(.AREA.,$,#${this.prof2d()},${R(r)})`), pts);
+  }
+  ishape(w, d, tw, tf) {
+    const a = w / 2, b = d / 2, c = tw / 2, e = b - tf;
+    return this.prof(this.add(`IFCISHAPEPROFILEDEF(.AREA.,$,#${this.prof2d()},${R(w)},${R(d)},${R(tw)},${R(tf)},$,$,$)`),
+      [[-a, -b], [a, -b], [a, -e], [c, -e], [c, e], [a, e], [a, b], [-a, b], [-a, e], [-c, e], [-c, -e], [-a, -e]]);
+  }
   poly(pts) {
     const ids = pts.map(([x, y]) => this.pt2(x, y));
     const pl = this.add(`IFCPOLYLINE((${[...ids, ids[0]].map((i) => '#' + i).join(',')}))`);
-    return this.add(`IFCARBITRARYCLOSEDPROFILEDEF(.AREA.,$,#${pl})`);
+    return this.prof(this.add(`IFCARBITRARYCLOSEDPROFILEDEF(.AREA.,$,#${pl})`), pts);
+  }
+  // dense: the prism as a closed, consistently oriented IfcTriangulatedFaceSet
+  // with a ring of vertices every ctx.dense metres along the extrusion — the
+  // triangle-heavy kind of mesh authoring tools export (narrow-phase stress).
+  densePrism(pts, depth, pos) {
+    let area = 0;
+    for (let i = 0; i < pts.length; i++) { const p = pts[i], q = pts[(i + 1) % pts.length]; area += p[0] * q[1] - q[0] * p[1]; }
+    const P = area < 0 ? pts.slice().reverse() : pts, n = P.length, o = pos || [0, 0, 0];
+    const rings = Math.max(1, Math.ceil(depth / this.ctx.dense));
+    const V = [], T = [];
+    for (let r = 0; r <= rings; r++) for (const [x, y] of P) V.push([x + o[0], y + o[1], depth * r / rings + o[2]]);
+    for (let r = 0; r < rings; r++) for (let i = 0; i < n; i++) {
+      const b0 = r * n + i, b1 = r * n + (i + 1) % n, t0 = b0 + n, t1 = b1 + n;
+      T.push([b0, b1, t1], [b0, t1, t0]);
+    }
+    for (const [a, b, c] of earClip(P)) { T.push([a, c, b]); T.push([rings * n + a, rings * n + b, rings * n + c]); }
+    return this.triSet(V, T);
   }
   extrude(prof, depth, pos) {
+    if (this.ctx.dense && this.profPts && this.profPts.has(prof)) return this.densePrism(this.profPts.get(prof), depth, pos);
     const p = this.ax3(pos || [0, 0, 0]);
     return this.add(`IFCEXTRUDEDAREASOLID(#${prof},#${p},#${this.dir(0, 0, 1)},${R(depth)})`);
   }
@@ -172,7 +222,12 @@ function generateBuilding(opts) {
   // crossed by services, for the role leave-out tests (rules.roleChoices).
   const roles = !!opts.roles;
   const lay = mulberry32(seed);
-  const ctx = { guids: new Set() };
+  // Opt-in `dense` (metres, default 0 = off): every extruded solid is written
+  // as a finely tessellated closed IfcTriangulatedFaceSet (32-gon circles, a
+  // vertex ring every `dense` m along the extrusion) — a triangle-heavy
+  // federation for narrow-phase timing (tests/browser/first-run-cost.mjs).
+  // Off leaves the output byte-identical.
+  const ctx = { guids: new Set(), dense: +opts.dense > 0 ? +opts.dense : 0 };
   let uniqCounter = 0;
   // Unique offsets in metres. a alone is unique per element (0.1..99.7 mm in
   // 0.1 mm steps, plus 1 µm per block of 997 elements); b adds 0.1 mm per block.

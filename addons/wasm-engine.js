@@ -251,6 +251,19 @@
       if (!replaced || !same(replaced, _wasm.mesh_intersect_raw(d0.a, ic[2].b))) { console.warn('[WASM Engine] engine self-check FAILED (re-register)'); return false; }
       eng.register(9002, d0.b);
       if (!same(eng.intersect(9001, 9002), before)) { console.warn('[WASM Engine] engine self-check FAILED (re-register restore)'); return false; }
+      // BVH export (bvhFlat): only offered when the Engine's tree is the JS
+      // tree node for node on every case; a mismatch disables just the export.
+      _flatOk = false;
+      if (typeof eng.bvh_flat === 'function' && ref && typeof ref.bvhFlat === 'function') {
+        var flatOk = true;
+        for (k = 0; k < ic.length && flatOk; k++) {
+          eng.register(9003, ic[k].a); eng.register(9004, ic[k].b);
+          flatOk = _flatEq(Array.prototype.slice.call(eng.bvh_flat(9003)), ref.bvhFlat(ic[k].a)) &&
+                   _flatEq(Array.prototype.slice.call(eng.bvh_flat(9004)), ref.bvhFlat(ic[k].b));
+        }
+        _flatOk = flatOk;
+        if (!flatOk) console.warn('[WASM Engine] BVH export differs from the JS tree — not used');
+      }
       return true;
     } catch (e) {
       console.warn('[WASM Engine] engine self-check threw:', e && e.message);
@@ -492,6 +505,7 @@
   var _engNextId = 1;
   var _engFloats = 0;
   var _engStats = { registered: 0, evicted: 0, collected: 0, queries: 0 };
+  var _flatOk = false;    // Engine.bvh_flat verified against the JS BVH builder (engine self-check)
 
   function _initEngine() {
     if (typeof WeakMap !== 'function' || typeof WeakRef !== 'function' || typeof FinalizationRegistry !== 'function') return false;
@@ -580,6 +594,19 @@
         }
         return r[0];
       } catch (e) { _engFail('minDist', e); return null; }
+    },
+    // The Engine's BVH of an ALREADY registered `tris` in the bvh_flat layout
+    // (the core rebuilds the identical JS tree from it, _ccBvhFromFlat), or
+    // null: not registered, export unverified, or any error (never fatal —
+    // the caller builds its own tree). Never registers anything itself.
+    bvhFlat: function(tris) {
+      if (!_eng || _engineCheckFailed || !_flatOk || !tris || !_engIds) return null;
+      try {
+        var id = _engIds.get(tris);
+        if (id === undefined || !_engLru.has(id)) return null;
+        var f = _eng.bvh_flat(id);
+        return f === undefined ? null : f;
+      } catch (e) { return null; }
     },
     // Explicitly forget one element's registration (e.g. its triangle array is being dropped).
     release: function(tris) {
