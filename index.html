@@ -9340,11 +9340,13 @@ function startApp() {
   // Worker entry point (runs INSIDE the worker; only `self` and the kernel
   // functions above exist there). Protocol (main -> worker):
   //   {t:'init', wasmJs, wasmBin, useEngine}         -> {t:'ready', wasm, engine, err}
-  //   {t:'job', id, drop:[elId], add:[{id,tris,box,wbox}], pairs:Int32Array[idA,idB,flags]*m, seedSq}
+  //   {t:'job', id, drop:[elId], add:[{id,tris,box,wbox}], pairs:Int32Array[idA,idB,flags]*m, seedSq, seeds}
   //        flags bit0 = run the hard test, bit1 = run min-distance when not a hit,
   //        bit2 = pre-compute the hit refinement _ccResolvePair will ask for;
   //        box = engine-frame box, wbox = world box (_ccContainment's nesting test);
-  //        seedSq = run-wide threshold-seeded search radius² (Infinity = unseeded)
+  //        seedSq = run-wide threshold-seeded search radius² (Infinity = unseeded);
+  //        seeds = optional Float64Array(m) of per-pair radii² used instead
+  //        (_ccMinDistSeedSq of each pair's own tolerance, as on the main thread)
   //                                                  -> {t:'result', id, res:Float64Array(_NP_REC*m)}
   //   res record: [status, hx,hy,hz,hDepth, dist, p0..p5, rf, depth, cx,cy,cz];
   //   status bit0 hard done, bit1 hard hit, bit2 soft done; rf (refinement):
@@ -9549,7 +9551,7 @@ function startApp() {
         }
         t1 = performance.now(); tm[0] += t1 - t0;
         if ((fl & 2) && !hard) {
-          res[o + 5] = _wkSoft(A, B, out, d.seedSq); st |= 4;
+          res[o + 5] = _wkSoft(A, B, out, d.seeds ? d.seeds[i] : d.seedSq); st |= 4;
           for (j = 0; j < 6; j++) res[o + 6 + j] = out[j];
         }
         t0 = performance.now(); tm[1] += t0 - t1;
@@ -10841,7 +10843,11 @@ function startApp() {
         pairs[i * 3] = idOf(job.eA[i]); pairs[i * 3 + 1] = idOf(job.eB[i]); pairs[i * 3 + 2] = job.fl[i];
       }
       xfer.push(pairs.buffer);
-      return { msg: { t: 'job', id: job.id, drop: drop, add: add, pairs: pairs, seedSq: pool.seedSq }, xfer: xfer };
+      // Per-pair clearance seeds (job.sd): each search is exactly the one the
+      // main thread would run for that pair (_meshMinDist with its own tolerance).
+      var seeds = null;
+      if (job.sd && job.sd.length === job.cidx.length) { seeds = new Float64Array(job.sd); xfer.push(seeds.buffer); }
+      return { msg: { t: 'job', id: job.id, drop: drop, add: add, pairs: pairs, seedSq: pool.seedSq, seeds: seeds }, xfer: xfer };
     }
     // Element affinity: a free worker takes, among the queued jobs of the
     // OLDEST open window (main waits for that whole window anyway, so the
@@ -10903,7 +10909,7 @@ function startApp() {
       if (--job.win.pending === 0) { job.win.done = true; job.win.resolve(); }
       pump();
     }
-    // specs: [{cidx:[], eA:[], eB:[], fl:[]}] -> window {done, promise}
+    // specs: [{cidx:[], eA:[], eB:[], fl:[], sd:[] (per-pair clearance seed, optional)}] -> window {done, promise}
     pool.addWindow = function(specs) {
       var win = { pending: specs.length, done: false, resolve: null };
       win.promise = new Promise(function(res) { win.resolve = res; });
@@ -12310,8 +12316,8 @@ function startApp() {
           // known without the kernel (exact, see _ccPairDismissed): main decides it in _processCandidate
           if (_ccPairDismissed(c.eA, c.eB, (fl & 2) ? _ccMinDistSeedSq(_pg) : 0)) continue;
           fl |= 4; // pre-compute the hit refinement too (_ccResolvePair reads it)
-          if (!cur || cur.cidx.length >= _NP_JOB_PAIRS) { cur = { cidx: [], eA: [], eB: [], fl: [] }; specs.push(cur); }
-          cur.cidx.push(i); cur.eA.push(c.eA); cur.eB.push(c.eB); cur.fl.push(fl);
+          if (!cur || cur.cidx.length >= _NP_JOB_PAIRS) { cur = { cidx: [], eA: [], eB: [], fl: [], sd: [] }; specs.push(cur); }
+          cur.cidx.push(i); cur.eA.push(c.eA); cur.eB.push(c.eB); cur.fl.push(fl); cur.sd.push((fl & 2) ? _ccMinDistSeedSq(_pg) : 0);
         } catch (e) { /* a malformed candidate is simply not offloaded; _processCandidate handles it as before */ }
       }
       return _np.addWindow(specs);

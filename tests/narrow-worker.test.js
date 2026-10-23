@@ -175,11 +175,13 @@ async function runMode(useWasm) {
   const results = [];
   // job 1 adds every element; job 2 reuses the cached ones with different flags; job 3 drops + re-adds a few
   // tolM: the job's threshold-seeded clearance radius (job.seedSq); 0 = unseeded
-  const runJob = async (pairs, flagsFn, add, drop, tolM) => {
+  // tolFn (optional): per-pair tolerance sent as job.seeds (overrides tolM's run-wide seedSq)
+  const runJob = async (pairs, flagsFn, add, drop, tolM, tolFn) => {
     const id = ++jobId;
     const arr = new Int32Array(pairs.length * 3);
     pairs.forEach(([a, b], i) => { arr[i * 3] = els[a].id; arr[i * 3 + 1] = els[b].id; arr[i * 3 + 2] = flagsFn(a, b); });
-    host.send({ t: 'job', id, drop: drop || [], add: (add || []).map((e) => ({ id: e.id, tris: e.tris.slice(), box: e.boxArr })), pairs: arr, seedSq: k._ccMinDistSeedSq(tolM) });
+    const seeds = tolFn ? new Float64Array(pairs.map(([a, b]) => k._ccMinDistSeedSq(tolFn(a, b)))) : undefined;
+    host.send({ t: 'job', id, drop: drop || [], add: (add || []).map((e) => ({ id: e.id, tris: e.tris.slice(), box: e.boxArr })), pairs: arr, seedSq: k._ccMinDistSeedSq(tolM), seeds });
     await waitFor(() => host.out.some((m) => (m.t === 'result' || m.t === 'error') && m.id === id));
     const m = host.out.find((mm) => (mm.t === 'result' || mm.t === 'error') && mm.id === id);
     assert.strictEqual(m.t, 'result', 'job failed: ' + m.msg);
@@ -190,9 +192,10 @@ async function runMode(useWasm) {
 
   let hardHits = 0, softFinite = 0, contained = 0, beyondSeed = 0;
   const refined = { touch: 0, crossing: 0, contain: 0, nested: 0, depth: 0 };
-  const verify = (pairs, res, flagsFn, tolM) => {
+  const verify = (pairs, res, flagsFn, tolM, tolFn) => {
     pairs.forEach(([a, b], i) => {
       const fl = flagsFn(a, b), o = i * k._NP_REC;
+      if (tolFn) tolM = tolFn(a, b);
       const eA = els[a], eB = els[b];
       let hard = false;
       if (fl & 1) {
@@ -252,6 +255,11 @@ async function runMode(useWasm) {
   // drop two elements and re-add them: the cache must forget them exactly
   const r3 = await runJob(pairIdx.slice(0, 200), both, [els[0], els[4]], [els[0].id, els[4].id], 0.5);
   verify(pairIdx.slice(0, 200), r3, both, 0.5);
+  // per-pair seeds (job.seeds): each pair answers exactly _meshMinDist with its own tolerance,
+  // whatever the run-wide seedSq says
+  const perPair = (a, b) => [0.0001, 0.02, 0.1, 0.5][(a * 7 + b) % 4];
+  const r4 = await runJob(pairIdx, both, [], null, 2, perPair);
+  verify(pairIdx, r4, both, 0, perPair);
   assert.ok(beyondSeed > 100, `seeded jobs must exercise pairs beyond the seed (${beyondSeed})`);
   assert.ok(refined.crossing > 10 && refined.touch > refined.crossing && refined.nested > 0 && refined.depth > 10,
     'fixture must exercise every refinement answer: ' + JSON.stringify(refined));
