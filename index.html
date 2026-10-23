@@ -2804,30 +2804,73 @@ function startApp() {
   // the storage report (and later, eviction planning) never has to re-walk
   // buffers. Estimation lives in storage-core.js; guard because the script
   // tag can fail without taking persistence down with it.
-  function _ccEstimateBytes(v) {
+  function _ccEstimateBytes(v, sizeCache) {
     try {
-      if (window._ccStorageCore) return window._ccStorageCore.estimateRecordBytes(v);
+      if (window._ccStorageCore) return window._ccStorageCore.estimateRecordBytes(v, sizeCache);
     } catch (_) {}
     return 0;
+  }
+  // Budget-grade size of a large record without walking every entry: long
+  // arrays one level down (geometry cache meshData/elData) are estimated
+  // from an even sample of 128 entries; everything else is walked.
+  function _ccEstimateBytesFast(v) {
+    if (!v || typeof v !== 'object' || ArrayBuffer.isView(v) || v instanceof ArrayBuffer) return _ccEstimateBytes(v);
+    var total = 0;
+    Object.keys(v).forEach(function(k) {
+      var x = v[k];
+      total += k.length + 2;
+      if (Array.isArray(x) && x.length > 512) {
+        var step = x.length / 128, sum = 0, n = 0;
+        for (var i = 0; i < x.length; i += step) { sum += _ccEstimateBytes(x[Math.floor(i)]); n++; }
+        total += n ? Math.round(sum / n * x.length) : 0;
+      } else total += _ccEstimateBytes(x);
+    });
+    return total;
   }
   var IDB_NAME = 'ClashControlFiles';
   var IDB_STORE = 'ifcFiles';
   var IDB_PROJSTORE = 'projects';
   var IDB_GEOCACHE = 'geoCache';
-  var IDB_VERSION = 3;
+  var IDB_VERSION = 4;
 
+  // v4 adds key-only indexes so size/age/project questions never read the
+  // stored buffers or geometry: 'cc_meta' (compound [bytes, savedAt, …],
+  // walked with openKeyCursor by _ccReadIdbInventory) and 'projectId' on
+  // ifcFiles (idbGetProjectFiles reads one project's files, not all).
+  var _CC_IDB_META = {};
+  _CC_IDB_META[IDB_STORE] = ['bytes', 'savedAt', 'projectId', 'name'];
+  _CC_IDB_META[IDB_GEOCACHE] = ['bytes', 'savedAt'];
+  _CC_IDB_META[IDB_PROJSTORE] = ['bytes'];
+  // One shared connection (reopened after a versionchange/close) instead of
+  // a fresh indexedDB.open() per read/write.
+  var _ccIdbConn = null;
   function _openIDB() {
-    return new Promise(function(resolve, reject) {
+    if (_ccIdbConn) return _ccIdbConn;
+    var p = new Promise(function(resolve, reject) {
       var req = indexedDB.open(IDB_NAME, IDB_VERSION);
       req.onupgradeneeded = function(e) {
-        var db = e.target.result;
+        var db = e.target.result, tx = e.target.transaction;
         if(!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE, {keyPath:'id'});
         if(!db.objectStoreNames.contains(IDB_PROJSTORE)) db.createObjectStore(IDB_PROJSTORE, {keyPath:'id'});
         if(!db.objectStoreNames.contains(IDB_GEOCACHE)) db.createObjectStore(IDB_GEOCACHE, {keyPath:'id'});
+        Object.keys(_CC_IDB_META).forEach(function(name) {
+          var st = tx.objectStore(name);
+          if (!st.indexNames.contains('cc_meta')) st.createIndex('cc_meta', _CC_IDB_META[name]);
+        });
+        var ifc = tx.objectStore(IDB_STORE);
+        if (!ifc.indexNames.contains('projectId')) ifc.createIndex('projectId', 'projectId');
       };
-      req.onsuccess = function(e) { resolve(e.target.result); };
-      req.onerror = function(e) { reject(e.target.error); };
+      req.onsuccess = function(e) {
+        var db = e.target.result;
+        db.onversionchange = function() { try { db.close(); } catch (_) {} _ccIdbConn = null; };
+        db.onclose = function() { _ccIdbConn = null; };
+        resolve(db);
+      };
+      req.onerror = function(e) { _ccIdbConn = null; reject(e.target.error); };
+      req.onblocked = function() { console.warn('[storage] database upgrade waiting for another ClashControl tab to close'); };
     });
+    _ccIdbConn = p;
+    return p;
   }
 
   function _ccIsQuotaError(e) {
@@ -2898,7 +2941,9 @@ function startApp() {
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
         var tx = db.transaction(IDB_STORE, 'readonly');
-        var req = tx.objectStore(IDB_STORE).getAll();
+        var st = tx.objectStore(IDB_STORE);
+        // Only this project's records (projectId index), never every stored model.
+        var req = st.indexNames.contains('projectId') ? st.index('projectId').getAll(projectId||'default') : st.getAll();
         req.onsuccess = function() {
           var all = req.result||[];
           resolve(all.filter(function(f){ return f.projectId===(projectId||'default'); }));
@@ -3267,12 +3312,15 @@ function startApp() {
   window._ccDeleteProjectStorage = _ccDeleteProjectStorage;
 
   // ── Project session data (clashes, issues, rules, etc.) ───────
+  var _ccProjBytesCache = new WeakMap();
   function idbSaveProjectData(projectId, data) {
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
         var tx = db.transaction(IDB_PROJSTORE, 'readwrite');
         var record = Object.assign({id:projectId||'default'}, data);
-        record.bytes = _ccEstimateBytes(record);
+        // the clash/issue clones are reused across saves (_ccCloneListCached),
+        // so the size walk only visits what changed since the last save
+        record.bytes = _ccEstimateBytes(record, _ccProjBytesCache);
         tx.objectStore(IDB_PROJSTORE).put(record);
         tx.oncomplete = function() { resolve(); };
         tx.onerror = function(e) { reject(e.target.error); };
@@ -3317,13 +3365,14 @@ function startApp() {
   function idbSaveGeoCache(fileId, data) {
     var candidate = _ccGeoCacheV8Enabled();
     var cacheKey = _ccGeoCacheKey(fileId, candidate);
+    var _bytes = _ccEstimateBytesFast(data) + 64;
     function attempt() {
       return _openIDB().then(function(db) {
         return new Promise(function(resolve, reject) {
           var tx = db.transaction(IDB_GEOCACHE, 'readwrite');
           var record = candidate ? {id:cacheKey, sourceId:fileId, schema:8,
             data:data, savedAt:Date.now()} : {id:fileId, data:data, savedAt:Date.now()};
-          record.bytes = _ccEstimateBytes(record);
+          record.bytes = _bytes;
           tx.objectStore(IDB_GEOCACHE).put(record);
           tx.oncomplete = function() { resolve(); };
           tx.onerror = function(e) { reject(e.target.error); };
@@ -3334,7 +3383,7 @@ function startApp() {
       // Quota pressure: evict older cache entries and retry once. Failure
       // stays non-fatal — the cache is an optimization, not source data.
       if (!_ccIsQuotaError(e)) throw e;
-      return _ccEvictGeoCacheBytes(_ccEstimateBytes(data) * 2 || 20 * 1024 * 1024).then(function(freed) {
+      return _ccEvictGeoCacheBytes(_bytes * 2 || 20 * 1024 * 1024).then(function(freed) {
         if (!freed) throw e;
         return attempt();
       });
@@ -3386,8 +3435,8 @@ function startApp() {
     _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
         var tx = db.transaction(IDB_STORE, 'readonly');
-        var req = tx.objectStore(IDB_STORE).getAll();
-        req.onsuccess = function() { resolve((req.result||[]).map(function(f){ return f.id; })); };
+        var req = tx.objectStore(IDB_STORE).getAllKeys();
+        req.onsuccess = function() { resolve(req.result||[]); };
         req.onerror = function() { resolve([]); };
       }).then(function(validIds) {
         var validSet = {};
@@ -3418,30 +3467,64 @@ function startApp() {
   // to {id, bytes, savedAt, …} immediately so they don't outlive this
   // tick. Old records predate `bytes` stamping — estimated on the fly.
   function _ccReadIdbInventory() {
-    function readAll(db, storeName) {
+    // Metadata only: the 'cc_meta' index is walked with openKeyCursor (index
+    // key = [bytes, savedAt, ...], primary key = id), which never
+    // deserialises a record. Records missing from the index (written before
+    // v4 without those fields) are read individually, once per call.
+    function readMeta(db, storeName) {
       return new Promise(function(resolve) {
         try {
           var tx = db.transaction(storeName, 'readonly');
-          var req = tx.objectStore(storeName).getAll();
-          req.onsuccess = function() { resolve(req.result || []); };
-          req.onerror = function() { resolve([]); };
+          var st = tx.objectStore(storeName);
+          var meta = {}, keys = null, legacy = [];
+          var kr = st.getAllKeys();
+          kr.onsuccess = function() { keys = kr.result || []; };
+          if (st.indexNames.contains('cc_meta')) {
+            var cr = st.index('cc_meta').openKeyCursor();
+            cr.onsuccess = function() {
+              var c = cr.result;
+              if (!c) return;
+              meta[c.primaryKey] = c.key;
+              c.continue();
+            };
+          }
+          tx.oncomplete = function() {
+            var out = [];
+            (keys || []).forEach(function(k) {
+              var m = meta[k];
+              if (m) out.push({ id: k, bytes: m[0], savedAt: m[1], projectId: m[2], name: m[3] });
+              else legacy.push(k);
+            });
+            if (!legacy.length) { resolve(out); return; }
+            var tx2 = db.transaction(storeName, 'readonly'), st2 = tx2.objectStore(storeName);
+            legacy.forEach(function(k) {
+              var g = st2.get(k);
+              g.onsuccess = function() {
+                var r = g.result;
+                if (r) out.push({ id: r.id, bytes: r.bytes || _ccEstimateBytes(r), savedAt: r.savedAt || 0, projectId: r.projectId, name: r.name, sourceId: r.sourceId });
+              };
+            });
+            tx2.oncomplete = function() { resolve(out); };
+            tx2.onerror = function() { resolve(out); };
+          };
+          tx.onerror = function() { resolve([]); };
         } catch (e) { resolve([]); }
       });
     }
     return _openIDB().then(function(db) {
-      return Promise.all([readAll(db, IDB_STORE), readAll(db, IDB_GEOCACHE), readAll(db, IDB_PROJSTORE)]);
+      return Promise.all([readMeta(db, IDB_STORE), readMeta(db, IDB_GEOCACHE), readMeta(db, IDB_PROJSTORE)]);
     }).then(function(stores) {
       return {
         ifcFiles: stores[0].map(function(f) {
           return { id: f.id, name: f.name, projectId: f.projectId || 'default',
-            savedAt: f.savedAt || 0, bytes: f.bytes || _ccEstimateBytes(f) };
+            savedAt: f.savedAt || 0, bytes: f.bytes || 0 };
         }),
         geoCache: stores[1].map(function(g) {
-          return { id: g.id, sourceId: g.sourceId, savedAt: g.savedAt || 0,
-            bytes: g.bytes || _ccEstimateBytes(g) };
+          var sid = g.sourceId != null ? g.sourceId : (typeof g.id === 'string' && g.id.indexOf('v8:') === 0 ? g.id.slice(3) : g.id);
+          return { id: g.id, sourceId: sid, savedAt: g.savedAt || 0, bytes: g.bytes || 0 };
         }),
         projects: stores[2].map(function(p) {
-          return { id: p.id, bytes: p.bytes || _ccEstimateBytes(p) };
+          return { id: p.id, bytes: p.bytes || 0 };
         })
       };
     });
@@ -7758,9 +7841,56 @@ function startApp() {
   // Shared by the clash list, the overview, the BCF export and the report so
   // a 50k-clash result is filed once, not once per component.
   var _ccTriageLast = null;
+  // The fields findTwice reads (copy detection): an edit that leaves them
+  // alone (status, assignee, priority, title …) cannot move any clash in or
+  // out of the 'twice' bucket.
+  var _CC_TWICE_FIELDS = ['id', 'type', 'modelAId', 'modelBId', 'elemA', 'elemB', 'globalIdA', 'globalIdB', 'bboxA', 'bboxB', 'overlapVolM3'];
+  var _CC_TRIAGE_INC_MAX = 256; // more changed clashes than this: rebuild
+  // Incremental triage model: same rules + models, same clash ids in the same
+  // order and only a few clash objects replaced without touching the copy-
+  // detection inputs (one status change, a group "Accept all" …) — refile
+  // just those clashes and patch counts / facet rows; everything else is
+  // reused. Returns null when a full rebuild is needed.
+  function _ccTriageIncremental(L, s) {
+    var prev = L.clashes, next = s.clashes, o = L.out;
+    if (!prev || !next || prev.length !== next.length) return null;
+    var changed = [];
+    for (var i = 0; i < next.length; i++) {
+      var a = prev[i], b = next[i];
+      if (a === b) continue;
+      if (!a || !b) return null;
+      for (var f = 0; f < _CC_TWICE_FIELDS.length; f++) if (a[_CC_TWICE_FIELDS[f]] !== b[_CC_TWICE_FIELDS[f]]) return null;
+      changed.push(i);
+      if (changed.length > _CC_TRIAGE_INC_MAX) return null;
+    }
+    var ctx = o.ctx;
+    _ccTwiceCache.set(next, ctx);
+    if (!changed.length) return o;
+    var tcore = window._ccClashTriageCore;
+    if (!o._visPos) { o._visPos = new Map(); o.visible.forEach(function(c, vi) { o._visPos.set(c.id, vi); }); }
+    var bucketOf = new Map(o.bucketOf), counts = Object.assign({}, o.counts), zoneGroups = Object.assign({}, o.zoneGroups);
+    var visible = o.visible.slice(), index = o.index.slice(), rowById = new Map(o.rowById);
+    var fctx = Object.assign({}, o.fctx, { bucket: function(c) { return bucketOf.get(c.id) || 'review'; } });
+    changed.forEach(function(ci) {
+      var c0 = prev[ci], c = next[ci];
+      var b0 = o.bucketOf.get(c0.id), b = _ccReviewBucket(c, s.rules, ctx);
+      bucketOf.set(c.id, b);
+      var vi = o._visPos.get(c.id);
+      if (vi == null) return;                     // on a hidden model: not counted
+      counts[b0] = (counts[b0] || 0) - 1; counts[b] = (counts[b] || 0) + 1;
+      if (b0 === 'zone' && c0.roleGroup) zoneGroups[c0.roleGroup] = (zoneGroups[c0.roleGroup] || 0) - 1;
+      if (b === 'zone' && c.roleGroup) zoneGroups[c.roleGroup] = (zoneGroups[c.roleGroup] || 0) + 1;
+      visible[vi] = c;
+      if (tcore && index[vi]) { var row = tcore.indexItems([c], fctx)[0]; index[vi] = row; rowById.set(c.id, row); }
+    });
+    return { bucketOf: bucketOf, counts: counts, total: o.total, visible: visible, ctx: ctx, fctx: fctx,
+      storeyNorm: o.storeyNorm, index: index, rowById: rowById, visibleModels: o.visibleModels, zoneGroups: zoneGroups, _visPos: o._visPos };
+  }
   function _ccTriageModel(s) {
     var L = _ccTriageLast;
     if (L && L.clashes === s.clashes && L.rules === s.rules && L.models === s.models) return L.out;
+    var inc = (L && L.rules === s.rules && L.models === s.models) ? _ccTriageIncremental(L, s) : null;
+    if (inc) { _ccTriageLast = { clashes: s.clashes, rules: s.rules, models: s.models, out: inc }; return inc; }
     var tcore = window._ccClashTriageCore, ccore = window._ccClashClassificationCore;
     var ctx = _ccTriageCtx(s.clashes || []);
     var vis = {}, names = {}, stE = [];
@@ -7797,6 +7927,15 @@ function startApp() {
   }
   // Legacy per-bucket "show" switches still count as showing that bucket.
   var _CC_BUCKET_LEGACY_SHOW = { provided:'showProvided', provision:'showProvisions', zone:'showRoleGroups', contact:'showContacts', handled:'showHandled' };
+  // the rules' hidden buckets, once per rules object (asked once per clash)
+  var _ccHiddenBucketsLast = { rules: undefined, out: null };
+  function _ccHiddenBuckets(rules) {
+    if (_ccHiddenBucketsLast.out && _ccHiddenBucketsLast.rules === rules) return _ccHiddenBucketsLast.out;
+    var core = window._ccClashClassificationCore;
+    var out = (core && core.hiddenBuckets) ? core.hiddenBuckets(rules) : [];
+    _ccHiddenBucketsLast = { rules: rules, out: out };
+    return out;
+  }
   function _ccBucketShown(bucket, rules, f) {
     if (bucket === 'review') return true;
     f = f || {};
@@ -7804,9 +7943,7 @@ function startApp() {
     if (Array.isArray(f.showBuckets) && f.showBuckets.indexOf(bucket) !== -1) return true;
     var lg = _CC_BUCKET_LEGACY_SHOW[bucket];
     if (lg && f[lg]) return true;
-    var core = window._ccClashClassificationCore;
-    var hidden = (core && core.hiddenBuckets) ? core.hiddenBuckets(rules) : [];
-    return hidden.indexOf(bucket) === -1;
+    return _ccHiddenBuckets(rules).indexOf(bucket) === -1;
   }
 
   // ── Möller triangle-triangle intersection test ──────────────────
@@ -11594,10 +11731,18 @@ function startApp() {
   // substring, its singular form, or (for a bare number) the item's stable
   // display number.
   var _CC_FILTER_FILLER = {on:1,in:1,at:1,the:1,of:1,for:1,a:1,an:1};
-  function _ccFilterTextMatches(q, hay, itemNumber) {
-    if (!q) return true;
+  // tokens of the last query (the list runs one query over every clash)
+  var _ccFilterTokLast = { q: null, tokens: [] };
+  function _ccFilterTokens(q) {
+    if (_ccFilterTokLast.q === q) return _ccFilterTokLast.tokens;
     var norm = String(q).toLowerCase().replace(/\b(?:storeys?|storys?|floors?)\b/g, 'level');
     var tokens = norm.split(/\s+/).filter(function(t){ return t && !_CC_FILTER_FILLER[t]; });
+    _ccFilterTokLast = { q: q, tokens: tokens };
+    return tokens;
+  }
+  function _ccFilterTextMatches(q, hay, itemNumber) {
+    if (!q) return true;
+    var tokens = _ccFilterTokens(q);
     if (!tokens.length) return true;
     return tokens.every(function(tok){
       var bare = tok.charAt(0)==='#' ? tok.slice(1) : tok;
@@ -22477,6 +22622,23 @@ function startApp() {
     return undefined;
   }
 
+  // Clashes and issues are immutable state (an edit makes a new object), so
+  // each one's save clone is made once and reused by later saves: an autosave
+  // after one status change clones one clash, not the whole result.
+  var _ccSaveCloneCache = new WeakMap();
+  function _ccCloneListCached(list) {
+    var out = [];
+    (list || []).forEach(function(c) {
+      var cl;
+      if (c && typeof c === 'object') {
+        cl = _ccSaveCloneCache.get(c);
+        if (cl === undefined) { cl = _cloneSafe(c, 2); _ccSaveCloneCache.set(c, cl); }
+      } else cl = _cloneSafe(c, 2);
+      if (cl !== undefined) out.push(cl);
+    });
+    return out;
+  }
+
   // Identity memo for the flagged autosave gate (storageAutosaveGate).
   // Reducer state is immutable — a slice that still has the same object
   // identity as at the last successful write cannot have changed, so a
@@ -22504,7 +22666,7 @@ function startApp() {
     var snap = {};
     _AUTOSAVE_SLICES.forEach(function(k){ snap[k] = s[k]; });
     var data = _cloneSafe({
-      clashes:s.clashes, issues:s.issues, rules:s.rules, floors:s.floors,
+      rules:s.rules, floors:s.floors,
       viewpoints:(s.viewpoints||[]).map(function(v){return Object.assign({},v,{snapshot:undefined})}),
       measurements:s.measurements||[], filters:s.filters,
       lastDeltaSummary:s.lastDeltaSummary||null,
@@ -22523,6 +22685,8 @@ function startApp() {
       triage:s.triage ? Object.assign({}, s.triage, {autoOpen:false}) : undefined,
       modelMeta:s.models.map(function(m){return {id:m.id,name:m.name,discipline:m.discipline,color:m.color,visible:m.visible,tag:m.tag||'',georef:m.georef||null};})
     }, 0);
+    data.clashes = _ccCloneListCached(s.clashes);
+    data.issues = _ccCloneListCached(s.issues);
     return idbSaveProjectData(pid, data).then(function(r){
       _ccAutosaveMemo = { pid: pid, slices: snap };
       return r;
@@ -28285,13 +28449,14 @@ function startApp() {
     </span>`;
   }
   function ClashOverviewCard(props) {
-    var it = props.it, i = props.i, tm = props.tm, c = it.lead, sum = it.summary;
+    _ccCountRender('cards');
+    var it = props.it, i = props.i, c = it.lead, sum = it.summary;
     var sev = sum ? sum.severity : (c.aiSeverity || _ccDeterministicSeverity(c));
-    var row = tm.rowById.get(c.id), v = row ? row.v : {};
+    var row = props.row, v = row ? row.v : {};
     // second line: what kind of overlap ("1 through · 2 partial", "Clearance")
     var ext = sum ? sum.extentSummary : _ccFacetValueLabel('extent', v.extent || '');
     var storey = sum ? sum.storey : (v.storey || '');
-    var modelName = tm.fctx.modelName;
+    var modelName = props.modelName;
     // model pair only when it tells something (> 2 models loaded) — same rule
     // as the list's cluster header
     var pair = props.manyModels ? (modelName(c.modelAId) === modelName(c.modelBId || c.modelAId) ? modelName(c.modelAId) : (modelName(c.modelAId) + ' ↔ ' + modelName(c.modelBId))) : '';
@@ -28301,8 +28466,8 @@ function startApp() {
     var meta = [storey, pair].filter(Boolean).join(' · ');
     var foot = _cc_t('overview.openCount','{n} open',{n:open2}) + (asg.length ? (' · ' + asg.join(', ')) : (' · ' + _cc_t('facet.unassigned','Unassigned')));
     return html`<div role="listitem" style=${{minWidth:0}}>
-      <button ref=${props.cardRef} data-cc-card-idx=${i} data-cc-card-key=${it.key} tabIndex=${props.focused ? 0 : -1}
-        onFocus=${props.onFocus} onClick=${props.onOpen}
+      <button ref=${function(el){ props.cardRefs.current[i] = el; }} data-cc-card-idx=${i} data-cc-card-key=${it.key} tabIndex=${props.focused ? 0 : -1}
+        onFocus=${function(){ props.onFocusIdx(i); }} onClick=${function(){ props.onOpenItem(it); }}
         style=${{...S_BTN,width:'100%',height:'100%',display:'flex',flexDirection:'column',padding:0,textAlign:'left',background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-md)',overflow:'hidden',boxShadow:'var(--shadow-sm)'}}>
         <${ClashOverviewSnapshot} c=${c} title=${it.title}>
           <span class="cc-status-pill" style=${{position:'absolute',top:'var(--space-2)',left:'var(--space-2)',..._ccSeverityPillStyle(sev)}}>${_ccFacetValueLabel('severity', sev)}</span>
@@ -28317,6 +28482,10 @@ function startApp() {
       </button>
     </div>`;
   }
+  // Memoised on stable props (review items keep their identity while their
+  // clashes are unchanged; the handlers are stable), so one clash's edit
+  // re-renders one card.
+  ClashOverviewCard = React.memo(ClashOverviewCard);
   function ClashOverview(props) {
     var s = props.s, d = props.d;
     var rm = _ccReviewModel(s), tm = _ccTriageModel(s);
@@ -28381,6 +28550,8 @@ function startApp() {
     }, [cards.length]);
     function close(){ d({t:A.TRIAGE_UPD, u:{view:'list'}}); }
     function open(it){ _ccOpenReviewItem(it, d); close(); }
+    // stable for the memoised cards (d is App's stable dispatch)
+    var openItem = useCallback(function(it){ _ccOpenReviewItem(it, d); d({t:A.TRIAGE_UPD, u:{view:'list'}}); }, []); // eslint-disable-line react-hooks/exhaustive-deps
     // Escape returns to the 3D view wherever focus is (not from a field or a dialog)
     useEffect(function(){
       function onEsc(e){
@@ -28442,9 +28613,8 @@ function startApp() {
       <div ref=${gridRef} data-cc-overview-grid="1" class="cc-overview-grid" role="list" aria-describedby="cc-overview-keys" style=${{flex:1,overflowY:'auto',padding:'var(--space-3) var(--space-4) var(--space-4)',display:'grid',gap:'var(--space-3)',alignContent:'start'}}>
         ${empty}
         ${cards.slice(0, limit).map(function(it, i){
-          return html`<${ClashOverviewCard} key=${it.key} it=${it} i=${i} tm=${tm} manyModels=${manyModels} focused=${i === focusIdx}
-            cardRef=${function(el){ cardRefs.current[i] = el; }}
-            onFocus=${function(){ if (focusIdx !== i) setFocusIdx(i); }} onOpen=${function(){ open(it); }} />`;
+          return html`<${ClashOverviewCard} key=${it.key} it=${it} i=${i} row=${tm.rowById.get(it.lead.id)} modelName=${tm.fctx.modelName} manyModels=${manyModels} focused=${i === focusIdx}
+            cardRefs=${cardRefs} onFocusIdx=${setFocusIdx} onOpenItem=${openItem} locale=${(window._ccGetLocale && window._ccGetLocale()) || ''} />`;
         })}
         ${cards.length > limit && html`<div role="listitem" style=${{gridColumn:'1 / -1',display:'flex',justifyContent:'center'}}>
           <button onClick=${function(){ setLimit(limit + CC_OVERVIEW_PAGE); }} style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)'}}>${_cc_t('overview.more','Show more ({n} of {total})',{n:limit,total:cards.length})}</button>
@@ -28458,7 +28628,30 @@ function startApp() {
   // storeys raw + normalised, GlobalIds, model pair, assignee) and the
   // classic filter dropdowns. Shared by the clash list and the overview so
   // both always show the same set.
+  // The lower-cased text a list search matches against, built once per clash
+  // object (+ its facet row), not on every keystroke for every clash.
+  var _ccSearchHayCache = new WeakMap();
+  function _ccSearchHay(it, isClashTab, trow) {
+    var hit = _ccSearchHayCache.get(it);
+    if (hit && hit.clash === isClashTab && hit.row === trow) return hit.hay;
+    var hay = isClashTab ? [it.title,it.description,it.type,it.elemAStorey,it.elemBStorey,it.elemAType,it.elemBType,it.elemAMaterial,it.elemBMaterial,it.status,it.elemAName,it.elemBName,it.globalIdA,it.globalIdB,trow&&trow.v.storey,trow&&trow.v.typePair,trow&&trow.v.modelPair,it.assignee].filter(Boolean).join(' ').toLowerCase()
+      : (it.title||'').toLowerCase()+' '+(it.description||'').toLowerCase();
+    _ccSearchHayCache.set(it, { clash: isClashTab, row: trow, hay: hay });
+    return hay;
+  }
+  // The list and the review model ask the same question for the same clash
+  // with the same filters in one render, and every unchanged clash again
+  // after an unrelated edit — the answer is remembered per clash object.
+  var _ccPassCache = new WeakMap();
   function _ccListItemPasses(it, f, isClashTab, visibleModelIds, triage, rules) {
+    var hit = it && typeof it === 'object' ? _ccPassCache.get(it) : null;
+    var row = isClashTab && triage && f.search ? triage.rowById.get(it.id) : null; // the only triage input (search text)
+    if (hit && hit.f === f && hit.vis === visibleModelIds && hit.clash === isClashTab && hit.row === row && hit.rules === rules) return hit.pass;
+    var pass = _ccListItemPasses1(it, f, isClashTab, visibleModelIds, triage, rules);
+    if (it && typeof it === 'object') _ccPassCache.set(it, { f: f, vis: visibleModelIds, clash: isClashTab, row: row, rules: rules, pass: pass });
+    return pass;
+  }
+  function _ccListItemPasses1(it, f, isClashTab, visibleModelIds, triage, rules) {
     if(isClashTab && (it.modelAId || it.modelBId)) {
       if(it.modelAId && !visibleModelIds[it.modelAId]) return false;
       if(it.modelBId && !visibleModelIds[it.modelBId]) return false;
@@ -28470,7 +28663,7 @@ function startApp() {
     // f.showHandled/f.status==='denied') so the list opens on what
     // still needs attention, not a mix of open + already-handled work.
     if(isClashTab && f.status==='all' && !_ccBucketShown('handled', rules, f) && (it.status==='resolved'||it.status==='closed')) return false;
-    if(f.search){var _trow=isClashTab&&triage?triage.rowById.get(it.id):null;var hay=isClashTab?[it.title,it.description,it.type,it.elemAStorey,it.elemBStorey,it.elemAType,it.elemBType,it.elemAMaterial,it.elemBMaterial,it.status,it.elemAName,it.elemBName,it.globalIdA,it.globalIdB,_trow&&_trow.v.storey,_trow&&_trow.v.typePair,_trow&&_trow.v.modelPair,it.assignee].filter(Boolean).join(' ').toLowerCase():(it.title||'').toLowerCase()+' '+(it.description||'').toLowerCase();if(!_ccFilterTextMatches(f.search,hay,it.number))return false;}
+    if(f.search){var _trow=isClashTab&&triage?triage.rowById.get(it.id):null;var hay=_ccSearchHay(it,isClashTab,_trow);if(!_ccFilterTextMatches(f.search,hay,it.number))return false;}
     if(isClashTab) {
       if(f.modelPair) {
         var _mpA=it.modelAId, _mpB=it.modelBId||it.modelAId, _mp=f.modelPair;
@@ -28511,6 +28704,8 @@ function startApp() {
   function IssuePanel(props) {
     var s=props.s, d=props.d, f=s.filters, hideTabBar=props.hideTabBar;
     var fo=useState(false), filtersOpen=fo[0], setFiltersOpen=fo[1];
+    // "Run details" (stats, AI summary, model matrix) is built only while open
+    var rdo=useState(false), runDetailsOpen=rdo[0], setRunDetailsOpen=rdo[1];
     var isClashTab = s.tab==='clashes';
     var isExplorerTab = s.tab==='navigator';
     var isStandardsTab = s.tab==='standards';
@@ -28567,10 +28762,12 @@ function startApp() {
       return ids;
     }, [s.models]);
 
+    // the filter dropdowns' choices — only needed while the filter panel is open
     var filterLists = useMemo(function(){
       var uTypes={}, uStoreys={}, uMats={};
       var uPriorities={}, uCategories={}, uAssignees={}, uIssueTypes={}, uIssueStoreys={};
-      if(isClashTab){
+      if(!filtersOpen){ /* closed: nothing to list */ }
+      else if(isClashTab){
         s.clashes.forEach(function(c){
           if((c.modelAId && !visibleModelIds[c.modelAId]) || (c.modelBId && !visibleModelIds[c.modelBId])) return;
           if(c.elemAType) uTypes[c.elemAType]=true;
@@ -28593,7 +28790,7 @@ function startApp() {
       return {types:Object.keys(uTypes).sort(), storeys:Object.keys(uStoreys).sort(), materials:Object.keys(uMats).sort(),
         priorities:Object.keys(uPriorities).sort(), categories:Object.keys(uCategories).sort(), assignees:Object.keys(uAssignees).sort(),
         issueTypes:Object.keys(uIssueTypes).sort(), issueStoreys:Object.keys(uIssueStoreys).sort()};
-    }, [s.clashes, s.issues, isClashTab, visibleModelIds]);
+    }, [s.clashes, s.issues, isClashTab, visibleModelIds, filtersOpen]);
     var typeList = filterLists.types;
     var storeyList = filterLists.storeys;
     var materialList = filterLists.materials;
@@ -28662,7 +28859,7 @@ function startApp() {
 
     var itemsPre = useMemo(function(){
       return rawItems.filter(function(it){
-        return _ccListItemPasses(it, f, isClashTab, visibleModelIds, triage, s.rules);
+        return _ccListItemPasses(it, f, isClashTab, isClashTab && triage ? triage.visibleModels : visibleModelIds, triage, s.rules);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- triage changes together with rawItems (same clashes/rules/models); s.rules only feeds the handled-bucket test
     }, [rawItems, f, isClashTab, visibleModelIds]);
@@ -28677,6 +28874,8 @@ function startApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- _tcore is a frozen module; facets is s.triage.facets
     }, [itemsPre, facetsOn, facets, triage]);
 
+    var runCaption = useMemo(function(){ return isClashTab ? _ccStatsSummaryLine(rawItems, true) : ''; },
+      [rawItems, isClashTab, window._ccGetLocale && window._ccGetLocale()]); // eslint-disable-line react-hooks/exhaustive-deps -- the UI language is part of the caption
     var counts = useMemo(function(){
       var _tmC = _ccTriageModel(s);
       return {
@@ -28705,7 +28904,7 @@ function startApp() {
       </div>`}
 
       ${isClashTab && triage && triage.total > 0 && html`<${BucketBar} counts=${triage.counts} zoneGroups=${triage.zoneGroups} total=${triage.total} rules=${s.rules} f=${f} d=${d} />`}
-      ${isClashTab && rawItems.length > 0 && html`<div data-cc-run-caption="1" style=${{padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-muted)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-tertiary)'}}>${_ccStatsSummaryLine(rawItems, true)}</div>`}
+      ${isClashTab && rawItems.length > 0 && html`<div data-cc-run-caption="1" style=${{padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-muted)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-tertiary)'}}>${runCaption}</div>`}
       ${isClashTab && s.lastRunExcluded && Object.keys(s.lastRunExcluded).length > 0 && html`<div data-cc-excluded="1" style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,fontSize:'var(--text-xs)',color:'var(--text-secondary)',flexWrap:'wrap'}}>
         <span style=${{flex:1,minWidth:160}}>${_cc_t('roles.leftOut','Left out of this run:')} ${Object.keys(s.lastRunExcluded).map(function(g){ return s.lastRunExcluded[g] + ' ' + _ccRoleGroupLabel(g, s.lastRunExcluded[g] !== 1); }).join(' · ')}</span>
         <button onClick=${function(){
@@ -28717,12 +28916,14 @@ function startApp() {
           }}
           style=${S_BTN_SECONDARY_SM}>${_cc_t('roles.includeRerunPlain','Include and run again')}</button>
       </div>`}
-      ${isClashTab && rawItems.length > 0 && html`<details data-cc-run-details="1" style=${{borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
+      ${isClashTab && rawItems.length > 0 && html`<details data-cc-run-details="1" open=${runDetailsOpen} onToggle=${function(e){ var o = !!e.currentTarget.open; if (o !== runDetailsOpen) setRunDetailsOpen(o); }} style=${{borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
         <summary style=${{cursor:'pointer',padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>${_cc_t('panel.runDetails','Run details')}</summary>
-        ${rawItems.some(function(c){return c.aiSeverity;}) && html`<${ClashAISummary} items=${rawItems} />`}
-        <${ClashStatsBar} items=${rawItems} isClash=${true} noSummary=${true} delta=${s.lastDeltaSummary} history=${s.runHistory||null}
-          handledHiddenCount=${handledHiddenCount} showHandled=${!!f.showHandled} d=${d} />
-        ${(s.models||[]).length >= 2 && html`<${ModelClashMatrix} s=${s} d=${d} items=${rawItems} />`}
+        ${runDetailsOpen && html`<div>
+          ${rawItems.some(function(c){return c.aiSeverity;}) && html`<${ClashAISummary} items=${rawItems} />`}
+          <${ClashStatsBar} items=${rawItems} isClash=${true} noSummary=${true} delta=${s.lastDeltaSummary} history=${s.runHistory||null}
+            handledHiddenCount=${handledHiddenCount} showHandled=${!!f.showHandled} d=${d} />
+          ${(s.models||[]).length >= 2 && html`<${ModelClashMatrix} s=${s} d=${d} items=${rawItems} />`}
+        </div>`}
       </details>`}
       ${!isClashTab && !isExplorerTab && !isStandardsTab && rawItems.length > 0 && html`<${ClashStatsBar} items=${rawItems} isClash=${false} d=${d} />`}
 
@@ -31856,14 +32057,26 @@ function startApp() {
   // clash happen to touch the same number of other elements.
   var _CC_MEP_TYPE_RE = /Duct|Pipe|Cable|Conduit|Flow|Fire|Sprinkler/i;
   function _ccIsLikelyMepType(t) { return _CC_MEP_TYPE_RE.test(t || '') ? 1 : 0; }
+  // Both element keys of a clash, cached per clash object (clashes are
+  // immutable state: an edit makes a new object), so regrouping after one
+  // clash's status change only builds the keys of that clash.
+  var _ccElemKeysCache = new WeakMap();
+  function _ccElemKeysOf(it) {
+    var k = _ccElemKeysCache.get(it);
+    if (!k) {
+      k = [_ccElemKeyFor(it.modelAId, it.elemA, it.globalIdA), _ccElemKeyFor(it.modelBId, it.elemB, it.globalIdB)];
+      _ccElemKeysCache.set(it, k);
+    }
+    return k;
+  }
   function _ccBuildElementDegreeMap(items) {
     var deg = {};
-    (items || []).forEach(function(it) {
-      var kA = _ccElemKeyFor(it.modelAId, it.elemA, it.globalIdA);
-      var kB = _ccElemKeyFor(it.modelBId, it.elemB, it.globalIdB);
-      deg[kA] = (deg[kA] || 0) + 1;
-      deg[kB] = (deg[kB] || 0) + 1;
-    });
+    var list = items || [];
+    for (var i = 0; i < list.length; i++) {
+      var k = _ccElemKeysOf(list[i]);
+      deg[k[0]] = (deg[k[0]] || 0) + 1;
+      deg[k[1]] = (deg[k[1]] || 0) + 1;
+    }
     return deg;
   }
   // Which side ('A' or 'B') of a clash is the "root cause" element: the one
@@ -31871,19 +32084,17 @@ function startApp() {
   // MEP-likeliness, then a stable key comparison so the choice never flips
   // between renders of the same data.
   function _ccRootCauseSideFor(it, degMap) {
-    degMap = degMap || {};
-    var kA = _ccElemKeyFor(it.modelAId, it.elemA, it.globalIdA);
-    var kB = _ccElemKeyFor(it.modelBId, it.elemB, it.globalIdB);
-    var dA = degMap[kA] || 0, dB = degMap[kB] || 0;
+    var keys = _ccElemKeysOf(it), kA = keys[0], kB = keys[1];
+    var dA = _ccDegreeOf(degMap, kA), dB = _ccDegreeOf(degMap, kB);
     if (dA !== dB) return dA > dB ? 'A' : 'B';
     var mepDiff = _ccIsLikelyMepType(it.elemAType) - _ccIsLikelyMepType(it.elemBType);
     if (mepDiff !== 0) return mepDiff > 0 ? 'A' : 'B';
     return kA <= kB ? 'A' : 'B';
   }
+  function _ccDegreeOf(degMap, k) { return (degMap && degMap[k]) || 0; }
   function _ccRootCauseKeyFor(it, degMap) {
-    return _ccRootCauseSideFor(it, degMap) === 'A'
-      ? _ccElemKeyFor(it.modelAId, it.elemA, it.globalIdA)
-      : _ccElemKeyFor(it.modelBId, it.elemB, it.globalIdB);
+    var keys = _ccElemKeysOf(it);
+    return _ccRootCauseSideFor(it, degMap) === 'A' ? keys[0] : keys[1];
   }
   function _ccPluralizeWord(w) {
     if (!w) return w;
@@ -32056,6 +32267,15 @@ function startApp() {
   // (root-cause element, worst severity first). A group of two or more is one
   // review item; a lone clash is its own. Memoised per state slice.
   var _ccReviewLast = null;
+  // A group header summary per (group object, storey normaliser).
+  var _ccGroupSummaryCache = new WeakMap(), _ccReviewItemCache = new WeakMap();
+  function _ccGroupSummaryCached(g, storeyFn) {
+    var hit = _ccGroupSummaryCache.get(g);
+    if (hit && hit.storey === storeyFn && hit.locale === (window._ccGetLocale && window._ccGetLocale())) return hit.sum;
+    var sum = _ccElementGroupSummary(g.items, { storey: storeyFn, extentLabel: function(k){ return _ccFacetValueLabel('extent', k); } });
+    _ccGroupSummaryCache.set(g, { storey: storeyFn, locale: window._ccGetLocale && window._ccGetLocale(), sum: sum });
+    return sum;
+  }
   function _ccReviewModel(s) {
     var facets = (s.triage && s.triage.facets) || {};
     var L = _ccReviewLast;
@@ -32069,17 +32289,24 @@ function startApp() {
       var row = tm.rowById.get(c.id);
       return !!row && tcore.matchesFacets(row.v, facets);
     });
-    var groups = groupAndSort(clashes, ['element'], [], { models: s.models }) || [];
+    // unchanged groups keep their identity, so their summaries are reused
+    var groups = (L && L.groups && _ccPatchElementGroups(L.out.clashes, L.groups, clashes))
+      || _ccStabilizeGroups(L && L.groups, groupAndSort(clashes, ['element'], [], { models: s.models }) || []);
+    var loc = (window._ccGetLocale && window._ccGetLocale()) || '';
     var items = groups.map(function(g) {
-      var sum = g.items.length > 1 ? _ccElementGroupSummary(g.items, { storey: tm.fctx.storey, extentLabel: function(k){ return _ccFacetValueLabel('extent', k); } }) : null;
+      var hit = _ccReviewItemCache.get(g);
+      if (hit && hit.storey === tm.fctx.storey && hit.loc === loc) return hit.item;
+      var sum = g.items.length > 1 ? _ccGroupSummaryCached(g, tm.fctx.storey) : null;
       var c0 = g.items[0];
-      return { key: g.items.length > 1 ? g.label : ('c:' + c0.id), group: g.items.length > 1, items: g.items, lead: c0,
+      var item = { key: g.items.length > 1 ? g.label : ('c:' + c0.id), group: g.items.length > 1, items: g.items, lead: c0,
         title: sum ? sum.title : (c0.title || _ccFacetValueLabel('typePair', '')), summary: sum };
+      _ccReviewItemCache.set(g, { storey: tm.fctx.storey, loc: loc, item: item });
+      return item;
     });
     var byClash = {};
     items.forEach(function(it) { it.items.forEach(function(c) { byClash[c.id] = it; }); });
     var out = { pre: pre, clashes: clashes, items: items, byClash: byClash };
-    _ccReviewLast = { clashes: s.clashes, rules: s.rules, models: s.models, filters: s.filters, facets: facets, out: out };
+    _ccReviewLast = { clashes: s.clashes, rules: s.rules, models: s.models, filters: s.filters, facets: facets, out: out, groups: groups };
     return out;
   }
 
@@ -32186,6 +32413,7 @@ function startApp() {
   // row-height guess. Deliberately does NOT touch groupAndSort/_groupKeyFor —
   // grouping/sorting/filtering semantics stay byte-identical to legacy.
   var CC_WINDOWED_AUTO_MIN = 2000; // results above this always render windowed (VirtualList)
+  var CC_WINDOWED_GROUPED_MIN = 50; // grouped results above this render windowed
   var CC_WINDOW_DEFAULT_HEIGHTS = { header: 32, clusterHeader: 62, item: ROW_HEIGHT, more: 34 };
   function _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup) {
     window._ccListPerfCounters.buildConflictRows++;
@@ -32254,6 +32482,218 @@ function startApp() {
   window._ccComputeRowOffsets = _ccComputeRowOffsets;
   window._ccComputeVisibleRowWindow = _ccComputeVisibleRowWindow;
 
+  // Test-only render counters (?ccRenderCount=1): how many clash rows / group
+  // headers / overview cards rendered since the last reset — the primary
+  // signal of tests/browser/action-cost.mjs ("an action costs what it
+  // changes"). Absent (and free) without the URL flag.
+  var _CC_RENDER_COUNT = (function(){ try { return /[?&]ccRenderCount=1(&|$)/.test(location.search); } catch(e) { return false; } })();
+  if (_CC_RENDER_COUNT) window.__ccRenderCount = { rows: 0, headers: 0, cards: 0 };
+  function _ccCountRender(k) { if (_CC_RENDER_COUNT) window.__ccRenderCount[k]++; }
+  // One group header of the clash/issue list (root-cause "By element" card,
+  // AI cluster card or the plain header of any other grouping). Memoised on
+  // stable props (the group object is reused by VirtualList while its items
+  // are unchanged), so an unrelated state change re-renders no header.
+  var _CC_VL_SEV_COLOR = {critical:'var(--color-danger)',major:'var(--color-warning)',hard:'var(--color-danger)',soft:'var(--color-warning)',minor:'var(--text-muted)',duplicate:'#8558ec',info:'var(--text-faint)'};
+  var _CC_VL_STATUS_COLORS = {open:'var(--color-danger)',in_progress:'var(--color-warning)',resolved:'var(--color-success)',closed:'var(--text-muted)',hard:'var(--color-danger)',soft:'var(--color-warning)',duplicate:'#8b5cf6'};
+  function ConflictGroupHeader(props) {
+    var g = props.g, d = props.d, isClash = props.isClash, models = props.models || [], storeyLabel = props.storeyLabel;
+    var elemSummary = props.mode === 'element' && g.items.length > 1 ? _ccGroupSummaryCached(g, storeyLabel) : null;
+    // A group of exactly one clash adds noise, not structure — render it
+    // as a plain row with no header at all (matches how Solibri/BIMcollab/
+    // Revizto/Dalux only show a group card once there's actually more
+    // than one thing under it).
+    if (g.items.length === 1) return null;
+    _ccCountRender('headers');
+    var isOpen = props.isOpen;
+    if (props.mode === 'element') {
+      // ── "By element" (root-cause) header ──
+      // Worst severity (word + colour), extent summary ("3 through · 1
+      // partial"), normalised storey, and group actions that go through
+      // BATCH_UPD_CLASH with explicit ids (undoable). The toggle is its
+      // own button so the actions are not nested inside it.
+      var summary = elemSummary || {};
+      var sevCol2 = _CC_VL_SEV_COLOR[summary.severity] || 'var(--text-muted)';
+      var openItems2 = g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed'&&it.status!=='denied';});
+      var openCount2 = openItems2.length;
+      var resolved2 = g.items.length - openCount2;
+      var sevPill = _ccSeverityPillStyle(summary.severity);
+      var gIds = g.items.map(function(it){ return it.id; });
+      return html`<div key=${g.label} data-element-group-key=${g.label}
+        style=${{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'var(--space-1) var(--space-2)',padding:'var(--space-2) var(--space-2) var(--space-2) var(--space-1)',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}>
+        <button aria-expanded=${isOpen?'true':'false'} onClick=${function(){props.onToggle(g.label)}}
+          style=${{...S_BTN,flex:'1 1 100%',minWidth:0,display:'flex',alignItems:'flex-start',gap:'var(--space-2)',padding:0,background:'none',textAlign:'left',color:'inherit'}}>
+          <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)',paddingTop:'2px'}}>${_ccChevron(isOpen)}</span>
+          <span style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'2px'}}>
+            <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${summary.title}</span>
+            <span style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
+              <span class="cc-status-pill" data-cc-group-sev=${summary.severity} style=${sevPill}>${_ccFacetValueLabel('severity', summary.severity)}</span>
+              ${summary.extentSummary && html`<span data-cc-group-extent="1" style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>${summary.extentSummary}</span>`}
+              ${summary.subtitle && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>${summary.subtitle}</span>`}
+              ${summary.storey && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${summary.storey}</span>`}
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${openCount2} open${resolved2?(' · '+resolved2+' resolved'):''}</span>
+            </span>
+          </span>
+        </button>
+        <span style=${{flex:1}}></span>
+        ${isClash && openCount2 > 0 && html`<button data-cc-group-accept="1" title=${_cc_t('vlist.acceptAllTip','Accept every open clash in this group (flag for a later check) — undo with Ctrl+Z')}
+          onClick=${function(e){ e.stopPropagation(); d({t:A.BATCH_UPD_CLASH, ids:openItems2.map(function(it){ return it.id; }), u:{status:'accepted_needs_check'}}); }}
+          style=${{...S_BTN_SECONDARY_SM,whiteSpace:'nowrap'}}>${_cc_t('vlist.acceptAll','Accept all')}</button>`}
+        ${isClash && html`<select data-cc-group-status="1" aria-label=${_cc_t('vlist.setGroupStatus','Set status of all {n} clashes in this group',{n:g.items.length})}
+          onClick=${function(e){ e.stopPropagation(); }}
+          onChange=${function(e){ var v = e.target.value; e.target.value = ''; if (v) d({t:A.BATCH_UPD_CLASH, ids:gIds, u:{status:v}}); }}
+          style=${{fontSize:'var(--text-2xs)',padding:'1px var(--space-1)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',maxWidth:88}}>
+          <option value="">${_cc_t('vlist.setStatus','Set status…')}</option>
+          ${['open','in_progress','accepted_needs_check','confirmed','resolved','denied'].map(function(st){ return html`<option key=${st} value=${st}>${(STAT[st] && STAT[st].label) || st}</option>`; })}
+        </select>`}
+        <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)',background:'var(--bg-secondary)',padding:'1px var(--space-2)',borderRadius:'var(--radius-pill)',fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
+      </div>`;
+    }
+    if (props.mode === 'cluster') {
+      // ── Sentry/Linear-style cluster card ──
+      var sev = window._ccClusterSeverity(g.items);
+      var sevCol = _CC_VL_SEV_COLOR[sev] || 'var(--text-muted)';
+      var label = window._ccClusterDisplay[g.label];
+      var c0 = g.items[0]||{};
+      var storey = c0.elemAStorey || c0.elemBStorey || '';
+      var mA = null, mB = null; models.forEach(function(m){ if (m.id === c0.modelAId) mA = m; if (m.id === c0.modelBId) mB = m; });
+      // Every group repeating the same "office-architecture ↔ office-mep"
+      // chip is noise when there are only 2 models loaded (it's the same
+      // pair every time) — only worth a chip once there's real ambiguity
+      // about which models are involved (>2 loaded).
+      var modelPair = (models.length > 2 && (mA||mB)) ? ((mA?mA.name:'?') + ' ↔ ' + (mB?mB.name:'?')) : '';
+      var crossModel = mA && mB && mA.id !== mB.id;
+      var openCount = g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}).length;
+      var resolved = g.items.length - openCount;
+      var triage = props.triage || null;
+      var triageLoading = !!(triage && triage.loading);
+      var triageResult = triage && triage.result;
+      var triageError = triage && triage.error;
+      return html`<div key=${g.label} data-cluster-key=${g.label}>
+        <div onClick=${function(){props.onToggle(g.label)}}
+          style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-2) var(--space-2) var(--space-2) var(--space-1)',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}
+          onMouseEnter=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='1';}}
+          onMouseLeave=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='0';}}>
+          <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)'}}>${_ccChevron(isOpen)}</span>
+          <div style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'2px'}}>
+            <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${label}</span>
+            <div style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
+              ${storey && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${storey}</span>`}
+              ${modelPair && html`<span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${modelPair}</span>`}
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${openCount} open${resolved?(' · '+resolved+' resolved'):''}</span>
+            </div>
+          </div>
+          <div class="cc-cluster-actions" style=${{opacity:triageLoading?1:0,display:'flex',gap:'var(--space-1)',transition:'opacity var(--duration-fast) var(--ease-standard)'}}>
+            <button aria-label=${_cc_t('vlist.triageClusterAria','Triage cluster with AI')} title=${_cc_t('vlist.triageClusterTitle','Triage with AI (T) — sends cluster to /api/triage')}
+              disabled=${triageLoading}
+              onClick=${function(e){e.stopPropagation(); window._ccTriageCluster(g.items, d, g.label);}}
+              style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--accent-subtle)',background:'var(--accent-bg)',color:'var(--accent-subtle)',fontWeight:'var(--weight-semibold)',opacity:triageLoading?0.6:1}}>${triageLoading?_cc_t('vlist.triaging','Triaging…'):(triageResult?_cc_t('vlist.reTriage','Re-triage'):_cc_t('vlist.triage','Triage'))}</button>
+            <button aria-label=${_cc_t('vlist.resolveAllGroupAria','Resolve all clashes in this group')} title=${_cc_t('vlist.resolveAllGroupTitle','Resolve all in this group (R)')}
+              onClick=${function(e){e.stopPropagation(); if (openCount===0 || confirm(_cc_t('vlist.resolveAllOpenInGroup','Resolve all {n} open clashes in this group?',{n:openCount}))) window._ccResolveCluster(g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}), d);}}
+              style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)'}}>${_cc_t('vlist.resolveAll','Resolve all')}</button>
+          </div>
+          <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'1px var(--space-2)',borderRadius:'var(--radius-pill)',fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
+        </div>
+        ${(triageResult || triageError) && html`<div style=${{padding:'var(--space-2) var(--space-3)',background:'var(--bg-secondary)',borderBottom:'1px solid var(--border-subtle)'}}>
+          ${triageError
+            ? html`<div style=${{fontSize:'var(--text-xs)',color:'var(--color-danger)'}}>Triage failed: ${triageError}</div>`
+            : html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-2)'}}>
+                <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexWrap:'wrap'}}>
+                  ${triageResult.severity && html`<span class="cc-status-pill" style=${{background:_CC_VL_SEV_COLOR[triageResult.severity]||'var(--text-muted)',color:'#fff'}}>${triageResult.severity}</span>`}
+                  ${triageResult.discipline_conflict && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${triageResult.discipline_conflict}</span>`}
+                  ${triageResult.false_positive_likelihood && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>false-positive: ${triageResult.false_positive_likelihood}</span>`}
+                </div>
+                ${triageResult.title && html`<div style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',lineHeight:'var(--leading-tight)'}}>${triageResult.title}</div>`}
+                ${triageResult.explanation && html`<div style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-base)'}}>${triageResult.explanation}</div>`}
+                ${Array.isArray(triageResult.resolution_options) && triageResult.resolution_options.length>0 && html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
+                  <div style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-bold)',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--text-muted)'}}>${_cc_t('vlist.resolutionOptions','Resolution options')}</div>
+                  ${triageResult.resolution_options.map(function(opt, idx){return html`<div key=${idx} style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-tertiary)',borderRadius:'var(--radius-xs)',borderLeft:'2px solid var(--accent-subtle)'}}>
+                    <div style=${{color:'var(--text-primary)',fontWeight:'var(--weight-medium)'}}>${idx+1}. ${opt.option}</div>
+                    ${opt.tradeoff && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginTop:'2px'}}>Tradeoff: ${opt.tradeoff}${opt.cost_impact?(' · cost: '+opt.cost_impact):''}</div>`}
+                  </div>`;})}
+                </div>`}
+                ${(function(){
+                  // Feedback row: cluster-level 👍/👎 dispatched as A.AI_FEEDBACK
+                  // for every clash in the cluster. Lights up the active choice
+                  // so it doesn't look like clicking did nothing on re-renders.
+                  var fb0 = (g.items[0] && g.items[0].aiFeedback) || null;
+                  var btn = function(label, val, on){return html`<button onClick=${function(e){
+                      e.stopPropagation();
+                      g.items.forEach(function(it){ d({t:A.AI_FEEDBACK, id:it.id, v:val}); });
+                      if (window._ccToast) window._ccToast(_cc_t('toast.thanksFeedbackRecorded','Thanks — feedback recorded'));
+                    }}
+                    title=${val==='real_clash'?_cc_t('vlist.markRealClash','Mark cluster as a real clash'):val==='false_positive'?_cc_t('vlist.markFalsePositive','Mark cluster as a false positive'):_cc_t('vlist.clearFeedback','Clear feedback')}
+                    style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid '+(on?'var(--accent-subtle)':'var(--border)'),background:on?'var(--accent-bg)':'var(--bg-secondary)',color:on?'var(--accent-subtle)':'var(--text-secondary)',fontWeight:on?'var(--weight-semibold)':'var(--weight-regular)'}}>${label}</button>`;};
+                  return html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',paddingTop:'var(--space-1)',borderTop:'1px dashed var(--border-subtle)'}}>
+                    <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginRight:'var(--space-1)'}}>${_cc_t('virtualList.wasThisUseful','Was this useful?')}</span>
+                    ${btn('👍 Real clash', 'real_clash', fb0==='real_clash')}
+                    ${btn('👎 False positive', 'false_positive', fb0==='false_positive')}
+                  </div>`;
+                })()}
+              </div>`}
+        </div>`}
+      </div>`;
+    }
+    // ── Non-cluster grouping (storey/severity/discipline/etc): keep the lean original header ──
+    var dotColor = _CC_VL_STATUS_COLORS[g.label] || 'var(--accent-light)';
+    return html`<div key=${g.label}
+      onClick=${function(){props.onToggle(g.label)}}
+      style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',padding:'var(--space-1) var(--space-2)',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}>
+      <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)'}}>${_ccChevron(isOpen)}</span>
+      <span data-cc-status="1" style=${{width:8,height:8,borderRadius:'50%',background:dotColor,flexShrink:0}}></span>
+      <span style=${{fontSize:'var(--text-xs)',fontWeight:600,color:'var(--text-primary)',flex:1}}>${g.label}</span>
+      <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'2px var(--space-1)',borderRadius:'var(--radius-md)'}}>${g.items.length}</span>
+    </div>`;
+  }
+  ConflictGroupHeader = React.memo(ConflictGroupHeader);
+
+  // Reuse the previous group objects whose label and member objects are the
+  // same; the whole previous array when nothing changed.
+  function _ccStabilizeGroups(prev, next) {
+    if (!prev || !next) return next;
+    var byLabel = {};
+    for (var i = 0; i < prev.length; i++) byLabel[prev[i].label] = prev[i];
+    var same = prev.length === next.length;
+    var out = next.map(function(g, gi) {
+      var p = byLabel[g.label], keep = !!p && p.items.length === g.items.length;
+      for (var k = 0; keep && k < g.items.length; k++) if (p.items[k] !== g.items[k]) keep = false;
+      var r = keep ? p : g;
+      if (r !== prev[gi]) same = false;
+      return r;
+    });
+    return same ? prev : out;
+  }
+  window._ccStabilizeGroups = _ccStabilizeGroups;
+  // Root-cause ('element') grouping, no explicit sort, after a few clashes
+  // were replaced by edited copies (status, assignee, title …): same ids in
+  // the same order and nothing the grouping or the in-group order reads
+  // changed (element keys and types, severity, depth) — swap the new objects
+  // into their groups instead of regrouping everything. null: regroup.
+  function _ccIsElementGrouping(groupBy, sortBy) {
+    var g = Array.isArray(groupBy) ? groupBy.filter(function(x){ return x && x !== 'none'; }) : (groupBy && groupBy !== 'none' ? [groupBy] : []);
+    var so = Array.isArray(sortBy) ? sortBy.filter(function(x){ return x && x !== 'none'; }) : (sortBy && sortBy !== 'none' ? [sortBy] : []);
+    return g.length === 1 && g[0] === 'element' && so.length === 0;
+  }
+  function _ccPatchElementGroups(prevItems, prevGroups, items) {
+    if (!prevItems || !prevGroups || !items || prevItems.length !== items.length) return null;
+    var byId = null, n = 0;
+    for (var i = 0; i < items.length; i++) {
+      var a = prevItems[i], b = items[i];
+      if (a === b) continue;
+      if (!a || !b || a.id !== b.id || a.distance !== b.distance || a.elemAType !== b.elemAType || a.elemBType !== b.elemBType) return null;
+      var ka = _ccElemKeysOf(a), kb = _ccElemKeysOf(b);
+      if (ka[0] !== kb[0] || ka[1] !== kb[1]) return null;
+      if ((a.aiSeverity || _ccDeterministicSeverity(a)) !== (b.aiSeverity || _ccDeterministicSeverity(b))) return null;
+      if (++n > 256) return null;
+      (byId = byId || new Map()).set(b.id, b);
+    }
+    if (!byId) return prevGroups;
+    return prevGroups.map(function(g) {
+      var hit = false;
+      for (var k = 0; k < g.items.length && !hit; k++) if (byId.has(g.items[k].id)) hit = true;
+      if (!hit) return g;
+      return { label: g.label, items: g.items.map(function(it) { return byId.get(it.id) || it; }) };
+    });
+  }
   var _VL_NO_MODELS = []; // shared empty fallback so `props.models||[]` doesn't mint a new array (and bust the groups memo) every render
   function VirtualList(props) {
     var rawItemsProp=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs, models=props.models||_VL_NO_MODELS;
@@ -32265,16 +32705,35 @@ function startApp() {
     var sortBy = props.sortBy || 'none';
     var selectMode=props.selectMode, selected=props.selected||{};
     var trainingMode=props.trainingMode;
+    // rows get the two prefs they use as booleans, not the prefs object, so a
+    // prefs change that doesn't touch them re-renders no row
+    var autoHighlight = !prefs || prefs.autoHighlight !== false, autoFlyTo = !prefs || prefs.autoFlyTo !== false;
+    var uiLocale = (window._ccGetLocale && window._ccGetLocale()) || ''; // memoised headers repaint on a language switch
     var scrollRef = useRef(null);
     var _st = useState(0), scrollTop=_st[0], setScrollTop=_st[1];
     var coll = useState({}), collapsed=coll[0], setCollapsed=coll[1];
+    // stable identity: the memoised group headers take it as a prop
+    var toggleGroup = useCallback(function(label) {
+      setCollapsed(function(prev) {
+        var n = Object.assign({}, prev);
+        n[label] = !n[label];
+        return n;
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setCollapsed is a useState setter (stable identity)
+    }, []);
     var grpLimits = useState({}), groupLimits=grpLimits[0], setGroupLimits=grpLimits[1];
 
     // ── ccUiWindowedConflicts state (hooks always called — Rules of Hooks —
     // only the render branch below is conditional on the flag) ──
     // Grouping is always on now, so big results (more rows than the legacy
     // fully-mounted path handles well) always use the windowed renderer.
-    var windowedOn = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiWindowedConflicts')) || rawItemsProp.length > CC_WINDOWED_AUTO_MIN;
+    // A grouped list (the clash list is always grouped by root-cause
+    // element) is windowed from CC_WINDOWED_GROUPED_MIN items on: fully
+    // mounted, every group with every row was ~10k DOM nodes on a ~2k-clash
+    // review set and every state change re-rendered all of them.
+    var hasGrouping = Array.isArray(groupBy) ? groupBy.some(function(g){ return g && g !== 'none'; }) : (!!groupBy && groupBy !== 'none');
+    var windowedOn = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiWindowedConflicts')) || rawItemsProp.length > CC_WINDOWED_AUTO_MIN
+      || (hasGrouping && rawItemsProp.length > CC_WINDOWED_GROUPED_MIN);
     // ── ccUiEmptyStates: model-loading subscription (same window._ccModelLoading
     // + 'cc-model-loading' event pattern already used elsewhere, e.g. the
     // welcome-card/toolbar loading indicators) ──
@@ -32362,8 +32821,19 @@ function startApp() {
     // change on a real data or grouping change (see the s.clashGroupBy /
     // s.issueGroupBy call site), so this is a safe, real memoization, not
     // just a relocated one.
+    // Group objects whose members are unchanged keep their identity across a
+    // regroup (_ccStabilizeGroups), so a single clash's change re-renders
+    // only its own header/row and the row table below is rebuilt only when
+    // the grouping really changed.
+    var prevGroupsRef = useRef(null), prevGroupInRef = useRef(null);
     var groups = useMemo(function(){
-      return groupAndSort(items, groupBy, sortBy, {models: models});
+      var pin = prevGroupInRef.current, next = null;
+      if (pin && pin.groupBy === groupBy && pin.sortBy === sortBy && _ccIsElementGrouping(groupBy, sortBy))
+        next = _ccPatchElementGroups(pin.items, prevGroupsRef.current, items);
+      if (!next) next = _ccStabilizeGroups(prevGroupsRef.current, groupAndSort(items, groupBy, sortBy, {models: models}));
+      prevGroupsRef.current = next;
+      prevGroupInRef.current = { items: items, groupBy: groupBy, sortBy: sortBy };
+      return next;
     }, [items, groupBy, sortBy, models]);
     var flatItems = useMemo(function(){
       if(!groups) return items;
@@ -32595,12 +33065,16 @@ function startApp() {
       }
       if(!scrollRef.current) return;
       if (windowedOn) {
-        var wRows2 = _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup);
-        var wOff2 = _ccComputeRowOffsets(wRows2, heightCacheRef.current);
+        // the memoised row table of this render (nothing was expanded above)
+        var wRows2 = wRows, wOff2 = wOff;
+        if (!wRows2 || !wOff2) return;
         var idx2 = -1;
         for (var ri2=0; ri2<wRows2.length; ri2++) { if (wRows2[ri2].key === 'i:'+activeId) { idx2 = ri2; break; } }
         if (idx2 >= 0) {
-          var target2 = Math.max(0, wOff2.offsets[idx2] - (scrollRef.current.clientHeight||600)/2);
+          // already fully in view (a click on a visible row): don't move the list
+          var vTop = scrollRef.current.scrollTop, vH = scrollRef.current.clientHeight || 600;
+          if (wOff2.offsets[idx2] >= vTop && wOff2.offsets[idx2 + 1] <= vTop + vH) return;
+          var target2 = Math.max(0, wOff2.offsets[idx2] - vH/2);
           scrollRef.current.scrollTop = target2;
           setWinScrollTop(target2);
         }
@@ -32720,13 +33194,6 @@ function startApp() {
         ${_emptyNudge}
       </div>`;
     }
-    function toggleGroup(label) {
-      setCollapsed(function(prev) {
-        var n = Object.assign({}, prev);
-        n[label] = !n[label];
-        return n;
-      });
-    }
     function showMore(label) {
       setGroupLimits(function(prev) {
         var n = Object.assign({}, prev);
@@ -32734,11 +33201,6 @@ function startApp() {
         return n;
       });
     }
-    // Severity → semantic color token. Maps to --color-danger/warning/info/text-muted.
-    // 'duplicate' is purple (no token exists) — matches the existing inline-statusColors palette below for visual continuity.
-    var SEV_COLOR = {critical:'var(--color-danger)',major:'var(--color-warning)',hard:'var(--color-danger)',soft:'var(--color-warning)',minor:'var(--text-muted)',duplicate:'#8558ec',info:'var(--text-faint)'};
-    var statusColors = {open:'var(--color-danger)',in_progress:'var(--color-warning)',resolved:'var(--color-success)',closed:'var(--text-muted)',hard:'var(--color-danger)',soft:'var(--color-warning)',duplicate:'#8b5cf6'};
-    var modelById = {}; (models||[]).forEach(function(m){modelById[m.id]=m;});
     function isClusterGroup(g) { return !!(isClash && window._ccClusterDisplay && window._ccClusterDisplay[g.label]); }
 
     // Header JSX factored out of the per-group map loop so BOTH the legacy
@@ -32747,153 +33209,15 @@ function startApp() {
     // the header (+ cluster triage panel); items/"show more" are separate
     // rows so the windowed path can mount them independently.
     function renderHeaderRow(g) {
-      // A group of exactly one clash adds noise, not structure — render it
-      // as a plain row with no header at all (matches how Solibri/BIMcollab/
-      // Revizto/Dalux only show a group card once there's actually more
-      // than one thing under it).
       if (g.items.length === 1) return null;
-      var isOpen = !collapsed[g.label];
-      if (isElementGroupMode) {
-        // ── "By element" (root-cause) header ──
-        // Worst severity (word + colour), extent summary ("3 through · 1
-        // partial"), normalised storey, and group actions that go through
-        // BATCH_UPD_CLASH with explicit ids (undoable). The toggle is its
-        // own button so the actions are not nested inside it.
-        var summary = _ccElementGroupSummary(g.items, {storey: storeyLabel, extentLabel: function(k){ return _ccFacetValueLabel('extent', k); }}) || {};
-        var sevCol2 = SEV_COLOR[summary.severity] || 'var(--text-muted)';
-        var openItems2 = g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed'&&it.status!=='denied';});
-        var openCount2 = openItems2.length;
-        var resolved2 = g.items.length - openCount2;
-        var sevPill = _ccSeverityPillStyle(summary.severity);
-        var gIds = g.items.map(function(it){ return it.id; });
-        return html`<div key=${g.label} data-element-group-key=${g.label}
-          style=${{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'var(--space-1) var(--space-2)',padding:'var(--space-2) var(--space-2) var(--space-2) var(--space-1)',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}>
-          <button aria-expanded=${isOpen?'true':'false'} onClick=${function(){toggleGroup(g.label)}}
-            style=${{...S_BTN,flex:'1 1 100%',minWidth:0,display:'flex',alignItems:'flex-start',gap:'var(--space-2)',padding:0,background:'none',textAlign:'left',color:'inherit'}}>
-            <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)',paddingTop:'2px'}}>${_ccChevron(isOpen)}</span>
-            <span style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'2px'}}>
-              <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${summary.title}</span>
-              <span style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
-                <span class="cc-status-pill" data-cc-group-sev=${summary.severity} style=${sevPill}>${_ccFacetValueLabel('severity', summary.severity)}</span>
-                ${summary.extentSummary && html`<span data-cc-group-extent="1" style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>${summary.extentSummary}</span>`}
-                ${summary.subtitle && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>${summary.subtitle}</span>`}
-                ${summary.storey && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${summary.storey}</span>`}
-                <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${openCount2} open${resolved2?(' · '+resolved2+' resolved'):''}</span>
-              </span>
-            </span>
-          </button>
-          <span style=${{flex:1}}></span>
-          ${isClash && openCount2 > 0 && html`<button data-cc-group-accept="1" title=${_cc_t('vlist.acceptAllTip','Accept every open clash in this group (flag for a later check) — undo with Ctrl+Z')}
-            onClick=${function(e){ e.stopPropagation(); d({t:A.BATCH_UPD_CLASH, ids:openItems2.map(function(it){ return it.id; }), u:{status:'accepted_needs_check'}}); }}
-            style=${{...S_BTN_SECONDARY_SM,whiteSpace:'nowrap'}}>${_cc_t('vlist.acceptAll','Accept all')}</button>`}
-          ${isClash && html`<select data-cc-group-status="1" aria-label=${_cc_t('vlist.setGroupStatus','Set status of all {n} clashes in this group',{n:g.items.length})}
-            onClick=${function(e){ e.stopPropagation(); }}
-            onChange=${function(e){ var v = e.target.value; e.target.value = ''; if (v) d({t:A.BATCH_UPD_CLASH, ids:gIds, u:{status:v}}); }}
-            style=${{fontSize:'var(--text-2xs)',padding:'1px var(--space-1)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',maxWidth:88}}>
-            <option value="">${_cc_t('vlist.setStatus','Set status…')}</option>
-            ${['open','in_progress','accepted_needs_check','confirmed','resolved','denied'].map(function(st){ return html`<option key=${st} value=${st}>${(STAT[st] && STAT[st].label) || st}</option>`; })}
-          </select>`}
-          <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)',background:'var(--bg-secondary)',padding:'1px var(--space-2)',borderRadius:'var(--radius-pill)',fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
-        </div>`;
-      }
-      if (isClusterGroup(g)) {
-        // ── Sentry/Linear-style cluster card ──
-        var sev = window._ccClusterSeverity(g.items);
-        var sevCol = SEV_COLOR[sev] || 'var(--text-muted)';
-        var label = window._ccClusterDisplay[g.label];
-        var c0 = g.items[0]||{};
-        var storey = c0.elemAStorey || c0.elemBStorey || '';
-        var mA = modelById[c0.modelAId], mB = modelById[c0.modelBId];
-        // Every group repeating the same "office-architecture ↔ office-mep"
-        // chip is noise when there are only 2 models loaded (it's the same
-        // pair every time) — only worth a chip once there's real ambiguity
-        // about which models are involved (>2 loaded).
-        var modelPair = (models.length > 2 && (mA||mB)) ? ((mA?mA.name:'?') + ' ↔ ' + (mB?mB.name:'?')) : '';
-        var crossModel = mA && mB && mA.id !== mB.id;
-        var openCount = g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}).length;
-        var resolved = g.items.length - openCount;
-        var triage = (triageResults && triageResults[g.label]) || null;
-        var triageLoading = !!(triage && triage.loading);
-        var triageResult = triage && triage.result;
-        var triageError = triage && triage.error;
-        return html`<div key=${g.label} data-cluster-key=${g.label}>
-          <div onClick=${function(){toggleGroup(g.label)}}
-            style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-2) var(--space-2) var(--space-2) var(--space-1)',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}
-            onMouseEnter=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='1';}}
-            onMouseLeave=${function(e){var el=e.currentTarget.querySelector('.cc-cluster-actions'); if(el)el.style.opacity='0';}}>
-            <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)'}}>${_ccChevron(isOpen)}</span>
-            <div style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'2px'}}>
-              <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${label}</span>
-              <div style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
-                ${storey && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${storey}</span>`}
-                ${modelPair && html`<span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${modelPair}</span>`}
-                <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${openCount} open${resolved?(' · '+resolved+' resolved'):''}</span>
-              </div>
-            </div>
-            <div class="cc-cluster-actions" style=${{opacity:triageLoading?1:0,display:'flex',gap:'var(--space-1)',transition:'opacity var(--duration-fast) var(--ease-standard)'}}>
-              <button aria-label=${_cc_t('vlist.triageClusterAria','Triage cluster with AI')} title=${_cc_t('vlist.triageClusterTitle','Triage with AI (T) — sends cluster to /api/triage')}
-                disabled=${triageLoading}
-                onClick=${function(e){e.stopPropagation(); window._ccTriageCluster(g.items, d, g.label);}}
-                style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--accent-subtle)',background:'var(--accent-bg)',color:'var(--accent-subtle)',fontWeight:'var(--weight-semibold)',opacity:triageLoading?0.6:1}}>${triageLoading?_cc_t('vlist.triaging','Triaging…'):(triageResult?_cc_t('vlist.reTriage','Re-triage'):_cc_t('vlist.triage','Triage'))}</button>
-              <button aria-label=${_cc_t('vlist.resolveAllGroupAria','Resolve all clashes in this group')} title=${_cc_t('vlist.resolveAllGroupTitle','Resolve all in this group (R)')}
-                onClick=${function(e){e.stopPropagation(); if (openCount===0 || confirm(_cc_t('vlist.resolveAllOpenInGroup','Resolve all {n} open clashes in this group?',{n:openCount}))) window._ccResolveCluster(g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed';}), d);}}
-                style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)'}}>${_cc_t('vlist.resolveAll','Resolve all')}</button>
-            </div>
-            <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'1px var(--space-2)',borderRadius:'var(--radius-pill)',fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
-          </div>
-          ${(triageResult || triageError) && html`<div style=${{padding:'var(--space-2) var(--space-3)',background:'var(--bg-secondary)',borderBottom:'1px solid var(--border-subtle)'}}>
-            ${triageError
-              ? html`<div style=${{fontSize:'var(--text-xs)',color:'var(--color-danger)'}}>Triage failed: ${triageError}</div>`
-              : html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-2)'}}>
-                  <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexWrap:'wrap'}}>
-                    ${triageResult.severity && html`<span class="cc-status-pill" style=${{background:SEV_COLOR[triageResult.severity]||'var(--text-muted)',color:'#fff'}}>${triageResult.severity}</span>`}
-                    ${triageResult.discipline_conflict && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${triageResult.discipline_conflict}</span>`}
-                    ${triageResult.false_positive_likelihood && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>false-positive: ${triageResult.false_positive_likelihood}</span>`}
-                  </div>
-                  ${triageResult.title && html`<div style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',lineHeight:'var(--leading-tight)'}}>${triageResult.title}</div>`}
-                  ${triageResult.explanation && html`<div style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-base)'}}>${triageResult.explanation}</div>`}
-                  ${Array.isArray(triageResult.resolution_options) && triageResult.resolution_options.length>0 && html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
-                    <div style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-bold)',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--text-muted)'}}>${_cc_t('vlist.resolutionOptions','Resolution options')}</div>
-                    ${triageResult.resolution_options.map(function(opt, idx){return html`<div key=${idx} style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-tertiary)',borderRadius:'var(--radius-xs)',borderLeft:'2px solid var(--accent-subtle)'}}>
-                      <div style=${{color:'var(--text-primary)',fontWeight:'var(--weight-medium)'}}>${idx+1}. ${opt.option}</div>
-                      ${opt.tradeoff && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginTop:'2px'}}>Tradeoff: ${opt.tradeoff}${opt.cost_impact?(' · cost: '+opt.cost_impact):''}</div>`}
-                    </div>`;})}
-                  </div>`}
-                  ${(function(){
-                    // Feedback row: cluster-level 👍/👎 dispatched as A.AI_FEEDBACK
-                    // for every clash in the cluster. Lights up the active choice
-                    // so it doesn't look like clicking did nothing on re-renders.
-                    var fb0 = (g.items[0] && g.items[0].aiFeedback) || null;
-                    var btn = function(label, val, on){return html`<button onClick=${function(e){
-                        e.stopPropagation();
-                        g.items.forEach(function(it){ d({t:A.AI_FEEDBACK, id:it.id, v:val}); });
-                        if (window._ccToast) window._ccToast(_cc_t('toast.thanksFeedbackRecorded','Thanks — feedback recorded'));
-                      }}
-                      title=${val==='real_clash'?_cc_t('vlist.markRealClash','Mark cluster as a real clash'):val==='false_positive'?_cc_t('vlist.markFalsePositive','Mark cluster as a false positive'):_cc_t('vlist.clearFeedback','Clear feedback')}
-                      style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid '+(on?'var(--accent-subtle)':'var(--border)'),background:on?'var(--accent-bg)':'var(--bg-secondary)',color:on?'var(--accent-subtle)':'var(--text-secondary)',fontWeight:on?'var(--weight-semibold)':'var(--weight-regular)'}}>${label}</button>`;};
-                    return html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',paddingTop:'var(--space-1)',borderTop:'1px dashed var(--border-subtle)'}}>
-                      <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginRight:'var(--space-1)'}}>${_cc_t('virtualList.wasThisUseful','Was this useful?')}</span>
-                      ${btn('👍 Real clash', 'real_clash', fb0==='real_clash')}
-                      ${btn('👎 False positive', 'false_positive', fb0==='false_positive')}
-                    </div>`;
-                  })()}
-                </div>`}
-          </div>`}
-        </div>`;
-      }
-      // ── Non-cluster grouping (storey/severity/discipline/etc): keep the lean original header ──
-      var dotColor = statusColors[g.label] || 'var(--accent-light)';
-      return html`<div key=${g.label}
-        onClick=${function(){toggleGroup(g.label)}}
-        style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',padding:'var(--space-1) var(--space-2)',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',position:'sticky',top:0,zIndex:1}}>
-        <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)'}}>${_ccChevron(isOpen)}</span>
-        <span data-cc-status="1" style=${{width:8,height:8,borderRadius:'50%',background:dotColor,flexShrink:0}}></span>
-        <span style=${{fontSize:'var(--text-xs)',fontWeight:600,color:'var(--text-primary)',flex:1}}>${g.label}</span>
-        <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'2px var(--space-1)',borderRadius:'var(--radius-md)'}}>${g.items.length}</span>
-      </div>`;
+      return html`<${ConflictGroupHeader} key=${g.label} g=${g} isOpen=${!collapsed[g.label]}
+        mode=${isElementGroupMode ? 'element' : (isClusterGroup(g) ? 'cluster' : 'plain')}
+        isClash=${isClash} storeyLabel=${storeyLabel} d=${d} onToggle=${toggleGroup} models=${models} locale=${uiLocale}
+        triage=${(triageResults && triageResults[g.label]) || null} />`;
     }
+
     function renderItemRow(it) {
-      return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} prefs=${prefs} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`;
+      return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} autoHighlight=${autoHighlight} autoFlyTo=${autoFlyTo} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`;
     }
     function renderMoreRow(g, limit) {
       return html`<button key=${'more:'+g.label} onClick=${function(e){e.stopPropagation();showMore(g.label);}}
@@ -33174,7 +33498,9 @@ function startApp() {
   }
 
   function IssueRow(props) {
-    var it=props.item, active=props.active, d=props.d, isClash=props.isClash, pr=props.prefs||{}; pr._models=props.models||[];
+    _ccCountRender('rows');
+    var it=props.item, active=props.active, d=props.d, isClash=props.isClash, rowModels=props.models||[];
+    var pr={autoHighlight:props.autoHighlight!==false, autoFlyTo:props.autoFlyTo!==false};
     var selectMode=props.selectMode, isSelected=props.isSelected;
     var trainingMode=props.trainingMode;
     // Occluder-reveal (Wave 2.2) — local to this row, not the reducer:
@@ -33388,7 +33714,7 @@ function startApp() {
           <button onClick=${function(e){e.stopPropagation();d({t:A.ACTIVE,id:null});if(_unghostAll)_unghostAll();if(window._ccRemoveActiveClashMarker)window._ccRemoveActiveClashMarker();}}
             title=${_cc_t('issueRow.collapse','Collapse')} aria-label=${_cc_t('issueRow.collapseDetailsAria','Collapse details')} style=${{...S_BTN,marginLeft:'auto',padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-base)',flexShrink:0}}>▲</button>
         </div>
-        ${html`<${ClashProps} item=${it} models=${pr._models||[]} isClash=${isClash} />`}
+        ${html`<${ClashProps} item=${it} models=${rowModels} isClash=${isClash} />`}
         <div style=${{display:'flex',gap:'var(--space-1)',alignItems:'center',marginTop:'var(--space-1)',marginBottom:'var(--space-1)'}}>
           <span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',flexShrink:0}}>${_cc_t('issueRow.assignLabel','Assign:')}</span>
           <input type="text" value=${it.assignee||''} placeholder=${_cc_t('issueRow.nameOrTeam','Name or team')}
@@ -46782,11 +47108,18 @@ function startApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on clash count: the restore dispatches LOAD_PROJECT_STATE, and depending on s.clashes would loop. d is App's useCallback([]) dispatch (stable identity)
     },[s.clashes.length]);
 
+    // Debounced (2 s after the last data change) and then run at idle, so a
+    // burst of edits is one save and the save never lands inside an
+    // interaction. UI-only state (filters/search, hover, selection, scroll,
+    // expanded groups) is not in the deps: it never triggers a save.
     useEffect(function(){
+      var idle = 0;
+      var ric = window.requestIdleCallback, cic = window.cancelIdleCallback;
       var timer = setTimeout(function(){
-        if(_hasProjectData(s)) _saveCurrentProjectData(s);
+        function run(){ idle = 0; if(_hasProjectData(s)) _saveCurrentProjectData(s); }
+        if (ric) idle = ric(run, {timeout: 3000}); else run();
       }, 2000);
-      return function(){ clearTimeout(timer); };
+      return function(){ clearTimeout(timer); if (idle && cic) cic(idle); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- persist keyed on the data fields that matter; depending on the whole state would save on every hover/selection change
     }, [s.clashes, s.issues, s.viewpoints, s.measurements, s.rules, s.models, s.triage && s.triage.savedViews, s.triage && s.triage.facets]);
     // on pagehide and on visibilitychange→hidden because beforeunload is

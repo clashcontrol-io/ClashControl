@@ -72,4 +72,43 @@ function generateConflicts(n, opts) {
   return { items, models };
 }
 
-module.exports = { generateConflicts, mulberry32 };
+// A synthetic two-model federation result shaped like a real run's review
+// set: `groupCount` MEP runs (model-1) each crossing many distinct structural
+// / architectural elements (model-0), so the clash list's root-cause
+// grouping ('element') yields exactly `groupCount` groups. Every clash is an
+// open hard crossing without sizes, so it stays in the 'review' bucket; each
+// carries a severity like a real run's output.
+const RUN_TYPES = ['IfcDuctSegment', 'IfcPipeSegment', 'IfcCableCarrierSegment'];
+const HOST_TYPES = ['IfcWall', 'IfcBeam', 'IfcSlab', 'IfcColumn'];
+function generateGroupedClashes(n, groupCount, opts) {
+  opts = opts || {};
+  const rand = mulberry32(opts.seed != null ? opts.seed : 7);
+  const models = [
+    { id: 'model-0', name: 'Model 1', discipline: 'structural' },
+    { id: 'model-1', name: 'Model 2', discipline: 'mep' },
+  ];
+  const items = [];
+  for (let i = 0; i < n; i++) {
+    const g = i % groupCount;
+    const storey = STOREYS[g % STOREYS.length];
+    items.push({
+      id: 'gc' + i,
+      type: 'hard',
+      status: 'open',
+      distance: -(5 + Math.round(rand() * 120)) / 1000,
+      elemA: 900000 + g, elemB: 100000 + i,
+      elemAName: 'Run ' + (g + 1), elemBName: 'Host ' + (i + 1),
+      elemAType: RUN_TYPES[g % RUN_TYPES.length],
+      elemBType: HOST_TYPES[Math.floor(rand() * HOST_TYPES.length)],
+      modelAId: 'model-1', modelBId: 'model-0',
+      elemAStorey: storey, elemBStorey: storey,
+      disciplines: ['mep', 'structural'],
+      // detection stamps a severity on every clash (classification core)
+      aiSeverity: ['critical', 'major', 'major', 'minor', 'minor'][Math.floor(rand() * 5)],
+      point: [g * 3 + rand(), 1 + rand(), (i % 40) * 0.5],
+    });
+  }
+  return { items, models };
+}
+
+module.exports = { generateConflicts, generateGroupedClashes, mulberry32 };
