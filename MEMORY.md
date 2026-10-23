@@ -309,6 +309,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- 2026-10-23: triangle-level narrow phase (branch `exact-predicates`): exact predicates / safe pruning / BVH build / refinement — keep only what is measurably faster or more accurate with identical-or-better results on every path.
 - ~~2026-10-23: clash accuracy — mod-2 closed meshes for parity (T-junctions / shared edges count as closed; real holes and slits do not; same definition in `tests/_oracle-exact.js`, exact BigInt), exact merged rows (one hub × partners, `_groupHub`, `_groupedDist`, closest member is the row pair; `tests/clash-merge-rows.test.js`), geo-cache save worker terminates when idle (pressure I15/I8).~~ (2026-10-23)
 - ~~2026-10-23: federation memory (branch `memory`): one CPU copy of batched geometry, detection caches capped by bytes from heap headroom, load-only data released, memory-aware load scheduling (serial under pressure); `tests/browser/memory-federation.mjs`.~~ (2026-10-23)
 - ~~2026-10-23: scene-level pick index (branch `pick-index`) — BVH over world boxes of meshes / instances / batch instances; hover, click, snap, orbit pivot, section pick, right-click, drag-edit go through it with results identical to the full-scene raycast + `firstVisibleHit`; `tests/browser/pick-index.mjs`.~~ (2026-10-23)

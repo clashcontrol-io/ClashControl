@@ -349,8 +349,8 @@ pub fn traverse_min_dist(
     let b_leaf = matches!(nb.kind, BvhKind::Leaf { .. });
 
     if a_leaf && b_leaf {
-        let idx_a = match &na.kind { BvhKind::Leaf { indices } => indices, _ => unreachable!() };
-        let idx_b = match &nb.kind { BvhKind::Leaf { indices } => indices, _ => unreachable!() };
+        let idx_a = match &na.kind { BvhKind::Leaf { indices } => indices.as_slice(), _ => unreachable!() };
+        let idx_b = match &nb.kind { BvhKind::Leaf { indices } => indices.as_slice(), _ => unreachable!() };
         // Mirrors the JS leaf loop: same pairs, order and strict update; the
         // edge-edge sub-tests are skipped only where `ee_lower_sq` proves
         // they cannot beat best, and nothing runs once best reaches 0.
@@ -387,11 +387,11 @@ pub fn traverse_min_dist(
     let count_b = match &nb.kind { BvhKind::Inner { count, .. } => *count, _ => 1 };
 
     if b_leaf || (!a_leaf && count_a >= count_b) {
-        let (la, ra) = match &na.kind { BvhKind::Inner { left, right, .. } => (left, right), _ => unreachable!() };
+        let (la, ra) = match &na.kind { BvhKind::Inner { children, .. } => (&children[0], &children[1]), _ => unreachable!() };
         traverse_min_dist(la, tris_a, nb, tris_b, best, out_a, out_b);
         traverse_min_dist(ra, tris_a, nb, tris_b, best, out_a, out_b);
     } else {
-        let (lb, rb) = match &nb.kind { BvhKind::Inner { left, right, .. } => (left, right), _ => unreachable!() };
+        let (lb, rb) = match &nb.kind { BvhKind::Inner { children, .. } => (&children[0], &children[1]), _ => unreachable!() };
         traverse_min_dist(na, tris_a, lb, tris_b, best, out_a, out_b);
         traverse_min_dist(na, tris_a, rb, tris_b, best, out_a, out_b);
     }

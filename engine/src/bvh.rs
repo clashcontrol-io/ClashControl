@@ -28,13 +28,27 @@ pub struct BvhNode {
     pub kind: BvhKind,
 }
 
+/// A leaf's triangle indices (1..=LEAF_SIZE), stored inline: no heap
+/// allocation per leaf.
+pub struct LeafIdx {
+    idx: [usize; LEAF_SIZE],
+    len: usize,
+}
+
+impl LeafIdx {
+    #[inline(always)]
+    pub fn as_slice(&self) -> &[usize] {
+        &self.idx[..self.len]
+    }
+}
+
 pub enum BvhKind {
     Leaf {
-        indices: Vec<usize>, // triangle indices
+        indices: LeafIdx, // triangle indices
     },
     Inner {
-        left: Box<BvhNode>,
-        right: Box<BvhNode>,
+        /// [left, right] in one allocation.
+        children: Box<[BvhNode; 2]>,
         count: usize,
     },
 }
@@ -53,31 +67,53 @@ impl BvhNode {
                 keys[t * 3 + axis] = tris[t * 9 + axis] as f64 + tris[t * 9 + 3 + axis] as f64 + tris[t * 9 + 6 + axis] as f64;
             }
         }
-        Self::build_recursive(tris, &keys, &mut indices, 0, n)
+        // Per-triangle boxes, with the node loop's own comparisons (`<` / `>`
+        // from +-Inf, vertex order): a node's box is the running min / max
+        // over its triangles' vertices in index order, which is the running
+        // min / max over its triangles' boxes in the same order — the first
+        // value reaching the extreme wins either way (+-0 included), and a
+        // NaN never wins a comparison. Same box bits, 6 reads per triangle
+        // per level instead of 9.
+        let mut tb = vec![0.0f32; n * 6];
+        for t in 0..n {
+            let mut mn = [f32::INFINITY; 3];
+            let mut mx = [f32::NEG_INFINITY; 3];
+            for v in 0..3 {
+                for c in 0..3 {
+                    let val = tris[t * 9 + v * 3 + c];
+                    if val < mn[c] { mn[c] = val; }
+                    if val > mx[c] { mx[c] = val; }
+                }
+            }
+            tb[t * 6..t * 6 + 3].copy_from_slice(&mn);
+            tb[t * 6 + 3..t * 6 + 6].copy_from_slice(&mx);
+        }
+        let has_nan = keys.iter().any(|k| k.is_nan());
+        let mut scratch: Vec<(f64, usize)> = Vec::new();
+        Self::build_recursive(&tb, &keys, has_nan, &mut scratch, &mut indices, 0, n)
     }
 
-    fn build_recursive(tris: &[f32], keys: &[f64], indices: &mut [usize], lo: usize, hi: usize) -> BvhNode {
+    fn build_recursive(tb: &[f32], keys: &[f64], has_nan: bool, scratch: &mut Vec<(f64, usize)>, indices: &mut [usize], lo: usize, hi: usize) -> BvhNode {
         // Compute AABB
         let mut mn = [f32::INFINITY; 3];
         let mut mx = [f32::NEG_INFINITY; 3];
         for &idx in &indices[lo..hi] {
-            let o = idx * 9;
-            for v in 0..3 {
-                for c in 0..3 {
-                    let val = tris[o + v * 3 + c];
-                    if val < mn[c] { mn[c] = val; }
-                    if val > mx[c] { mx[c] = val; }
-                }
+            let b = &tb[idx * 6..idx * 6 + 6];
+            for c in 0..3 {
+                if b[c] < mn[c] { mn[c] = b[c]; }
+                if b[3 + c] > mx[c] { mx[c] = b[3 + c]; }
             }
         }
 
         let count = hi - lo;
         if count <= LEAF_SIZE {
+            let mut idx = [0usize; LEAF_SIZE];
+            idx[..count].copy_from_slice(&indices[lo..hi]);
             return BvhNode {
                 mn,
                 mx,
                 kind: BvhKind::Leaf {
-                    indices: indices[lo..hi].to_vec(),
+                    indices: LeafIdx { idx, len: count },
                 },
             };
         }
@@ -106,18 +142,33 @@ impl BvhNode {
         // Keys are f64 sums (JS adds Float32-derived doubles). Summing in f32
         // rounds each partial sum, turning strictly ordered centroids into
         // ties (or reversing them) — a different partition than the JS BVH.
-        sub.sort_by(|&a, &b| keys[a * 3 + axis].partial_cmp(&keys[b * 3 + axis]).unwrap_or(std::cmp::Ordering::Equal));
+        if has_nan {
+            // NaN keys: the comparator is not a total preorder, so the result
+            // depends on the algorithm — keep exactly the original call.
+            sub.sort_by(|&a, &b| keys[a * 3 + axis].partial_cmp(&keys[b * 3 + axis]).unwrap_or(std::cmp::Ordering::Equal));
+        } else if !sub.windows(2).all(|w| keys[w[0] * 3 + axis] <= keys[w[1] * 3 + axis]) {
+            // No NaN: `partial_cmp` is a total preorder (-0 == +0), so every
+            // STABLE sort gives the one same permutation. Sorting (key, index)
+            // pairs side by side instead of indices through the key table only
+            // saves the indirection. A range already in order (the parent split
+            // on the same axis) is left as is — the identity.
+            scratch.clear();
+            scratch.extend(sub.iter().map(|&i| (keys[i * 3 + axis], i)));
+            scratch.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            for (d, s) in sub.iter_mut().zip(scratch.iter()) {
+                *d = s.1;
+            }
+        }
 
         let mid = (lo + hi) / 2;
-        let left = Self::build_recursive(tris, keys, indices, lo, mid);
-        let right = Self::build_recursive(tris, keys, indices, mid, hi);
+        let left = Self::build_recursive(tb, keys, has_nan, scratch, indices, lo, mid);
+        let right = Self::build_recursive(tb, keys, has_nan, scratch, indices, mid, hi);
 
         BvhNode {
             mn,
             mx,
             kind: BvhKind::Inner {
-                left: Box::new(left),
-                right: Box::new(right),
+                children: Box::new([left, right]),
                 count,
             },
         }
@@ -160,8 +211,8 @@ pub fn traverse_pair(
     let b_leaf = matches!(nb.kind, BvhKind::Leaf { .. });
 
     if a_leaf && b_leaf {
-        let idx_a = match &na.kind { BvhKind::Leaf { indices } => indices, _ => unreachable!() };
-        let idx_b = match &nb.kind { BvhKind::Leaf { indices } => indices, _ => unreachable!() };
+        let idx_a = match &na.kind { BvhKind::Leaf { indices } => indices.as_slice(), _ => unreachable!() };
+        let idx_b = match &nb.kind { BvhKind::Leaf { indices } => indices.as_slice(), _ => unreachable!() };
         for &ia in idx_a {
             if pts.len() >= max_pts {
                 return;
@@ -194,14 +245,14 @@ pub fn traverse_pair(
     if b_leaf || (!a_leaf && count_a >= count_b) {
         // Split the larger node (A) — B is a leaf and can't be split, or A
         // is at least as big as B.
-        let (la, ra) = match &na.kind { BvhKind::Inner { left, right, .. } => (left, right), _ => unreachable!() };
+        let (la, ra) = match &na.kind { BvhKind::Inner { children, .. } => (&children[0], &children[1]), _ => unreachable!() };
         traverse_pair(la, tris_a, nb, tris_b, pts, max_depth, max_pts, early_exit);
         if early_exit && !pts.is_empty() {
             return;
         }
         traverse_pair(ra, tris_a, nb, tris_b, pts, max_depth, max_pts, early_exit);
     } else {
-        let (lb, rb) = match &nb.kind { BvhKind::Inner { left, right, .. } => (left, right), _ => unreachable!() };
+        let (lb, rb) = match &nb.kind { BvhKind::Inner { children, .. } => (&children[0], &children[1]), _ => unreachable!() };
         traverse_pair(na, tris_a, lb, tris_b, pts, max_depth, max_pts, early_exit);
         if early_exit && !pts.is_empty() {
             return;
