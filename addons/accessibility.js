@@ -8,23 +8,62 @@
 // general rule framework, and it does not touch geo / zoning / setbacks.
 //
 // The UI panel lives in index.html and calls window._ccRunAccessibilityChecks.
-// Defaults are NL Bbl / NEN-oriented but overridable per run.
+// The engine has NO built-in numbers: thresholds come from the active country
+// pack (regulations/*.json, engines.accessibility), or from values the user
+// enters when no pack applies, or per call. A check without a threshold does
+// not run (it is never measured against a guessed value).
 (function () {
   'use strict';
   if (typeof window === 'undefined') return;
 
-  // Threshold defaults (metres, or ratio for slope). Overridable via opts.
-  var DEFAULTS = {
-    doorClearWidth:  0.85,   // m  — min clear opening width
-    corridorWidth:   1.20,   // m  — min circulation / escape-route width
-    turningDiameter: 1.50,   // m  — free turning circle (wheelchair)
-    thresholdHeight: 0.02,   // m  — max height difference at a door threshold
-    rampSlope:       1 / 12  // max rise/run (~8.3 %)
+  // Threshold keys (metres, or a rise/run ratio for slope) and the check each
+  // one drives:
+  //   doorClearWidth   min clear opening width        -> door_clear_width
+  //   corridorWidth    min circulation / escape width  -> route_width
+  //   turningDiameter  free turning circle             -> turning_circle
+  //   thresholdHeight  max height step at a door       -> threshold_height
+  //   rampSlope        max rise/run                    -> ramp_slope
+  var THRESHOLD_KEYS = ['doorClearWidth', 'corridorWidth', 'turningDiameter', 'thresholdHeight', 'rampSlope'];
+  var CHECK_THRESHOLD = {
+    door_clear_width: 'doorClearWidth', threshold_height: 'thresholdHeight', ramp_slope: 'rampSlope',
+    route_width: 'corridorWidth', turning_circle: 'turningDiameter'
   };
 
-  // Space-role matchers (EN + NL), matched against name + objectType.
-  var CORRIDOR_RE = /corridor|gang|\bhal\b|circulat|route|vlucht|escape|passage/i;
-  var SANITARY_RE = /toilet|\bwc\b|sanitair|bath|badkamer|douche|mindervalide|accessible|invalide|rolstoel/i;
+  // Space-role words, matched against name + objectType. English generic
+  // defaults; the active country pack's naming.spaceRoles replaces them.
+  var ROLE_DEFAULTS = {
+    corridor: /corridor|hallway|\bhall\b|circulat|route|escape|passage/i,
+    sanitary: /toilet|\bwc\b|bath|shower|restroom|accessible|wheelchair/i
+  };
+  function _roleRe(role) {
+    var pk = (typeof window._ccGetCountryPack === 'function') ? window._ccGetCountryPack() : null;
+    var src = pk && pk.naming && pk.naming.spaceRoles && pk.naming.spaceRoles[role];
+    var core = window._ccCountryPackCore;
+    var re = (src && core) ? core.safeRegex(src, 'i') : null;
+    return re || ROLE_DEFAULTS[role];
+  }
+
+  // Thresholds the user entered for when no country pack applies (per
+  // browser; never overrides an active pack's values).
+  var CUSTOM_KEY = 'cc_a11y_thresholds';
+  function _num0(v) { var n = +v; return (v !== '' && v != null && isFinite(n) && n > 0) ? n : null; }
+  function getCustomThresholds() {
+    var out = {};
+    try {
+      var raw = JSON.parse(localStorage.getItem(CUSTOM_KEY) || '{}') || {};
+      THRESHOLD_KEYS.forEach(function (k) { var n = _num0(raw[k]); if (n != null) out[k] = n; });
+    } catch (e) {}
+    return out;
+  }
+  function setCustomThresholds(th) {
+    var out = {};
+    THRESHOLD_KEYS.forEach(function (k) { var n = _num0(th && th[k]); if (n != null) out[k] = n; });
+    try {
+      if (Object.keys(out).length) localStorage.setItem(CUSTOM_KEY, JSON.stringify(out));
+      else localStorage.removeItem(CUSTOM_KEY);
+    } catch (e) {}
+    return out;
+  }
 
   function _num(x) {
     if (x && x.value != null) x = x.value;
@@ -143,26 +182,30 @@
 
   // ── Public engine ────────────────────────────────────────────────────────
   // Returns { items:[...per-element results], groups:{check:{label,sev,total,fail,ex}}, thresholds }
+  // groups only lists checks that have a threshold.
   function runAccessibilityChecks(elements, opts) {
-    // Precedence: built-in NL Bbl/NEN defaults < active regional preset
-    // (regulations/*.json, follows the model's location) < explicit per-call
-    // override. A region with no registered 'accessibility' preset falls
-    // through to DEFAULTS unchanged.
+    // Precedence: active country pack (regulations/*.json, follows the
+    // model's location or the Settings pick) — or, when no pack carries
+    // accessibility thresholds, the values the user entered — < explicit
+    // per-call override. No built-in numbers.
     var regionPreset = (typeof window._ccGetRegulationPreset === 'function')
       ? window._ccGetRegulationPreset(null, 'accessibility') : null;
-    var TH = Object.assign({}, DEFAULTS, regionPreset || {}, (opts && opts.thresholds) || {});
+    var TH = Object.assign({}, regionPreset || getCustomThresholds(), (opts && opts.thresholds) || {});
+    function has(k) { return typeof TH[k] === 'number' && isFinite(TH[k]); }
+    var CORRIDOR_RE = _roleRe('corridor'), SANITARY_RE = _roleRe('sanitary');
     var items = [];
     (elements || []).forEach(function (el) {
       var p = el.props || {}; var t = p.ifcType || '';
       var res = [];
       if (t === 'IfcDoor' || t === 'IfcDoorStandardCase') {
-        res.push(checkDoorWidth(el, TH)); res.push(checkThreshold(el, TH));
+        if (has('doorClearWidth')) res.push(checkDoorWidth(el, TH));
+        if (has('thresholdHeight')) res.push(checkThreshold(el, TH));
       } else if (t === 'IfcRamp' || t === 'IfcRampFlight') {
-        res.push(checkRampSlope(el, TH));
+        if (has('rampSlope')) res.push(checkRampSlope(el, TH));
       } else if (t === 'IfcSpace') {
         var nm = (p.name || '') + ' ' + (p.objectType || '');
-        if (CORRIDOR_RE.test(nm)) res.push(checkCorridor(el, TH));
-        if (SANITARY_RE.test(nm)) res.push(checkTurning(el, TH));
+        if (has('corridorWidth') && CORRIDOR_RE.test(nm)) res.push(checkCorridor(el, TH));
+        if (has('turningDiameter') && SANITARY_RE.test(nm)) res.push(checkTurning(el, TH));
       }
       for (var i = 0; i < res.length; i++) {
         var r = res[i]; if (!r) continue;
@@ -176,6 +219,7 @@
 
     var groups = {};
     Object.keys(LABELS).forEach(function (k) {
+      if (!has(CHECK_THRESHOLD[k])) return;
       var sub = items.filter(function (it) { return it.check === k; });
       var fails = sub.filter(function (it) { return !it.pass; });
       groups[k] = {
@@ -189,7 +233,9 @@
   }
 
   window._ccRunAccessibilityChecks = runAccessibilityChecks;
-  window._ccAccessibilityDefaults = DEFAULTS;
+  window._ccAccessibilityThresholdKeys = THRESHOLD_KEYS.slice();
+  window._ccGetAccessibilityCustomThresholds = getCustomThresholds;
+  window._ccSetAccessibilityCustomThresholds = setCustomThresholds;
 
   // Clearance helper that reuses the existing min-distance kernel (WASM, JS
   // fallback). Exposed for the panel's future "clearance to nearest obstacle"
@@ -216,7 +262,7 @@
       id: 'accessibility',
       alwaysOn: true,
       name: 'Accessibility checks',
-      description: 'Deterministic building-code geometry checks (door clear width, thresholds, ramp slope, corridor width, turning circles) with NL Bbl/NEN defaults — behind the Accessibility panel.'
+      description: 'Deterministic building-code geometry checks (door clear width, thresholds, ramp slope, corridor width, turning circles) against the active country pack\'s thresholds or your own — behind the Accessibility panel.'
     });
   }
 })();

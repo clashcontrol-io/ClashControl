@@ -29726,8 +29726,8 @@ function startApp() {
             + '<div class="sub" style="margin-bottom:6px">'+esc(x.entry.packName)+(std.note ? ' — '+esc(std.note) : '')+'</div>'
             + '<table><tr><th>Check</th><th>Count</th></tr>'+checkRows(x.res, keys)+'</table>';
         }).join('')
-      + (acc && acc.groups
-        ? '<h2>Accessibility (NL Bbl/NEN)</h2><table><tr><th>Check</th><th>Pass / total</th></tr>'
+      + (acc && acc.groups && Object.keys(acc.groups).length
+        ? '<h2>Accessibility ('+esc(_ccA11yThresholdSource().label)+')</h2><table><tr><th>Check</th><th>Pass / total</th></tr>'
           + Object.keys(acc.groups).map(function(k){ var g=acc.groups[k]; if(!g||!g.total) return ''; return '<tr><td>'+esc(g.label||k)+'</td><td>'+(g.total-(g.fail||0))+' / '+g.total+'</td></tr>'; }).join('')
           + '</table>'
         : '')
@@ -29954,8 +29954,57 @@ function startApp() {
 
   // ── Data Quality Panel (dedicated tab) ─────────────────────────────
 
+  // Where the accessibility thresholds come from: the active country pack, the
+  // user's own values (only when no pack carries thresholds), or nowhere.
+  function _ccA11yThresholdSource() {
+    var pk = typeof window._ccGetCountryPack === 'function' ? window._ccGetCountryPack() : null;
+    var packTh = typeof window._ccGetRegulationPreset === 'function' ? window._ccGetRegulationPreset(null, 'accessibility') : null;
+    if (packTh && pk) return {kind:'pack', label:pk.name + (pk.verified === false ? ' — ' + _cc_t('settings.unverified','unverified') : ''), pack:pk};
+    var cu = typeof window._ccGetAccessibilityCustomThresholds === 'function' ? window._ccGetAccessibilityCustomThresholds() : {};
+    if (Object.keys(cu).length) return {kind:'custom', label:_cc_t('a11y.customThresholds','your own thresholds')};
+    return {kind:'none', label:_cc_t('a11y.noThresholds','no thresholds')};
+  }
+
+  // Thresholds the user enters when no country pack applies (per browser).
+  // Ramp slope is entered as a percentage, stored as a rise/run ratio.
+  function AccessibilityThresholdsEditor(props) {
+    var keys = window._ccAccessibilityThresholdKeys || [];
+    var stV = useState(function(){
+      var cur = typeof window._ccGetAccessibilityCustomThresholds === 'function' ? window._ccGetAccessibilityCustomThresholds() : {};
+      var o = {};
+      keys.forEach(function(k){ o[k] = cur[k] == null ? '' : String(k === 'rampSlope' ? +(cur[k] * 100).toFixed(2) : cur[k]); });
+      return o;
+    }), vals = stV[0], setVals = stV[1];
+    var LBL = {
+      doorClearWidth: _cc_t('a11y.th.doorClearWidth','Door clear width, min (m)'),
+      corridorWidth: _cc_t('a11y.th.corridorWidth','Corridor / escape-route width, min (m)'),
+      turningDiameter: _cc_t('a11y.th.turningDiameter','Turning circle diameter, min (m)'),
+      thresholdHeight: _cc_t('a11y.th.thresholdHeight','Threshold height, max (m)'),
+      rampSlope: _cc_t('a11y.th.rampSlope','Ramp slope, max (%)')
+    };
+    function save() {
+      var th = {};
+      keys.forEach(function(k){ var n = parseFloat(String(vals[k]).replace(',', '.')); if (isFinite(n) && n > 0) th[k] = k === 'rampSlope' ? n / 100 : n; });
+      if (typeof window._ccSetAccessibilityCustomThresholds === 'function') window._ccSetAccessibilityCustomThresholds(th);
+      if (props.onSaved) props.onSaved();
+    }
+    var INP = {width:'5.5rem',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-primary)'};
+    return html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
+      ${keys.map(function(k){ return html`<label key=${k} style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'var(--space-2)',fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>
+        <span>${LBL[k] || k}</span>
+        <input type="number" min="0" step="any" inputmode="decimal" value=${vals[k]} aria-label=${LBL[k] || k}
+          onInput=${function(e){ var v = e.target.value; setVals(function(p){ var n = Object.assign({}, p); n[k] = v; return n; }); }} style=${INP} />
+      </label>`; })}
+      <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${_cc_t('a11y.th.hint','Only checks with a value run. Use the figures of the building code that applies to this project.')}</div>
+      <button onClick=${save} style=${{alignSelf:'flex-start',padding:'var(--space-1) var(--space-3)',borderRadius:'var(--radius-sm)',fontSize:'var(--text-xs)',fontWeight:600,border:'none',cursor:'pointer',background:'var(--accent)',color:'var(--accent-contrast)'}}>${_cc_t('a11y.th.save','Save thresholds')}</button>
+    </div>`;
+  }
+
   function AccessibilityPanel(props) {
     var s = props.s, d = props.d;
+    useCcRegion();
+    var edSt = useState(false), editTh = edSt[0], setEditTh = edSt[1];
+    var thSrc = _ccA11yThresholdSource();
     var resSt = useState(null), result = resSt[0], setResult = resSt[1];
     var runSt = useState(false), isRunning = runSt[0], setRunning = runSt[1];
     var lcSt = useState(null), lastChecked = lcSt[0], setLastChecked = lcSt[1];
@@ -30026,7 +30075,7 @@ function startApp() {
         globalIdA: it.globalId||'', globalIdB:'', elemAStorey: it.storey||'', elemBStorey:'',
         selfClash:false, disciplines:[], point: pt, elevation: pt?Math.round(pt[1]*1000)/1000:null, distance:null,
         title: grpLabel+': '+it.name,
-        description: grpLabel+' — measured '+f.got+', required '+f.req+(it.note?' ('+it.note+')':'')+'. Advisory; verify against Bbl/NEN.',
+        description: grpLabel+' — measured '+f.got+', required '+f.req+(it.note?' ('+it.note+')':'')+'. Advisory; verify against the applicable building code ('+_ccA11yThresholdSource().label+').',
         aiSeverity: (SEV_TYPE[it.check]==='hard')?'major':'minor', aiCategory:'accessibility',
         aiReason:'Accessibility geometric check ('+f.got+' vs '+f.req+')',
         accessCheck: it.check, accessMeasured: it.value, accessRequired: it.required, accessPass:false
@@ -30064,6 +30113,16 @@ function startApp() {
       </div>
 
       ${!hasEngine && html`<div style=${{padding:'var(--space-4)',fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${_cc_t('a11y.engineNotLoaded','Accessibility engine not loaded.')}</div>`}
+
+      ${hasEngine && html`<div style=${{padding:'var(--space-2) var(--space-4)',borderBottom:'1px solid var(--border-subtle)',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',display:'flex',flexDirection:'column',gap:'var(--space-2)',flexShrink:0}}>
+        ${thSrc.kind === 'none'
+          ? html`<div role="note" style=${{padding:'var(--space-2)',borderRadius:'var(--radius-sm)',background:'var(--color-info-bg)',color:'var(--color-info-fg)',lineHeight:1.5}}>${_cc_t('a11y.noThresholdsHelp','No regional code applies to this model, so there are no accessibility thresholds yet. Choose a regional code in Settings, or enter the thresholds of the building code that applies.')}</div>`
+          : html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)'}}>
+              <span style=${{flex:1}}>${_cc_t('a11y.thresholdsFrom','Thresholds: {src}',{src:thSrc.label})}</span>
+              ${thSrc.kind === 'custom' && html`<button onClick=${function(){ setEditTh(!editTh); }} style=${{fontSize:'var(--text-2xs)',color:'var(--accent)',background:'none',border:'none',cursor:'pointer',padding:0}}>${editTh?_cc_t('common.close','Close'):_cc_t('common.edit','Edit')}</button>`}
+            </div>`}
+        ${(thSrc.kind === 'none' || (thSrc.kind === 'custom' && editTh)) && html`<${AccessibilityThresholdsEditor} onSaved=${function(){ setEditTh(false); setResult(null); }} />`}
+      </div>`}
 
       ${result && html`<div style=${{flex:1,overflowY:'auto'}}>
         <div style=${{padding:'var(--space-2) var(--space-4)',display:'flex',alignItems:'center',justifyContent:'space-between',
@@ -30103,12 +30162,12 @@ function startApp() {
         })}
 
         <div style=${{padding:'var(--space-3) var(--space-4)',fontSize:'var(--text-2xs)',color:'var(--text-faint)',lineHeight:1.5}}>
-          ${_cc_t('a11y.disclaimer','Advisory geometric check — deterministic measurement from IFC quantities and bounding geometry. Verify against the applicable Bbl / NEN articles. Corridor and turning use footprint bounds (approximate for non-rectangular spaces).')}
+          ${_cc_t('a11y.disclaimerGeneric','Advisory geometric check — deterministic measurement from IFC quantities and bounding geometry. Verify against the applicable building-code articles. Corridor and turning use footprint bounds (approximate for non-rectangular spaces).')}
         </div>
       </div>`}
 
       ${!result && hasEngine && html`<div style=${{padding:'var(--space-4)',fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:1.6}}>
-        ${_cc_t('a11y.intro','Geometric accessibility checks: door clear width, threshold height, ramp slope, corridor / escape-route width, turning clearance — measured against NL Bbl/NEN thresholds. Failing elements add to the Clashes tab and export to BCF.')}
+        ${_cc_t('a11y.introGeneric','Geometric accessibility checks: door clear width, threshold height, ramp slope, corridor / escape-route width, turning clearance — measured against the thresholds of the regional code (country pack) or your own. Failing elements add to the Clashes tab and export to BCF.')}
       </div>`}
     </div>`;
   }

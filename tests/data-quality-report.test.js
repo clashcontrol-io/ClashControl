@@ -47,6 +47,8 @@ function run(s, windowOverrides) {
     _ccChangelogUser: 'Tester',
     window: fakeWindow,
     _cc_t: _ccT,
+    // Accessibility heading names where the thresholds come from (country pack).
+    _ccA11yThresholdSource: () => ({ kind: 'pack', label: 'Nederland — unverified' }),
     runDataQualityChecks: () => ({ noMaterial: { label: 'No material assigned', sev: 'warn', count: 2 }, _total: 5 }),
     runBIMModelChecks: () => ({ noFireRating: { label: 'Missing FireRating', sev: 'warn', count: 1 }, _total: 5, _dist: {} }),
     // National standards come from country packs (here: two stub standards).
@@ -112,13 +114,13 @@ test('renders every check-engine section: General/BIM, the applicable national s
   assert.ok(html.includes('IfcProject zonder naam'));
   assert.ok(html.includes('Nederland — shown for visibility'), 'pack name + standard note under the heading');
   assert.ok(!html.includes('Other standard') && !html.includes('Not applicable here'), 'standards that do not apply are left out of the report');
-  assert.ok(html.includes('Accessibility (NL Bbl/NEN)'));
+  assert.ok(html.includes('Accessibility (Nederland — unverified)'));
   assert.ok(html.includes('Door clear width'));
 });
 
 test('omits the Accessibility section entirely when that engine is not loaded', () => {
   const html = run({ models: [model('m1', 3)] }, { _ccRunAccessibilityChecks: undefined });
-  assert.ok(!html.includes('Accessibility (NL Bbl/NEN)'));
+  assert.ok(!html.includes('Accessibility (Nederland — unverified)'));
 });
 
 test('a zero-count check renders a checkmark, not "0"', () => {
