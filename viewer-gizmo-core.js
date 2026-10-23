@@ -35,7 +35,7 @@
       if (Object.prototype.hasOwnProperty.call(cache, name)) return cache[name];
       var v = '';
       try { v = String(getValue(name) || '').trim(); } catch (e) { v = ''; }
-      return (cache[name] = v || fallback || '#808080');
+      return (cache[name] = v || fallback || '');
     }
     read.invalidate = function() { cache = {}; };
     return read;
@@ -48,8 +48,9 @@
                stroke: { idle: '--text-muted', hover: '--accent', active: '--accent' } },
     handle:  { fill: { idle: '--text-secondary', hover: '--accent', active: '--accent' }, fillOpacity: 0.95 },
     outline: { fill: { idle: '--accent' }, fillOpacity: 0.04,
-               stroke: { idle: '--border', hover: '--accent', active: '--accent' } },
-    edge:    { stroke: { idle: '--border' } }
+               stroke: { idle: '--text-faint', hover: '--accent', active: '--accent' } },
+    edge:    { stroke: { idle: '--text-faint' } },
+    cut:     { stroke: { idle: '--text-primary' } }
   };
 
   function _each(obj, fn) {
@@ -64,8 +65,9 @@
       var m = o.material;
       if (!m || m.visible === false || !m.color) return;
       var role = o.isLine ? spec.stroke : spec.fill;
-      if (!role) return;
-      m.color.set(read(role[state] || role.idle));
+      var c = role && read(role[state] || role.idle);
+      if (!c) return; // token missing: keep the current colour
+      m.color.set(c);
       if (!o.isLine && spec.fillOpacity != null) m.opacity = spec.fillOpacity;
       m.needsUpdate = true;
     });
@@ -115,9 +117,9 @@
   // Arrow along local +Z from the origin (shaft + cone) with a small ring at
   // its base (local XY plane). Returns {group, move:[pick meshes], ring}.
   function buildArrow(THREE, lengthPx, opts) {
-    var len = lengthPx || 44, tipLen = 10, tipR = 4.5, shaftLen = len - tipLen;
+    var len = lengthPx || 44, tipLen = 11, tipR = 5.5, shaftLen = len - tipLen;
     var group = new THREE.Group();
-    var shaftGeo = new THREE.CylinderGeometry(1, 1, shaftLen, 8, 1, true); shaftGeo.rotateX(Math.PI / 2); shaftGeo.translate(0, 0, shaftLen / 2);
+    var shaftGeo = new THREE.CylinderGeometry(1.5, 1.5, shaftLen, 8, 1, true); shaftGeo.rotateX(Math.PI / 2); shaftGeo.translate(0, 0, shaftLen / 2);
     var tipGeo = new THREE.ConeGeometry(tipR, tipLen, 16); tipGeo.rotateX(Math.PI / 2); tipGeo.translate(0, 0, shaftLen + tipLen / 2);
     var proxyGeo = new THREE.CylinderGeometry(8, 8, len, 8); proxyGeo.rotateX(Math.PI / 2); proxyGeo.translate(0, 0, len / 2);
     var move = _proxy(THREE, proxyGeo);
@@ -129,7 +131,7 @@
     if (!opts || opts.ring !== false) {
       var rr = 11;
       ring = _proxy(THREE, new THREE.TorusGeometry(rr, 5, 6, 32));
-      var ringVis = new THREE.Mesh(new THREE.TorusGeometry(rr, 1, 6, 48), _mat(THREE));
+      var ringVis = new THREE.Mesh(new THREE.TorusGeometry(rr, 1.25, 6, 48), _mat(THREE));
       ringVis.renderOrder = 1000;
       ring.add(ringVis);
       ring.userData.ccGizmo = { style: 'handle' };
@@ -196,7 +198,7 @@
     });
     var ext = [hi[0] - lo[0], hi[1] - lo[1]], big = Math.max(ext[0], ext[1], 1e-6);
     var e = [Math.max(ext[0], 0.01 * big), Math.max(ext[1], 0.01 * big)];
-    var fMax = ((maxScale || 1.3) - 1) / 2;
+    var fMax = ((maxScale || 1.2) - 1) / 2;
     var f = Math.min(fMax, Math.max(0.04, 2 * gap / Math.min(e[0], e[1])));
     var mu = (lo[0] + hi[0]) / 2, mv = (lo[1] + hi[1]) / 2, u = basis.u, v = basis.v;
     return {

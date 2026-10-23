@@ -14046,7 +14046,7 @@ function startApp() {
       var gzc = window._ccViewerGizmo, fr = _ccPlanFrame();
       function a3(v){ return [v.x, v.y, v.z]; }
       var b = gzc.planeBasis(a3(n), a3(fr.axes.x));
-      var out = gzc.planeOutline(gzc.boxCorners({x:a3(fr.axes.x), y:a3(fr.axes.y), z:a3(fr.axes.z)}, fr.min, fr.max), b.n, a3(p), b, 1.3);
+      var out = gzc.planeOutline(gzc.boxCorners({x:a3(fr.axes.x), y:a3(fr.axes.y), z:a3(fr.axes.z)}, fr.min, fr.max), b.n, a3(p), b, 1.2);
       if (!vis) {
         vis = new THREE.Group();
         var sheet = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({transparent:true, side:THREE.DoubleSide, depthWrite:false}));
@@ -19764,6 +19764,7 @@ function startApp() {
 
         // Screen-constant gizmo handles (section plane / box / floor-plan
         // arrow) — viewer-gizmo-core.js; no-op while no gizmo exists.
+        if (S._sboxPlaceArc) S._sboxPlaceArc(S.camera.position);
         if (S.gz) S.gz.update(S.camera, renderer.domElement.clientHeight || 1);
         // Section rotation ring: lies flat (spins about world up) on a vertical
         // plane, stands on a horizontal one.  See docs/INTERNALS.md § 21.35
@@ -20194,7 +20195,7 @@ function startApp() {
         if(S._sboxHelper){_disposeMesh(S._sboxHelper);S._sboxHelper=null;}
         if(S._sboxFaceHandles){S._sboxFaceHandles.forEach(_disposeMesh);S._sboxFaceHandles=null;}
         if(S._sboxRotRing){_disposeMesh(S._sboxRotRing);S._sboxRotRing=null;}
-        S._sboxLayout=null;
+        S._sboxLayout=S._sboxPlaceArc=S._sboxGeom=null;
       }
       if(!s.sectionBox||!s.sectionBox.enabled) {
         if(S._sectionBoxActive) {
@@ -20274,9 +20275,17 @@ function startApp() {
             t.position.copy(c).addScaledVector(ax[i], sg*he[i]);
             t.userData._faceAxis=ax[i].clone().multiplyScalar(sg); // outward
           });
-          S._sboxRotRing.position.copy(c).addScaledVector(ax[0],he[0]).addScaledVector(ax[1],he[1]).addScaledVector(ax[2],-he[2]);
-          S._sboxRotRing.rotation.set(0,r,0);
+          S._sboxGeom={c:c, ax:ax, he:he, r:r};
+          S._sboxPlaceArc(S.camera.position);
           invalidate();
+        };
+        // The arc sits on the top corner nearest the camera, sweeping outward,
+        // so it is never hidden behind the box (re-placed every frame in tick).
+        S._sboxPlaceArc=function(cam){
+          var g=S._sboxGeom; if(!g) return;
+          var d=cam.clone().sub(g.c), sx=d.dot(g.ax[0])>=0?1:-1, sz=d.dot(g.ax[2])>=0?1:-1;
+          S._sboxRotRing.position.copy(g.c).addScaledVector(g.ax[0],sx*g.he[0]).addScaledVector(g.ax[1],g.he[1]).addScaledVector(g.ax[2],sz*g.he[2]);
+          S._sboxRotRing.rotation.set(0, g.r + (sx>0 ? (sz<0 ? 0 : -Math.PI/2) : (sz<0 ? Math.PI/2 : Math.PI)), 0);
         };
       }
       S._sboxLayout(sb);
@@ -38005,11 +38014,13 @@ function startApp() {
       if(!positions.length) return;
       var geo=new THREE.BufferGeometry();
       geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
-      var mat=new THREE.LineBasicMaterial({color:0xf97316,depthTest:false,transparent:true,opacity:0.9});
+      var mat=new THREE.LineBasicMaterial({depthTest:false,transparent:true,opacity:0.9});
       mat.clippingPlanes=[];
       var lines=new THREE.LineSegments(geo,mat);
       lines.renderOrder=998;
+      lines.userData.ccGizmo={style:'cut', fixed:true}; // --text-primary, repainted on theme change
       S.scene.add(lines);
+      if (S.gz) S.gz.track(lines);
       S._sectionCutLines=lines;
       invalidate();
     };

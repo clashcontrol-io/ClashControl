@@ -48,7 +48,7 @@ test('token reader caches until invalidated; create().color reads through it', (
   assert.strictEqual(calls, 1);
   read.invalidate();
   assert.strictEqual(read('--accent'), '#1a6b4a');
-  assert.ok(/^#|^rgb/.test(read('--missing')), 'missing token falls back to a colour');
+  assert.strictEqual(read('--missing'), '', 'missing token reads empty (paint keeps the current colour)');
 });
 
 test('setState paints idle / hover / active from tokens and repaints on theme change', () => {
