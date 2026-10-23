@@ -24,7 +24,7 @@ test('the breadcrumb row renders when available, with a fallback to the plain Fl
 
 test('the Hosted elements card only renders when there are hosted elements, and caps the list', () => {
   assert.ok(/hostedEls\.length>0 && html/.test(section));
-  assert.ok(/Hosted elements \(\$\{hostedEls\.length\}\)/.test(section));
+  assert.ok(/_cc_t\('aiChat\.hostedElements','Hosted elements \(\{n\}\)',\{n:hostedEls\.length\}\)/.test(section));
   assert.ok(/hostedEls\.slice\(0,20\)/.test(section));
   assert.ok(/hostedEls\.length>20/.test(section), 'a "+N more" overflow indicator must exist for large hosted lists');
 });

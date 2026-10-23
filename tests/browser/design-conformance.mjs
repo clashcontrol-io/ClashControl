@@ -19,6 +19,10 @@
 //   radius         border-radius not on the --radius-* scale (or 50 %)
 //   caps           ALL-CAPS text that is not the documented section label
 //                  (--text-xs / bold / .08em) or a .cc-status-pill
+//   status-colour  a status token (--color-success/warning/danger/info,
+//                  --pill-*, --sev-*) on something that is not a status:
+//                  .cc-status-pill, role=status/alert or [data-cc-status]
+//                  (a destructive button may use the danger tokens — S_BTN Danger)
 //   tap-target     a control under 44 × 44 px on the phone viewport
 //   overflow       horizontal scroll on the page or a panel root
 //   diagnostics    "No diagnostics in the main UI": percentages, IFC class
@@ -29,7 +33,7 @@
 //
 // Run: CC_CHROMIUM_EXECUTABLE=... CC_BROWSER_OFFLINE_DEPS=1 node tests/browser/design-conformance.mjs
 //   CC_DESIGN_LOCALE=nl-NL (default) | en-GB — browser language (auto-detected UI language)
-//   CC_DESIGN_ONLY=desktop|mobile — one viewport only
+//   CC_DESIGN_ONLY=desktop|mobile|desktop-light,... — run only these variants (prefix match)
 import { createServer } from 'node:http';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
@@ -164,8 +168,13 @@ function inPageChecker() {
         for (const side of ['Top', 'Right', 'Bottom', 'Left']) {
           if (px(cs['border' + side + 'Width']) > 0 && cs['border' + side + 'Style'] !== 'none' && !allowed.has(cs['border' + side + 'Color'])) { add('colour', el, 'border-' + side.toLowerCase() + ' ' + cs['border' + side + 'Color']); break; }
         }
-        // type scale + leading (elements that render text)
-        if (txt || el.matches('input,textarea,select')) {
+        // status colour only on real status (pill / live region / marked status)
+        const inl = el.getAttribute('style') || '';
+        const destructive = el.matches('button,[role=menuitem]') && /^(?:(?!var\(--color-(success|warning|info)).)*var\(--color-danger/.test(inl) && !/var\(--color-(success|warning|info)/.test(inl);
+        if (/var\(--(color-(success|warning|danger|info)|pill-|sev-|progress-)/.test(inl) && !destructive && !el.closest('.cc-status-pill,[role=status],[role=alert],[data-cc-status]')) add('status-colour', el, (inl.match(/var\(--(color-[a-z-]+|pill-[a-z-]+|sev-[a-z-]+|progress-[a-z-]+)\)/) || [])[0]);
+        // type scale + leading (elements that render text; UA-styled toggles excluded)
+        const uaControl = el.matches('input[type=checkbox],input[type=radio],input[type=color],input[type=range],input[type=file]');
+        if (!uaControl && (txt || el.matches('input,textarea,select'))) {
           const fs = px(cs.fontSize);
           if (!near(fs, TEXT_PX, 0.15)) add('type-scale', el, 'font-size ' + cs.fontSize);
           if (txt && cs.lineHeight !== 'normal' && !near(px(cs.lineHeight) / fs, LEADING, 0.03)) add('leading', el, 'line-height ' + cs.lineHeight + ' (' + (px(cs.lineHeight) / fs).toFixed(2) + ')');
@@ -179,7 +188,7 @@ function inPageChecker() {
           if (mr > 2.01 && !near(mr, SPACE_PX, 0.3)) sp.push('marginRight ' + cs.marginRight);
         }
         for (const k of ['rowGap', 'columnGap']) { if (cs[k] === 'normal') continue; const v = px(cs[k]); if (v > 2.01 && !near(v, SPACE_PX, 0.3)) sp.push(k + ' ' + cs[k]); }
-        if (sp.length) add('spacing', el, sp.join(', '));
+        if (sp.length && !uaControl) add('spacing', el, sp.join(', '));
         // radius
         for (const k of ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomRightRadius', 'borderBottomLeftRadius']) {
           const v = cs[k];
@@ -231,7 +240,7 @@ function inPageChecker() {
         }
         // diagnostics in the default model card / inspector
         if (txt && el.closest('[data-cc-plain]')) {
-          if (/\d\s?%|\bIfc[A-Z][A-Za-z]+|\b\d+(\.\d+)?\s?(MB|KB|GB)\b|\b\d+\.\d+\s?s\b|\b\d+\s?(meshes|elements)\b/.test(txt)) add('diagnostics', el, txt.slice(0, 80));
+          if (/\d\s?%|\bIfc[A-Z][A-Za-z]+|\b\d+(\.\d+)?\s?(MB|KB|GB)\b|\b\d+\.\d+\s?s\b|\b\d+\s?meshes\b/.test(txt) || /\b(stated|inferred|provenance|confidence|evidence)\b/i.test(txt)) add('diagnostics', el, txt.slice(0, 80));
         }
       }
     }
@@ -316,15 +325,21 @@ async function runVariant(variant, viewport, theme, mobile) {
   const page = await newPage(viewport, theme);
   const o = { mobile };
   await load(page);
-  const LEFT = mobile ? ['.cc-side-panel', '.cc-left-panel', '.cc-mobile-nav', '.cc-header'] : ['.cc-left-panel', '.cc-desktop-topbar', '.cc-top-toolbar', '.cc-left-rail'];
+  const LEFT = mobile ? ['.cc-left-panel', '.cc-mobile-nav', '.cc-header'] : ['.cc-left-panel', '.cc-desktop-topbar', '.cc-top-toolbar', '.cc-left-rail'];
+  const MODELS = mobile ? LEFT : LEFT.concat(['.cc-ai-panel']);
+  // top bar / toolbars in each workspace
+  for (const ws of ['present', 'review', 'coordinate']) {
+    await page.evaluate((w) => { window._ccDispatch({ t: 'SET_WORKSPACE', v: w }); window._ccDispatch({ t: 'TAB', v: null }); }, ws);
+    await surface(page, variant, 'workspace-' + ws, mobile ? ['.cc-header', '.cc-mobile-nav'] : ['.cc-desktop-topbar', '.cc-top-toolbar', '.cc-left-rail', '.cc-overlay-top'], o);
+  }
   // models panel: cards (one expanded) + geo placement
   await page.evaluate(() => window._ccDispatch({ t: 'SET_WORKSPACE', v: 'coordinate' }));
-  await page.evaluate(() => window._ccDispatch({ t: 'TAB', v: 'models' }));
-  await surface(page, variant, 'models', LEFT, o);
+  await page.evaluate((m) => { if (!m && window._ccOpenModelsPanel) { window._ccDispatch({ t: 'TAB', v: null }); window._ccOpenModelsPanel(); } else window._ccDispatch({ t: 'TAB', v: 'models' }); }, mobile);
+  await surface(page, variant, 'models', MODELS, o);
   await page.evaluate(() => { const b = document.querySelector('[data-cc-model-card] [data-cc-card-toggle]') || [...document.querySelectorAll('.cc-left-panel button,.cc-side-panel button')].find((x) => x.textContent.trim() === '▼'); if (b) b.click(); });
-  await surface(page, variant, 'model-card-open', LEFT, o);
+  await surface(page, variant, 'model-card-open', MODELS, o);
   await page.evaluate(() => { const g = document.querySelector('[data-cc-geo]') || [...document.querySelectorAll('span')].find((x) => /^(geo placement|geo-plaatsing|locatie)$/i.test(x.textContent.trim())); if (g) g.scrollIntoView(); });
-  await surface(page, variant, 'geo', LEFT, o);
+  await surface(page, variant, 'geo', MODELS, o);
   // a site location that is an authoring-tool default, not the building
   await page.evaluate(() => {
     const m = window._ccLatestState.models[0], sh = JSON.parse(JSON.stringify(m.spatialHierarchy || {}));
@@ -332,7 +347,7 @@ async function runVariant(variant, viewport, theme, mobile) {
     window._ccDispatch({ t: 'UPD_MODEL', id: m.id, u: { spatialHierarchy: sh } });
   });
   await page.evaluate(() => { const g = document.querySelector('[data-cc-geo]') || [...document.querySelectorAll('span')].find((x) => /^(geo placement|geo-plaatsing|locatie)$/i.test(x.textContent.trim())); if (g) g.scrollIntoView(); });
-  await surface(page, variant, 'geo-default-site', LEFT, o);
+  await surface(page, variant, 'geo-default-site', MODELS, o);
   // pre-run panel
   await page.evaluate(() => { window._ccDispatch({ t: 'UPD_PREFS', u: { preRunDontAsk: false } }); window._ccRunDetectionInteractive(); });
   const pre = await page.waitForSelector('[data-cc-prerun]', { timeout: 15_000 }).catch(() => null);
@@ -383,14 +398,9 @@ async function runVariant(variant, viewport, theme, mobile) {
 
 await mkdir(OUT, { recursive: true });
 try {
-  if (ONLY !== 'mobile') {
-    await runVariant('desktop-light', { width: 1440, height: 900 }, 'light', false);
-    await runVariant('desktop-dark', { width: 1440, height: 900 }, 'dark', false);
-  }
-  if (ONLY !== 'desktop') {
-    await runVariant('mobile-light', { width: 390, height: 844 }, 'light', true);
-    await runVariant('mobile-dark', { width: 390, height: 844 }, 'dark', true);
-  }
+  const VARIANTS = [['desktop-light', { width: 1440, height: 900 }, 'light', false], ['desktop-dark', { width: 1440, height: 900 }, 'dark', false],
+    ['mobile-light', { width: 390, height: 844 }, 'light', true], ['mobile-dark', { width: 390, height: 844 }, 'dark', true]];
+  for (const v of VARIANTS) if (!ONLY || ONLY.split(',').some((o) => v[0].indexOf(o) === 0)) await runVariant(...v);
 } catch (e) {
   report.harnessError = String(e && e.stack || e);
   console.error('DESIGN harness: ' + report.harnessError);

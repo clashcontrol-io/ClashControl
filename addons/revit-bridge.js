@@ -804,7 +804,7 @@
         // the Smart Bridge can emit a deterministic projectKey ("revit:<uid>")
         // that matches PDRA/Loam for the same open document.
         if (msg.projectUniqueId) { try { window._ccRevitProjectUniqueId = msg.projectUniqueId; } catch(_e) {} }
-        d({t:'BRIDGE_LOG', logType:'pull', text:_i18n('revitBridge.exportStartedModelSElements','Export started — {v1} model(s), {v2} elements total',{v1:(msg.totalModels||1),v2:(msg.totalElements||'?')})});
+        d({t:'BRIDGE_LOG', logType:'pull', text:_i18n('revitBridge.exportStartedCounts','Export started — models: {v1}, elements: {v2}',{v1:(msg.totalModels||1),v2:(msg.totalElements||'?')})});
         // Single loading-card event for the whole pull (cleared at export-end) —
         // no per-model/per-batch events (those caused the slow-pull regression).
         _revitLoadingEvent(true, 'Receiving model from Revit…');
@@ -865,7 +865,7 @@
       // (if any) and each link group. Swap _revitBuf for each call so
       // the rest of the finalise logic works on the current group.
       var _origBuf = _revitBuf;
-      d({t:'BRIDGE_LOG', logType:'pull', text:_i18n('revitBridge.splittingIncomingBufferIntoLinked','Splitting incoming buffer into {v1}{v2} linked model(s)',{v1:(_hostElements.length > 0 ? '1 host + ' : ''),v2:_groupKeys.length})});
+      d({t:'BRIDGE_LOG', logType:'pull', text:_i18n('revitBridge.splittingIntoLinkedCount','Splitting the incoming data into linked models: {v1}{v2}',{v1:(_hostElements.length > 0 ? '1 host + ' : ''),v2:_groupKeys.length})});
       if (_hostElements.length > 0) {
         _revitBuf = {
           name: _origBuf.name,

@@ -120,7 +120,7 @@ test('0-clash same-discipline toast and banner key models by sub-discipline', ()
 });
 
 test('UI strings for the new surfaces go through _cc_t', () => {
-  for (const key of ['provision.passThrough', 'run.roleGroups', 'roles.title', 'roles.leftOut', 'inspector.disciplineCard', 'modelCard.detected', 'boundary.unplaced', 'matrix.help']) {
+  for (const key of ['provision.passThrough', 'run.roleGroups', 'roles.titlePlain', 'roles.leftOut', 'inspector.disciplineCard', 'modelCard.notice.roomOutlinesAll', 'boundary.unplaced', 'matrix.help']) {
     assert.match(src, new RegExp("_cc_t\\('" + key.replace('.', '\\.') + "'"), key);
   }
 });
