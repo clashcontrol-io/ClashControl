@@ -94,12 +94,11 @@ from a token.
 
 - **Mark:** a flat green square keyed to `--accent` (`#1a6b4a` dark /
   `#4d9e75` light), matching the favicon and PWA icons.
-- The "CC" wordmark sits on the gradient in white, set in `Syne` (`var
+- The "CC" wordmark sits on the mark in white, set in `Syne` (`var
   (--font-display)`) at weight 800 with `letter-spacing: -.02em`.
-- Drop shadow: `0 4px 12px rgba(124,58,237,.3)` for small marks; bump to
-  `0 8px 24px rgba(124,58,237,.35)` for hero/boot/error-screen marks.
-- Used in: favicon, boot screen, header, left rail, error boundary, welcome
-  popup gradient header.
+- Shadow: none on small marks; `--shadow-md` for the boot/error-screen mark.
+  No coloured glows or gradients.
+- Used in: favicon, boot screen, header, left rail, error boundary.
 
 ---
 
