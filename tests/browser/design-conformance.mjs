@@ -325,7 +325,9 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function surface(page, variant, name, selectors, opts) {
   await pause(350);
-  // let hover/press transitions settle (a colour mid-transition is not a token)
+  // let hover/press transitions settle (a colour mid-transition is not a token);
+  // two frames first so a transition the last state change kicked off exists
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   await page.evaluate(() => Promise.race([Promise.all(document.getAnimations().filter((a) => { const t = a.effect && a.effect.getTiming && a.effect.getTiming(); return !(t && t.iterations === Infinity); }).map((a) => a.finished.catch(() => {}))), new Promise((r) => setTimeout(r, 1500))]));
   const v = await page.evaluate(([sel, o]) => window.__ccDesignCheck(sel, o), [selectors, opts || {}]);
   const shot = join(OUT, variant + '-' + name + '.png');
