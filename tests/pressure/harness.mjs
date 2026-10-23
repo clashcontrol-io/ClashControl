@@ -171,8 +171,10 @@ function installHelpers() {
     async ensureNative(bridgeSrc) {
       if (H.native || H.nativeErr) return H.nativeErr;
       try {
-        const urls = orig._ccWasmModuleUrls && orig._ccWasmModuleUrls();
-        if (!urls) throw new Error('no WASM module (page class without WASM)');
+        // The desktop engine does not need the browser's WASM addon: on page
+        // classes without it (no-wasm, addon-404) the mock loads the same
+        // engine package from a harness path the page's 404 routes don't cover.
+        const urls = (orig._ccWasmModuleUrls && orig._ccWasmModuleUrls()) || { js: '/__native/clashcontrol_engine.js', wasm: '/__native/clashcontrol_engine_bg.wasm' };
         const mod = await import(urls.js);
         await mod.default({ module_or_path: urls.wasm });
         const eng = new mod.Engine();
@@ -404,7 +406,8 @@ function installHelpers() {
       d({ t: 'TAB', v: 'clashes' });
       const core = window._ccClashClassificationCore;
       const R = window.ClashControl.review;
-      const caption = () => { const el = document.querySelector('[data-cc-run-caption]'); const m = el && el.textContent.match(/^\s*(\d+)/); return m ? +m[1] : (st().clashes.length ? null : 0); };
+      // the caption is not rendered while the list is empty (bucket bar still is)
+      const caption = () => { const el = document.querySelector('[data-cc-run-caption]'); const m = el && el.textContent.match(/^\s*(\d+)/); return m ? +m[1] : (!st().clashes.length || (!el && document.querySelector('[data-cc-bucket-bar]')) ? 0 : null); };
       const waitFor = async (pred) => { for (let i = 0; i < 80; i++) { await sleep(i ? 60 : 150); if (pred()) return true; } return false; };
       await waitFor(() => caption() != null || !st().clashes.length);
       const sum = R.summary();
@@ -690,7 +693,7 @@ export async function startHarness(opts = {}) {
   const server = createServer(async (req, res) => {
     try {
       const urlPath = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-      if (virtual.has(urlPath)) { res.writeHead(200, { 'Content-Type': 'application/octet-stream' }); return res.end(virtual.get(urlPath)); }
+      if (virtual.has(urlPath)) { res.writeHead(200, { 'Content-Type': MIME[extname(urlPath)] && extname(urlPath) !== '.ifc' ? MIME[extname(urlPath)] : 'application/octet-stream' }); return res.end(virtual.get(urlPath)); }
       const rel = urlPath === '/' ? 'index.html' : urlPath.slice(1);
       const file = normalize(join(ROOT, rel));
       if (!file.startsWith(normalize(ROOT))) { res.writeHead(403); return res.end(); }
@@ -702,6 +705,7 @@ export async function startHarness(opts = {}) {
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
   const bridgeSrc = await readFile(join(ROOT, 'addons', 'tauri-bridge.js'), 'utf8');
+  for (const f of ['clashcontrol_engine.js', 'clashcontrol_engine_bg.wasm']) virtual.set('/__native/' + f, await readFile(join(ROOT, 'addons', 'wasm-engine-pkg', f)));
   const h = new Harness({ server, port, virtual, bridgeSrc, log: opts.log || (() => {}), singleProcess: !!opts.singleProcess });
   await h.launch();
   return h;

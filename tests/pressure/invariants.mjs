@@ -575,7 +575,7 @@ export async function executeCombo(h, combo, env) {
     const e = await h.ensureNative(P);
     if (e) { skip('engine.path=native', 'SKIPPED (absent): native mock unavailable on this page (' + e + ')'); mode = 'auto'; }
   }
-  if (P.cls !== 'default' && mode !== 'js' && mode !== 'auto' && mode !== 'pool-js') notes.push('engine ' + mode + ' on page class ' + P.cls + ' (no WASM): path falls back');
+  if (P.cls !== 'default' && mode !== 'js' && mode !== 'auto' && mode !== 'pool-js' && mode !== 'native') notes.push('engine ' + mode + ' on page class ' + P.cls + ' (no WASM): path falls back');
   await P.ev((m) => window.__ccH.setMode(m), mode);
   const failure = dims.failure;
   const inject = async (on) => P.ev(({ f, on }) => {
