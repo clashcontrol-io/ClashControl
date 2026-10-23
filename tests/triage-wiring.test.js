@@ -17,7 +17,7 @@ test('triage core is loaded next to the classification core and precached', () =
 
 test('rules.hideBuckets is display-only (not in the run signature); showBuckets resets every run', () => {
   assert.match(src, /k === 'hideContacts' \|\| k === 'hideBuckets' \|\| k === 'roleChoicesRemembered'/);
-  assert.match(src, /_st\.filters=Object\.assign\(\{\},_st\.filters\|\|s\.filters,\{showBuckets:\[\]\}\)/);
+  assert.match(src, /_st\.filters=Object\.assign\(\{\},_st\.filters\|\|s\.filters,\{showBuckets:\[\],hideBuckets:\[\]\}\)/);
 });
 
 test('grouping by root-cause element is the default at any size; big lists render windowed', () => {
@@ -90,4 +90,26 @@ test('triage state is per project: reset on switch, autosaved, in the project co
   codec.restoreProject(Object.assign({ models: [] }, out), (a) => acts.push(a), { ADD_MODEL: 'AM', UPD_RULES: 'UR', TRIAGE_STATE: 'TS', UPD_FILTERS: 'UF' });
   assert.deepEqual(acts.find((a) => a.t === 'TS').v.facets, { severity: ['critical'] });
   assert.equal(acts.find((a) => a.t === 'UF').u.search, 'duct');
+});
+
+// A bucket the rules show (legacy "show contacts" = rules.hideContacts:false,
+// or rules.hideBuckets) used to render as a pressed bucket-bar button that
+// did nothing when clicked. filters.hideBuckets hides it for the run.
+test('every bucket-bar button toggles, including buckets the rules show', () => {
+  const vm = require('node:vm');
+  const at = src.indexOf('  var _CC_BUCKET_LEGACY_SHOW = ');
+  const end = src.indexOf('\n  }\n', src.indexOf('function _ccBucketShown(bucket, rules, f) {')) + 4;
+  const core = require('../clash-classification-core.js');
+  const ctx = { window: { _ccClashClassificationCore: core } };
+  vm.runInNewContext(src.slice(at, end) + '\nthis.shown = _ccBucketShown;', ctx);
+  const rules = { hideContacts: false };
+  assert.equal(ctx.shown('contact', rules, {}), true, 'the rules show contacts');
+  assert.equal(ctx.shown('contact', rules, { hideBuckets: ['contact'] }), false, 'hidden for this run');
+  assert.equal(ctx.shown('graze', {}, { showBuckets: ['graze'] }), true);
+  assert.equal(ctx.shown('graze', {}, { showBuckets: ['graze'], hideBuckets: ['graze'] }), false, 'hide wins');
+  assert.equal(ctx.shown('review', rules, { hideBuckets: ['review'] }), true, 'review is always listed');
+  const bar = src.slice(src.indexOf('function BucketBar(props) {'), src.indexOf('var _CC_FACET_TITLES = null;'));
+  assert.match(bar, /if \(shown\) \{ if \(byRules\(b\)\) hide\.push\(b\); \} else show\.push\(b\);/);
+  assert.match(bar, /u:\{showBuckets: others\.slice\(\), hideBuckets: \[\]\}/);
+  assert.match(bar, /\{showBuckets: \[\], hideBuckets: others\.filter\(byRules\)\}/);
 });

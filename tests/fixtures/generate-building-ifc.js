@@ -143,7 +143,7 @@ const TAILS = {
   IFCOPENINGELEMENT: () => '$,.OPENING.', IFCSPACE: (o) => `'${o.longName || 'Room'}',.ELEMENT.,.INTERNAL.,$`,
   IFCDUCTSEGMENT: () => '$,.RIGIDSEGMENT.', IFCPIPESEGMENT: () => '$,.RIGIDSEGMENT.', IFCCABLECARRIERSEGMENT: () => '$,.CABLETRAYSEGMENT.',
   IFCDUCTFITTING: (o) => `$,${o.pre || '.BEND.'}`, IFCPIPEFITTING: (o) => `$,${o.pre || '.BEND.'}`, IFCCABLECARRIERFITTING: () => '$,.BEND.',
-  IFCAIRTERMINAL: () => '$,.DIFFUSER.', IFCFLOWTERMINAL: () => '$',
+  IFCAIRTERMINAL: () => '$,.DIFFUSER.', IFCFLOWTERMINAL: () => '$', IFCBUILDINGELEMENTPROXY: () => '$,.NOTDEFINED.',
 };
 const PSET_NAME = {
   IFCWALL: 'Pset_WallCommon', IFCSLAB: 'Pset_SlabCommon', IFCCOLUMN: 'Pset_ColumnCommon', IFCBEAM: 'Pset_BeamCommon', IFCMEMBER: 'Pset_MemberCommon',
@@ -166,6 +166,11 @@ function generateBuilding(opts) {
   // drops the background building. Defaults leave the output byte-identical.
   const keepCases = Array.isArray(opts.cases) ? new Set(opts.cases) : null;
   const background = opts.background !== false;
+  // Opt-in `roles:true`: a strip of suggestion-group elements (an exact
+  // same-class duplicate across models, an unclassified proxy, a provision
+  // block several services pass through, a fire-compartment volume), each
+  // crossed by services, for the role leave-out tests (rules.roleChoices).
+  const roles = !!opts.roles;
   const lay = mulberry32(seed);
   const ctx = { guids: new Set() };
   let uniqCounter = 0;
@@ -592,6 +597,32 @@ function generateBuilding(opts) {
       a: vb('M', 'IFCFLOWTERMINAL', 'P cabinet x-gap', x + 1.0501, x + 1.5, 0.5, 1.0, 0, 1.2), b: vb('A', 'IFCWALL', 'P wall x-gap', x + 0.8, x + 1, 0, 2, 0, 3) }));
     plant((x) => ({ name: 'parallel rectangular pipes 49.9 mm apart', category: 'clearance', distanceM: 0.0499, toleranceRelation: 'below',
       a: hr('M', 'IFCPIPESEGMENT', 'P pipe parallel A', 'x', x, 1, 1.5, 2, 0.1, 0.1), b: hr('S', 'IFCMEMBER', 'P member parallel', 'x', x, 1 + 0.1 + 0.0499, 1.5, 2, 0.1, 0.1) }));
+  }
+
+  if (planted && roles) {
+    const st = { A: A.storeys[0], S: S.storeys[0], M: M.storeys[0] };
+    const mdl = { A, S, M };
+    const vb = (key, cls, name, x0, x1, y0, y1, z0, z1, o) => [key, vbox(mdl[key], cls, name, st[key], x0, x1, y0, y1, z0, z1, o)];
+    const hr = (key, cls, name, along, x, y, zc, len, w, hh, o) => [key, hrun(mdl[key], cls, name, st[key], along, x, y, zc, len, w, hh, o)];
+    const xr = W + 12 + 4 * 40, out = manifest.roleStrip = []; // past every planted slot, independent of `cases`
+    const rec = (group, e) => out.push({ group, model: mdl[e[0]].file, globalId: e[1].guid, ifcType: e[1].cls, name: e[1].name });
+    // duplicate across models: the same column (class + box) in S and in A
+    const colS = vb('S', 'IFCCOLUMN', 'R column', xr, xr + 0.4, 1, 1.4, 0, 3);
+    const colA = vb('A', 'IFCCOLUMN', 'R column', xr, xr + 0.4, 1, 1.4, 0, 3);
+    rec('duplicate', colS); rec('duplicate', colA);
+    hr('M', 'IFCDUCTSEGMENT', 'R duct through the duplicated column', 'x', xr - 1.1, 1.2, 2.03, 2.5, 0.3, 0.2);
+    // unclassified proxy (no type, classification, system or material)
+    rec('proxy', vb('A', 'IFCBUILDINGELEMENTPROXY', 'R loose block', xr + 3, xr + 3.5, 0.5, 1.0, 0, 1));
+    hr('M', 'IFCPIPESEGMENT', 'R pipe through the loose block', 'x', xr + 2.6, 0.73, 0.52, 1.4, 0.1, 0.1);
+    // provision: a reservation block three services of two trades pass through
+    rec('provision', vb('A', 'IFCBUILDINGELEMENTPROXY', 'R reservation block', xr + 6, xr + 6.6, 0, 1.5, 1.5, 2.5));
+    hr('M', 'IFCDUCTSEGMENT', 'R duct 1 through the reservation', 'x', xr + 5.5, 0.4, 2.01, 1.6, 0.2, 0.2);
+    hr('M', 'IFCDUCTSEGMENT', 'R duct 2 through the reservation', 'x', xr + 5.5, 0.9, 1.97, 1.6, 0.2, 0.2);
+    hr('M', 'IFCPIPESEGMENT', 'R pipe through the reservation', 'x', xr + 5.5, 1.23, 2.05, 1.6, 0.1, 0.1);
+    // zone: a fire-compartment volume enclosing services
+    rec('zone', vb('A', 'IFCBUILDINGELEMENTPROXY', 'R fire compartment', xr + 9, xr + 12, 0, 3, 0, 3));
+    for (let i = 0; i < 10; i++) vb('M', 'IFCFLOWTERMINAL', 'R terminal in compartment ' + i, xr + 9.2 + 0.25 * i, xr + 9.4 + 0.25 * i, 1, 1.2, 0.5, 0.7);
+    hr('M', 'IFCPIPESEGMENT', 'R pipe leaving the compartment', 'x', xr + 11, 2.03, 1.51, 2.2, 0.1, 0.1);
   }
 
   // ── finalize: containment + spaces aggregation ──

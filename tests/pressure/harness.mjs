@@ -171,8 +171,10 @@ function installHelpers() {
     async ensureNative(bridgeSrc) {
       if (H.native || H.nativeErr) return H.nativeErr;
       try {
-        const urls = orig._ccWasmModuleUrls && orig._ccWasmModuleUrls();
-        if (!urls) throw new Error('no WASM module (page class without WASM)');
+        // The desktop engine does not need the browser's WASM addon: on page
+        // classes without it (no-wasm, addon-404) the mock loads the same
+        // engine package from a harness path the page's 404 routes don't cover.
+        const urls = (orig._ccWasmModuleUrls && orig._ccWasmModuleUrls()) || { js: '/__native/clashcontrol_engine.js', wasm: '/__native/clashcontrol_engine_bg.wasm' };
         const mod = await import(urls.js);
         await mod.default({ module_or_path: urls.wasm });
         const eng = new mod.Engine();
@@ -238,7 +240,7 @@ function installHelpers() {
       window.addEventListener('cc-detect-progress', onProg);
       const before = st().clashes.map((c) => c.id + ':' + c.status).join(',');
       let res, err = null;
-      try { res = await window.ClashControl.runDetection(r); } catch (e) { err = String((e && e.stack) || e); }
+      try { res = await window.ClashControl.runDetection(r, opts.clearCachesAfter ? { clearCachesAfter: true } : undefined); } catch (e) { err = String((e && e.stack) || e); }
       H.lastRes = res || [];
       window.removeEventListener('cc-detect-progress', onProg);
       await sleep(0);
@@ -251,6 +253,8 @@ function installHelpers() {
         detecting: !!st().detecting,
         prof: { smart: !!prof.smart_rerun, changed: prof.changed_elements, hard: prof.hard_tests, soft: prof.soft_tests, cand: prof.candidates, reemits: prof.pair_cache_reemits, elements: prof.elements },
         pool: window._ccNarrowPool.last ? JSON.parse(JSON.stringify(window._ccNarrowPool.last)) : null,
+        bvh: H.bvhStats(),
+        excluded: res && res._ccExcluded ? Object.assign({}, res._ccExcluded) : null,
         engineQueries: window._ccWasmEngine && window._ccWasmEngine.stats ? window._ccWasmEngine.stats().queries : null,
       };
     },
@@ -270,8 +274,12 @@ function installHelpers() {
       window.Worker = window.__ccP.Worker;
       window.__ccP.inject.ls = false; window.__ccP.inject.idb = false;
       H.setMode('auto');
+      H.flagTokens = [];
       const S = window._ccSafetyMigrations;
       if (S && S._setFlagsForTest) S._setFlagsForTest(S.readFlags({ search: location.search, storage: null }));
+      const bc = H.bvhCache();
+      if (bc) bc.setMax(null);
+      H.unshard();
       for (const m of st().models.concat(st().parkedModels || [])) d({ t: 'DEL_MODEL', id: m.id });
       for (const i of st().issues.slice()) d({ t: 'DEL_ISSUE', id: i.id });
       for (const v of (st().viewpoints || []).slice()) d({ t: 'DEL_VIEWPOINT', id: v.id });
@@ -298,6 +306,182 @@ function installHelpers() {
       await sleep(50);
       return { models: st().models.length, clashes: st().clashes.length, loading: !!window._ccModelLoading };
     },
+    // ── safety flags: tokens accumulate per combo (reset() clears them) ──
+    flagTokens: [],
+    setFlag(tok) {
+      const S = window._ccSafetyMigrations;
+      if (!S || !S._setFlagsForTest) return false;
+      if (!H.flagTokens.includes(tok)) H.flagTokens.push(tok);
+      const q = new URLSearchParams(location.search);
+      const base = q.get('ccSafety');
+      S._setFlagsForTest(S.readFlags({ search: '?ccSafety=' + encodeURIComponent((base ? base + ',' : '') + H.flagTokens.join(',')), storage: null }));
+      return S.isEnabled(tok.replace(/^-/, '')) === !tok.startsWith('-');
+    },
+    // ── storage=low-bvh-cap / evict: the per-element clash cache (ClashControl.storage.bvhCache) ──
+    bvhCache() { const C = window.ClashControl; return C && C.storage && C.storage.bvhCache && typeof C.storage.bvhCache.setMax === 'function' ? C.storage.bvhCache : null; },
+    bvhStats() { const bc = H.bvhCache(); return bc ? bc.stats() : null; },
+    // ── load.path=sharded: every file parses at once (parallelLoad with a
+    // plan of >= N workers, progressive preview batches on) and the parse
+    // results arrive in REVERSE file order — the in-order commit must not
+    // care which worker finishes first.
+    _shard: null,
+    shard(n) {
+      H.unshard();
+      H.setFlag('parallelLoad'); H.setFlag('progressivePreview');
+      const nav = window.navigator;
+      const W0 = window.Worker;
+      const sh = H._shard = { n, W0, started: 0, alive: 0, peak: 0, order: [], props: [] };
+      try {
+        Object.defineProperty(nav, 'hardwareConcurrency', { value: 16, configurable: true });
+        Object.defineProperty(nav, 'deviceMemory', { value: 8, configurable: true });
+      } catch (_) {}
+      window.Worker = function (url, o) {
+        const w = new W0(url, o);
+        let job = -1, handler = null;
+        const post = w.postMessage.bind(w);
+        w.postMessage = function (m, x) {
+          if (job < 0 && m && m.buffer && 'stream' in m && 'scope' in m) { job = sh.started++; sh.alive++; if (sh.alive > sh.peak) sh.peak = sh.alive; }
+          return post(m, x);
+        };
+        const term = w.terminate.bind(w);
+        w.terminate = function () { if (job >= 0 && !w.__ccDone) { w.__ccDone = true; sh.alive--; } return term(); };
+        Object.defineProperty(w, 'onmessage', {
+          configurable: true,
+          get() { return handler; },
+          set(fn) {
+            handler = fn;
+            const deliver = (e) => {
+              const t = e && e.data && e.data.type;
+              if (job < 0 || (t !== 'result' && t !== 'props' && t !== 'props-error' && t !== 'error')) return fn && fn.call(w, e);
+              const delay = Math.max(0, (sh.n - 1 - job)) * 250;
+              setTimeout(() => { if (t === 'result') sh.order.push(job); if (t === 'props') sh.props.push(job); if (handler) handler.call(w, e); }, delay);
+            };
+            w.addEventListener('message', deliver);
+            if (w.__ccDeliver) w.removeEventListener('message', w.__ccDeliver);
+            w.__ccDeliver = deliver;
+          },
+        });
+        return w;
+      };
+      window.Worker.prototype = W0.prototype;
+    },
+    unshard() {
+      const sh = H._shard;
+      if (!sh) return null;
+      H._shard = null;
+      if (window.Worker !== sh.W0 && window.Worker && window.Worker.prototype === sh.W0.prototype) window.Worker = sh.W0;
+      try { delete window.navigator.hardwareConcurrency; delete window.navigator.deviceMemory; } catch (_) {}
+      return { files: sh.n, jobs: sh.started, peak: sh.peak, resultOrder: sh.order.slice(), propsOrder: sh.props.slice() };
+    },
+    // ── roles.exclusion=leave-out: rules.roleChoices[group] = 'exclude' for
+    // seeded suggestion groups of the loaded federation (pre-run panel /
+    // Detection rules → Suggestion groups) ──
+    roleGroups() {
+      const core = window._ccClashDisciplineCore;
+      if (!core || typeof core.suggestRoles !== 'function') return null;
+      const idx = core.suggestRoles(st().models);
+      const out = {};
+      for (const g of Object.keys(idx.groups)) if (g !== 'space' && idx.groups[g].n > 0) out[g] = idx.groups[g].n;
+      return out;
+    },
+    // The elements the last run left out (the app's own _ccRoleExcluded
+    // test over the run's role index), by GlobalId and per group.
+    excluded(rules) {
+      const gids = [], byGroup = {};
+      const core = window._ccClashDisciplineCore;
+      const idx = core ? core.suggestRoles(st().models) : null;
+      if (typeof window._ccRoleExcluded === 'function') {
+        for (const m of st().models) for (const el of m.elements) {
+          if (!window._ccRoleExcluded(el, rules)) continue;
+          gids.push((el.props && el.props.globalId) || m.id + ':' + el.expressId);
+          const e = idx && idx.byEl.get(el), g = e ? e.group : '?';
+          byGroup[g] = (byGroup[g] || 0) + 1;
+        }
+      }
+      return { gids, byGroup, lastRunExcluded: st().lastRunExcluded || null };
+    },
+    // ── display.filter=bucket: click bucket-bar buttons; the run caption
+    // must list exactly the clashes of the shown buckets ──
+    async bucketCheck(pickA, pickB) {
+      d({ t: 'TAB', v: 'clashes' });
+      const core = window._ccClashClassificationCore;
+      const R = window.ClashControl.review;
+      // the caption is not rendered while the list is empty (bucket bar still is)
+      const caption = () => { const el = document.querySelector('[data-cc-run-caption]'); const m = el && el.textContent.match(/^\s*(\d+)/); return m ? +m[1] : (!st().clashes.length || (!el && document.querySelector('[data-cc-bucket-bar]')) ? 0 : null); };
+      const waitFor = async (pred) => { for (let i = 0; i < 80; i++) { await sleep(i ? 60 : 150); if (pred()) return true; } return false; };
+      await waitFor(() => caption() != null || !st().clashes.length);
+      const sum = R.summary();
+      const vis = {}; (st().models || []).forEach((m) => { if (m.visible !== false) vis[m.id] = true; });
+      const off = (st().clashes || []).filter((c) => (c.modelAId && !vis[c.modelAId]) || (c.modelBId && !vis[c.modelBId])).length;
+      const shownSet = () => {
+        const f = st().filters || {};
+        const hidden = core.hiddenBuckets(st().rules);
+        const leg = { provided: 'showProvided', provision: 'showProvisions', zone: 'showRoleGroups', contact: 'showContacts', handled: 'showHandled' };
+        return Object.keys(sum.buckets).filter((b) => b === 'review' || (!(f.hideBuckets || []).includes(b) && ((f.showBuckets || []).includes(b) || (leg[b] && f[leg[b]]) || !hidden.includes(b))));
+      };
+      const expectNow = () => shownSet().reduce((a, b) => a + (sum.buckets[b] || 0), 0);
+      const steps = [];
+      const check = async (what) => {
+        const want = expectNow();
+        await waitFor(() => { const c = caption(); return c != null && c >= want && c <= want + off; });
+        const got = caption();
+        steps.push({ what, want, got, off, shown: shownSet(), ok: got != null && got >= want && got <= want + off });
+      };
+      await check('initial');
+      const btns = [...document.querySelectorAll('[data-cc-bucket-bar] button[data-cc-bucket]')];
+      const clicked = [];
+      if (btns.length) {
+        for (const k of [pickA % btns.length, pickB % btns.length]) {
+          const b = btns[k];
+          if (clicked.includes(b.getAttribute('data-cc-bucket'))) continue;
+          const before = b.getAttribute('aria-pressed');
+          b.click(); await sleep(60);
+          clicked.push(b.getAttribute('data-cc-bucket'));
+          const now = document.querySelector('[data-cc-bucket-bar] button[data-cc-bucket="' + clicked[clicked.length - 1] + '"]');
+          steps.push({ what: 'toggle ' + clicked[clicked.length - 1], pressedBefore: before, pressedAfter: now && now.getAttribute('aria-pressed'), ok: !!now && now.getAttribute('aria-pressed') !== before });
+          await check('after toggling ' + clicked.join('+'));
+        }
+        const all = document.querySelector('[data-cc-bucket-bar] [data-cc-bucket-all]');
+        if (all) {
+          all.click(); await sleep(60); await check('show all / review only');
+          const all2 = document.querySelector('[data-cc-bucket-bar] [data-cc-bucket-all]');
+          if (all2) { all2.click(); await sleep(60); await check('show all / review only (back)'); }
+        }
+      }
+      d({ t: 'UPD_FILTERS', u: { showBuckets: [], hideBuckets: [] } });
+      return { buckets: sum.buckets, buttons: btns.map((b) => b.getAttribute('data-cc-bucket')), clicked, steps, ok: steps.every((x) => x.ok) };
+    },
+    // ── storage=autosave-gate: what the debounced project autosave left in
+    // IndexedDB must match the session (the gate may skip only unchanged
+    // writes) ──
+    async persisted() {
+      const pid = st().activeProject || 'default';
+      const db = await new Promise((res, rej) => { const r = indexedDB.open('ClashControlFiles'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+      try {
+        if (!db.objectStoreNames.contains('projects')) return null;
+        return await new Promise((res, rej) => { const tx = db.transaction('projects', 'readonly'); const q = tx.objectStore('projects').get(pid); q.onsuccess = () => res(q.result || null); q.onerror = () => rej(q.error); });
+      } finally { db.close(); }
+    },
+    async autosaveCheck(editIdx) {
+      const S = window._ccSafetyMigrations;
+      const gate = !!(S && S.isEnabled('storageAutosaveGate'));
+      const view = (cs) => (cs || []).map((c) => c.id + ':' + c.status + ':' + (c.assignee || '')).sort().join(',');
+      const same = (rec) => !!rec && view(rec.clashes) === view(st().clashes) && JSON.stringify((rec.issues || []).map((i) => i.id).sort()) === JSON.stringify(st().issues.map((i) => i.id).sort()) && rec.rules && rec.rules.maxGap === st().rules.maxGap;
+      const settle = async () => { let rec = null; for (let i = 0; i < 40; i++) { await sleep(i ? 200 : 2300); rec = await H.persisted(); if (same(rec)) return { ok: true, rec }; } return { ok: false, rec }; };
+      const out = { gate, steps: [] };
+      let r = await settle();
+      out.steps.push({ what: 'after the combo', ok: r.ok, persisted: r.rec ? r.rec.clashes && r.rec.clashes.length : null, live: st().clashes.length });
+      // one more review decision: the gate must not skip it
+      const cs = st().clashes;
+      if (cs.length) {
+        const c = cs[editIdx % cs.length];
+        d({ t: 'UPD_CLASH', id: c.id, u: { assignee: 'autosave-' + (editIdx % 5) } });
+        r = await settle();
+        out.steps.push({ what: 'after an assignee edit', ok: r.ok, clash: c.id });
+      }
+      out.ok = out.steps.every((x) => x.ok);
+      return out;
+    },
     // files: [{url, name}] in load order. opts.fallback: force the main-thread
     // loader (Worker constructor throws). opts.abort: 'start'|'first-model'.
     async load(files, opts) {
@@ -309,6 +493,7 @@ function installHelpers() {
       const prevEls = new Map(st().models.filter((m) => want.has(m.name)).map((m) => [m.name, m.elements]));
       const RealW = window.Worker;
       if (opts.fallback) window.Worker = class { constructor() { throw new Error('pressure: forced main-thread loader'); } };
+      if (opts.sharded) H.shard(files.length);
       const t0 = performance.now();
       let aborted = null;
       try {
@@ -323,6 +508,7 @@ function installHelpers() {
           const a = st().models.map((m) => m.name + ':' + (m.elements || []).length).sort().join(',');
           await sleep(1000);
           const b = st().models.map((m) => m.name + ':' + (m.elements || []).length).sort().join(',');
+          if (opts.sharded) H.unshard();
           return { aborted, loading: !!window._ccModelLoading, loadMsg: window._ccModelLoadMsg || '', settledModels: b, grewAfterAbort: a !== b, ms: performance.now() - t0, workers: window.__ccP.liveWorkers() };
         }
         const deadline = performance.now() + (opts.timeoutMs || 240000);
@@ -335,7 +521,8 @@ function installHelpers() {
         }
       } finally { if (opts.fallback) window.Worker = RealW; }
       await sleep(50);
-      return { ms: performance.now() - t0, models: st().models.map((m) => ({ id: m.id, name: m.name, elements: m.elements.length, discipline: m.discipline })) };
+      const shard = opts.sharded ? H.unshard() : null;
+      return { ms: performance.now() - t0, shard, models: st().models.map((m) => ({ id: m.id, name: m.name, elements: m.elements.length, discipline: m.discipline })) };
     },
     async reloadModel(name) {
       const m = st().models.find((x) => x.name === name);
@@ -449,15 +636,16 @@ function installHelpers() {
       d({ t: 'UPD_PREFS', u: { renderStyle: dv.style, showSpaces: dv.showSpaces } });
       if (dv.section === 'plane') d({ t: 'SECTION', axis: 'y', pos: 0.5 });
       else if (dv.section === 'box' && window._ccModelSectionBoxSpec) { const b = window._ccModelSectionBoxSpec(); if (b) d({ t: 'SECTION_BOX', v: b }); }
-      if (dv.occlusion === 'off') {
-        const S = window._ccSafetyMigrations;
-        if (S && S._setFlagsForTest) S._setFlagsForTest(S.readFlags({ search: '?ccSafety=-occlusionCulling', storage: null }));
-      }
+      if (dv.occlusion === 'off') H.setFlag('-occlusionCulling');
       if (dv.locale && dv.locale !== 'en' && window._ccSetLocale) {
         window._ccSetLocale(dv.locale, { persist: false });
         for (let i = 0; i < 100 && window._ccGetLocale() !== dv.locale; i++) await sleep(20);
       }
       if (dv.filter === 'status') d({ t: 'UPD_FILTERS', u: { status: 'open' } });
+      // the bucket bar's choices are per run (reset by every commit); set here
+      // they must not change the run (I7) — the list check happens after the
+      // last run (bucketCheck)
+      if (dv.filter === 'bucket') d({ t: 'UPD_FILTERS', u: { showBuckets: ['contact', 'graze'] } });
       if (window._ccInvalidate) window._ccInvalidate(3);
       await sleep(120);
       return { tab: st().tab, locale: window._ccGetLocale ? window._ccGetLocale() : null };
@@ -505,7 +693,7 @@ export async function startHarness(opts = {}) {
   const server = createServer(async (req, res) => {
     try {
       const urlPath = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-      if (virtual.has(urlPath)) { res.writeHead(200, { 'Content-Type': 'application/octet-stream' }); return res.end(virtual.get(urlPath)); }
+      if (virtual.has(urlPath)) { res.writeHead(200, { 'Content-Type': MIME[extname(urlPath)] && extname(urlPath) !== '.ifc' ? MIME[extname(urlPath)] : 'application/octet-stream' }); return res.end(virtual.get(urlPath)); }
       const rel = urlPath === '/' ? 'index.html' : urlPath.slice(1);
       const file = normalize(join(ROOT, rel));
       if (!file.startsWith(normalize(ROOT))) { res.writeHead(403); return res.end(); }
@@ -517,6 +705,7 @@ export async function startHarness(opts = {}) {
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
   const bridgeSrc = await readFile(join(ROOT, 'addons', 'tauri-bridge.js'), 'utf8');
+  for (const f of ['clashcontrol_engine.js', 'clashcontrol_engine_bg.wasm']) virtual.set('/__native/' + f, await readFile(join(ROOT, 'addons', 'wasm-engine-pkg', f)));
   const h = new Harness({ server, port, virtual, bridgeSrc, log: opts.log || (() => {}), singleProcess: !!opts.singleProcess });
   await h.launch();
   return h;

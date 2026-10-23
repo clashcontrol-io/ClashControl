@@ -112,3 +112,51 @@ test('the STYLE menu no longer renders a full-screen click-swallowing backdrop, 
   assert.match(block, /document\.addEventListener\('pointerdown', onDocPointerDown\)/);
   assert.doesNotMatch(block, /position:'fixed',inset:0,zIndex:'var\(--z-dropdown\)'/);
 });
+
+// A single clash's review decision (UPD_CLASH status/assignee/priority) is on
+// the unified stack like the group action (BATCH_UPD_CLASH with ids) — run
+// the real _ccBuildUndoEntry against a stub dispatch.
+function loadBuildUndoEntry(dispatched) {
+  const vm = require('node:vm');
+  const start = html.indexOf('function _ccBuildUndoEntry(prevState, a) {');
+  const end = html.indexOf('\n\n  // How close the orbit', start);
+  const A = { SECTION: 'SECTION', SECTION_CUSTOM: 'SECTION_CUSTOM', SECTION_BOX: 'SECTION_BOX', BATCH_UPD_CLASH: 'BATCH_UPD_CLASH', UPD_CLASH: 'UPD_CLASH', CLASH_BATCH_RESTORE: 'CLASH_BATCH_RESTORE' };
+  const ctx = { A, window: { _ccDispatch: (a) => dispatched.push(a) } };
+  vm.runInNewContext(html.slice(start, end) + '\nthis._ccBuildUndoEntry = _ccBuildUndoEntry;', ctx);
+  return ctx._ccBuildUndoEntry;
+}
+
+test('a single clash status edit is undoable: undo restores the previous fields via CLASH_BATCH_RESTORE, redo replays the edit', () => {
+  const out = [];
+  const build = loadBuildUndoEntry(out);
+  const prev = { clashes: [{ id: 'c1', status: 'open', assignee: 'x', linkedIssueId: null }, { id: 'c2', status: 'open' }], issues: [{ id: 'i0' }] };
+  const act = { t: 'UPD_CLASH', id: 'c1', u: { status: 'confirmed' } };
+  const e = build(prev, act);
+  assert.ok(e, 'status edit produces an undo entry');
+  e.undo();
+  assert.equal(out[0].t, 'CLASH_BATCH_RESTORE');
+  assert.equal(out[0]._ccReplay, true);
+  assert.deepEqual(Object.keys(out[0].prev), ['c1']);
+  assert.equal(out[0].prev.c1.status, 'open');
+  assert.ok('linkedIssueId' in out[0].prev.c1, 'a confirm-created issue link is undone too');
+  assert.deepEqual(Object.keys(out[0].keepIssueIds), ['i0'], 'issues created by the edit are dropped on undo');
+  e.redo();
+  assert.equal(out[1].t, 'UPD_CLASH');
+  assert.equal(out[1]._ccReplay, true);
+  assert.equal(out[1].u.status, 'confirmed');
+  // replays never re-track, remote merges and bookkeeping fields stay off the stack
+  assert.equal(build(prev, Object.assign({}, act, { _ccReplay: true })), null);
+  assert.equal(build(prev, Object.assign({}, act, { _fromSync: true })), null);
+  assert.equal(build(prev, { t: 'UPD_CLASH', id: 'c1', u: { aiTitle: 't' } }), null);
+  assert.equal(build(prev, { t: 'UPD_CLASH', id: 'missing', u: { status: 'denied' } }), null);
+  // typing an assignee coalesces per clash; a status edit does not
+  assert.equal(build(prev, { t: 'UPD_CLASH', id: 'c1', u: { assignee: 'ab' } }).coalesceKey, 'clash-assignee:c1');
+  assert.ok(!e.coalesceKey);
+});
+
+test('undoing a deny forgets the denied pair so the next run does not drop it again', () => {
+  const i = html.indexOf('case A.CLASH_BATCH_RESTORE:');
+  const block = html.slice(i, i + 700);
+  assert.match(block, /c\.status==='denied' && 'status' in _cbr\[c\.id\] && _cbr\[c\.id\]\.status!=='denied'\) _forgetDeniedClash\(c\)/);
+  assert.match(html, /function _forgetDeniedClash\(clash\) \{[\s\S]{0,300}delete store\[pair\];/);
+});

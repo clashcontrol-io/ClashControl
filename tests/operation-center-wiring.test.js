@@ -39,9 +39,18 @@ test('cancel actions reuse the existing abort hooks, no new cancellation path', 
 
 test('cancelling a load ends the open load batches (a terminated parse never releases its properties hold)', () => {
   const at = html.indexOf('window._ccAbortLoading = function() {');
-  const abort = html.slice(at, at + 600);
+  const abort = html.slice(at, at + 1000);
   assert.match(abort, /_ccOpenLoadBatches\.splice\(0\)\.forEach\(function\(b\) \{ try \{ b\.cancel\(\); \} catch \(_\) \{\} \}\);/);
   assert.match(html, /_ccOpenLoadBatches\.push\(_loadBatch\);/);
+});
+
+test('cancelling a load also drops files handed over but not picked up yet (the Models panel listener mounts with the panel)', () => {
+  const at = html.indexOf('window._ccAbortLoading = function() {');
+  const abort = html.slice(at, at + 1000);
+  assert.match(abort, /window\._ccPendingFiles = null;/);
+  // the hand-over really is deferred until the panel's listener exists
+  assert.match(html, /window\._ccPendingFiles = Array\.prototype\.slice\.call\(files\);/);
+  assert.match(html, /function onPending\(\)\{\n\s+if\(window\._ccPendingFiles\)\{/);
 });
 
 test('load coordinator now emits cc-load-session events (Phase 5 depends on this)', () => {

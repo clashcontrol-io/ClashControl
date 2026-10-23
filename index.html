@@ -1521,7 +1521,8 @@ function startApp() {
     showProvisions:false, // "inside provisions / reservations — show" toggle (hidden while rules.roleChoices.provision is 'classify', the default)
     showRoleGroups:false, // clashes of 'classify' suggestion groups (zones, duplicates …) — show toggle
     showContacts:false, // "surfaces only touch — show" toggle — default OFF (rules.hideContacts)
-    showBuckets:[]      // review buckets shown on top of 'review' (bucket bar "show"); reset at every run
+    showBuckets:[],     // review buckets shown on top of 'review' (bucket bar "show"); reset at every run
+    hideBuckets:[]      // buckets the rules show (e.g. "show contacts") hidden for this run by the bucket bar; reset at every run
   };
   var _ccLoadPref = function(key,fallback){try{var v=localStorage.getItem('cc_'+key);return v!==null?JSON.parse(v):fallback;}catch(e){return fallback;}};
 
@@ -2400,7 +2401,7 @@ function startApp() {
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
-      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[], a.coverageModelIds); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary, lastRunExcluded:a.excluded||null}; var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* The bucket bar's "show" choices are per run, whatever the reset pref says: a new result starts on its review set. */ _st.filters=Object.assign({},_st.filters||s.filters,{showBuckets:[]}); /* Grouped by root-cause element ("one row = one thing to fix", see _ccRootCauseKeyFor) whenever the user has nothing chosen — at any size: big sets render through the windowed list (VirtualList). Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0) { _st.clashGroupBy=['element']; }
+      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[], a.coverageModelIds); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary, lastRunExcluded:a.excluded||null}; var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* The bucket bar's "show" choices are per run, whatever the reset pref says: a new result starts on its review set. */ _st.filters=Object.assign({},_st.filters||s.filters,{showBuckets:[],hideBuckets:[]}); /* Grouped by root-cause element ("one row = one thing to fix", see _ccRootCauseKeyFor) whenever the user has nothing chosen — at any size: big sets render through the windowed list (VirtualList). Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0) { _st.clashGroupBy=['element']; }
         return Object.assign({},s,_st);
       case A.ADD_CLASHES: { /* additive, non-destructive append (does NOT auto-resolve existing clashes like MERGE_CLASHES). Used by the accessibility panel. */
         var _addc=(a.v||[]).filter(Boolean); if(!_addc.length) return s;
@@ -2579,6 +2580,9 @@ function startApp() {
       // the batch confirm created.
       case A.CLASH_BATCH_RESTORE:
         var _cbr=a.prev||{}, _cbrKeep=a.keepIssueIds||null;
+        // An undone deny must not stay in the denied-pair memory, or the
+        // next detection run would drop the pair again.
+        s.clashes.forEach(function(c){ if (_cbr[c.id] && c.status==='denied' && 'status' in _cbr[c.id] && _cbr[c.id].status!=='denied') _forgetDeniedClash(c); });
         return Object.assign({},s,{
           clashes:s.clashes.map(function(c){ return _cbr[c.id] ? Object.assign({},c,_cbr[c.id]) : c; }),
           issues:_cbrKeep ? s.issues.filter(function(i){ return !(i.clashId && _cbr[i.clashId]) || _cbrKeep[i.id]; }) : s.issues
@@ -6554,6 +6558,11 @@ function startApp() {
   var _ccOpenLoadBatches = [];
   window._ccAbortLoading = function() {
     _ccLoadGeneration++; // invalidates main-thread fallback loads at their gen checkpoints
+    // Files handed over (ClashControl.loadFiles / file input / drop) but not
+    // picked up yet: the Models panel's 'cc-pending-files' listener mounts
+    // with the panel, so a Cancel right after the hand-over used to run
+    // before the batch existed, and the batch then started anyway.
+    window._ccPendingFiles = null;
     _ccOpenLoadBatches.splice(0).forEach(function(b) { try { b.cancel(); } catch (_) {} });
     try { _ccLoadPreview.endSession(); } catch (_) {} // display-only previews go with the loads
     _ccActiveLoads.splice(0).forEach(function(l) {
@@ -7746,6 +7755,7 @@ function startApp() {
   function _ccBucketShown(bucket, rules, f) {
     if (bucket === 'review') return true;
     f = f || {};
+    if (Array.isArray(f.hideBuckets) && f.hideBuckets.indexOf(bucket) !== -1) return false;
     if (Array.isArray(f.showBuckets) && f.showBuckets.indexOf(bucket) !== -1) return true;
     var lg = _CC_BUCKET_LEGACY_SHOW[bucket];
     if (lg && f[lg]) return true;
@@ -7862,7 +7872,13 @@ function startApp() {
   // against navigator.deviceMemory, or a 1500 middle ground when neither
   // signal exists.
   var _bvhCacheMaxCached = null;
+  // Explicit cap (ClashControl.storage.bvhCache.setMax) — wins over the
+  // automatic sizing; null = automatic. Results never depend on the cap:
+  // evicted elements just re-extract (tests/pressure storage=low-bvh-cap).
+  var _bvhCacheMaxOverride = null;
+  var _bvhEvictions = 0;
   function _BVH_CACHE_MAX_FN() {
+    if (_bvhCacheMaxOverride != null) return _bvhCacheMaxOverride;
     if (_bvhCacheMaxCached != null) return _bvhCacheMaxCached;
     var v = 300;
     try {
@@ -7883,12 +7899,14 @@ function startApp() {
   function _bvhLRUTouch(el) {
     if (_bvhLRU.delete(el)) _bvhLRU.set(el, true);
   }
+  function _bvhLRUEvict1() {
+    var old = _bvhLRU.keys().next().value;
+    _bvhLRU.delete(old);
+    delete old._wvCache; delete old._triCache; delete old._bvhCache; delete old._topo;
+    _bvhEvictions++;
+  }
   function _bvhLRUEvict() {
-    while (_bvhLRU.size >= _BVH_CACHE_MAX_FN()) {
-      var old = _bvhLRU.keys().next().value;
-      _bvhLRU.delete(old);
-      delete old._wvCache; delete old._triCache; delete old._bvhCache; delete old._topo;
-    }
+    while (_bvhLRU.size && _bvhLRU.size >= _BVH_CACHE_MAX_FN()) _bvhLRUEvict1();
   }
   function _bvhLRURemoveModel(model) {
     if (!model || !model.elements) return;
@@ -11550,6 +11568,15 @@ function startApp() {
       _ccLsSet('cc_denied_clashes', store);
     } catch(e) {}
   }
+  function _forgetDeniedClash(clash) {
+    try {
+      var store = _getDeniedClashStore();
+      var pair = computeClashPair(clash);
+      if (!store[pair]) return;
+      delete store[pair];
+      _ccLsSet('cc_denied_clashes', store);
+    } catch(e) {}
+  }
   function _isDeniedClash(clash) {
     var store = _getDeniedClashStore();
     var pair = computeClashPair(clash);
@@ -13302,9 +13329,10 @@ function startApp() {
 
   // ── Unified undo/redo (bounded, 50 entries) ─────────────────────
   // Covers visibility changes (hide / isolate / show all — wired from
-  // window._ccTempHide/_ccIsolate/_ccTempUnhide/_ccUnisolate) and section
-  // plane/box changes (wired generically from the reducer — see
-  // _ccBuildUndoEntry below, called from reducer()). Measurement add/remove
+  // window._ccTempHide/_ccIsolate/_ccTempUnhide/_ccUnisolate), section
+  // plane/box changes and clash review decisions (one clash's status /
+  // assignee / priority, and group actions) — the latter two wired
+  // generically from the reducer, see _ccBuildUndoEntry below. Measurement add/remove
   // deliberately keeps its own existing window._ccUndoMeasurement toggle
   // (Ctrl+Z tries that first) rather than being folded in here, so this
   // stack and that one never double-track the same dispatch.
@@ -13390,6 +13418,24 @@ function startApp() {
         });
         var keep = {}; (prevState.issues || []).forEach(function(i){ keep[i.id] = true; });
         return {label:'Set status', undo:function(){replay({t:A.CLASH_BATCH_RESTORE, prev:prev, keepIssueIds:keep});}, redo:function(){replay(a);}};
+      }
+      case A.UPD_CLASH: {
+        // A single clash's review decision (status / assignee / priority:
+        // row buttons, C/D/V keys, the detail panel) is undoable exactly
+        // like the group action above. Remote merges (_fromSync) and
+        // bookkeeping updates (titles, links, snapshots …) are not user
+        // edits and stay off the stack. Typing an assignee coalesces.
+        if (!a.u || a._fromSync) return null;
+        var uf = Object.keys(a.u);
+        if (!uf.some(function(f){ return f === 'status' || f === 'assignee' || f === 'priority'; })) return null;
+        var c1 = (prevState.clashes || []).find(function(c){ return c.id === a.id; });
+        if (!c1) return null;
+        var p1 = {}; uf.concat(['linkedIssueId', 'aiSignals']).forEach(function(f){ p1[f] = c1[f]; });
+        var prev1 = {}; prev1[a.id] = p1;
+        var keep1 = {}; (prevState.issues || []).forEach(function(i){ keep1[i.id] = true; });
+        var onlyAssignee = uf.length === 1 && uf[0] === 'assignee';
+        return {label:'Set status', coalesceKey: onlyAssignee ? 'clash-assignee:' + a.id : null,
+          undo:function(){replay({t:A.CLASH_BATCH_RESTORE, prev:prev1, keepIssueIds:keep1});}, redo:function(){replay(a);}};
       }
     }
     return null;
@@ -16128,7 +16174,19 @@ function startApp() {
         storage: {
           report:        function(){ return window._ccStorageReport ? window._ccStorageReport() : Promise.resolve(null); },
           clearGeoCache: function(){ return window._ccClearGeoCache ? window._ccClearGeoCache() : Promise.resolve(); },
-          enforceBudget: function(){ return window._ccStorageEnforceBudget ? window._ccStorageEnforceBudget() : Promise.resolve(null); }
+          enforceBudget: function(){ return window._ccStorageEnforceBudget ? window._ccStorageEnforceBudget() : Promise.resolve(null); },
+          // Per-element clash caches (world verts / triangles / BVH, LRU):
+          // size, cap, evictions so far; setMax(n) caps it explicitly
+          // (null = automatic sizing) and trims at once. Results never
+          // depend on it — evicted elements re-extract when touched.
+          bvhCache: {
+            stats: function(){ return { size: _bvhLRU.size, max: _BVH_CACHE_MAX_FN(), override: _bvhCacheMaxOverride, evictions: _bvhEvictions }; },
+            setMax: function(n){
+              _bvhCacheMaxOverride = (n == null) ? null : Math.max(1, Math.floor(+n) || 1);
+              if (_bvhCacheMaxOverride != null) { while (_bvhLRU.size > _bvhCacheMaxOverride) _bvhLRUEvict1(); }
+              return _BVH_CACHE_MAX_FN();
+            }
+          }
         },
         clashReport:      function(){ if (window._ccClashReport && window._ccLatestState) return window._ccClashReport(window._ccLatestState); },
         // Clash review: bucket counts (they add up to the visible raw total),
@@ -27713,10 +27771,16 @@ function startApp() {
     var core = window._ccClashClassificationCore;
     var order = (core && core.REVIEW_BUCKETS) || ['review'];
     var others = order.filter(function(b){ return b !== 'review' && counts[b] > 0; });
+    // A bucket the rules show (rules.hideContacts:false, rules.hideBuckets …)
+    // is hidden for this run through filters.hideBuckets — every button
+    // really toggles (it used to stay pressed and do nothing).
+    var byRules = function(b){ return _ccBucketShown(b, rules, null); };
     function toggle(b) {
       var shown = _ccBucketShown(b, rules, f);
-      var list = (f.showBuckets || []).filter(function(x){ return x !== b; });
-      var u = {showBuckets: shown ? list : list.concat([b])};
+      var show = (f.showBuckets || []).filter(function(x){ return x !== b; });
+      var hide = (f.hideBuckets || []).filter(function(x){ return x !== b; });
+      if (shown) { if (byRules(b)) hide.push(b); } else show.push(b);
+      var u = {showBuckets: show, hideBuckets: hide};
       if (shown && _CC_BUCKET_LEGACY_SHOW[b]) u[_CC_BUCKET_LEGACY_SHOW[b]] = false;
       d({t:A.UPD_FILTERS, u:u});
     }
@@ -27733,8 +27797,8 @@ function startApp() {
         </button>`;
       })}
       ${others.length > 1 && html`<button data-cc-bucket-all="1" onClick=${function(){
-          if (hiddenNow.length) d({t:A.UPD_FILTERS, u:{showBuckets: others.slice()}});
-          else { var u = {showBuckets: []}; others.forEach(function(b){ if (_CC_BUCKET_LEGACY_SHOW[b]) u[_CC_BUCKET_LEGACY_SHOW[b]] = false; }); d({t:A.UPD_FILTERS, u:u}); }
+          if (hiddenNow.length) d({t:A.UPD_FILTERS, u:{showBuckets: others.slice(), hideBuckets: []}});
+          else { var u = {showBuckets: [], hideBuckets: others.filter(byRules)}; others.forEach(function(b){ if (_CC_BUCKET_LEGACY_SHOW[b]) u[_CC_BUCKET_LEGACY_SHOW[b]] = false; }); d({t:A.UPD_FILTERS, u:u}); }
         }}
         style=${{...S_BTN,marginLeft:'auto',padding:'0 var(--space-1)',fontSize:'var(--text-xs)',background:'none',color:'var(--text-secondary)',textDecoration:'underline',textUnderlineOffset:2}}>
         ${hiddenNow.length ? _cc_t('bucket.showAll','show all') : _cc_t('bucket.reviewOnly','review only')}
@@ -28225,7 +28289,7 @@ function startApp() {
           </div>`
         : html`<div data-cc-overview-empty="review" role="listitem" style=${{gridColumn:'1 / -1',display:'flex',flexDirection:'column',alignItems:'center',gap:'var(--space-3)',padding:'var(--space-8) var(--space-4)',textAlign:'center'}}>
             <span style=${{fontSize:'var(--text-md)',color:'var(--text-primary)'}}>${_cc_t('overview.emptyReview','Nothing to review — {n} findings are filed in other buckets',{n:nOther})}</span>
-            ${nOther > 0 && html`<button class="cc-tap" onClick=${function(){ d({t:A.UPD_FILTERS, u:{showBuckets: otherBuckets.slice()}}); close(); setTimeout(function(){ var bb = document.querySelector('[data-cc-bucket-bar]'); if (bb && bb.focus) { bb.setAttribute('tabindex', '-1'); bb.focus(); } }, 50); }} style=${EMPTY_BTN}>${_cc_t('bucket.showAll','show all')}</button>`}
+            ${nOther > 0 && html`<button class="cc-tap" onClick=${function(){ d({t:A.UPD_FILTERS, u:{showBuckets: otherBuckets.slice(), hideBuckets: []}}); close(); setTimeout(function(){ var bb = document.querySelector('[data-cc-bucket-bar]'); if (bb && bb.focus) { bb.setAttribute('tabindex', '-1'); bb.focus(); } }, 50); }} style=${EMPTY_BTN}>${_cc_t('bucket.showAll','show all')}</button>`}
           </div>`;
     }
     return html`<section ref=${secRef} class="cc-overview" data-cc-overview="1" aria-labelledby="cc-overview-title" onKeyDown=${onKey}
@@ -28358,7 +28422,7 @@ function startApp() {
       });
       return base.concat(idsItems);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- s.models feeds _ccTriageModel (memoised on clashes/rules/models identity)
-    }, [isClashTab, s.clashes, s.issues, s.models, s.idsValidation, f.status, f.showHandled, f.showProvided, f.showProvisions, f.showRoleGroups, f.showContacts, f.showBuckets, s.rules]);
+    }, [isClashTab, s.clashes, s.issues, s.models, s.idsValidation, f.status, f.showHandled, f.showProvided, f.showProvisions, f.showRoleGroups, f.showContacts, f.showBuckets, f.hideBuckets, s.rules]);
 
 
     var visibleModelIds = useMemo(function(){

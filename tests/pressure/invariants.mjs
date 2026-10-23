@@ -7,13 +7,15 @@
 //                            profile says smart when nothing invalidated it, with
 //                            exactly the edited elements recomputed)
 //   I3  load order/subset  — order, duplicate loads, reloads, the main-thread
-//                            loader and loading a subset don't change the
+//                            loader, the sharded load (every file at once,
+//                            results in reverse order) and loading a subset don't change the
 //                            (element-pair, type, opening) set vs the canonical
 //                            federation restricted to that subset
 //   I5  accuracy           — planted manifest outcomes per ruleset, and a seeded
 //                            exact-oracle sample (≤150 pairs) at P = R = 1
-//   I6  buckets            — the clash list's headline + "N pass through provided
-//                            openings" + "N only touch" + denied == raw clashes
+//   I6  buckets            — review buckets add up to the raw clashes; the bucket
+//                            bar (display.filter=bucket) lists exactly the shown
+//                            buckets
 //   I7  display no-op      — tab/style/section/spaces/occlusion/locale/filter
 //                            don't change the signature and keep smart re-runs smart
 //   I8  cancel             — a cancelled run commits nothing, stops its workers,
@@ -26,7 +28,15 @@
 //   I11 project round-trip — save -> fresh page -> restore -> re-load files -> run:
 //                            statuses, ids, issues intact
 //   I12 BCF round-trip     — export (shown / all) -> import: topic count, GUIDs,
-//                            components, Z-up camera
+//                            components, Z-up camera; undo/redo of section,
+//                            box, hide and a clash status edit (deny -> undo
+//                            must not come back at the next run)
+//   I13 role leave-out     — rules.roleChoices 'exclude': no clash involves a
+//                            left-out element, the run reports exactly those
+//                            per group (result._ccExcluded, lastRunExcluded)
+//   I14 storage knobs      — a tiny BVH cache cap really evicts, clearCachesAfter
+//                            empties the cache (results: I1/I2/I9), the gated
+//                            autosave leaves IndexedDB equal to the session
 //   I15 health             — no page errors; workers back to 0; WebGL contexts and
 //                            window/document listeners constant (checked in run.mjs)
 //   I16 determinism        — the same run twice gives the same list; the combo's
@@ -53,7 +63,9 @@ export class Fixtures {
   }
   async get(dims, extra = {}) {
     if (this.externalFiles) return this._external();
-    const spec = { seed: dims['fixture.seed'], scale: dims['fixture.scale'], georef: dims['fixture.georef'] };
+    // roles: the suggestion-group strip (duplicate / proxy / provision / zone),
+    // so role leave-out, classify-only buckets and the bucket bar have members
+    const spec = { seed: dims['fixture.seed'], scale: dims['fixture.scale'], georef: dims['fixture.georef'], roles: true };
     if (extra.cases) spec.cases = extra.cases;
     if (extra.background === false) spec.background = false;
     if (extra.scale) spec.scale = extra.scale;
@@ -178,13 +190,15 @@ function installChecks(oracleSrc) {
       return by;
     },
     // I5a: planted manifest cases (analytic intent) against the last run.
-    planted(cases, rules) {
+    planted(cases, rules, excluded) {
       const els = C.elementsByGid(), app = C.appByPair(), out = [];
+      const ex = new Set(excluded || []);
       for (const c of cases) {
         const A = els.get(c.a.globalId), B = els.get(c.b.globalId);
         if (!A || !B) { out.push({ id: c.id, skipped: 'model not loaded' }); continue; }
         let exp;
-        if (window._ccMatrixSkipsSameDiscipline && window._ccMatrixSkipsSameDiscipline(A.el, A.m, B.el, B.m, false, rules)) exp = 'none';
+        if (ex.has(c.a.globalId) || ex.has(c.b.globalId)) exp = 'none'; // left out (rules.roleChoices)
+        else if (window._ccMatrixSkipsSameDiscipline && window._ccMatrixSkipsSameDiscipline(A.el, A.m, B.el, B.m, false, rules)) exp = 'none';
         else {
           const cat = c.category === 'separate' ? 'clearance' : c.category;
           const dM = c.category === 'clearance' || c.category === 'separate' ? (c.toleranceRelation === 'at' ? (rules.maxGap === 50 ? null : c.distanceM) : c.distanceM) : null;
@@ -386,18 +400,34 @@ function firstDiff(a, b) {
 }
 const sameList = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 
-// Adapters for features that may not exist yet (B5). An absent adapter makes
-// its dim value run as the default and report "SKIPPED (absent)".
+// Adapters: each dim value drives an existing app feature. A feature the
+// running app lacks makes its value run as the default and report
+// "SKIPPED (absent)" (e.g. replaying a combo against an older build).
+//   shardedLoad   parallelLoad + progressivePreview flags, every file parsing
+//                 at once, results arriving in reverse order (harness shard())
+//   roleExclusion rules.roleChoices[group] = 'exclude' over the federation's
+//                 suggestion groups (clash-discipline-core suggestRoles) and
+//                 the app's own _ccRoleExcluded test
+//   bucketFilter  the clash list's bucket bar (filters.showBuckets) against
+//                 ClashControl.review.summary()
+//   bvhCap/bvhEvict ClashControl.storage.bvhCache (cap + stats) and
+//                 runDetection's clearCachesAfter
+//   autosaveGate  the storageAutosaveGate flag + the debounced IndexedDB autosave
+//   statusUndo    probed by behaviour in the undo-redo round-trip
 async function probeAdapters(P) {
-  return P.ev(() => ({
-    shardedLoad: typeof window._ccLoadShardedForTest === 'function',
-    roleExclusion: typeof window._ccSetRoleExclusion === 'function',
-    bucketFilter: typeof window._ccSetBucketFilter === 'function',
-    bvhCap: typeof window._ccSetBvhCacheMax === 'function',
-    bvhEvict: typeof window._ccEvictBvhCaches === 'function',
-    autosaveGate: typeof window._ccSetAutosaveGate === 'function',
-    statusUndo: false, // probed by behaviour in the undo-redo round-trip
-  }));
+  return P.ev(() => {
+    const S = window._ccSafetyMigrations, C = window.ClashControl || {};
+    const flagKnown = (n) => !!(S && S._setFlagsForTest && S.readFlags({ search: '?ccSafety=' + n, storage: null })[n] === true);
+    const bc = C.storage && C.storage.bvhCache;
+    return {
+      shardedLoad: flagKnown('parallelLoad') && !!(window._ccLoadPreview && typeof window._ccLoadPreview.parallelPeak === 'function'),
+      roleExclusion: !!(window._ccClashDisciplineCore && typeof window._ccClashDisciplineCore.suggestRoles === 'function') && typeof window._ccRoleExcluded === 'function',
+      bucketFilter: !!(C.review && typeof C.review.summary === 'function' && window._ccClashClassificationCore && typeof window._ccClashClassificationCore.hiddenBuckets === 'function'),
+      bvhCap: !!(bc && typeof bc.setMax === 'function' && typeof bc.stats === 'function'),
+      bvhEvict: !!(bc && typeof bc.stats === 'function'),
+      autosaveGate: flagKnown('storageAutosaveGate'),
+    };
+  });
 }
 
 // Node-side edit plan for a combo (deterministic from the combo seed).
@@ -428,10 +458,12 @@ export async function executeCombo(h, combo, env) {
   await P.ev(() => window.__ccH.reset());
   await h.clearErrors(P);
   await P.ev(installChecks, env.oracleSrc);
+  const storage = dims.storage;
   const fx = await env.fixtures.get(dims, env.extraGen || {});
   const files = filesFor(fx, dims);
   if (!files.length) throw new InfraError('no fixture files for subset ' + dims['models.subset']);
   const fallback = dims['load.path'] === 'fallback';
+  const sharded = dims['load.path'] === 'sharded';
   const rules = rulesFor(dims);
   const result = { id: combo.id, checks, notes, fixture: fx.key, files: files.map((f) => f.sha256 ? f.name + ' sha256:' + f.sha256 : f.name) };
 
@@ -439,23 +471,47 @@ export async function executeCombo(h, combo, env) {
   // ── I8: abort-load ──
   if (dims.cancel === 'abort-load') {
     const when = pick(rnd, ['start', 'first-model']);
-    const r = await P.ev(({ files, fallback, when }) => window.__ccH.load(files, { fallback, abort: when }), { files, fallback, when });
+    const r = await P.ev(({ files, fallback, sharded, when }) => window.__ccH.load(files, { fallback, sharded, abort: when }), { files, fallback, sharded, when });
     ck('I8.abort-load', !r.loading && !r.grewAfterAbort, 'after aborting the load (' + when + '): loading=' + r.loading + ', models kept appearing=' + r.grewAfterAbort + ' (' + r.settledModels + '; msg ' + JSON.stringify(r.loadMsg) + '; live workers ' + JSON.stringify(r.workers) + ')');
     await P.ev(() => window.__ccH.reset());
   }
+
+  // (after the abort-load step: its reset() restores the boot flags)
+  if (storage === 'autosave-gate') ck('I14.autosave-flag', await P.ev(() => window.__ccH.setFlag('storageAutosaveGate')), 'storageAutosaveGate did not switch on');
 
   trace('load');
   // ── load ──
   const loadFiles = files.slice();
   if (dims['models.extra'] === 'dup-load') loadFiles.push(files[Math.floor(rnd() * files.length)]);
-  const lr = await P.ev(({ files, fallback }) => window.__ccH.load(files, { fallback }), { files: loadFiles, fallback });
+  const lr = await P.ev(({ files, fallback, sharded }) => window.__ccH.load(files, { fallback, sharded }), { files: loadFiles, fallback, sharded });
   if (lr.timeout) { ck('I3.load', false, 'load never completed: ' + JSON.stringify(lr)); return finish(); }
   ck('I3.load', lr.models.length === files.length && lr.models.every((m) => m.elements > 0),
     'loaded models ' + JSON.stringify(lr.models.map((m) => m.name + ':' + m.elements)) + ' for files ' + JSON.stringify(files.map((f) => f.name)));
+  if (sharded) {
+    // the path really ran: one parse worker per file, side by side
+    const sh = lr.shard || {};
+    const wantPeak = Math.min(2, loadFiles.length);
+    ck('I3.sharded', sh.jobs >= files.length && sh.peak >= wantPeak, 'sharded load: ' + JSON.stringify(sh) + ' (want >= ' + files.length + ' parse jobs, >= ' + wantPeak + ' at once)');
+    notes.push('sharded: ' + sh.jobs + ' parse jobs, peak ' + sh.peak + ' at once, results in order ' + JSON.stringify(sh.resultOrder));
+  }
   if (dims['models.extra'] === 'reload') {
     const rr = await P.ev((n) => window.__ccH.reloadModel(n), files[0].model);
     if (rr.skipped) skip('I3.reload', rr.skipped);
     else ck('I3.reload', rr.reloaded && rr.sameId && rr.elements === rr.before && rr.models === files.length, 'reload in full: ' + JSON.stringify(rr));
+  }
+  let roleChoices = null;
+  if (dims['roles.exclusion'] === 'leave-out') {
+    const groups = await P.ev(() => window.__ccH.roleGroups()) || {};
+    const present = Object.keys(groups).sort();
+    // a seeded non-empty subset of the groups present (all of them when none
+    // is present: the run must then leave nothing out)
+    let chosen = present.filter(() => rnd() < 0.6);
+    if (!chosen.length && present.length) chosen = [pick(rnd, present)];
+    if (!present.length) { chosen = ['provision', 'zone', 'duplicate', 'proxy']; notes.push('leave-out: no suggestion groups in this federation'); }
+    roleChoices = {};
+    for (const g of chosen) roleChoices[g] = 'exclude';
+    rules.roleChoices = roleChoices;
+    result.roleGroups = groups; result.roleChoices = roleChoices;
   }
   await P.ev((u) => window._ccDispatch({ t: 'UPD_RULES', u }), rules);
 
@@ -466,6 +522,19 @@ export async function executeCombo(h, combo, env) {
   if (ref.err || ref.outcome !== 'complete') { ck('I16.reference', false, 'reference run failed: ' + (ref.err || ref.outcome)); return finish(); }
   const refPairs = await P.ev(() => window.__ccC.pairsOf());
   result.refCount = ref.n;
+  let excludedGids = [];
+  if (roleChoices) {
+    const ex = await P.ev((r) => window.__ccH.excluded(r), rules);
+    excludedGids = ex.gids;
+    const exSet = new Set(ex.gids);
+    const touching = refPairs.filter((p) => exSet.has(p.a) || exSet.has(p.b));
+    const want = Object.keys(roleChoices).filter((g) => ex.byGroup[g]);
+    const badCounts = want.filter((g) => !ref.excluded || ref.excluded[g] !== ex.byGroup[g]);
+    ck('I13.role-exclusion', touching.length === 0 && badCounts.length === 0 && JSON.stringify(ex.lastRunExcluded) === JSON.stringify(ref.excluded),
+      'leave out ' + JSON.stringify(roleChoices) + ': ' + touching.length + ' clash(es) still involve a left-out element ' + JSON.stringify(touching.slice(0, 3).map((p) => p.key)) +
+      '; reported ' + JSON.stringify(ref.excluded) + ' vs left out ' + JSON.stringify(ex.byGroup) + '; state.lastRunExcluded ' + JSON.stringify(ex.lastRunExcluded));
+    notes.push('leave-out ' + Object.keys(roleChoices).join('+') + ': ' + ex.gids.length + ' element(s) left out ' + JSON.stringify(ex.byGroup));
+  }
   result.digest = digest(await P.ev((rows) => window.__ccH.normalized(rows), ref.clashes));
   const ref2 = await P.ev((r) => window.__ccH.run(r, { full: true }), rules);
   ck('I16.repeat', sameList(ref.clashes, ref2.clashes), 'the same full JS run twice differs: ' + JSON.stringify(firstDiff(ref2.clashes, ref.clashes)));
@@ -473,17 +542,31 @@ export async function executeCombo(h, combo, env) {
   trace('planted + oracle');
   // ── I5: planted manifest + oracle sample ──
   if (fx.manifest && fx.manifest.cases.length) {
-    const pl = await P.ev(({ cases, rules }) => window.__ccC.planted(cases, rules), { cases: fx.manifest.cases, rules });
+    const pl = await P.ev(({ cases, rules, ex }) => window.__ccC.planted(cases, rules, ex), { cases: fx.manifest.cases, rules, ex: excludedGids });
     const bad = pl.filter((x) => !x.skipped && !x.ok);
     ck('I5.planted', bad.length === 0, bad.length + ' planted case(s) wrong: ' + JSON.stringify(bad.slice(0, 6)));
     result.planted = { checked: pl.filter((x) => !x.skipped).length, bad: bad.length };
   } else skip('I5.planted', 'no manifest (external files)');
   if (env.oracle !== false) {
-    const os = await P.ev(({ rules, n, seed }) => window.__ccC.oracleSample(rules, n, seed), { rules, n: env.oracleMax || 150, seed: combo.seed });
+    const os = await P.ev(({ rules, n, seed, ex }) => window.__ccC.oracleSample(rules, n, seed, ex), { rules, n: env.oracleMax || 150, seed: combo.seed, ex: excludedGids });
     const err = os.results.filter((x) => x.error), bad = os.results.filter((x) => !x.error && !x.ok);
     ck('I5.oracle', err.length === 0 && bad.length === 0, (err.length ? err.length + ' oracle errors e.g. ' + err[0].error + '; ' : '') + bad.length + '/' + os.evaluated + ' sampled pairs disagree with the exact oracle: ' + JSON.stringify(bad.slice(0, 6)));
     result.oracle = { candidates: os.candidates, evaluated: os.evaluated, bad: bad.length };
   }
+
+  // ── storage knobs (I14) ──
+  let bvh0 = null, bvhCap = null;
+  if (storage === 'low-bvh-cap') {
+    bvhCap = pick(rnd, [1, 2, 5, 25]);
+    bvh0 = await P.ev((n) => { const bc = window.ClashControl.storage.bvhCache; bc.setMax(n); return bc.stats(); }, bvhCap);
+  }
+  const clearCaches = storage === 'evict';
+  const bvhChecks = [];
+  const bvhAfter = (res, what) => {
+    if (!res || !res.bvh) return;
+    if (storage === 'evict') bvhChecks.push({ what, ok: res.bvh.size === 0, size: res.bvh.size });
+    if (storage === 'low-bvh-cap') bvhChecks.push({ what, ok: res.bvh.size <= bvhCap && res.bvh.max === bvhCap, size: res.bvh.size, max: res.bvh.max, evictions: res.bvh.evictions });
+  };
 
   trace('engine path');
   // ── engine path X ──
@@ -492,7 +575,7 @@ export async function executeCombo(h, combo, env) {
     const e = await h.ensureNative(P);
     if (e) { skip('engine.path=native', 'SKIPPED (absent): native mock unavailable on this page (' + e + ')'); mode = 'auto'; }
   }
-  if (P.cls !== 'default' && mode !== 'js' && mode !== 'auto' && mode !== 'pool-js') notes.push('engine ' + mode + ' on page class ' + P.cls + ' (no WASM): path falls back');
+  if (P.cls !== 'default' && mode !== 'js' && mode !== 'auto' && mode !== 'pool-js' && mode !== 'native') notes.push('engine ' + mode + ' on page class ' + P.cls + ' (no WASM): path falls back');
   await P.ev((m) => window.__ccH.setMode(m), mode);
   const failure = dims.failure;
   const inject = async (on) => P.ev(({ f, on }) => {
@@ -518,16 +601,18 @@ export async function executeCombo(h, combo, env) {
   const runX = async (r, full, withFaults) => {
     if (withFaults) await inject(true);
     let res;
-    try { res = await P.ev(({ r, full, cancel }) => window.__ccH.run(r, { full, cancel }), { r, full, cancel: withFaults ? cancel : null }); }
+    try { res = await P.ev(({ r, full, cancel, cc }) => window.__ccH.run(r, { full, cancel, clearCachesAfter: cc }), { r, full, cancel: withFaults ? cancel : null, cc: clearCaches }); }
     finally { if (withFaults) await inject(false); }
+    if (res && res.outcome === 'complete') bvhAfter(res, (full ? 'full' : 'smart') + ' run');
     if (withFaults && cancel) {
       if (!res.fired) notes.push('cancel=' + cancel + ' not exercised (' + res.events + ' progress events)');
       else if (res.outcome === 'cancelled') {
         const settle = await P.ev(async () => { for (let i = 0; i < 100 && window.__ccP.liveWorkers().length; i++) await new Promise((r) => setTimeout(r, 20)); return { live: window.__ccP.liveWorkers().length, liveWho: window.__ccP.liveWorkers().slice(0, 2), detecting: !!window._ccLatestState.detecting, active: window._ccDetectionActive() }; });
         ck('I8.cancel', res.stateUnchanged && !settle.detecting && !settle.active && settle.live === 0,
           'cancelled run (' + JSON.stringify(res.fired) + '): state unchanged=' + res.stateUnchanged + ' detecting=' + settle.detecting + ' active=' + settle.active + ' live workers=' + settle.live + ' ' + JSON.stringify(settle.liveWho) + ' pool=' + JSON.stringify(res.pool && { used: res.pool.used, reason: res.pool.reason }));
-        res = await P.ev(({ r, full }) => window.__ccH.run(r, { full }), { r, full });
+        res = await P.ev(({ r, full, cc }) => window.__ccH.run(r, { full, clearCachesAfter: cc }), { r, full, cc: clearCaches });
         res.afterCancel = true;
+        if (res.outcome === 'complete') bvhAfter(res, 'run after cancel');
       } else ck('I8.cancel', res.outcome === 'complete', 'run with a late cancel ended ' + res.outcome);
     }
     return res;
@@ -591,8 +676,15 @@ export async function executeCombo(h, combo, env) {
       } else if (e.k === 'rule-change') {
         const gaps = [0, 30, 50, 100].filter((g) => g !== curRules.maxGap);
         curRules.maxGap = gaps[e.b % gaps.length];
-        await P.ev((u) => window._ccDispatch({ t: 'UPD_RULES', u }), { maxGap: curRules.maxGap });
-        r = { maxGap: curRules.maxGap }; invalidates = true;
+        const u = { maxGap: curRules.maxGap };
+        if (roleChoices && Object.keys(roleChoices).length) {
+          // leave-out combos: also flip one group between left out and included
+          const g = Object.keys(roleChoices).sort()[e.b % Object.keys(roleChoices).length];
+          curRules.roleChoices = Object.assign({}, curRules.roleChoices, { [g]: curRules.roleChoices[g] === 'exclude' ? 'include' : 'exclude' });
+          u.roleChoices = curRules.roleChoices;
+        }
+        await P.ev((uu) => window._ccDispatch({ t: 'UPD_RULES', u: uu }), u);
+        r = u; invalidates = true;
       } else if (e.k === 'deny') { r = await P.ev((i) => window.__ccH.editClash(i, 'denied'), e.b); if (r) { r.seq = applied.length; denied.push(r); } }
       else if (e.k === 'status') {
         const s = ['in_progress', 'resolved'][e.b % 2];
@@ -673,6 +765,21 @@ export async function executeCombo(h, combo, env) {
       'list headline ' + lc.headline + ' + provided ' + lc.provided + ' + provisions ' + lc.provision + ' + groups ' + lc.groups + ' + contacts ' + lc.contact + ' + denied ' + lc.denied + ' = ' + sum + ' != ' + lc.raw + ' raw clashes (' + JSON.stringify(lc) + ')');
   }
 
+  if (dims['display.filter'] === 'bucket') {
+    trace('bucket filter');
+    const bf = await P.ev(({ a, b }) => window.__ccH.bucketCheck(a, b), { a: Math.floor(rnd() * 1e6), b: Math.floor(rnd() * 1e6) });
+    ck('I6.bucket-filter', bf.ok, 'bucket bar ' + JSON.stringify(bf.buckets) + ' (buttons ' + JSON.stringify(bf.buttons) + '): ' + JSON.stringify(bf.steps.filter((x) => !x.ok).slice(0, 3)));
+    notes.push('bucket bar: ' + (bf.clicked.length ? 'toggled ' + bf.clicked.join('+') : 'no bucket besides review') + ', ' + bf.steps.length + ' list checks');
+  }
+  if (storage === 'low-bvh-cap' || storage === 'evict') {
+    const end = await P.ev(() => window.ClashControl.storage.bvhCache.stats());
+    if (storage === 'low-bvh-cap') {
+      const ev = end.evictions - (bvh0 ? bvh0.evictions : 0);
+      ck('I14.bvh-cap', bvhChecks.length > 0 && bvhChecks.every((x) => x.ok) && ev > 0, 'cache cap ' + bvhCap + ': ' + ev + ' eviction(s) during the runs; ' + JSON.stringify(bvhChecks.filter((x) => !x.ok).slice(0, 3)) + ' (' + bvhChecks.length + ' runs checked)');
+      notes.push('bvh cap ' + bvhCap + ': ' + ev + ' evictions');
+    } else ck('I14.evict', bvhChecks.length > 0 && bvhChecks.every((x) => x.ok), 'clearCachesAfter left cached elements: ' + JSON.stringify(bvhChecks.filter((x) => !x.ok).slice(0, 3)) + ' (' + bvhChecks.length + ' runs checked)');
+  }
+
   trace('round-trip');
   // ── B4 round-trips ──
   const rt = dims.roundtrip;
@@ -686,11 +793,18 @@ export async function executeCombo(h, combo, env) {
     await undoRedo(P, curRules, lastRun, ck, skip);
   }
 
+  if (storage === 'autosave-gate') {
+    trace('autosave');
+    const as = await P.ev((i) => window.__ccH.autosaveCheck(i), Math.floor(rnd() * 1e6));
+    ck('I14.autosave', as.gate && as.ok, 'autosave with the gate ' + (as.gate ? 'on' : 'OFF') + ': ' + JSON.stringify(as.steps.filter((x) => !x.ok)));
+  }
+
   trace('I3 canonical');
   // ── I3: subset / order / extras vs the canonical federation ──
-  const canonical = dims['models.subset'] === 'ASM' && dims['models.order'] === '012' && dims['models.extra'] === 'none' && !fallback && dims.cancel !== 'abort-load';
+  const canonical = dims['models.subset'] === 'ASM' && dims['models.order'] === '012' && dims['models.extra'] === 'none' && dims['load.path'] === 'worker' && dims.cancel !== 'abort-load';
   const ckey = fx.key + '|' + digest(rules) + '|' + P.cls;
-  if (canonical) env.canon.set(ckey, refPairs.map(stripPair));
+  env.canonEx = env.canonEx || new Map();
+  if (canonical) { env.canon.set(ckey, refPairs.map(stripPair)); env.canonEx.set(ckey, excludedGids); }
   else if (env.i3 !== false) {
     if (!env.canon.has(ckey)) {
       await P.ev(() => window.__ccH.reset());
@@ -702,13 +816,18 @@ export async function executeCombo(h, combo, env) {
       const cr = await P.ev((r) => window.__ccH.run(r, { full: true }), rules);
       if (cr.outcome !== 'complete') throw new InfraError('canonical run ' + cr.outcome);
       env.canon.set(ckey, (await P.ev(() => window.__ccC.pairsOf())).map(stripPair));
+      env.canonEx.set(ckey, roleChoices ? (await P.ev((r) => window.__ccH.excluded(r), rules)).gids : []);
     }
     const canon = env.canon.get(ckey);
+    // left-out groups depend on the federation (duplicates across models,
+    // geometric provisions): compare only pairs neither run left out
+    const exAll = new Set(excludedGids.concat(env.canonEx.get(ckey) || []));
+    const keep = (p) => !exAll.has(p.a) && !exAll.has(p.b);
     const names = new Set(files.map((f) => f.model));
     const single = names.size === 1;
     const keyOf = (p) => p.key + '|' + p.type + '|' + (p.opening || '');
-    const want = new Set(canon.filter((p) => names.has(p.mA) && names.has(p.mB)).map(keyOf));
-    const got = new Set(refPairs.map(stripPair).filter((p) => !(single && p.same && rules.selfClashModels === 'none')).map(keyOf));
+    const want = new Set(canon.filter((p) => names.has(p.mA) && names.has(p.mB) && keep(p)).map(keyOf));
+    const got = new Set(refPairs.map(stripPair).filter((p) => !(single && p.same && rules.selfClashModels === 'none') && keep(p)).map(keyOf));
     const missing = [...want].filter((k) => !got.has(k)), extra = [...got].filter((k) => !want.has(k));
     ck('I3.subset-order', missing.length === 0 && extra.length === 0, 'vs the canonical federation (restricted to ' + [...names].join(',') + '): missing ' + missing.length + ' ' + JSON.stringify(missing.slice(0, 4)) + ', extra ' + extra.length + ' ' + JSON.stringify(extra.slice(0, 4)));
   }
@@ -731,7 +850,7 @@ export async function executeCombo(h, combo, env) {
   }
 }
 
-function stripPair(p) { return { key: p.key, type: p.type, opening: p.opening, mA: p.mA, mB: p.mB, same: p.same }; }
+function stripPair(p) { return { key: p.key, a: p.a, b: p.b, type: p.type, opening: p.opening, mA: p.mA, mB: p.mB, same: p.same }; }
 
 // The path actually ran (otherwise I1 would compare JS with JS).
 function pathEvidence(r, mode, ck, notes) {
@@ -810,9 +929,10 @@ async function projectRoundTrip(h, P, files, ck, skip, result) {
 }
 
 // Undo/redo: section plane + section box + temp-hide, undone and redone; the
-// clash list must not move and the next re-run stays smart. Status edits are
-// probed: if UPD_CLASH status changes are not on the undo stack, that adapter
-// is absent (reported, not failed).
+// clash list must not move and the next re-run stays smart. A single clash's
+// review decision (UPD_CLASH status) is on the same stack: deny -> undo ->
+// redo -> undo must end on the original status, and the undone deny must not
+// come back at the next run (the denied-pair memory forgets it).
 async function undoRedo(P, rules, lastRun, ck, skip) {
   const r = await P.ev(async () => {
     const d = window._ccDispatch, st = () => window._ccLatestState;
@@ -821,15 +941,22 @@ async function undoRedo(P, rules, lastRun, ck, skip) {
     window._ccUndoStack.length = 0; window._ccRedoStack.length = 0;
     const s0 = snap();
     // status edit probe
-    const c = st().clashes[0];
-    let statusUndo = null;
+    const c = st().clashes.find((x) => x.status === 'open') || st().clashes.find((x) => x.status !== 'denied' && x.status !== 'auto_resolved');
+    let statusUndo = null, statusSteps = null;
     if (c) {
       const n0 = window._ccUndoStack.length;
-      d({ t: 'UPD_CLASH', id: c.id, u: { status: 'in_progress' } });
+      const statusOf = () => (st().clashes.find((x) => x.id === c.id) || {}).status;
+      d({ t: 'UPD_CLASH', id: c.id, u: { status: 'denied' } });
       await sleep(30);
-      statusUndo = window._ccUndoStack.length > n0;
-      if (statusUndo) { window._ccUndo(); await sleep(30); }
-      else d({ t: 'UPD_CLASH', id: c.id, u: { status: c.status } });
+      statusUndo = window._ccUndoStack.length === n0 + 1;
+      if (statusUndo) {
+        const s1 = statusOf();
+        window._ccUndo(); await sleep(30); const s2 = statusOf();
+        window._ccRedo(); await sleep(30); const s3 = statusOf();
+        window._ccUndo(); await sleep(30); const s4 = statusOf();
+        statusSteps = { denied: s1, undo: s2, redo: s3, undoAgain: s4, from: c.status, ok: s1 === 'denied' && s2 === c.status && s3 === 'denied' && s4 === c.status };
+      } else d({ t: 'UPD_CLASH', id: c.id, u: { status: c.status } });
+      window._ccUndoStack.length = 0; window._ccRedoStack.length = 0;
     }
     const n0 = window._ccUndoStack.length;
     d({ t: 'SECTION', axis: 'x', pos: 0.4 }); await sleep(800); // past the coalesce window
@@ -846,12 +973,18 @@ async function undoRedo(P, rules, lastRun, ck, skip) {
     while (window._ccUndo()) await sleep(10);
     if (window._ccTempUnhide) window._ccTempUnhide();
     window._ccUndoStack.length = 0; window._ccRedoStack.length = 0;
-    return { pushed, undone, redone, back: sU === s0, again: sR === s1, statusUndo, statusOk: c ? st().clashes.find((x) => x.id === c.id).status === c.status : true };
+    return { pushed, undone, redone, back: sU === s0, again: sR === s1, statusUndo, statusSteps, probe: c ? { id: c.id, status: c.status, a: c.globalIdA, b: c.globalIdB } : null,
+      statusOk: c ? st().clashes.find((x) => x.id === c.id).status === c.status : true };
   });
   ck('I12.undo-redo', r.pushed >= 2 && r.undone === r.pushed && r.redone === r.pushed && r.back && r.again && r.statusOk, 'undo/redo of section/box/hide: ' + JSON.stringify(r));
   if (r.statusUndo === false) skip('I12.undo-status', 'SKIPPED (absent): clash status edits are not on the undo stack');
+  else if (r.statusUndo) ck('I12.undo-status', r.statusSteps && r.statusSteps.ok, 'deny -> undo -> redo -> undo of one clash: ' + JSON.stringify(r.statusSteps));
   const after = await P.ev((rr) => window.__ccH.run(rr, { full: false }), rules);
   ck('I12.undo-no-op', after.outcome === 'complete' && after.prof.smart && after.prof.changed === 0 && sameList(after.clashes, lastRun.clashes), 'after undo/redo the re-run should be smart and unchanged: ' + JSON.stringify(after.prof) + ' ' + JSON.stringify(firstDiff(after.clashes, lastRun.clashes)));
+  if (r.statusUndo && r.probe) {
+    const back = await P.ev((pr) => window._ccLatestState.clashes.filter((x) => [x.globalIdA, x.globalIdB].sort().join('|') === [pr.a, pr.b].sort().join('|')).map((x) => x.status), r.probe);
+    ck('I12.undo-deny-forgotten', back.length > 0 && !back.includes('denied'), 'the undone deny of clash ' + r.probe.id + ' came back at the next run: ' + JSON.stringify(back));
+  }
 }
 
 export async function loadOracleSrc() { return readFile(join(ROOT, 'tests/_oracle-exact.js'), 'utf8'); }

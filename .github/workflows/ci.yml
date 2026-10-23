@@ -111,6 +111,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       app-code: ${{ steps.filter.outputs.app-code }}
+      pressure: ${{ steps.filter.outputs.pressure }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -130,6 +131,13 @@ jobs:
             echo "app-code=true" >> "$GITHUB_OUTPUT"
           else
             echo "app-code=false" >> "$GITHUB_OUTPUT"
+          fi
+          # the pressure harness also depends on the clash-pipeline cores,
+          # the safety flags / storage modules and its own sources
+          if echo "$CHANGED" | grep -qE '^(index\.html|addons/|engine/|cc-runtime\.js|[a-z-]+-core\.js|project-codec\.js|safety-migrations\.js|tests/pressure/|tests/fixtures/generate-building-ifc\.js|tests/_oracle-exact\.js)'; then
+            echo "pressure=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pressure=false" >> "$GITHUB_OUTPUT"
           fi
 
   # Differential correctness probes, promoted from local-only scripts per the
@@ -183,3 +191,43 @@ jobs:
 
       - name: Occlusion culling on vs off renders identical pixels (every view)
         run: node tests/browser/occlusion-culling.mjs
+
+  # Randomized pressure test (tests/pressure/): the fast tier — 24 seeded
+  # pairwise combinations of load path, rules, role exclusion, edits, display
+  # filters, engine path, cancel, failure injection, storage knobs and
+  # round-trips over the synthetic federation, each checked against the
+  # exact oracle and the invariants I1–I16. Fixed seed so a PR sees the same
+  # combos every time; the nightly workflow (pressure-nightly.yml) explores
+  # new seeds. Bounded: each combo has its own timeout, the job a hard cap.
+  # A failure uploads the report + replayable repro files
+  # (node tests/pressure/run.mjs --combo <repro.json>).
+  browser-pressure:
+    needs: changes
+    if: needs.changes.outputs.pressure == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CC_PRESSURE_OUT: ${{ runner.temp }}/cc-pressure
+      CC_PRESSURE_COMBO_TIMEOUT_MS: '300000'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Playwright Chromium
+        run: |
+          npm install --no-save playwright@1
+          npx playwright install --with-deps chromium
+
+      - name: Pressure test, fast tier (seed 1)
+        run: node tests/pressure/run.mjs --tier fast --seed 1
+
+      - name: Upload pressure report + repros
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pressure-fast-seed-1
+          path: ${{ runner.temp }}/cc-pressure
+          if-no-files-found: ignore

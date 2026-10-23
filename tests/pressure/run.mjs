@@ -12,6 +12,11 @@
 //   env:     CC_PRESSURE_OUT (default <os.tmpdir()>/cc-pressure), CC_PRESSURE_FILES
 //            (comma-separated IFC paths used instead of the generated federation; reports name them by hash)
 //
+// CI: .github/workflows/ci.yml (browser-pressure) runs the fast tier on seed 1
+// for every app change; .github/workflows/pressure-nightly.yml runs the nightly
+// tier on a random seed (or workflow_dispatch tier/seed/count) with --shrink and
+// uploads the report, repros and shrunk combos.
+//
 // No timing asserts. Infra problems (browser crash, page never boots, missing
 // deps) are retried; an invariant failure is never retried.
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
