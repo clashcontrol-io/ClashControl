@@ -75,8 +75,10 @@ test('provisions and classified groups are labelled, never dropped, and hidden b
   assert.match(src, /if \(_sigNow && _roleIdx && _roleIdx\.sig\) _sigNow \+= '#r' \+ _roleIdx\.sig;/);
   assert.match(src, /if \(_provStatus\) b\.obj\.provision = _provStatus;/);
   assert.match(src, /if \(_rGroup\) b\.obj\.roleGroup = _rGroup;/);
-  assert.match(src, /var hg = _ccClashClassifiedHidden\(c, s\.rules\);/);
-  assert.match(src, /var classifiedCounts = useMemo\(/);
+  // filed by the shared review buckets (clash-classification-core.js
+  // reviewBucket: 'provision' / 'zone'), counted in the one bucket bar
+  assert.match(src, /roleChoice: function\(g, rules\) \{ return _ccDisciplineCore\.roleChoice\(g, rules\); \}/);
+  assert.match(src, /<\$\{BucketBar\} counts=\$\{triage\.counts\}/);
   assert.match(src, /k === 'roleChoicesRemembered'/, 'the remember flag is not part of the run signature');
 });
 

@@ -839,6 +839,19 @@ clashcontrol-engine --install</pre>
       overlapVolM3: c.volume || 0,
       clearanceMm: (type === 'soft' || type === 'clearance') ? Math.round(Math.abs(rawDist)) : null
     };
+    // Element box sizes (mm) and trades, exactly as the browser engine stamps
+    // them, so review facets/buckets read the same fields from both engines.
+    // The engine's depth is an AABB-overlap bound, so extent stays 'unknown'
+    // (clash-classification-core.js clashExtent keys on source).
+    var _bb = function(el) {
+      if (!el || !el.box || !el.box.max || !el.box.min) return null;
+      var r = function(v) { return Math.round(v * 1000 * 10) / 10; };
+      return { dx: r(el.box.max.x - el.box.min.x), dy: r(el.box.max.y - el.box.min.y), dz: r(el.box.max.z - el.box.min.z) };
+    };
+    var _bbA = _bb(elA), _bbB = _bb(elB);
+    if (_bbA && _bbB) { out.bboxA = _bbA; out.bboxB = _bbB; }
+    var _dc = (typeof window !== 'undefined' && window._ccClashDisciplineCore) || null;
+    if (_dc && typeof _dc.elementMatrixKey === 'function') out.trades = [_dc.elementMatrixKey(elA, mA.discipline), _dc.elementMatrixKey(elB, mB.discipline)];
     if (_cls && _cls.applyDefaultTitle) _cls.applyDefaultTitle(out);
     return out;
   }

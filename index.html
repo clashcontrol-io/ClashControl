@@ -511,6 +511,11 @@
     }
     .cc-side-panel{overflow-x:hidden}
     .cc-side-panel>*{min-width:0}
+    /* Clash review overview: covers the 3D view between the floating panels
+       (--cc-ov-left/right are measured from them); full screen above the
+       panel sheet on phones. */
+    .cc-overview{position:absolute;top:0;bottom:0;left:var(--cc-ov-left,0px);right:var(--cc-ov-right,0px);z-index:5}
+    @media(max-width:768px){.cc-overview{position:fixed;top:0;left:0;right:0;bottom:56px;z-index:calc(var(--z-panel) + 3)}}
     body{background:var(--bg-primary);color:var(--text-primary);font-family:var(--font-body);overflow:hidden;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
     .cc-display{font-family:var(--font-display);letter-spacing:-.01em}
     .cc-mono{font-family:var(--font-mono)}
@@ -778,6 +783,7 @@
 <script src="clash-identity-core.js" defer></script>
 <script src="clash-reconciliation-core.js" defer></script>
 <script src="clash-classification-core.js" defer></script>
+<script src="clash-triage-core.js" defer></script>
 <script src="project-codec.js" defer></script>
 <script src="storage-core.js" defer></script>
 <script>
@@ -1452,7 +1458,8 @@ function startApp() {
     showProvided:false, // "pass through provided openings — show" toggle — default OFF (rules.hideProvidedOpenings)
     showProvisions:false, // "inside provisions / reservations — show" toggle (hidden while rules.roleChoices.provision is 'classify', the default)
     showRoleGroups:false, // clashes of 'classify' suggestion groups (zones, duplicates …) — show toggle
-    showContacts:false  // "surfaces only touch — show" toggle — default OFF (rules.hideContacts)
+    showContacts:false, // "surfaces only touch — show" toggle — default OFF (rules.hideContacts)
+    showBuckets:[]      // review buckets shown on top of 'review' (bucket bar "show"); reset at every run
   };
   var _ccLoadPref = function(key,fallback){try{var v=localStorage.getItem('cc_'+key);return v!==null?JSON.parse(v):fallback;}catch(e){return fallback;}};
 
@@ -1530,6 +1537,10 @@ function startApp() {
     issueGroupBy:(function(){var v=_ccLoadPref('issueGroupBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()), issueSortBy:(function(){var v=_ccLoadPref('issueSortBy',[]);return Array.isArray(v)?v:(v&&v!=='none'?[v]:[]);}()),
     chatOpen:false, detecting:false, switchingProject:false, runModalOpen:false,
     triageResults:{}, // { [clusterKey]: { loading, result, error, ts } } — Week 3 AI triage state, keyed by group label
+    // Clash review: facet filters + saved views (persisted per project via
+    // project-codec), overview/list choice ('auto' = overview when the review
+    // set is small enough and the run was interactive — autoOpen).
+    triage:{facets:{}, view:'auto', autoOpen:false, savedViews:[], activeViewId:null},
     sectionAxis:(_savedSection&&_savedSection.axis)||null,
     sectionPos:(_savedSection&&_savedSection.pos!=null)?_savedSection.pos:0.5,
     sectionCustom:(_savedSection&&_savedSection.custom)||null,
@@ -1640,7 +1651,7 @@ function startApp() {
     AI_FEEDBACK:'AI_FEEDBACK', CLEAR_TRAINING_DATA:'CLEAR_TRAINING_DATA',
     UPD_CLASH:'UPD_CLASH', BATCH_UPD_CLASH:'BATCH_UPD_CLASH',
     ACTIVE:'ACTIVE', MODAL:'MODAL',
-    UPD_RULES:'UPD_RULES', UPD_FILTERS:'UPD_FILTERS', RESET_FILTERS:'RESET_FILTERS', SHOW_RUN_MODAL:'SHOW_RUN_MODAL', TRIAGE_RESULT:'TRIAGE_RESULT',
+    UPD_RULES:'UPD_RULES', UPD_FILTERS:'UPD_FILTERS', RESET_FILTERS:'RESET_FILTERS', TRIAGE_UPD:'TRIAGE_UPD', TRIAGE_STATE:'TRIAGE_STATE', CLASH_BATCH_RESTORE:'CLASH_BATCH_RESTORE', SHOW_RUN_MODAL:'SHOW_RUN_MODAL', TRIAGE_RESULT:'TRIAGE_RESULT',
     SECTION:'SECTION', SECTION_CUSTOM:'SECTION_CUSTOM', SECTION_BOX:'SECTION_BOX', SECTION_FLIP:'SECTION_FLIP', SECTION_HATCH:'SECTION_HATCH',
     TAB:'TAB', SETTINGS:'SETTINGS', TRAINING_MODE:'TRAINING_MODE',
     UPD_PREFS:'UPD_PREFS',
@@ -2241,7 +2252,7 @@ function startApp() {
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
-      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[], a.coverageModelIds); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary, lastRunExcluded:a.excluded||null}; var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* Default to Grouped (by root-cause element — "one row = one thing to fix", see _ccRootCauseKeyFor) only when the user has nothing chosen AND the result is small enough that thousands of sticky-positioned group headers won't tax the browser. Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0 && _mr.clashes.length<=2000) { _st.clashGroupBy=['element']; }
+      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[], a.coverageModelIds); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary, lastRunExcluded:a.excluded||null}; var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* The bucket bar's "show" choices are per run, whatever the reset pref says: a new result starts on its review set. */ _st.filters=Object.assign({},_st.filters||s.filters,{showBuckets:[]}); /* Grouped by root-cause element ("one row = one thing to fix", see _ccRootCauseKeyFor) whenever the user has nothing chosen — at any size: big sets render through the windowed list (VirtualList). Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0) { _st.clashGroupBy=['element']; }
         return Object.assign({},s,_st);
       case A.ADD_CLASHES: { /* additive, non-destructive append (does NOT auto-resolve existing clashes like MERGE_CLASHES). Used by the accessibility panel. */
         var _addc=(a.v||[]).filter(Boolean); if(!_addc.length) return s;
@@ -2411,6 +2422,19 @@ function startApp() {
       case 'CHAT_OPEN':   return Object.assign({},s,{chatOpen:!!a.v});
       case A.UPD_FILTERS: return Object.assign({},s,{filters:Object.assign({},s.filters,a.u)});
       case A.RESET_FILTERS: return Object.assign({},s,{filters:Object.assign({},INIT_FILTERS)});
+      // Clash-review facets / view / saved views (see INIT.triage). u.facets
+      // replaces the whole facet map; an explicit view choice ends 'auto'.
+      case A.TRIAGE_UPD: return Object.assign({},s,{triage:Object.assign({},s.triage||INIT.triage,a.u)});
+      case A.TRIAGE_STATE: return Object.assign({},s,{triage:Object.assign({},INIT.triage,a.v||{})});
+      // Undo of a group status change (BATCH_UPD_CLASH with explicit ids):
+      // puts each clash's previous field values back and drops the issues
+      // the batch confirm created.
+      case A.CLASH_BATCH_RESTORE:
+        var _cbr=a.prev||{}, _cbrKeep=a.keepIssueIds||null;
+        return Object.assign({},s,{
+          clashes:s.clashes.map(function(c){ return _cbr[c.id] ? Object.assign({},c,_cbr[c.id]) : c; }),
+          issues:_cbrKeep ? s.issues.filter(function(i){ return !(i.clashId && _cbr[i.clashId]) || _cbrKeep[i.id]; }) : s.issues
+        });
       case A.SECTION:     if(a.axis&&!s.sectionAxis) _gcEvent('section-plane', a.axis); return Object.assign({},s,{sectionAxis:a.axis, sectionPos:a.pos!=null?a.pos:s.sectionPos, sectionCustom:null, sectionStorey:a.storeyName||null, sectionFlip:false, walkMode:false, commentMode:false}); // keeps measureMode — section plane coexists with measure
       case A.SECTION_CUSTOM: return Object.assign({},s,{sectionAxis:null, sectionCustom:a.v, sectionPos:a.pos!=null?a.pos:0.5, sectionFlip:false});
       case A.SECTION_FLIP:  return Object.assign({},s,{sectionFlip:!s.sectionFlip});
@@ -2564,6 +2588,13 @@ function startApp() {
       case A.SELECT_NONE:    return Object.assign({},s,{selected:{}});
       case A.SELECT_MODE:    return Object.assign({},s,{selectMode:a.v,selected:a.v?s.selected:{}});
       case A.BATCH_UPD_CLASH:
+        // a.ids (group header "Accept all" / "Set status"): act on exactly
+        // those clashes instead of the multi-select; the selection is kept.
+        if (Array.isArray(a.ids)) {
+          var _bsel={}; a.ids.forEach(function(id){_bsel[id]=true;});
+          var _bres=reducer(Object.assign({},s,{selected:_bsel}), Object.assign({},a,{ids:null,_ccReplay:true}));
+          return Object.assign({},_bres,{selected:s.selected});
+        }
         // Bug 4: batch "Set status... Confirmed" used to just flip the
         // status string, unlike the single Confirm action (C key / Confirm
         // button) which promotes the clash to a full issue. Route batch
@@ -6448,7 +6479,7 @@ function startApp() {
     try {
       var r = {};
       Object.keys(rules || {}).sort().forEach(function(k) {
-        if (k === 'fullRerun' || k === 'changeAware' || k === 'hideProvidedOpenings' || k === 'hideContacts' || k === 'roleChoicesRemembered') return;
+        if (k === 'fullRerun' || k === 'changeAware' || k === 'hideProvidedOpenings' || k === 'hideContacts' || k === 'hideBuckets' || k === 'roleChoicesRemembered') return;
         r[k] = rules[k];
       });
       var ms = (models || []).map(function(m) {
@@ -6953,6 +6984,81 @@ function startApp() {
     if (c.provision === 'inside' && _ccDisciplineCore.roleChoice('provision', rules) === 'classify') return 'provision';
     if (c.roleGroup && _ccDisciplineCore.roleChoice(c.roleGroup, rules) === 'classify') return c.roleGroup;
     return false;
+  }
+
+  // ── Review buckets (clash-classification-core.js reviewBucket) ──────
+  // Every clash is filed in exactly one bucket; only 'review' is shown by
+  // default, the rest sit behind the bucket bar's counts. The "twice" map
+  // (one conflict against two copies of an element) needs the whole result,
+  // so it is computed once per clashes array.
+  var _ccTwiceCache = new WeakMap();
+  function _ccTriageCtx(clashes) {
+    var ctx = clashes && _ccTwiceCache.get(clashes);
+    if (ctx) return ctx;
+    var core = window._ccClashClassificationCore;
+    ctx = { twice: (core && core.findTwice) ? core.findTwice(clashes || []) : {},
+            roleChoice: function(g, rules) { return _ccDisciplineCore.roleChoice(g, rules); } };
+    if (clashes) _ccTwiceCache.set(clashes, ctx);
+    return ctx;
+  }
+  function _ccReviewBucket(c, rules, ctx) {
+    var core = window._ccClashClassificationCore;
+    if (!core || !core.reviewBucket) return 'review';
+    return core.reviewBucket(c, rules, ctx || null);
+  }
+  // One memoised triage model per (clashes, rules, models): bucket of every
+  // clash, bucket counts over the visible models (they always add up to the
+  // visible raw total), the storey normaliser and each clash's facet values.
+  // Shared by the clash list, the overview, the BCF export and the report so
+  // a 50k-clash result is filed once, not once per component.
+  var _ccTriageLast = null;
+  function _ccTriageModel(s) {
+    var L = _ccTriageLast;
+    if (L && L.clashes === s.clashes && L.rules === s.rules && L.models === s.models) return L.out;
+    var tcore = window._ccClashTriageCore, ccore = window._ccClashClassificationCore;
+    var ctx = _ccTriageCtx(s.clashes || []);
+    var vis = {}, names = {}, stE = [];
+    (s.models || []).forEach(function(m) {
+      if (m.visible !== false) vis[m.id] = true;
+      names[m.id] = m.name || m.id;
+      (m.storeyData || []).forEach(function(st) { if (st && st.name) stE.push({ modelId: m.id, name: st.name, elevation: st.elevation }); });
+    });
+    var bucketOf = new Map(), counts = {}, visible = [];
+    ((ccore && ccore.REVIEW_BUCKETS) || ['review']).forEach(function(b) { counts[b] = 0; });
+    (s.clashes || []).forEach(function(c) {
+      var b = _ccReviewBucket(c, s.rules, ctx);
+      bucketOf.set(c.id, b);
+      if ((c.modelAId && !vis[c.modelAId]) || (c.modelBId && !vis[c.modelBId])) return;
+      counts[b] = (counts[b] || 0) + 1;
+      visible.push(c);
+    });
+    var norm = tcore ? tcore.buildStoreyNormaliser(stE) : { label: function(m, n) { return n || ''; }, labels: [] };
+    var fctx = {
+      severity: function(c) { return _ccDeterministicSeverity(c); },
+      bucket: function(c) { return bucketOf.get(c.id) || 'review'; },
+      storey: function(mid, n) { return norm.label(mid, n); },
+      modelName: function(id) { return names[id] || id || '?'; },
+      trade: function(c, side) { var i = side === 'A' ? 0 : 1; return (c.trades && c.trades[i]) || (c.disciplines && c.disciplines[i]) || 'other'; }
+    };
+    var index = tcore ? tcore.indexItems(visible, fctx) : [];
+    var rowById = new Map();
+    index.forEach(function(r) { rowById.set(r.c.id, r); });
+    var out = { bucketOf: bucketOf, counts: counts, total: visible.length, visible: visible, ctx: ctx, fctx: fctx,
+      storeyNorm: norm, index: index, rowById: rowById, visibleModels: vis };
+    _ccTriageLast = { clashes: s.clashes, rules: s.rules, models: s.models, out: out };
+    return out;
+  }
+  // Legacy per-bucket "show" switches still count as showing that bucket.
+  var _CC_BUCKET_LEGACY_SHOW = { provided:'showProvided', provision:'showProvisions', zone:'showRoleGroups', contact:'showContacts', handled:'showHandled' };
+  function _ccBucketShown(bucket, rules, f) {
+    if (bucket === 'review') return true;
+    f = f || {};
+    if (Array.isArray(f.showBuckets) && f.showBuckets.indexOf(bucket) !== -1) return true;
+    var lg = _CC_BUCKET_LEGACY_SHOW[bucket];
+    if (lg && f[lg]) return true;
+    var core = window._ccClashClassificationCore;
+    var hidden = (core && core.hiddenBuckets) ? core.hiddenBuckets(rules) : [];
+    return hidden.indexOf(bucket) === -1;
   }
 
   // ── Möller triangle-triangle intersection test ──────────────────
@@ -9737,6 +9843,8 @@ function startApp() {
           elemAMaterial:pA.material||'', elemBMaterial:pB.material||'',
           objectTypeA:pA.objectType||'', objectTypeB:pB.objectType||'',
           roleA:_ccRoleOfElement(eA, mA), roleB:_ccRoleOfElement(eB, mB),
+          // trade per side ('mep.ventilation', 'structural' …) for the review facets
+          trades:(typeof _ccDisciplineCore === 'object' && _ccDisciplineCore) ? [_ccDisciplineCore.elementMatrixKey(eA, mA.discipline), _ccDisciplineCore.elementMatrixKey(eB, mB.discipline)] : null,
           bboxA:bbA, bboxB:bbB
         },
         pA:pA, pB:pB, tA:tA, tB:tB, nA:nA, nB:nB
@@ -10908,7 +11016,8 @@ function startApp() {
       ADD_VIEWPOINT:A.ADD_VIEWPOINT, ADD_MEASUREMENT:A.ADD_MEASUREMENT,
       ADD_SELSET:'ADD_SELSET', ADD_SEARCHSET:'ADD_SEARCHSET',
       ADD_ASSIGN_RULE:'ADD_ASSIGN_RULE', MERGE_CHANGELOG:A.MERGE_CHANGELOG,
-      MERGE_COMMENTS:A.MERGE_COMMENTS // Bug 9: comments weren't persisted at all
+      MERGE_COMMENTS:A.MERGE_COMMENTS, // Bug 9: comments weren't persisted at all
+      TRIAGE_STATE:A.TRIAGE_STATE, UPD_FILTERS:A.UPD_FILTERS // clash review facets / saved views / search
     };
   }
   function _ccSerializeProject(s, version, savedAt) {
@@ -11468,8 +11577,12 @@ function startApp() {
     return partial.length ? {complete: false, partialModels: partial} : {complete: true};
   }
 
-  function exportBCF(items, version, viewpoints, state) {
+  // opts.labelFor(item) -> extra <Labels> text (the "shown" clash export
+  // labels every topic with its review item's title, so a group stays a
+  // group in BIMcollab/Solibri).
+  function exportBCF(items, version, viewpoints, state, opts) {
     if (!items.length) return;
+    opts = opts || {};
     _gcEvent('bcf-export', 'BCF '+version+' ('+items.length+' items)');
     var v3 = version === '3.0';
     var zip = new JSZip();
@@ -11555,7 +11668,11 @@ function startApp() {
       // synthesized vp needs no special-casing past this point.
       if (!vp) {
         var _synth = _ccSynthesizeViewpoint(it, state && state.models);
-        if (_synth) vp = { camera: _synth.camera, snapshot: null };
+        // the overview's cached clash picture (never rendered here: export is
+        // synchronous) becomes the viewpoint's snapshot.png
+        var _snapUrl = null;
+        try { _snapUrl = window._ccClashSnapshots ? window._ccClashSnapshots.get(it) : null; } catch (_) { _snapUrl = null; }
+        if (_synth) vp = { camera: _synth.camera, snapshot: _snapUrl };
       }
       // Persist a stable viewpoint GUID the same way as the topic GUID above
       // (only meaningful for a real captured viewpoint — it has a .id;
@@ -11590,6 +11707,7 @@ function startApp() {
       var labels = [];
       // Round-trip Revit element IDs via Labels (standard BCF field, arbitrary
       // string content). Matching labels are parsed back on import.
+      if (typeof opts.labelFor === 'function') { var _rl = opts.labelFor(it); if (_rl) labels.push(esc(_rl)); }
       if (it.revitIdA != null) labels.push('cc:revitA='+esc(it.revitIdA));
       if (it.revitIdB != null) labels.push('cc:revitB='+esc(it.revitIdB));
       // AI provenance — model + source + timestamp for every AI-touched issue.
@@ -12559,6 +12677,20 @@ function startApp() {
       case A.SECTION_BOX: {
         var oldBox = {t:A.SECTION_BOX, v:prevState.sectionBox};
         return {label:'Section box', coalesceKey:'section-box', undo:function(){replay(oldBox);}, redo:function(){replay(a);}};
+      }
+      case A.BATCH_UPD_CLASH: {
+        // Group header actions (explicit ids) are undoable: remember each
+        // clash's previous values of the changed fields (+ linkedIssueId for
+        // a batch confirm) and which issues already existed.
+        if (!Array.isArray(a.ids) || !a.u) return null;
+        var ids = {}, prev = {}, fields = Object.keys(a.u).concat(['linkedIssueId', 'aiSignals']);
+        a.ids.forEach(function(id){ ids[id] = true; });
+        (prevState.clashes || []).forEach(function(c){
+          if (!ids[c.id]) return;
+          var p = {}; fields.forEach(function(f){ p[f] = c[f]; }); prev[c.id] = p;
+        });
+        var keep = {}; (prevState.issues || []).forEach(function(i){ keep[i.id] = true; });
+        return {label:'Set status', undo:function(){replay({t:A.CLASH_BATCH_RESTORE, prev:prev, keepIssueIds:keep});}, redo:function(){replay(a);}};
       }
     }
     return null;
@@ -15352,6 +15484,24 @@ function startApp() {
           enforceBudget: function(){ return window._ccStorageEnforceBudget ? window._ccStorageEnforceBudget() : Promise.resolve(null); }
         },
         clashReport:      function(){ if (window._ccClashReport && window._ccLatestState) return window._ccClashReport(window._ccLatestState); },
+        // Clash review: bucket counts (they add up to the visible raw total),
+        // the review items the overview shows, cached snapshots, and BCF of
+        // the review set ('shown', labelled per review item) or of everything.
+        review: {
+          summary: function(){
+            var st = window._ccLatestState;
+            if (!st) return null;
+            var tm = _ccTriageModel(st), rm = _ccReviewModel(st);
+            return { total: tm.total, buckets: Object.assign({}, tm.counts), reviewClashes: rm.clashes.length, reviewItems: rm.items.length,
+              items: rm.items.map(function(it){ return { key: it.key, title: it.title, size: it.items.length, ids: it.items.map(function(c){ return c.id; }) }; }) };
+          },
+          get snapshots() { return window._ccClashSnapshots || null; },
+          exportBCF: function(scope, version){
+            var st = window._ccLatestState;
+            if (!st) return 0;
+            return _ccExportClashesBCF(st, scope === 'shown' ? 'shown' : 'all', version || '2.1', scope === 'shown' ? _ccReviewModel(st).clashes : null);
+          }
+        },
         parkModel:        function(id){ if (window._ccParkModel) return window._ccParkModel(id); },
         restoreModel:     function(id){ if (window._ccRestoreParkedModel) return window._ccRestoreParkedModel(id); },
         isModelParked:    function(id){ return window._ccIsModelParked ? window._ccIsModelParked(id) : false; },
@@ -18715,6 +18865,294 @@ function startApp() {
       }
       if (_occl.mode === 'auto') _occlLoadVerdict();
 
+      // ── Clash snapshots (overview cards, BCF snapshot.png, PDF report) ──
+      // An offscreen picture per clash: the pair in its A/B colours, the
+      // surrounding model ghosted and cut by a local section box around the
+      // clash region, a marker on the clash point, a fixed framing camera.
+      // Same busy rules as the occlusion check above (_occlBusy: never during
+      // detection, interaction, loading, a pending frame or a hidden tab);
+      // each idle slice renders until its time budget is used. Nothing on
+      // screen changes: every scene/renderer state touched is restored in
+      // the same synchronous call. Results are cached in memory and in
+      // IndexedDB ('cc-snapshots', budgeted by storage-core planSnapshotGC)
+      // under a key of clash identity + both elements' geometry hashes, so a
+      // re-run that changes either element invalidates the picture.
+      var _SNAP_VER = 'v1', _SNAP_W = 320, _SNAP_H = 200;
+      var _snap = {
+        mem: new Map(), byIdent: new Map(), queue: [], queued: {}, waiting: {}, timer: 0, db: null, dbFailed: false, writes: 0,
+        sliceBudgetMs: 40, memMax: 400,
+        stats: { rendered: 0, memHits: 0, idbHits: 0, busyDeferrals: 0, invalidated: 0, renderedWhileDetecting: 0, ms: [] }
+      };
+      var _snapLut = null;
+      function _snapSrgb() {
+        if (_snapLut) return _snapLut;
+        _snapLut = new Uint8Array(256);
+        for (var i = 0; i < 256; i++) {
+          var c = i / 255, v = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+          _snapLut[i] = Math.max(0, Math.min(255, Math.round(v * 255)));
+        }
+        return _snapLut;
+      }
+      function _snapEls(c) {
+        var a = c && c.elemA != null ? _ccProxyElement(c.elemA, c.modelAId) : null;
+        var b = c && c.elemB != null ? _ccProxyElement(c.elemB, c.modelBId) : null;
+        return { a: a && a.el, b: b && b.el };
+      }
+      function _snapIdent(c) {
+        var core = window._ccClashIdentityCore;
+        return core && core.computeClashIdentityKey ? core.computeClashIdentityKey(c) : String(c.id);
+      }
+      function _snapKey(c) {
+        if (!c || !c.point) return null;
+        var e = _snapEls(c);
+        if (!e.a || !e.b || !e.a.box || !e.b.box) return null;
+        var ha = e.a._ccGeoHash !== undefined ? e.a._ccGeoHash : (e.a._ccSnapHash || (e.a._ccSnapHash = _hashElement(e.a)));
+        var hb = e.b._ccGeoHash !== undefined ? e.b._ccGeoHash : (e.b._ccSnapHash || (e.b._ccSnapHash = _hashElement(e.b)));
+        var p = c.point;
+        return _SNAP_VER + '|' + _snapIdent(c) + '|' + ha + '|' + hb + '|' + Math.round(p[0] * 1000) + ',' + Math.round(p[1] * 1000) + ',' + Math.round(p[2] * 1000) + '|' + c.type;
+      }
+      function _snapHash(px) {
+        var h = 2166136261;
+        for (var i = 0; i < px.length; i++) h = Math.imul(h ^ px[i], 16777619);
+        return (h >>> 0).toString(16);
+      }
+      function _snapDb() {
+        if (_snap.db || _snap.dbFailed) return _snap.db;
+        try {
+          _snap.db = new Promise(function(resolve) {
+            var req = indexedDB.open('cc-snapshots', 1);
+            req.onupgradeneeded = function() { try { req.result.createObjectStore('snapshots', { keyPath: 'key' }); } catch (_) {} };
+            req.onsuccess = function() { resolve(req.result); };
+            req.onerror = function() { _snap.dbFailed = true; resolve(null); };
+          });
+        } catch (_) { _snap.dbFailed = true; _snap.db = null; }
+        return _snap.db;
+      }
+      function _snapIdbGet(key) {
+        var p = _snapDb();
+        if (!p) return Promise.resolve(null);
+        return p.then(function(db) {
+          if (!db) return null;
+          return new Promise(function(resolve) {
+            try {
+              var r = db.transaction('snapshots', 'readonly').objectStore('snapshots').get(key);
+              r.onsuccess = function() { resolve(r.result || null); };
+              r.onerror = function() { resolve(null); };
+            } catch (_) { resolve(null); }
+          });
+        });
+      }
+      function _snapIdbPut(rec) {
+        var p = _snapDb();
+        if (!p) return;
+        p.then(function(db) {
+          if (!db) return;
+          try { db.transaction('snapshots', 'readwrite').objectStore('snapshots').put(rec); } catch (_) {}
+          if (++_snap.writes % 25 === 0) _snapGC();
+        });
+      }
+      function _snapIdbDelete(keys) {
+        var p = _snapDb();
+        if (!p || !keys.length) return Promise.resolve();
+        return p.then(function(db) {
+          if (!db) return;
+          return new Promise(function(resolve) {
+            try {
+              var tx = db.transaction('snapshots', 'readwrite'), st = tx.objectStore('snapshots');
+              keys.forEach(function(k) { st.delete(k); });
+              tx.oncomplete = function() { resolve(); }; tx.onerror = function() { resolve(); };
+            } catch (_) { resolve(); }
+          });
+        });
+      }
+      // Budget the IndexedDB cache (storage-core planSnapshotGC: LRU by
+      // last use, count + byte caps).
+      function _snapGC(opts) {
+        var p = _snapDb(), sc = window._ccStorageCore;
+        if (!p || !sc || !sc.planSnapshotGC) return Promise.resolve([]);
+        return p.then(function(db) {
+          if (!db) return [];
+          return new Promise(function(resolve) {
+            var rows = [];
+            try {
+              var cur = db.transaction('snapshots', 'readonly').objectStore('snapshots').openCursor();
+              cur.onsuccess = function() {
+                var c = cur.result;
+                if (c) { rows.push({ key: c.value.key, bytes: c.value.bytes || 0, at: c.value.at || 0 }); c.continue(); return; }
+                var del = sc.planSnapshotGC(rows, opts || {});
+                _snapIdbDelete(del).then(function() { resolve(del); });
+              };
+              cur.onerror = function() { resolve([]); };
+            } catch (_) { resolve([]); }
+          });
+        });
+      }
+      function _snapRemember(key, ident, rec) {
+        var prev = _snap.byIdent.get(ident);
+        if (prev && prev !== key) {
+          // the same clash with different geometry (a re-run moved/changed an
+          // element): the old picture is wrong now — drop it everywhere
+          _snap.mem.delete(prev); _snapIdbDelete([prev]); _snap.stats.invalidated++;
+        }
+        _snap.byIdent.set(ident, key);
+        _snap.mem.delete(key); _snap.mem.set(key, rec);
+        while (_snap.mem.size > _snap.memMax) _snap.mem.delete(_snap.mem.keys().next().value);
+      }
+      function _snapNotify(key) { try { window.dispatchEvent(new CustomEvent('cc-snapshot', { detail: { key: key } })); } catch (_) {} }
+      // Synchronous offscreen render of one clash. Returns {url, hash, ms}.
+      function _snapRender(c) {
+        var e = _snapEls(c);
+        if (!e.a || !e.b) return null;
+        var t0 = performance.now();
+        var pt = new THREE.Vector3(c.point[0], c.point[1], c.point[2]);
+        var ov = e.a.box.clone().intersect(e.b.box);
+        var r = 0.35;
+        if (!ov.isEmpty()) { var sz = ov.getSize(new THREE.Vector3()); r = Math.max(0.35, Math.min(4, 0.5 * Math.max(sz.x, sz.y, sz.z))); }
+        var half = r * 1.3 + 0.2;
+        var clip = new THREE.Box3(pt.clone().subScalar(half), pt.clone().addScalar(half));
+        var planes = [new THREE.Plane(new THREE.Vector3(1, 0, 0), -clip.min.x), new THREE.Plane(new THREE.Vector3(-1, 0, 0), clip.max.x),
+          new THREE.Plane(new THREE.Vector3(0, 1, 0), -clip.min.y), new THREE.Plane(new THREE.Vector3(0, -1, 0), clip.max.y),
+          new THREE.Plane(new THREE.Vector3(0, 0, 1), -clip.min.z), new THREE.Plane(new THREE.Vector3(0, 0, -1), clip.max.z)];
+        var pairHalf = half * 1.6;
+        var pairPlanes = [new THREE.Plane(new THREE.Vector3(1, 0, 0), -(pt.x - pairHalf)), new THREE.Plane(new THREE.Vector3(-1, 0, 0), pt.x + pairHalf),
+          new THREE.Plane(new THREE.Vector3(0, 1, 0), -(pt.y - pairHalf)), new THREE.Plane(new THREE.Vector3(0, -1, 0), pt.y + pairHalf),
+          new THREE.Plane(new THREE.Vector3(0, 0, 1), -(pt.z - pairHalf)), new THREE.Plane(new THREE.Vector3(0, 0, -1), pt.z + pairHalf)];
+        var cam = new THREE.PerspectiveCamera(35, _SNAP_W / _SNAP_H, 0.01, 2000);
+        var dir = new THREE.Vector3(1, 0.75, 0.9).normalize();
+        var dist = half * 1.1 / Math.tan(THREE.MathUtils.degToRad(17.5));
+        cam.position.copy(pt).addScaledVector(dir, dist); cam.up.set(0, 1, 0); cam.lookAt(pt); cam.updateMatrixWorld(true);
+        var matA = new THREE.MeshLambertMaterial({ color: 0xef4444, clippingPlanes: pairPlanes, side: THREE.DoubleSide });
+        var matB = new THREE.MeshLambertMaterial({ color: 0x22d3ee, clippingPlanes: pairPlanes, side: THREE.DoubleSide });
+        var ctxMat = new THREE.MeshLambertMaterial({ color: 0xb6c0cc, transparent: true, opacity: 0.32, depthWrite: false, clippingPlanes: planes, side: THREE.DoubleSide });
+        var markMat = new THREE.MeshBasicMaterial({ color: 0xfacc15, depthTest: false });
+        var markGeo = new THREE.SphereGeometry(Math.max(0.03, r * 0.07), 16, 12);
+        var pairScene = new THREE.Scene(), markScene = new THREE.Scene();
+        pairScene.add(new THREE.AmbientLight(0xffffff, 1.6));
+        var dl = new THREE.DirectionalLight(0xffffff, 2.2); dl.position.copy(dir).add(new THREE.Vector3(0.3, 1, -0.2)); pairScene.add(dl);
+        [[e.a, matA], [e.b, matB]].forEach(function(pr) {
+          (pr[0].meshes || []).forEach(function(m) {
+            if (!m || !m.geometry) return;
+            if (!m.parent) m.updateMatrixWorld(true);
+            var px = new THREE.Mesh(m.geometry, pr[1]);
+            px.matrixAutoUpdate = false; px.matrix.copy(m.matrixWorld); px.matrixWorld.copy(m.matrixWorld);
+            pairScene.add(px);
+          });
+        });
+        var mk = new THREE.Mesh(markGeo, markMat); mk.position.copy(pt); mk.renderOrder = 10; mk.updateMatrixWorld(true); markScene.add(mk);
+        var rt = new THREE.WebGLRenderTarget(_SNAP_W, _SNAP_H, { samples: 4 });
+        var prevRT = renderer.getRenderTarget(), prevAuto = renderer.autoClear, prevLocal = renderer.localClippingEnabled, prevPlanes = renderer.clippingPlanes;
+        var prevClear = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha();
+        var prevOverride = scene.overrideMaterial, prevBg = scene.background;
+        var hidden = [], unculled = [];
+        try {
+          renderer.setRenderTarget(rt);
+          renderer.localClippingEnabled = true; renderer.clippingPlanes = [];
+          renderer.setClearColor(0xf1f5f9, 1); renderer.autoClear = false; renderer.clear();
+          renderer.render(pairScene, cam);
+          // context: the model only, ghosted + section-boxed, culling undone
+          scene.children.forEach(function(ch) { if (ch !== S.mg && !ch.isLight && ch.visible) { ch.visible = false; hidden.push(ch); } });
+          S.mg.traverse(function(o) { if (o.isMesh && !o.visible && (o.userData._frustumCulled || o.userData._occlCulled)) { o.visible = true; unculled.push(o); } });
+          scene.overrideMaterial = ctxMat; scene.background = null;
+          renderer.render(scene, cam);
+          scene.overrideMaterial = prevOverride; scene.background = prevBg;
+          renderer.clearDepth();
+          renderer.render(markScene, cam);
+          var px = new Uint8Array(_SNAP_W * _SNAP_H * 4);
+          renderer.readRenderTargetPixels(rt, 0, 0, _SNAP_W, _SNAP_H, px);
+        } finally {
+          scene.overrideMaterial = prevOverride; scene.background = prevBg;
+          hidden.forEach(function(ch) { ch.visible = true; });
+          unculled.forEach(function(o) { o.visible = false; });
+          renderer.setRenderTarget(prevRT); renderer.autoClear = prevAuto; renderer.localClippingEnabled = prevLocal; renderer.clippingPlanes = prevPlanes;
+          renderer.setClearColor(prevClear, prevAlpha);
+          rt.dispose(); matA.dispose(); matB.dispose(); ctxMat.dispose(); markMat.dispose(); markGeo.dispose();
+        }
+        var lut = _snapSrgb(), cv = document.createElement('canvas'); cv.width = _SNAP_W; cv.height = _SNAP_H;
+        var ctx2 = cv.getContext('2d'), img = ctx2.createImageData(_SNAP_W, _SNAP_H);
+        for (var y = 0; y < _SNAP_H; y++) {
+          var src = (_SNAP_H - 1 - y) * _SNAP_W * 4, dst = y * _SNAP_W * 4;
+          for (var x = 0; x < _SNAP_W * 4; x += 4) {
+            img.data[dst + x] = lut[px[src + x]]; img.data[dst + x + 1] = lut[px[src + x + 1]]; img.data[dst + x + 2] = lut[px[src + x + 2]]; img.data[dst + x + 3] = 255;
+          }
+        }
+        ctx2.putImageData(img, 0, 0);
+        var url = cv.toDataURL('image/png');
+        var ms = performance.now() - t0;
+        var st = window._ccLatestState;
+        if (st && st.detecting) _snap.stats.renderedWhileDetecting++;
+        _snap.stats.rendered++; _snap.stats.ms.push(ms); if (_snap.stats.ms.length > 200) _snap.stats.ms.shift();
+        return { url: url, hash: _snapHash(img.data), ms: ms };
+      }
+      function _snapSchedule(delay) {
+        if (_snap.timer || !_snap.queue.length) return;
+        _snap.timer = setTimeout(function() {
+          _snap.timer = 0;
+          var go = function() { _snapPump(); };
+          if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(go, { timeout: 2000 }); else go();
+        }, delay == null ? 120 : delay);
+      }
+      function _snapPump() {
+        if (!_snap.queue.length) return;
+        if (_occlBusy() || !S.mg) { _snap.stats.busyDeferrals++; _snapSchedule(400); return; }
+        var t0 = performance.now();
+        while (_snap.queue.length && performance.now() - t0 < _snap.sliceBudgetMs) {
+          var job = _snap.queue.shift();
+          delete _snap.queued[job.key];
+          if (_snap.mem.has(job.key)) continue;
+          var res = null;
+          try { res = _snapRender(job.c); } catch (err) { console.warn('[snapshot] render failed:', err && err.message || err); }
+          if (!res) continue;
+          var rec = { key: job.key, url: res.url, hash: res.hash, at: Date.now(), bytes: res.url.length, ms: Math.round(res.ms) };
+          _snapRemember(job.key, _snapIdent(job.c), rec);
+          _snapIdbPut(rec);
+          _snapNotify(job.key);
+        }
+        if (_snap.queue.length) _snapSchedule(60);
+      }
+      function _snapRequest(c, front) {
+        var key = _snapKey(c);
+        if (!key) return null;
+        if (_snap.mem.has(key)) { _snap.stats.memHits++; return key; }
+        if (_snap.queued[key] || _snap.waiting[key]) return key;
+        _snap.waiting[key] = true;
+        _snapIdbGet(key).then(function(rec) {
+          delete _snap.waiting[key];
+          if (rec && rec.url) {
+            _snap.stats.idbHits++;
+            rec.at = Date.now();
+            _snapRemember(key, _snapIdent(c), rec);
+            _snapIdbPut(rec);
+            _snapNotify(key);
+            return;
+          }
+          if (_snap.queued[key] || _snap.mem.has(key)) return;
+          _snap.queued[key] = true;
+          if (front) _snap.queue.unshift({ key: key, c: c }); else _snap.queue.push({ key: key, c: c });
+          _snapSchedule();
+        });
+        return key;
+      }
+      window._ccClashSnapshots = {
+        key: _snapKey,
+        // cached picture (data: URL) for a clash, or null — never renders
+        get: function(c) { var k = _snapKey(c); var r = k && _snap.mem.get(k); return r ? r.url : null; },
+        record: function(c) { var k = _snapKey(c); return (k && _snap.mem.get(k)) || null; },
+        // queue a render at the next idle slice (memory, then IndexedDB first)
+        request: function(c, opts) { return _snapRequest(c, !!(opts && opts.front)); },
+        // render right now, ignoring the queue and caches (tests, determinism checks)
+        renderNow: function(c) { return _snapRender(c); },
+        pending: function() { return _snap.queue.length + Object.keys(_snap.waiting).length; },
+        stats: function() {
+          var ms = _snap.stats.ms.slice().sort(function(a, b) { return a - b; });
+          return Object.assign({}, _snap.stats, { ms: undefined, memEntries: _snap.mem.size, queue: _snap.queue.length,
+            medianMs: ms.length ? ms[ms.length >> 1] : null, maxMs: ms.length ? ms[ms.length - 1] : null });
+        },
+        clearMemory: function() { _snap.mem.clear(); _snap.byIdent.clear(); },
+        gc: function(opts) { return _snapGC(opts); },
+        set sliceBudgetMs(v) { _snap.sliceBudgetMs = Math.max(5, +v || 40); },
+        get sliceBudgetMs() { return _snap.sliceBudgetMs; }
+      };
+
       function _occlEnd() {
         var h = _occl.hidden, i;
         for (i = 0; i < h.length; i++) { h[i].visible = true; h[i].userData._occlCulled = false; }
@@ -21684,7 +22122,7 @@ function startApp() {
   var _ccAutosaveMemo = null;
   var _AUTOSAVE_SLICES = ['clashes','issues','rules','floors','viewpoints','measurements','filters',
     'lastDeltaSummary','runHistory','sheets','activeSheetId','sheetPins','markups',
-    'selectionSets','searchSets','assignmentRules','models'];
+    'selectionSets','searchSets','assignmentRules','models','triage'];
 
   function _saveCurrentProjectData(s, opts) {
     var pid = s.activeProject||'default';
@@ -21716,6 +22154,8 @@ function startApp() {
       // export/import a project file. LOAD_PROJECT_STATE is a blind
       // Object.assign merge, so adding the keys here is the whole fix.
       selectionSets:s.selectionSets||[], searchSets:s.searchSets||[], assignmentRules:s.assignmentRules||[],
+      // clash review facets / saved views / overview choice (autoOpen is per run)
+      triage:s.triage ? Object.assign({}, s.triage, {autoOpen:false}) : undefined,
       modelMeta:s.models.map(function(m){return {id:m.id,name:m.name,discipline:m.discipline,color:m.color,visible:m.visible,tag:m.tag||'',georef:m.georef||null};})
     }, 0);
     return idbSaveProjectData(pid, data).then(function(r){
@@ -21891,7 +22331,8 @@ function startApp() {
       // detected clashes, and project A's run history/comments/changelog
       // bled into project B's UI until the next full page reload.
       runHistory:[], selectionSets:[], searchSets:[], assignmentRules:[],
-      comments:[], changelog:[]
+      comments:[], changelog:[],
+      triage:Object.assign({},INIT.triage), // facets / saved views are per project (restored by project-codec)
     }});
     d({t:A.UPD_PREFS, u:{showMarkers:false}});
     d({t:A.SET_PROJECT, id:newProjId});
@@ -26099,7 +26540,12 @@ function startApp() {
     var s = window._ccLatestState;
     if (!s || s.detecting) return false;
     var runRules = Object.assign({}, s.rules, rulesOverride || {});
-    _ccMaybePreRun(runRules, function(r) { if (window._ccRunDetection) window._ccRunDetection(r); });
+    // A person started this run: let the overview open on its result when the
+    // review set is small (triage.view 'auto'); automation never sets this.
+    _ccMaybePreRun(runRules, function(r) {
+      if (window._ccDispatch) window._ccDispatch({t:A.TRIAGE_UPD, u:{autoOpen:true}});
+      if (window._ccRunDetection) window._ccRunDetection(r);
+    });
     return true;
   };
   function PreRunPanel(props) {
@@ -26907,6 +27353,515 @@ function startApp() {
   }
   /* eslint-enable react-hooks/rules-of-hooks */
 
+  // Severity as a pill: the word carries the meaning, the colour only backs it.
+  function _ccSeverityPillStyle(sev) {
+    var m = { critical: ['var(--color-danger-bg)', 'var(--color-danger-fg)'], major: ['var(--color-warning-bg)', 'var(--color-warning-fg)'],
+      minor: ['var(--color-info-bg)', 'var(--color-info-fg)'], info: ['var(--bg-secondary)', 'var(--text-secondary)'] }[sev] || ['var(--bg-secondary)', 'var(--text-secondary)'];
+    return { padding: '1px var(--space-2)', background: m[0], color: m[1] };
+  }
+  // ── Review bucket bar + smart filters (clash list and overview) ──────
+  // Labels: plain counts sentence ("1243 inside provisions · 16 only touch").
+  function _ccBucketLabel(b, n) {
+    var L = {
+      review: _cc_t('bucket.review', '{n} to review', {n:n}),
+      contact: n + ' ' + _cc_t('contact.only', 'only touch (contact)'),
+      provided: n + ' ' + _cc_t('opening.passThrough', 'pass through provided openings'),
+      provision: n + ' ' + _cc_t('provision.passThrough', 'inside provisions / reservations'),
+      zone: _cc_t('bucket.zone', '{n} in classified groups', {n:n}),
+      twice: _cc_t('bucket.twice', '{n} reported twice (copied element)', {n:n}),
+      embedded: _cc_t('bucket.embedded', '{n} embedded by design', {n:n}),
+      finish: _cc_t('bucket.finish', '{n} finishes / furniture', {n:n}),
+      graze: _cc_t('bucket.graze', '{n} only graze', {n:n}),
+      handled: _cc_t('bucket.handled', '{n} handled', {n:n})
+    };
+    return L[b] || (n + ' ' + b);
+  }
+  function _ccBucketHint(b) {
+    var H = {
+      contact: _cc_t('contact.title', 'Surfaces meet but nothing interpenetrates (flush faces, an element resting on another) — not a clash'),
+      provided: _cc_t('bucket.providedHint', 'The element passes through an IFC opening made for it'),
+      provision: _cc_t('provision.insideTitle', 'The element sits in or passes through a provision / reservation volume made for it'),
+      zone: _cc_t('roles.classifiedTitle', 'Clashes with elements whose suggestion group is set to "classify only" (Detection rules → Suggestion groups)'),
+      twice: _cc_t('bucket.twiceHint', 'The same conflict against an exact copy of an element in another model — reported once in review'),
+      embedded: _cc_t('bucket.embeddedHint', 'Reinforcement, fasteners, element parts, voids, and doors/windows sitting in a wall or slab of another model'),
+      finish: _cc_t('bucket.finishHint', 'Only finishes (coverings) or movable furniture involved'),
+      graze: _cc_t('bucket.grazeHint', 'Overlap shallower than 25 mm and 10 % of the thinner element'),
+      handled: _cc_t('bucket.handledHint', 'Resolved, closed or denied')
+    };
+    return H[b] || '';
+  }
+  function BucketBar(props) {
+    var counts = props.counts || {}, rules = props.rules, f = props.f || {}, d = props.d;
+    var core = window._ccClashClassificationCore;
+    var order = (core && core.REVIEW_BUCKETS) || ['review'];
+    var others = order.filter(function(b){ return b !== 'review' && counts[b] > 0; });
+    function toggle(b) {
+      var shown = _ccBucketShown(b, rules, f);
+      var list = (f.showBuckets || []).filter(function(x){ return x !== b; });
+      var u = {showBuckets: shown ? list : list.concat([b])};
+      if (shown && _CC_BUCKET_LEGACY_SHOW[b]) u[_CC_BUCKET_LEGACY_SHOW[b]] = false;
+      d({t:A.UPD_FILTERS, u:u});
+    }
+    var hiddenNow = others.filter(function(b){ return !_ccBucketShown(b, rules, f); });
+    return html`<div data-cc-bucket-bar="1" role="group" aria-label=${_cc_t('bucket.barAria','Clash review buckets')}
+      style=${{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'var(--space-1) var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-tertiary)',fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:'var(--leading-base)'}}>
+      <span data-cc-bucket="review" style=${{color:'var(--text-primary)',fontWeight:'var(--weight-semibold)'}}>${_ccBucketLabel('review', counts.review || 0)}</span>
+      ${others.map(function(b){
+        var shown = _ccBucketShown(b, rules, f);
+        return html`<button key=${b} data-cc-bucket=${b} aria-pressed=${shown ? 'true' : 'false'} title=${_ccBucketHint(b)}
+          onClick=${function(){ toggle(b); }}
+          style=${{...S_BTN,padding:'0 var(--space-1)',fontSize:'var(--text-xs)',background:shown?'var(--accent-bg)':'none',color:shown?'var(--text-primary)':'var(--text-secondary)',border:shown?'1px solid var(--accent)':'1px solid transparent',borderRadius:'var(--radius-xs)',textDecoration:shown?'none':'underline',textUnderlineOffset:2}}>
+          ${'· ' + _ccBucketLabel(b, counts[b])}${shown ? ' ✓' : ''}
+        </button>`;
+      })}
+      ${others.length > 1 && html`<button data-cc-bucket-all="1" onClick=${function(){
+          if (hiddenNow.length) d({t:A.UPD_FILTERS, u:{showBuckets: others.slice()}});
+          else { var u = {showBuckets: []}; others.forEach(function(b){ if (_CC_BUCKET_LEGACY_SHOW[b]) u[_CC_BUCKET_LEGACY_SHOW[b]] = false; }); d({t:A.UPD_FILTERS, u:u}); }
+        }}
+        style=${{...S_BTN,marginLeft:'auto',padding:'0 var(--space-1)',fontSize:'var(--text-xs)',background:'none',color:'var(--text-secondary)',textDecoration:'underline',textUnderlineOffset:2}}>
+        ${hiddenNow.length ? _cc_t('bucket.showAll','show all') : _cc_t('bucket.reviewOnly','review only')}
+      </button>`}
+    </div>`;
+  }
+
+  var _CC_FACET_TITLES = null;
+  function _ccFacetTitle(k) {
+    _CC_FACET_TITLES = _CC_FACET_TITLES || {
+      severity: _cc_t('facet.severity','Severity'), extent: _cc_t('facet.extent','Extent'), storey: _cc_t('facet.storey','Storey'),
+      modelPair: _cc_t('facet.modelPair','Models'), trade: _cc_t('facet.trade','Trades'), typePair: _cc_t('facet.typePair','Element types'),
+      status: _cc_t('facet.status','Status'), assignee: _cc_t('facet.assignee','Assignee'), bucket: _cc_t('facet.bucket','Bucket'), tag: _cc_t('facet.view','View')
+    };
+    return _CC_FACET_TITLES[k] || k;
+  }
+  function _ccFacetValueLabel(k, v) {
+    if (k === 'severity') return ({critical:_cc_t('sev.critical','Critical'),major:_cc_t('sev.major','Major'),minor:_cc_t('sev.minor','Minor'),info:_cc_t('sev.info','Info')})[v] || v;
+    if (k === 'extent') return ({through:_cc_t('extent.through','Through'),'through-thin':_cc_t('extent.throughThin','Through (thin)'),partial:_cc_t('extent.partial','Partial'),graze:_cc_t('extent.graze','Graze'),unknown:_cc_t('extent.unknown','Depth unknown'),clearance:_cc_t('extent.clearance','Clearance'),contact:_cc_t('extent.contact','Contact'),duplicate:_cc_t('extent.duplicate','Duplicate')})[v] || v;
+    if (k === 'storey') return v || _cc_t('facet.noStorey','No storey');
+    if (k === 'trade') return String(v).split(' × ').map(function(x){ return _ccDisciplineLabel(x); }).join(' × ');
+    if (k === 'status') return (STAT[v] && STAT[v].label) || v;
+    if (k === 'assignee') return v || _cc_t('facet.unassigned','Unassigned');
+    if (k === 'bucket') return ({review:_cc_t('bucket.name.review','To review'),contact:_cc_t('bucket.name.contact','Contact'),provided:_cc_t('bucket.name.provided','Provided opening'),provision:_cc_t('bucket.name.provision','Provision'),zone:_cc_t('bucket.name.zone','Classified group'),twice:_cc_t('bucket.name.twice','Reported twice'),embedded:_cc_t('bucket.name.embedded','Embedded'),finish:_cc_t('bucket.name.finish','Finish'),graze:_cc_t('bucket.name.graze','Graze'),handled:_cc_t('bucket.name.handled','Handled')})[v] || v;
+    if (k === 'tag') { var sv = ((window._ccClashTriageCore && window._ccClashTriageCore.SUGGESTED) || []).find(function(x){ return x.facets.tag[0] === v; }); return sv ? _ccSuggestedLabel(sv.id, sv.label) : v; }
+    return v;
+  }
+  function _ccSuggestedLabel(id, label) {
+    return ({'structural-penetration':_cc_t('view.structuralPenetration','Structural penetrations'),'riser-through-slab':_cc_t('view.riserThroughSlab','Risers through slabs'),
+      'unassigned-critical':_cc_t('view.unassignedCritical','Unassigned critical'),'opening-too-small':_cc_t('view.openingTooSmall','Openings too small'),'new':_cc_t('view.new','New since last run')})[id] || label;
+  }
+  function _ccToggleFacet(facets, k, v) {
+    var cur = (facets[k] || []).slice(), i = cur.indexOf(v);
+    if (i === -1) cur.push(v); else cur.splice(i, 1);
+    var out = Object.assign({}, facets); if (cur.length) out[k] = cur; else delete out[k];
+    return out;
+  }
+  // BCF of the clashes on screen ("shown") — every topic labelled with its
+  // review item's title (the root-cause group, or the clash itself) — or of
+  // every clash ("all", exactly the existing export).
+  function _ccReviewTitleMap(list, s) {
+    var tm = _ccTriageModel(s), map = {};
+    (groupAndSort(list, ['element'], [], { models: s.models }) || []).forEach(function(g) {
+      var title = g.items.length > 1
+        ? ((_ccElementGroupSummary(g.items, { storey: tm.fctx.storey }) || {}).title || '')
+        : (g.items[0].title || '');
+      g.items.forEach(function(c) { map[c.id] = title; });
+    });
+    return map;
+  }
+  function _ccExportClashesBCF(s, scope, version, shownItems) {
+    if (scope === 'shown') {
+      var list = (shownItems || []).filter(function(c) { return !c._idsValidation; });
+      if (!list.length) return 0;
+      var titles = _ccReviewTitleMap(list, s);
+      exportBCF(list, version, s.viewpoints, s, { labelFor: function(c) { return titles[c.id] || ''; } });
+      return list.length;
+    }
+    var all = s.clashes || [];
+    if (all.length) exportBCF(all, version, s.viewpoints, s);
+    return all.length;
+  }
+  function ClashBcfScopeMenu(props) {
+    var s = props.s, shown = props.shown || [], total = (s.clashes || []).length;
+    var op = useState(false), open = op[0], setOpen = op[1];
+    var ref = useRef(null);
+    useEffect(function(){
+      if (!open) return;
+      function out(e){ if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+      function esc(e){ if (e.key === 'Escape') setOpen(false); }
+      document.addEventListener('mousedown', out); document.addEventListener('keydown', esc);
+      return function(){ document.removeEventListener('mousedown', out); document.removeEventListener('keydown', esc); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setOpen is a useState setter (stable identity)
+    }, [open]);
+    var nShown = shown.filter(function(c){ return !c._idsValidation; }).length;
+    var ITEM = {...S_BTN, display:'block', width:'100%', textAlign:'left', padding:'var(--space-2) var(--space-3)', fontSize:'var(--text-xs)', background:'none', color:'var(--text-primary)', borderRadius:0};
+    function go(scope, v){ setOpen(false); _ccExportClashesBCF(s, scope, v, shown); }
+    return html`<span ref=${ref} style=${{position:'relative',display:'inline-flex'}}>
+      <button data-cc-bcf-scope="1" aria-haspopup="menu" aria-expanded=${open?'true':'false'} onClick=${function(){ setOpen(!open); }}
+        style=${{...S_BTN,padding:'0 var(--space-1)',fontSize:'var(--text-xs)',background:'none',color:'var(--text-secondary)',textDecoration:'underline',textUnderlineOffset:2}}>${_cc_t('triage.bcf','Export BCF…')}</button>
+      ${open && html`<div role="menu" style=${{position:'absolute',top:'calc(100% + 4px)',left:0,zIndex:'var(--z-dropdown)',minWidth:200,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'var(--shadow-md)',overflow:'hidden'}}>
+        ${['2.1','3.0'].map(function(v){ return html`<button key=${'s'+v} role="menuitem" data-cc-bcf-shown=${v} disabled=${!nShown} onClick=${function(){ go('shown', v); }} style=${{...ITEM,opacity:nShown?1:0.6}}>${_cc_t('triage.bcfShown','Shown ({n}) — BCF {v}',{n:nShown,v:v})}</button>`; })}
+        ${['2.1','3.0'].map(function(v){ return html`<button key=${'a'+v} role="menuitem" data-cc-bcf-all=${v} disabled=${!total} onClick=${function(){ go('all', v); }} style=${{...ITEM,borderTop:'1px solid var(--border-subtle)'}}>${_cc_t('triage.bcfAll','All ({n}) — BCF {v}',{n:total,v:v})}</button>`; })}
+      </div>`}
+    </span>`;
+  }
+
+  // Smart filters: suggested views (only non-empty ones), active-filter
+  // pills + reset, saved views (named facet sets + search, stored in the
+  // project) and the facet chips with live counts. Every control is a
+  // button (Tab + Enter/Space); the facet panel is a native <details>.
+  function TriageFilterBar(props) {
+    var s = props.s, d = props.d, triage = props.triage, itemsPre = props.itemsPre || _VL_NO_MODELS, shown = props.shown, total = props.total;
+    var tcore = window._ccClashTriageCore;
+    var tr = s.triage || {}, facets = tr.facets || {}, search = (s.filters && s.filters.search) || '';
+    var sv = useState(null), saveName = sv[0], setSaveName = sv[1];
+    var ex = useState({}), expanded = ex[0], setExpanded = ex[1];
+    var rows = useMemo(function(){
+      if (!triage || !tcore) return [];
+      var out = [];
+      for (var i = 0; i < itemsPre.length; i++) { var r = triage.rowById.get(itemsPre[i].id); if (r) out.push(r); }
+      return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- tcore is a frozen module
+    }, [itemsPre, triage]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- tcore is a frozen module
+    var fc = useMemo(function(){ return tcore ? tcore.facetCounts(rows, facets) : {}; }, [rows, facets]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- tcore is a frozen module
+    var suggested = useMemo(function(){ return tcore ? tcore.suggestedViews(rows) : []; }, [rows]);
+    if (!tcore) return null;
+    function setFacets(nf, viewId) { d({t:A.TRIAGE_UPD, u:{facets:nf, activeViewId:viewId || null}}); }
+    var activePills = [];
+    Object.keys(facets).forEach(function(k){ (facets[k] || []).forEach(function(v){ activePills.push({k:k, v:v}); }); });
+    var anyActive = activePills.length > 0 || !!search;
+    var saved = tr.savedViews || [];
+    var CHIP = function(on){ return {...S_BTN, display:'inline-flex', alignItems:'center', gap:'var(--space-1)', padding:'0 var(--space-2)', minHeight:24, fontSize:'var(--text-xs)', borderRadius:'var(--radius-pill)',
+      background:on?'var(--accent-bg-deep)':'var(--bg-secondary)', color:on?'var(--text-primary)':'var(--text-secondary)', border:on?'1px solid var(--accent)':'1px solid var(--border)'}; };
+    var CNT = {fontFamily:'var(--font-mono)', fontSize:'var(--text-2xs)', color:'var(--text-muted)'};
+    var LBL = {fontSize:'var(--text-2xs)', fontWeight:'var(--weight-bold)', textTransform:'uppercase', letterSpacing:'.08em', color:'var(--text-muted)'};
+    var LINK = {...S_BTN,padding:'0 var(--space-1)',fontSize:'var(--text-xs)',background:'none',color:'var(--text-secondary)',textDecoration:'underline',textUnderlineOffset:2};
+    function saveView() {
+      var name = String(saveName || '').trim();
+      if (!name) return;
+      var v = tcore.normaliseView({id:'view-' + Date.now().toString(36), name:name, facets:facets, search:search});
+      if (!v) return;
+      d({t:A.TRIAGE_UPD, u:{savedViews: saved.filter(function(x){ return x.name !== v.name; }).concat([v]), activeViewId:v.id}});
+      setSaveName(null);
+    }
+    function applyView(v) {
+      d({t:A.TRIAGE_UPD, u:{facets:tcore.normaliseFacets(v.facets), activeViewId:v.id}});
+      d({t:A.UPD_FILTERS, u:{search:v.search || ''}});
+    }
+    return html`<div data-cc-triage-filters="1" style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
+      ${suggested.length > 0 && html`<div role="group" aria-label=${_cc_t('triage.suggestedAria','Suggested views')} style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)',alignItems:'center'}}>
+        <span style=${LBL}>${_cc_t('triage.suggested','Suggested')}</span>
+        ${suggested.map(function(v){
+          var on = tcore.sameFacets(facets, v.facets);
+          return html`<button key=${v.id} data-cc-suggested=${v.id} aria-pressed=${on?'true':'false'} onClick=${function(){ setFacets(on ? {} : v.facets, null); }} style=${CHIP(on)}>
+            ${v.perStorey ? (_cc_t('facet.storey','Storey') + ' ' + v.label) : _ccSuggestedLabel(v.id, v.label)} <span style=${CNT}>${v.count}</span>
+          </button>`;
+        })}
+      </div>`}
+      ${saved.length > 0 && html`<div role="group" aria-label=${_cc_t('triage.savedAria','Saved views')} style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)',alignItems:'center'}}>
+        <span style=${LBL}>${_cc_t('triage.saved','Saved')}</span>
+        ${saved.map(function(v){
+          var on = tr.activeViewId === v.id;
+          return html`<span key=${v.id} style=${{display:'inline-flex',alignItems:'center'}}>
+            <button data-cc-saved-view=${v.name} aria-pressed=${on?'true':'false'} onClick=${function(){ applyView(v); }} style=${{...CHIP(on),borderTopRightRadius:0,borderBottomRightRadius:0}}>${v.name}</button>
+            <button aria-label=${_cc_t('triage.deleteView','Delete saved view {name}',{name:v.name})} onClick=${function(){ d({t:A.TRIAGE_UPD, u:{savedViews:saved.filter(function(x){ return x.id !== v.id; }), activeViewId: on ? null : tr.activeViewId}}); }}
+              style=${{...CHIP(on),borderLeft:'none',borderTopLeftRadius:0,borderBottomLeftRadius:0,padding:'0 var(--space-1)'}}>×</button>
+          </span>`;
+        })}
+      </div>`}
+      <div style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)',alignItems:'center'}}>
+        <span data-cc-shown-total="1" role="status" aria-live="polite" style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',color:shown<total?'var(--text-primary)':'var(--text-muted)'}}>${_cc_t('triage.shownOfTotal','{shown} shown / {total} total',{shown:shown,total:total})}</span>
+        ${activePills.map(function(p){
+          return html`<button key=${p.k + ':' + p.v} data-cc-pill=${p.k} aria-label=${_cc_t('triage.removeFilter','Remove filter {name}',{name:_ccFacetTitle(p.k) + ': ' + _ccFacetValueLabel(p.k, p.v)})}
+            onClick=${function(){ setFacets(_ccToggleFacet(facets, p.k, p.v), null); }} style=${CHIP(true)}>
+            ${_ccFacetTitle(p.k)}: ${_ccFacetValueLabel(p.k, p.v)} <span aria-hidden="true">×</span>
+          </button>`;
+        })}
+        ${search && html`<button data-cc-pill="search" aria-label=${_cc_t('triage.removeSearch','Remove search "{q}"',{q:search})} onClick=${function(){ d({t:A.UPD_FILTERS,u:{search:''}}); }} style=${CHIP(true)}>“${search}” <span aria-hidden="true">×</span></button>`}
+        ${anyActive && html`<button data-cc-reset="1" onClick=${function(){ setFacets({}, null); d({t:A.UPD_FILTERS,u:{search:''}}); }} style=${LINK}>${_cc_t('triage.reset','Reset')}</button>`}
+        ${anyActive && saveName == null && html`<button data-cc-save-view="1" onClick=${function(){ setSaveName(''); }} style=${LINK}>${_cc_t('triage.saveView','Save view…')}</button>`}
+        ${props.shownItems && html`<${ClashBcfScopeMenu} s=${s} shown=${props.shownItems} />`}
+        ${saveName != null && html`<form onSubmit=${function(e){ e.preventDefault(); saveView(); }} style=${{display:'inline-flex',gap:'var(--space-1)',alignItems:'center'}}>
+          <input data-cc-save-view-name="1" aria-label=${_cc_t('triage.viewName','View name')} value=${saveName} autoFocus onInput=${function(e){ setSaveName(e.target.value); }}
+            onKeyDown=${function(e){ if (e.key === 'Escape') { e.stopPropagation(); setSaveName(null); } }}
+            placeholder=${_cc_t('triage.viewName','View name')} style=${{...S_INPUT,width:140,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)'}} />
+          <button type="submit" disabled=${!String(saveName).trim()} style=${{...S_BTN,padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-xs)',background:'var(--accent)',color:'var(--accent-contrast)'}}>${_cc_t('triage.save','Save')}</button>
+          <button type="button" onClick=${function(){ setSaveName(null); }} style=${{...S_BTN,padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-xs)',background:'none',color:'var(--text-secondary)'}}>${_cc_t('common.cancel','Cancel')}</button>
+        </form>`}
+      </div>
+      <details data-cc-facets="1">
+        <summary style=${{cursor:'pointer',fontSize:'var(--text-xs)',color:'var(--text-secondary)',padding:'var(--space-1) 0'}}>${_cc_t('triage.refine','Filter by severity, extent, storey, models, trades …')}</summary>
+        <div style=${{display:'flex',flexDirection:'column',gap:'var(--space-2)',paddingBottom:'var(--space-2)'}}>
+          ${tcore.FACETS.map(function(k){
+            var counts = fc[k] || {};
+            var vals = tcore.orderedValues(k, counts, triage && triage.storeyNorm ? triage.storeyNorm.labels : []);
+            (facets[k] || []).forEach(function(v){ if (vals.indexOf(v) === -1) vals.push(v); });
+            if (!vals.length) return null;
+            var limit = expanded[k] ? vals.length : 8;
+            return html`<div key=${k} role="group" aria-label=${_ccFacetTitle(k)} data-cc-facet=${k} style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)',alignItems:'center'}}>
+              <span style=${{...LBL,minWidth:72}}>${_ccFacetTitle(k)}</span>
+              ${vals.slice(0, limit).map(function(v){
+                var on = (facets[k] || []).indexOf(v) !== -1;
+                return html`<button key=${v} data-cc-chip=${k + '=' + v} aria-pressed=${on?'true':'false'} onClick=${function(){ setFacets(_ccToggleFacet(facets, k, v), null); }} style=${CHIP(on)}>
+                  ${_ccFacetValueLabel(k, v)} <span style=${CNT}>${counts[v] || 0}</span>
+                </button>`;
+              })}
+              ${vals.length > limit && html`<button onClick=${function(){ var n = Object.assign({}, expanded); n[k] = true; setExpanded(n); }} style=${LINK}>${_cc_t('triage.more','+{n} more',{n:vals.length - limit})}</button>`}
+            </div>`;
+          })}
+        </div>
+      </details>
+    </div>`;
+  }
+
+  // ── Overview (card grid of the review items) ────────────────────────
+  // 'auto' opens the overview after an INTERACTIVE run (Run button, presets,
+  // palette — never automation) when the review set is small enough to scan
+  // as cards; bigger sets open on the list with a prompt.
+  var CC_OVERVIEW_AUTO_MAX = 150;
+  function _ccOverviewVisible(s, rm) {
+    if (!s || s.tab !== 'clashes' || !rm || !rm.items.length) return false;
+    var tr = s.triage || {};
+    if (tr.view === 'overview') return true;
+    return tr.view === 'auto' && !!tr.autoOpen && rm.items.length <= CC_OVERVIEW_AUTO_MAX;
+  }
+  function _ccOverviewPrompt(s, rm) {
+    var tr = (s && s.triage) || {};
+    return !!(rm && tr.view === 'auto' && tr.autoOpen && rm.items.length > CC_OVERVIEW_AUTO_MAX);
+  }
+  function ClashViewToggle(props) {
+    var s = props.s, d = props.d, n = props.reviewCount || 0;
+    var rm = n ? _ccReviewModel(s) : null;
+    var ov = _ccOverviewVisible(s, rm);
+    var SEG = function(on){ return {...S_BTN, padding:'var(--space-1) var(--space-2)', fontSize:'var(--text-xs)', borderRadius:0, whiteSpace:'nowrap',
+      background:on?'var(--accent-bg-deep)':'var(--bg-secondary)', color:on?'var(--text-primary)':'var(--text-secondary)', border:'1px solid '+(on?'var(--accent)':'var(--border)')}; };
+    return html`<div role="group" aria-label=${_cc_t('overview.viewAria','Clash view')} style=${{display:'inline-flex',flexShrink:0}}>
+      <button data-cc-view="list" aria-pressed=${ov?'false':'true'} onClick=${function(){ d({t:A.TRIAGE_UPD,u:{view:'list'}}); }}
+        style=${{...SEG(!ov),borderTopLeftRadius:'var(--radius-sm)',borderBottomLeftRadius:'var(--radius-sm)'}}>${_cc_t('overview.list','List')}</button>
+      <button data-cc-view="overview" aria-pressed=${ov?'true':'false'} disabled=${!n} title=${n ? _cc_t('overview.tip','Cards of the {n} review items',{n:n}) : _cc_t('overview.none','Nothing to review')}
+        onClick=${function(){ d({t:A.TRIAGE_UPD,u:{view:'overview'}}); }}
+        style=${{...SEG(ov),borderLeft:'none',borderTopRightRadius:'var(--radius-sm)',borderBottomRightRadius:'var(--radius-sm)',opacity:n?1:0.6}}>${_cc_t('overview.overview','Overview')} <span style=${{fontFamily:'var(--font-mono)'}}>${n}</span></button>
+    </div>`;
+  }
+  // Fly to a review item and make it the active clash (same sequence the
+  // list's J/K uses).
+  function _ccOpenReviewItem(it, d) {
+    var c = it && it.lead;
+    if (!c) return;
+    d({t:A.ACTIVE, id:c.id});
+    try {
+      var refs = _itemRefs(c);
+      if (refs.length && _ghostOthers) _ghostOthers(refs);
+      if (refs.length && _highlightRefs) _highlightRefs(refs, false);
+      if (c.point && window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(c.point);
+      if (_flyToElements && refs.length) _flyToElements(refs, c.point);
+      else if (c.point && _flyTo) _flyTo(c.point);
+    } catch (e) {}
+  }
+  var CC_OVERVIEW_PAGE = 60;
+  function ClashOverviewHost(props) {
+    var s = props.s;
+    var tm = _ccTriageModel(s);
+    if (!tm.total) return null;
+    var rm = _ccReviewModel(s);
+    if (!_ccOverviewVisible(s, rm)) return null;
+    return html`<${ClashOverview} s=${s} d=${props.d} />`;
+  }
+  function ClashOverview(props) {
+    var s = props.s, d = props.d;
+    var rm = _ccReviewModel(s), tm = _ccTriageModel(s);
+    var cards = rm.items;
+    var pg = useState(CC_OVERVIEW_PAGE), limit = pg[0], setLimit = pg[1];
+    var tk = useState(0), setTick = tk[1];
+    var fi = useState(0), focusIdx = fi[0], setFocusIdx = fi[1];
+    var gridRef = useRef(null), cardRefs = useRef([]), secRef = useRef(null);
+    // keep clear of the floating left rail/panel and the right Details panel
+    useEffect(function(){
+      function fit(){
+        var el = secRef.current; if (!el || !el.parentElement) return;
+        var col = el.parentElement.getBoundingClientRect(), l = 0, r = 0;
+        if (window.innerWidth > 768) {
+          ['.cc-left-rail', '.cc-left-panel'].forEach(function(sel){ var p = document.querySelector(sel); if (p && p.offsetParent !== null) { var b = p.getBoundingClientRect(); if (b.width && b.left < col.left + 4) l = Math.max(l, b.right - col.left); } });
+          var ai = document.querySelector('.cc-ai-panel');
+          if (ai && ai.offsetParent !== null) { var a = ai.getBoundingClientRect(); if (a.width && a.left < col.right && a.left > col.left + col.width / 3) r = Math.max(r, col.right - a.left + 8); }
+        }
+        el.style.setProperty('--cc-ov-left', Math.max(0, Math.round(l)) + 'px');
+        el.style.setProperty('--cc-ov-right', Math.max(0, Math.round(r)) + 'px');
+      }
+      fit();
+      var RO = window.ResizeObserver, ro = RO ? new RO(fit) : null;
+      if (ro) ['.cc-left-panel', '.cc-ai-panel', '.cc-left-rail'].forEach(function(sel){ var p = document.querySelector(sel); if (p) ro.observe(p); });
+      window.addEventListener('resize', fit);
+      var iv = setInterval(fit, 1000); // panels open/close without resizing the window
+      return function(){ if (ro) ro.disconnect(); window.removeEventListener('resize', fit); clearInterval(iv); };
+    }, []);
+    // re-render when a snapshot lands
+    useEffect(function(){
+      function on(){ setTick(function(t){ return t + 1; }); }
+      window.addEventListener('cc-snapshot', on);
+      return function(){ window.removeEventListener('cc-snapshot', on); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setTick is a useState setter (stable identity)
+    }, []);
+    // ask for the pictures of the cards on screen (idle-time render queue)
+    useEffect(function(){
+      var svc = window._ccClashSnapshots;
+      if (!svc || !gridRef.current) return;
+      var IO = window.IntersectionObserver;
+      var shown = cards.slice(0, limit);
+      if (!IO) { shown.forEach(function(it){ svc.request(it.lead); }); return; }
+      var io = new IO(function(entries){
+        entries.forEach(function(en){
+          if (!en.isIntersecting) return;
+          var i = +en.target.getAttribute('data-cc-card-idx');
+          if (shown[i]) svc.request(shown[i].lead);
+          io.unobserve(en.target);
+        });
+      }, { root: gridRef.current, rootMargin: '200px' });
+      gridRef.current.querySelectorAll('[data-cc-card-idx]').forEach(function(el){ io.observe(el); });
+      return function(){ io.disconnect(); };
+    }, [cards, limit]);
+    useEffect(function(){
+      if (focusIdx >= cards.length && cards.length) setFocusIdx(cards.length - 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setFocusIdx is a useState setter (stable identity)
+    }, [cards.length]);
+    function close(){ d({t:A.TRIAGE_UPD, u:{view:'list'}}); }
+    function open(it){ _ccOpenReviewItem(it, d); close(); }
+    // Escape returns to the 3D view wherever focus is (not from a field or a dialog)
+    useEffect(function(){
+      function onEsc(e){
+        if (e.key !== 'Escape' || e.defaultPrevented) return;
+        var t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || (t.closest && t.closest('[role="dialog"]')))) return;
+        d({t:A.TRIAGE_UPD, u:{view:'list'}});
+      }
+      window.addEventListener('keydown', onEsc);
+      return function(){ window.removeEventListener('keydown', onEsc); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- d is App's stable dispatch
+    }, []);
+    function focusCard(i){
+      i = Math.max(0, Math.min(cards.length - 1, i));
+      if (i >= limit) setLimit(Math.ceil((i + 1) / CC_OVERVIEW_PAGE) * CC_OVERVIEW_PAGE);
+      setFocusIdx(i);
+      setTimeout(function(){ var el = cardRefs.current[i]; if (el) { el.focus(); if (el.scrollIntoView) el.scrollIntoView({block:'nearest'}); } }, 0);
+    }
+    function onKey(e){
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA')) return;
+      var k = e.key;
+      if (k === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); return; }
+      if (!e.target || !e.target.closest || !e.target.closest('[data-cc-card-idx]')) return;
+      if (k === 'j' || k === 'J' || k === 'ArrowRight' || k === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); focusCard(focusIdx + 1); }
+      else if (k === 'k' || k === 'K' || k === 'ArrowLeft' || k === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); focusCard(focusIdx - 1); }
+      else if (k === 'Home') { e.preventDefault(); focusCard(0); }
+      else if (k === 'End') { e.preventDefault(); focusCard(cards.length - 1); }
+    }
+    var svc = window._ccClashSnapshots;
+    var modelName = tm.fctx.modelName;
+    var nClashes = rm.clashes.length;
+    return html`<section ref=${secRef} class="cc-overview" data-cc-overview="1" aria-labelledby="cc-overview-title" onKeyDown=${onKey}
+      style=${{display:'flex',flexDirection:'column',background:'var(--bg-primary)',color:'var(--text-primary)',minHeight:0,borderLeft:'1px solid var(--border-subtle)'}}>
+      <div style=${{display:'flex',alignItems:'center',flexWrap:'wrap',gap:'var(--space-2)',padding:'var(--space-3) var(--space-4)',borderBottom:'1px solid var(--border)'}}>
+        <h2 id="cc-overview-title" style=${{margin:0,fontSize:'var(--text-lg)',fontWeight:'var(--weight-semibold)',lineHeight:'var(--leading-tight)'}}>${_cc_t('overview.title','Review overview')}</h2>
+        <span data-cc-overview-count="1" style=${{fontSize:'var(--text-sm)',color:'var(--text-secondary)'}}>${_cc_t('overview.count','{items} review items · {clashes} clashes · {total} found',{items:cards.length,clashes:nClashes,total:tm.total})}</span>
+        <span style=${{flex:1}}></span>
+        <span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${_cc_t('overview.keys','J/K or arrows to move · Enter to open · Esc for the 3D view')}</span>
+        <button data-cc-overview-close="1" onClick=${close} style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)'}}>${_cc_t('overview.close','3D view')}</button>
+      </div>
+      <${TriageFilterBar} s=${s} d=${d} triage=${tm} itemsPre=${rm.pre} shownItems=${rm.clashes} shown=${nClashes} total=${tm.total} />
+      <div ref=${gridRef} data-cc-overview-grid="1" role="list" style=${{flex:1,overflowY:'auto',padding:'var(--space-4)',display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(min(100%, 240px), 1fr))',gap:'var(--space-3)',alignContent:'start'}}>
+        ${cards.slice(0, limit).map(function(it, i){
+          var c = it.lead, sum = it.summary;
+          var sev = sum ? sum.severity : (c.aiSeverity || _ccDeterministicSeverity(c));
+          var row = tm.rowById.get(c.id), v = row ? row.v : {};
+          var ext = sum ? sum.extentSummary : _ccFacetValueLabel('extent', v.extent || '');
+          var storey = sum ? sum.storey : (v.storey || '');
+          var pair = modelName(c.modelAId) === modelName(c.modelBId || c.modelAId) ? modelName(c.modelAId) : (modelName(c.modelAId) + ' ↔ ' + modelName(c.modelBId));
+          var url = svc ? svc.get(c) : null;
+          var open2 = it.items.filter(function(x){ return x.status !== 'resolved' && x.status !== 'closed' && x.status !== 'denied'; }).length;
+          var assignees = {}; it.items.forEach(function(x){ if (x.assignee) assignees[x.assignee] = 1; });
+          var asg = Object.keys(assignees);
+          return html`<div key=${it.key} role="listitem" style=${{minWidth:0}}>
+            <button ref=${function(el){ cardRefs.current[i] = el; }} data-cc-card-idx=${i} data-cc-card-key=${it.key} tabIndex=${i === focusIdx ? 0 : -1}
+              onFocus=${function(){ if (focusIdx !== i) setFocusIdx(i); }} onClick=${function(){ open(it); }}
+              style=${{...S_BTN,width:'100%',height:'100%',display:'flex',flexDirection:'column',padding:0,textAlign:'left',background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-md)',overflow:'hidden',boxShadow:'var(--shadow-sm)'}}>
+              <span style=${{display:'block',position:'relative',width:'100%',aspectRatio:'320 / 200',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)'}}>
+                ${url ? html`\x3Cimg src=${url} alt="" data-cc-snapshot="1" width="320" height="200" style=${{display:'block',width:'100%',height:'100%',objectFit:'cover'}} />`
+                  : html`<span data-cc-snapshot-pending="1" style=${{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${_cc_t('overview.rendering','Picture renders when the viewer is idle…')}</span>`}
+                <span class="cc-status-pill" style=${{position:'absolute',top:'var(--space-2)',left:'var(--space-2)',..._ccSeverityPillStyle(sev)}}>${_ccFacetValueLabel('severity', sev)}</span>
+                ${it.group && html`<span class="cc-status-pill" style=${{position:'absolute',top:'var(--space-2)',right:'var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-primary)',textTransform:'none',letterSpacing:0}}>${_cc_t('overview.members','{n} clashes',{n:it.items.length})}</span>`}
+              </span>
+              <span style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)',padding:'var(--space-2) var(--space-3) var(--space-3)',minWidth:0,width:'100%'}}>
+                <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',lineHeight:'var(--leading-tight)',overflow:'hidden',textOverflow:'ellipsis',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical'}}>${it.title}</span>
+                ${ext && html`<span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>${ext}</span>`}
+                <span style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
+                  ${storey && html`<span>${storey}</span>`}${storey && html`<span aria-hidden="true">·</span>`}<span style=${{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'100%'}}>${pair}</span>
+                </span>
+                <span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${_cc_t('overview.openCount','{n} open',{n:open2})}${asg.length ? (' · ' + asg.join(', ')) : (' · ' + _cc_t('facet.unassigned','Unassigned'))}</span>
+              </span>
+            </button>
+          </div>`;
+        })}
+        ${cards.length > limit && html`<div role="listitem" style=${{gridColumn:'1 / -1',display:'flex',justifyContent:'center'}}>
+          <button onClick=${function(){ setLimit(limit + CC_OVERVIEW_PAGE); }} style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)'}}>${_cc_t('overview.more','Show more ({n} of {total})',{n:limit,total:cards.length})}</button>
+        </div>`}
+      </div>
+    </section>`;
+  }
+
+  // One list row's filter test (everything except review buckets and
+  // facets): model visibility, status, free-text search (names, types,
+  // storeys raw + normalised, GlobalIds, model pair, assignee) and the
+  // classic filter dropdowns. Shared by the clash list and the overview so
+  // both always show the same set.
+  function _ccListItemPasses(it, f, isClashTab, visibleModelIds, triage, rules) {
+    if(isClashTab && (it.modelAId || it.modelBId)) {
+      if(it.modelAId && !visibleModelIds[it.modelAId]) return false;
+      if(it.modelBId && !visibleModelIds[it.modelBId]) return false;
+    }
+    if(f.status!=='all' && it.status!==f.status) return false;
+    // "Show resolved/denied" toggle (default off): with no specific
+    // status pill selected, resolved/closed clashes stay hidden too
+    // (denied is already excluded upstream in rawItems unless
+    // f.showHandled/f.status==='denied') so the list opens on what
+    // still needs attention, not a mix of open + already-handled work.
+    if(isClashTab && f.status==='all' && !_ccBucketShown('handled', rules, f) && (it.status==='resolved'||it.status==='closed')) return false;
+    if(f.search){var _trow=isClashTab&&triage?triage.rowById.get(it.id):null;var hay=isClashTab?[it.title,it.description,it.type,it.elemAStorey,it.elemBStorey,it.elemAType,it.elemBType,it.elemAMaterial,it.elemBMaterial,it.status,it.elemAName,it.elemBName,it.globalIdA,it.globalIdB,_trow&&_trow.v.storey,_trow&&_trow.v.typePair,_trow&&_trow.v.modelPair,it.assignee].filter(Boolean).join(' ').toLowerCase():(it.title||'').toLowerCase()+' '+(it.description||'').toLowerCase();if(!_ccFilterTextMatches(f.search,hay,it.number))return false;}
+    if(isClashTab) {
+      if(f.modelPair) {
+        var _mpA=it.modelAId, _mpB=it.modelBId||it.modelAId, _mp=f.modelPair;
+        if(!((_mpA===_mp.a && _mpB===_mp.b) || (_mpA===_mp.b && _mpB===_mp.a))) return false;
+      }
+      if(f.type!=='all' && it.type!==f.type) return false;
+      if(f.discipline!=='all' && it.disciplines && it.disciplines.indexOf(f.discipline)===-1) return false;
+      // f.floor holds a real IFC storey NAME (see the Floor/Level select
+      // below, populated from _ccCollectStoreys) — was elevation-band
+      // matching against deriveFloors()'s synthetic, off-by-one "Level N"
+      // clusters, which didn't correspond to any real storey and even
+      // mislabeled IFC's own Level 0 as "Level 1".
+      if(f.floor!=='all' && it.elemAStorey!==f.floor && it.elemBStorey!==f.floor) return false;
+      if(f.distMax<9999 && (it.distance||0)>f.distMax) return false;
+      if(f.elementId) {
+        var eid=f.elementId;
+        if(String(it.elemA).indexOf(eid)===-1 && String(it.elemB).indexOf(eid)===-1) return false;
+      }
+      if(f.selfClash==='self' && !it.selfClash) return false;
+      if(f.selfClash==='cross' && it.selfClash) return false;
+      if(f.ifcType!=='all' && it.elemAType!==f.ifcType && it.elemBType!==f.ifcType) return false;
+      if(f.excludedTypes&&f.excludedTypes.length){var ex=f.excludedTypes;if(ex.indexOf(it.elemAType)!==-1||ex.indexOf(it.elemBType)!==-1) return false;}
+      if(f.excludedStoreys&&f.excludedStoreys.length){var exs=f.excludedStoreys;if(exs.indexOf(it.elemAStorey)!==-1||exs.indexOf(it.elemBStorey)!==-1) return false;}
+      if(f.excludedMaterials&&f.excludedMaterials.length){var exm=f.excludedMaterials;if(exm.indexOf(it.elemAMaterial)!==-1||exm.indexOf(it.elemBMaterial)!==-1) return false;}
+      if(f.storey!=='all' && it.elemAStorey!==f.storey && it.elemBStorey!==f.storey) return false;
+      if(f.material!=='all' && it.elemAMaterial!==f.material && it.elemBMaterial!==f.material) return false;
+      if(f.deltaState && f.deltaState!=='all' && it._delta!==f.deltaState) return false;
+    } else {
+      if(f.priority!=='all' && it.priority!==f.priority) return false;
+      if(f.category!=='all' && it.category!==f.category) return false;
+      if(f.assignee!=='all' && (it.assignee||'')!==f.assignee) return false;
+      if(f.issueElementType!=='all' && (it.elementType||'')!==f.issueElementType) return false;
+      if(f.issueStorey!=='all' && (it.storey||'')!==f.issueStorey) return false;
+    }
+    return true;
+  }
+
   function IssuePanel(props) {
     var s=props.s, d=props.d, f=s.filters, hideTabBar=props.hideTabBar;
     var fo=useState(false), filtersOpen=fo[0], setFiltersOpen=fo[1];
@@ -26923,20 +27878,18 @@ function startApp() {
       // nothing -- there was no way to review or undo a deny. Keep the
       // existing declutter default (hidden under every other filter
       // value) but let them through when the Denied filter is active.
-      var base = isClashTab ? s.clashes.filter(function(c){return f.status==='denied' || f.showHandled || c.status!=='denied';}) : s.issues;
-      // Clashes passing through an IFC opening made for them are hidden by
-      // default (rules.hideProvidedOpenings) — counted + one click to show.
-      if (isClashTab && s.rules.hideProvidedOpenings !== false && !f.showProvided) base = base.filter(function(c){ return c.opening !== 'provided'; });
-      // Same for MEP inside a provision volume and for clashes of the
-      // suggestion groups set to 'classify' (zones, duplicates …):
-      // counted, one click to show (rules.roleChoices).
-      if (isClashTab) base = base.filter(function(c){
-        var hg = _ccClashClassifiedHidden(c, s.rules);
-        return !hg || (hg === 'provision' ? f.showProvisions : f.showRoleGroups);
-      });
-      // Touching surfaces (type 'contact': flush faces, a pipe resting on a
-      // beam) are not clashes: hidden by default, counted, one click to show.
-      if (isClashTab && s.rules.hideContacts !== false && !f.showContacts) base = base.filter(function(c){ return c.type !== 'contact'; });
+      // Review buckets (clash-classification-core.js reviewBucket): only
+      // 'review' is listed by default; contacts, provided openings,
+      // provisions, classified groups, copies reported twice, embedded,
+      // finishes, grazes and handled clashes sit behind the bucket bar's
+      // counts — one click shows a bucket, nothing is dropped. A status pill
+      // (e.g. "Denied") still lists the handled clashes of that status.
+      var _tmR = isClashTab ? _ccTriageModel(s) : null;
+      var base = isClashTab ? s.clashes.filter(function(c){
+        var b = _tmR.bucketOf.get(c.id) || 'review';
+        if (_ccBucketShown(b, s.rules, f)) return true;
+        return b === 'handled' && f.status !== 'all' && c.status === f.status;
+      }) : s.issues;
       if (!isClashTab || !s.idsValidation || !s.idsValidation.results || !s.idsValidation.results.length) return base;
       var idsItems = s.idsValidation.results.map(function(r, i) {
         return {
@@ -26958,7 +27911,8 @@ function startApp() {
         };
       });
       return base.concat(idsItems);
-    }, [isClashTab, s.clashes, s.issues, s.idsValidation, f.status, f.showHandled, f.showProvided, f.showProvisions, f.showRoleGroups, f.showContacts, s.rules]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- s.models feeds _ccTriageModel (memoised on clashes/rules/models identity)
+    }, [isClashTab, s.clashes, s.issues, s.models, s.idsValidation, f.status, f.showHandled, f.showProvided, f.showProvisions, f.showRoleGroups, f.showContacts, f.showBuckets, s.rules]);
 
 
     var visibleModelIds = useMemo(function(){
@@ -27052,111 +28006,39 @@ function startApp() {
       return n;
     }, [s.clashes, isClashTab, visibleModelIds]);
 
-    // Clashes that pass through an IFC opening made for them ("provision for
-    // void"): hidden from the list by default, never dropped — this count and
-    // the toggle below make sure nothing is silently lost.
-    var providedCount = useMemo(function(){
-      if (!isClashTab || s.rules.hideProvidedOpenings === false) return 0;
-      var n = 0;
-      for (var i=0;i<s.clashes.length;i++) {
-        var c = s.clashes[i];
-        if (c.opening !== 'provided') continue;
-        if (c.modelAId && !visibleModelIds[c.modelAId]) continue;
-        if (c.modelBId && !visibleModelIds[c.modelBId]) continue;
-        n++;
-      }
-      return n;
-    }, [s.clashes, isClashTab, visibleModelIds, s.rules.hideProvidedOpenings]);
+    // Bucket counts (all buckets, visible models — they add up to the raw
+    // total) for the bucket bar; the triage model is memoised per result.
+    var triage = useMemo(function(){ return isClashTab ? _ccTriageModel(s) : null; }, [isClashTab, s.clashes, s.rules, s.models]); // eslint-disable-line react-hooks/exhaustive-deps -- _ccTriageModel reads exactly s.clashes/s.rules/s.models
+    var facets = (s.triage && s.triage.facets) || {};
+    var reviewModel = isClashTab && triage && triage.total > 0 ? _ccReviewModel(s) : null;
+    var _tcore = window._ccClashTriageCore;
+    var facetsOn = !!(isClashTab && _tcore && _tcore.hasFacets(facets));
 
-    // Clashes inside provision volumes — same "counted, never dropped" rule.
-    // ... and per 'classify' suggestion group (zones, duplicates, proxies, spaces).
-    var classifiedCounts = useMemo(function(){
-      var out = {provision:0, groups:{}, groupTotal:0};
-      if (!isClashTab) return out;
-      for (var i=0;i<s.clashes.length;i++) {
-        var c = s.clashes[i];
-        var hg = _ccClashClassifiedHidden(c, s.rules);
-        if (!hg) continue;
-        if (c.modelAId && !visibleModelIds[c.modelAId]) continue;
-        if (c.modelBId && !visibleModelIds[c.modelBId]) continue;
-        if (hg === 'provision') out.provision++;
-        else { out.groups[hg] = (out.groups[hg]||0) + 1; out.groupTotal++; }
-      }
-      return out;
-    }, [s.clashes, isClashTab, visibleModelIds, s.rules]);
-    var provisionCount = classifiedCounts.provision;
-
-    var contactCount = useMemo(function(){
-      if (!isClashTab || s.rules.hideContacts === false) return 0;
-      var n = 0;
-      for (var i=0;i<s.clashes.length;i++) {
-        var c = s.clashes[i];
-        if (c.type !== 'contact') continue;
-        if (c.modelAId && !visibleModelIds[c.modelAId]) continue;
-        if (c.modelBId && !visibleModelIds[c.modelBId]) continue;
-        n++;
-      }
-      return n;
-    }, [s.clashes, isClashTab, visibleModelIds, s.rules.hideContacts]);
-
-    var items = useMemo(function(){
+    var itemsPre = useMemo(function(){
       return rawItems.filter(function(it){
-        if(isClashTab && (it.modelAId || it.modelBId)) {
-          if(it.modelAId && !visibleModelIds[it.modelAId]) return false;
-          if(it.modelBId && !visibleModelIds[it.modelBId]) return false;
-        }
-        if(f.status!=='all' && it.status!==f.status) return false;
-        // "Show resolved/denied" toggle (default off): with no specific
-        // status pill selected, resolved/closed clashes stay hidden too
-        // (denied is already excluded upstream in rawItems unless
-        // f.showHandled/f.status==='denied') so the list opens on what
-        // still needs attention, not a mix of open + already-handled work.
-        if(isClashTab && f.status==='all' && !f.showHandled && (it.status==='resolved'||it.status==='closed')) return false;
-        if(f.search){var hay=isClashTab?[it.title,it.description,it.type,it.elemAStorey,it.elemBStorey,it.elemAType,it.elemBType,it.elemAMaterial,it.elemBMaterial,it.status].filter(Boolean).join(' ').toLowerCase():(it.title||'').toLowerCase()+' '+(it.description||'').toLowerCase();if(!_ccFilterTextMatches(f.search,hay,it.number))return false;}
-        if(isClashTab) {
-          if(f.modelPair) {
-            var _mpA=it.modelAId, _mpB=it.modelBId||it.modelAId, _mp=f.modelPair;
-            if(!((_mpA===_mp.a && _mpB===_mp.b) || (_mpA===_mp.b && _mpB===_mp.a))) return false;
-          }
-          if(f.type!=='all' && it.type!==f.type) return false;
-          if(f.discipline!=='all' && it.disciplines && it.disciplines.indexOf(f.discipline)===-1) return false;
-          // f.floor holds a real IFC storey NAME (see the Floor/Level select
-          // below, populated from _ccCollectStoreys) — was elevation-band
-          // matching against deriveFloors()'s synthetic, off-by-one "Level N"
-          // clusters, which didn't correspond to any real storey and even
-          // mislabeled IFC's own Level 0 as "Level 1".
-          if(f.floor!=='all' && it.elemAStorey!==f.floor && it.elemBStorey!==f.floor) return false;
-          if(f.distMax<9999 && (it.distance||0)>f.distMax) return false;
-          if(f.elementId) {
-            var eid=f.elementId;
-            if(String(it.elemA).indexOf(eid)===-1 && String(it.elemB).indexOf(eid)===-1) return false;
-          }
-          if(f.selfClash==='self' && !it.selfClash) return false;
-          if(f.selfClash==='cross' && it.selfClash) return false;
-          if(f.ifcType!=='all' && it.elemAType!==f.ifcType && it.elemBType!==f.ifcType) return false;
-          if(f.excludedTypes&&f.excludedTypes.length){var ex=f.excludedTypes;if(ex.indexOf(it.elemAType)!==-1||ex.indexOf(it.elemBType)!==-1) return false;}
-          if(f.excludedStoreys&&f.excludedStoreys.length){var exs=f.excludedStoreys;if(exs.indexOf(it.elemAStorey)!==-1||exs.indexOf(it.elemBStorey)!==-1) return false;}
-          if(f.excludedMaterials&&f.excludedMaterials.length){var exm=f.excludedMaterials;if(exm.indexOf(it.elemAMaterial)!==-1||exm.indexOf(it.elemBMaterial)!==-1) return false;}
-          if(f.storey!=='all' && it.elemAStorey!==f.storey && it.elemBStorey!==f.storey) return false;
-          if(f.material!=='all' && it.elemAMaterial!==f.material && it.elemBMaterial!==f.material) return false;
-          if(f.deltaState && f.deltaState!=='all' && it._delta!==f.deltaState) return false;
-        } else {
-          if(f.priority!=='all' && it.priority!==f.priority) return false;
-          if(f.category!=='all' && it.category!==f.category) return false;
-          if(f.assignee!=='all' && (it.assignee||'')!==f.assignee) return false;
-          if(f.issueElementType!=='all' && (it.elementType||'')!==f.issueElementType) return false;
-          if(f.issueStorey!=='all' && (it.storey||'')!==f.issueStorey) return false;
-        }
-        return true;
+        return _ccListItemPasses(it, f, isClashTab, visibleModelIds, triage, s.rules);
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- triage changes together with rawItems (same clashes/rules/models); s.rules only feeds the handled-bucket test
     }, [rawItems, f, isClashTab, visibleModelIds]);
+    // Facet filters (s.triage.facets, persisted per project) on top of the
+    // list filters; facet counts are computed over itemsPre (live counts).
+    var items = useMemo(function(){
+      if (!facetsOn) return itemsPre;
+      return itemsPre.filter(function(it){
+        var row = triage && triage.rowById.get(it.id);
+        return !!row && _tcore.matchesFacets(row.v, facets);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- _tcore is a frozen module; facets is s.triage.facets
+    }, [itemsPre, facetsOn, facets, triage]);
 
     var counts = useMemo(function(){
+      var _tmC = _ccTriageModel(s);
       return {
-        oC: s.clashes.filter(function(c){return c.status==='open' && !(c.opening==='provided' && s.rules.hideProvidedOpenings!==false) && !_ccClashClassifiedHidden(c, s.rules) && !(c.type==='contact' && s.rules.hideContacts!==false)}).length,
+        oC: s.clashes.filter(function(c){return c.status==='open' && _tmC.bucketOf.get(c.id)==='review';}).length,
         oI: s.issues.filter(function(i){return i.status!=='resolved'&&i.status!=='closed';}).length
       };
-    }, [s.clashes, s.issues, s.rules]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- s.models only feeds the memoised triage model
+    }, [s.clashes, s.issues, s.rules, s.models]);
     var oC=counts.oC, oI=counts.oI;
     var FL={fontSize:'0.69rem',color:'var(--text-muted)',marginBottom:'.15rem',display:'block'};
     var PILL=function(active){return Object.assign({},S_BTN,{fontSize:'0.69rem',padding:'.15rem .35rem',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'var(--accent-contrast)':'var(--text-faint)'});};
@@ -27176,21 +28058,7 @@ function startApp() {
           </button>`})}
       </div>`}
 
-      ${isClashTab && providedCount > 0 && html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-tertiary)',fontSize:'0.68rem',color:'var(--text-muted)'}}>
-        <span style=${{flex:1}}>${providedCount} ${_cc_t('opening.passThrough','pass through provided openings')} —</span>
-        <button onClick=${function(){d({t:A.UPD_FILTERS,u:{showProvided:!f.showProvided}})}}
-          style=${{...S_BTN,padding:'.1rem .4rem',fontSize:'0.68rem',color:'var(--accent-hover)',background:'none',border:'none',textDecoration:'underline',cursor:'pointer'}}>${f.showProvided ? _cc_t('opening.hide','hide') : _cc_t('opening.show','show')}</button>
-      </div>`}
-      ${isClashTab && provisionCount > 0 && html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-tertiary)',fontSize:'0.68rem',color:'var(--text-muted)'}}>
-        <span style=${{flex:1}} title=${_cc_t('provision.insideTitle','The element sits in or passes through a provision / reservation volume made for it')}>${provisionCount} ${_cc_t('provision.passThrough','inside provisions / reservations')} —</span>
-        <button onClick=${function(){d({t:A.UPD_FILTERS,u:{showProvisions:!f.showProvisions}})}}
-          style=${{...S_BTN,padding:'.1rem .4rem',fontSize:'0.68rem',color:'var(--accent-hover)',background:'none',border:'none',textDecoration:'underline',cursor:'pointer'}}>${f.showProvisions ? _cc_t('opening.hide','hide') : _cc_t('opening.show','show')}</button>
-      </div>`}
-      ${isClashTab && classifiedCounts.groupTotal > 0 && html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-tertiary)',fontSize:'0.68rem',color:'var(--text-muted)'}}>
-        <span style=${{flex:1}} title=${_cc_t('roles.classifiedTitle','Clashes with elements whose suggestion group is set to "classify only" (Detection rules → Suggestion groups)')}>${_cc_t('roles.classifiedPrefix','Clashes with')} ${Object.keys(classifiedCounts.groups).map(function(g){ return classifiedCounts.groups[g] + '× ' + _ccRoleGroupLabel(g, true); }).join(' · ')} —</span>
-        <button onClick=${function(){d({t:A.UPD_FILTERS,u:{showRoleGroups:!f.showRoleGroups}})}}
-          style=${{...S_BTN,padding:'.1rem .4rem',fontSize:'0.68rem',color:'var(--accent-hover)',background:'none',border:'none',textDecoration:'underline',cursor:'pointer'}}>${f.showRoleGroups ? _cc_t('opening.hide','hide') : _cc_t('opening.show','show')}</button>
-      </div>`}
+      ${isClashTab && triage && triage.total > 0 && html`<${BucketBar} counts=${triage.counts} total=${triage.total} rules=${s.rules} f=${f} d=${d} />`}
       ${isClashTab && s.lastRunExcluded && Object.keys(s.lastRunExcluded).length > 0 && html`<div data-cc-excluded="1" style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--color-warning-bg)',fontSize:'0.68rem',color:'var(--color-warning-fg)'}}>
         <span style=${{flex:1}}>${_cc_t('roles.leftOut','Left out of this run:')} ${Object.keys(s.lastRunExcluded).map(function(g){ return s.lastRunExcluded[g] + ' ' + _ccRoleGroupLabel(g, s.lastRunExcluded[g] !== 1); }).join(' · ')}</span>
         <button onClick=${function(){
@@ -27201,11 +28069,6 @@ function startApp() {
             if (window._ccRunDetection) window._ccRunDetection(u);
           }}
           style=${{...S_BTN,padding:'.1rem .4rem',fontSize:'0.68rem',color:'var(--color-warning-fg)',background:'none',border:'none',textDecoration:'underline',cursor:'pointer'}}>${_cc_t('roles.includeRerun','include and re-run')}</button>
-      </div>`}
-      ${isClashTab && contactCount > 0 && html`<div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--bg-tertiary)',fontSize:'0.68rem',color:'var(--text-muted)'}}>
-        <span style=${{flex:1}} title=${_cc_t('contact.title','Surfaces meet but nothing interpenetrates (flush faces, an element resting on another) — not a clash')}>${contactCount} ${_cc_t('contact.only','only touch (contact)')} —</span>
-        <button onClick=${function(){d({t:A.UPD_FILTERS,u:{showContacts:!f.showContacts}})}}
-          style=${{...S_BTN,padding:'.1rem .4rem',fontSize:'0.68rem',color:'var(--accent-hover)',background:'none',border:'none',textDecoration:'underline',cursor:'pointer'}}>${f.showContacts ? _cc_t('opening.hide','hide') : _cc_t('opening.show','show')}</button>
       </div>`}
       ${isClashTab && rawItems.length > 0 && rawItems.some(function(c){return c.aiSeverity;}) && html`<${ClashAISummary} items=${rawItems} />`}
       ${!isExplorerTab && !isStandardsTab && rawItems.length > 0 && html`<${ClashStatsBar} items=${rawItems} isClash=${isClashTab} delta=${isClashTab ? s.lastDeltaSummary : null} history=${isClashTab ? (s.runHistory||null) : null}
@@ -27220,20 +28083,26 @@ function startApp() {
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style=${{position:'absolute',left:'.5rem',pointerEvents:'none',flexShrink:0,color:'var(--text-muted)'}}>
               <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>
             </svg>
-            <input type="text" placeholder=${isClashTab ? _cc_t('issues.filter.placeholderClash','Filter… e.g. "hard on floor 2" or "open pipes"') : _cc_t('issues.filter.placeholderSearch','Search…')} value=${f.search}
+            <input type="text" aria-label=${isClashTab ? _cc_t('issues.filter.searchClashAria','Search clashes (names, types, storeys, GlobalIds)') : _cc_t('issues.filter.searchAria','Search')} placeholder=${isClashTab ? _cc_t('issues.filter.placeholderClash','Filter… e.g. "hard on floor 2" or "open pipes"') : _cc_t('issues.filter.placeholderSearch','Search…')} value=${f.search}
               onInput=${function(e){d({t:A.UPD_FILTERS,u:{search:e.target.value}})}}
               style=${{...S_INPUT,fontSize:'0.8rem',padding:'.32rem .4rem .32rem 1.85rem',width:'100%',background:f.search?'var(--accent-bg)':'var(--bg-secondary)',border:f.search?'1px solid var(--accent)':'1px solid var(--border)',transition:'all .15s'}} />
             ${f.search && html`<button onClick=${function(){d({t:A.UPD_FILTERS,u:{search:''}})}} style=${{position:'absolute',right:'.4rem',background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',padding:0,lineHeight:0,display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
             </button>`}
           </div>
-          <span style=${{fontFamily:'var(--font-mono)',fontSize:'.68rem',color:items.length<rawItems.length?'var(--accent)':'var(--text-muted)',whiteSpace:'nowrap',flexShrink:0}}>${items.length}${items.length<rawItems.length?' / '+rawItems.length:''}</span>
+          ${isClashTab && triage ? html`<${ClashViewToggle} s=${s} d=${d} reviewCount=${reviewModel ? reviewModel.items.length : 0} />`
+            : html`<span style=${{fontFamily:'var(--font-mono)',fontSize:'.68rem',color:items.length<rawItems.length?'var(--accent)':'var(--text-muted)',whiteSpace:'nowrap',flexShrink:0}}>${items.length}${items.length<rawItems.length?' / '+rawItems.length:''}</span>`}
           <button onClick=${function(){setFiltersOpen(!filtersOpen)}}
             style=${{...S_BTN,padding:'.3rem .45rem',background:filtersOpen||activeCount>0?'var(--accent-bg)':'var(--bg-secondary)',color:filtersOpen||activeCount>0?'var(--accent)':'var(--text-muted)',border:'1px solid var(--border)',fontSize:'0.75rem',whiteSpace:'nowrap',flexShrink:0,display:'inline-flex',alignItems:'center',gap:'.25rem'}} aria-label=${_cc_t('issues.filter.toggle','Toggle filters')}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>
             ${activeCount>0?html`<span style=${{fontFamily:'var(--font-mono)',fontSize:'.65rem',color:'var(--accent)'}}>${activeCount}</span>`:''}
           </button>
         </div>
+      </div>`}
+      ${isClashTab && triage && triage.total > 0 && html`<${TriageFilterBar} s=${s} d=${d} triage=${triage} itemsPre=${itemsPre} shownItems=${items} shown=${items.length} total=${triage.total} />`}
+      ${isClashTab && reviewModel && _ccOverviewPrompt(s, reviewModel) && html`<div data-cc-overview-prompt="1" style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,background:'var(--color-info-bg)',fontSize:'var(--text-xs)',color:'var(--color-info-fg)'}}>
+        <span style=${{flex:1}}>${_cc_t('overview.prompt','{n} review items — narrow them with the filters above, or open the overview anyway.',{n:reviewModel.items.length})}</span>
+        <button onClick=${function(){ d({t:A.TRIAGE_UPD,u:{view:'overview'}}); }} style=${{...S_BTN,padding:'0 var(--space-2)',fontSize:'var(--text-xs)',background:'none',color:'var(--color-info-fg)',textDecoration:'underline',textUnderlineOffset:2}}>${_cc_t('overview.open','Open overview')}</button>
       </div>`}
       ${!isExplorerTab && !isStandardsTab && filtersOpen && html`<div style=${{padding:'.5rem',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',flexDirection:'column',gap:'.4rem',background:'var(--bg-tertiary)'}}>
         <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -27492,7 +28361,7 @@ function startApp() {
       }()}
       ${!isExplorerTab && !isStandardsTab && items.length>0 && html`<${BulkActionBar} s=${s} d=${d} items=${items} isClash=${isClashTab} />`}
 
-      ${!isExplorerTab && !isStandardsTab && html`<${VirtualList} items=${items} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${s.models} groupBy=${isClashTab?s.clashGroupBy:s.issueGroupBy} sortBy=${isClashTab?s.clashSortBy:s.issueSortBy} selectMode=${s.selectMode} selected=${s.selected} trainingMode=${s.trainingMode} triageResults=${s.triageResults}
+      ${!isExplorerTab && !isStandardsTab && html`<${VirtualList} items=${items} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${s.models} storeyLabel=${isClashTab && triage ? triage.fctx.storey : null} groupBy=${isClashTab?s.clashGroupBy:s.issueGroupBy} sortBy=${isClashTab?s.clashSortBy:s.issueSortBy} selectMode=${s.selectMode} selected=${s.selected} trainingMode=${s.trainingMode} triageResults=${s.triageResults}
         emptyCtx=${{
           hasModel: (s.models||[]).length > 0,
           detecting: !!s.detecting,
@@ -28012,6 +28881,29 @@ function startApp() {
     var rules = '';
     try { rules = _ccSummariseRules(s.rules, s.models); } catch(_) {}
 
+    // Review items (the overview's cards): bucket counts + the top review
+    // items with their cached clash pictures (rendered at idle by the
+    // overview; never rendered here — the report is synchronous).
+    var review = null;
+    try {
+      var _tmR = _ccTriageModel(s), _rmR = _ccReviewModel(s), _snapSvc = window._ccClashSnapshots;
+      review = { counts: _tmR.counts, items: _rmR.items.slice(0, 24).map(function(it){
+        var sv = it.summary ? it.summary.severity : (it.lead.aiSeverity || _ccDeterministicSeverity(it.lead));
+        return { title: it.title, n: it.items.length, sev: sv, img: _snapSvc ? _snapSvc.get(it.lead) : null,
+          ext: it.summary ? it.summary.extentSummary : '', storey: it.summary ? it.summary.storey : (it.lead.elemAStorey || it.lead.elemBStorey || '') };
+      }), total: _rmR.items.length };
+    } catch (_) { review = null; }
+    function _reviewSection() {
+      if (!review) return '';
+      var bl = Object.keys(review.counts).filter(function(b){ return review.counts[b] > 0; })
+        .map(function(b){ return _ccBucketLabel(b, review.counts[b]); }).join(' · ');
+      return '<h2>Review items ('+review.total+')</h2><div class="sub">'+esc(bl)+'</div>'
+        + (review.items.length ? '<div class="snapgrid">' + review.items.map(function(r){
+            return '<div class="snap">' + (r.img ? '<im'+'g src="'+esc(r.img)+'"/>' : '')
+              + '<div><b>'+esc(r.title)+'</b> · '+esc(r.sev)+(r.n > 1 ? ' · '+r.n+' clashes' : '')+(r.ext ? ' · '+esc(r.ext) : '')+(r.storey ? ' · '+esc(r.storey) : '')+'</div></div>';
+          }).join('') + '</div>' : '');
+    }
+
     var h = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Clash report — '+esc(projName)+'</title><style>'
       + 'body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;margin:0;padding:24px 32px;background:#fff}'
       + 'h1{font-size:22px;margin:0 0 2px}h2{font-size:15px;margin:26px 0 8px;border-bottom:2px solid #16a34a;padding-bottom:4px}'
@@ -28046,6 +28938,7 @@ function startApp() {
         ? '<h2>Trend</h2>'+_trendSvg()
           +'<table style="margin-top:8px"><tr><th>Run</th><th>Total</th><th>Open</th><th>New</th><th>Auto-resolved</th></tr>'+_histRows()+'</table>'
         : '')
+      + _reviewSection()
       + '<h2>Clash clusters'+(truncated?' (top '+ROW_CAP+' by open count)':'')+'</h2>'
       + '<table><tr><th>#</th><th>Cluster</th><th>Clashes</th><th>Open</th><th>Severity</th><th>Storey</th><th>Assignee</th></tr>'
       +   rows.map(function(r, i){
@@ -30271,11 +31164,14 @@ function startApp() {
   // group's items (no side-channel map to keep in sync, unlike
   // window._ccClusterDisplay) \u2014 title = root element's name + human type,
   // subtitle = counts of what it hits by human type, storey, worst severity.
-  function _ccElementGroupSummary(items) {
+  // opts.storey(modelId, name) -> normalised storey label (federated models
+  // name the same floor differently); without it the raw IFC name is used.
+  function _ccElementGroupSummary(items, opts) {
     if (!items || !items.length) return null;
+    opts = opts || {};
     var degMap = _ccBuildElementDegreeMap(items);
     var rootInfo = null;
-    var otherTypeCounts = {}, storeys = {}, worstSev = null;
+    var otherTypeCounts = {}, storeys = {}, worstSev = null, extents = {};
     var SEV_ORDER = { critical: 3, major: 2, minor: 1, info: 0 };
     var niceType = function(t) { return (typeof window._ccNiceTypeLabel === 'function') ? window._ccNiceTypeLabel(t) : (t || 'Element'); };
     items.forEach(function(it) {
@@ -30288,7 +31184,10 @@ function startApp() {
       var otherType = niceType(side === 'A' ? it.elemBType : it.elemAType).toLowerCase();
       otherTypeCounts[otherType] = (otherTypeCounts[otherType] || 0) + 1;
       var st = side === 'A' ? it.elemAStorey : it.elemBStorey;
+      if (st && opts.storey) st = opts.storey(side === 'A' ? it.modelAId : it.modelBId, st);
       if (st) storeys[st] = true;
+      var ext = it.type === 'hard' ? (it.extent || 'unknown') : (it.type === 'soft' ? 'clearance' : it.type);
+      if (ext) extents[ext] = (extents[ext] || 0) + 1;
       var sev = it.aiSeverity || (typeof _ccDeterministicSeverity === 'function' ? _ccDeterministicSeverity(it) : 'info');
       if (worstSev == null || (SEV_ORDER[sev] || 0) > (SEV_ORDER[worstSev] || 0)) worstSev = sev;
     });
@@ -30299,11 +31198,17 @@ function startApp() {
     }).join(' \u00b7 ');
     var storeyKeys = Object.keys(storeys);
     var niceRootType = niceType(rootInfo.type);
+    var EXT_ORDER = ['through', 'through-thin', 'partial', 'graze', 'unknown', 'clearance', 'contact', 'duplicate'];
+    var extentKeys = Object.keys(extents).sort(function(a, b) { var ia = EXT_ORDER.indexOf(a), ib = EXT_ORDER.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib); });
+    var extLabel = typeof opts.extentLabel === 'function' ? opts.extentLabel : function(k) { return k; };
     return {
       title: (rootInfo.name || niceRootType) + ' (' + niceRootType + ')',
       subtitle: subtitle ? ('crosses ' + subtitle) : '',
       storey: storeyKeys.length === 1 ? storeyKeys[0] : (storeyKeys.length > 1 ? (storeyKeys.length + ' storeys') : ''),
-      severity: worstSev || 'info'
+      storeys: storeyKeys,
+      severity: worstSev || 'info',
+      extents: extents,
+      extentSummary: extentKeys.map(function(k) { return extents[k] + ' ' + extLabel(k).toLowerCase(); }).join(' · ')
     };
   }
   window._ccElemKeyFor = _ccElemKeyFor;
@@ -30347,6 +31252,7 @@ function startApp() {
   // just asserting a useMemo call exists in the source (a source-pattern
   // check can't catch an unmemoized upstream dependency invalidating it).
   window._ccListPerfCounters = { groupAndSort: 0, buildConflictRows: 0, computeRowOffsets: 0 };
+  var _CC_SEV_RANK = { critical: 4, major: 3, minor: 2, info: 1 };
   function groupAndSort(items, groupBy, sortBy, opts) {
     window._ccListPerfCounters.groupAndSort++;
     opts = opts || {};
@@ -30380,6 +31286,20 @@ function startApp() {
       if (!groupMap[k]) groupMap[k] = [];
       groupMap[k].push(it);
     });
+    // Root-cause grouping alone (the default): worst severity first, then
+    // the bigger group, so the list opens on what matters most; inside a
+    // group (no explicit sort) the same rule \u2014 severity, then depth/gap.
+    if (groupByArr.length === 1 && groupByArr[0] === 'element') {
+      var _sevOf = function(it){ return _CC_SEV_RANK[it.aiSeverity || _ccDeterministicSeverity(it)] || 0; };
+      var _inGroup = sortFn || function(a, b){ return (_sevOf(b) - _sevOf(a)) || (Math.abs(b.distance || 0) - Math.abs(a.distance || 0)) || String(a.id).localeCompare(String(b.id)); };
+      var _gs = Object.keys(groupMap).map(function(k){
+        var its = groupMap[k].slice().sort(_inGroup), w = 0;
+        its.forEach(function(it){ var r = _sevOf(it); if (r > w) w = r; });
+        return { label: k, items: its, _w: w };
+      });
+      _gs.sort(function(a, b){ return (b._w - a._w) || (b.items.length - a.items.length) || a.label.localeCompare(b.label); });
+      return _gs.map(function(g){ return { label: g.label, items: g.items }; });
+    }
     var keys = Object.keys(groupMap).sort(function(a,b){
       var pa=a.split(' \u2502 '), pb=b.split(' \u2502 ');
       for (var i=0;i<Math.max(pa.length,pb.length);i++){
@@ -30392,6 +31312,39 @@ function startApp() {
     return keys.map(function(k) {
       return { label: k, items: sortFn ? groupMap[k].slice().sort(sortFn) : groupMap[k] };
     });
+  }
+
+  // ── Review items (overview cards, BCF "shown", report) ──────────────
+  // The post-triage review set: clashes in the 'review' bucket that pass the
+  // list filters, search and facets — grouped exactly like the list
+  // (root-cause element, worst severity first). A group of two or more is one
+  // review item; a lone clash is its own. Memoised per state slice.
+  var _ccReviewLast = null;
+  function _ccReviewModel(s) {
+    var facets = (s.triage && s.triage.facets) || {};
+    var L = _ccReviewLast;
+    if (L && L.clashes === s.clashes && L.rules === s.rules && L.models === s.models && L.filters === s.filters && L.facets === facets) return L.out;
+    var tm = _ccTriageModel(s), tcore = window._ccClashTriageCore, f = s.filters || INIT_FILTERS;
+    var facetsOn = !!(tcore && tcore.hasFacets(facets));
+    var pre = tm.visible.filter(function(c) {
+      return tm.bucketOf.get(c.id) === 'review' && _ccListItemPasses(c, f, true, tm.visibleModels, tm, s.rules);
+    });
+    var clashes = !facetsOn ? pre : pre.filter(function(c) {
+      var row = tm.rowById.get(c.id);
+      return !!row && tcore.matchesFacets(row.v, facets);
+    });
+    var groups = groupAndSort(clashes, ['element'], [], { models: s.models }) || [];
+    var items = groups.map(function(g) {
+      var sum = g.items.length > 1 ? _ccElementGroupSummary(g.items, { storey: tm.fctx.storey, extentLabel: function(k){ return _ccFacetValueLabel('extent', k); } }) : null;
+      var c0 = g.items[0];
+      return { key: g.items.length > 1 ? g.label : ('c:' + c0.id), group: g.items.length > 1, items: g.items, lead: c0,
+        title: sum ? sum.title : (c0.title || _ccFacetValueLabel('typePair', '')), summary: sum };
+    });
+    var byClash = {};
+    items.forEach(function(it) { it.items.forEach(function(c) { byClash[c.id] = it; }); });
+    var out = { pre: pre, clashes: clashes, items: items, byClash: byClash };
+    _ccReviewLast = { clashes: s.clashes, rules: s.rules, models: s.models, filters: s.filters, facets: facets, out: out };
+    return out;
   }
 
   // ── Truthful empty/filtered states (ccUiEmptyStates) ──  REWRITE_UI_PLAN.md Phase 4
@@ -30496,6 +31449,7 @@ function startApp() {
   // measured-height cache so variable-height cluster cards don't need a fixed
   // row-height guess. Deliberately does NOT touch groupAndSort/_groupKeyFor —
   // grouping/sorting/filtering semantics stay byte-identical to legacy.
+  var CC_WINDOWED_AUTO_MIN = 2000; // results above this always render windowed (VirtualList)
   var CC_WINDOW_DEFAULT_HEIGHTS = { header: 32, clusterHeader: 62, item: ROW_HEIGHT, more: 34 };
   function _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup) {
     window._ccListPerfCounters.buildConflictRows++;
@@ -30568,6 +31522,7 @@ function startApp() {
   function VirtualList(props) {
     var rawItemsProp=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs, models=props.models||_VL_NO_MODELS;
     var triageResults = props.triageResults || {};
+    var storeyLabel = props.storeyLabel || null; // normalised storey names for the group headers
     var groupBy = props.groupBy || 'none';
     var groupByPrimary = Array.isArray(groupBy) ? groupBy[0] : groupBy;
     var isElementGroupMode = isClash && groupByPrimary === 'element';
@@ -30581,7 +31536,9 @@ function startApp() {
 
     // ── ccUiWindowedConflicts state (hooks always called — Rules of Hooks —
     // only the render branch below is conditional on the flag) ──
-    var windowedOn = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiWindowedConflicts'));
+    // Grouping is always on now, so big results (more rows than the legacy
+    // fully-mounted path handles well) always use the windowed renderer.
+    var windowedOn = !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('ccUiWindowedConflicts')) || rawItemsProp.length > CC_WINDOWED_AUTO_MIN;
     // ── ccUiEmptyStates: model-loading subscription (same window._ccModelLoading
     // + 'cc-model-loading' event pattern already used elsewhere, e.g. the
     // welcome-card/toolbar loading indicators) ──
@@ -30699,6 +31656,8 @@ function startApp() {
     useEffect(function(){
       function onKey(e){
         if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA'||e.target.tagName==='SELECT') return;
+        // the overview's card grid has its own J/K/Enter/Escape
+        if(e.target.closest && e.target.closest('[data-cc-overview]')) return;
         if(e.key==='Escape'&&activeId!=null){
           d({t:A.ACTIVE,id:null});
           if(_unghostAll)_unghostAll();
@@ -31060,23 +32019,45 @@ function startApp() {
       var isOpen = !collapsed[g.label];
       if (isElementGroupMode) {
         // ── "By element" (root-cause) header ──
-        var summary = _ccElementGroupSummary(g.items) || {};
+        // Worst severity (word + colour), extent summary ("3 through · 1
+        // partial"), normalised storey, and group actions that go through
+        // BATCH_UPD_CLASH with explicit ids (undoable). The toggle is its
+        // own button so the actions are not nested inside it.
+        var summary = _ccElementGroupSummary(g.items, {storey: storeyLabel, extentLabel: function(k){ return _ccFacetValueLabel('extent', k); }}) || {};
         var sevCol2 = SEV_COLOR[summary.severity] || 'var(--text-muted)';
-        var openCount2 = g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed'&&it.status!=='denied';}).length;
+        var openItems2 = g.items.filter(function(it){return it.status!=='resolved'&&it.status!=='closed'&&it.status!=='denied';});
+        var openCount2 = openItems2.length;
         var resolved2 = g.items.length - openCount2;
+        var sevPill = _ccSeverityPillStyle(summary.severity);
+        var gIds = g.items.map(function(it){ return it.id; });
         return html`<div key=${g.label} data-element-group-key=${g.label}
-          onClick=${function(){toggleGroup(g.label)}}
-          style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-2) var(--space-2) var(--space-2) var(--space-1)',cursor:'pointer',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',borderLeft:'3px solid '+sevCol2,position:'sticky',top:0,zIndex:1}}>
-          <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',width:10}}>${isOpen?'▼':'▶'}</span>
-          <div style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'2px'}}>
-            <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${summary.title}</span>
-            <div style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
-              ${summary.subtitle && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>${summary.subtitle}</span>`}
-              ${summary.storey && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${summary.storey}</span>`}
-              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${openCount2} open${resolved2?(' · '+resolved2+' resolved'):''}</span>
-            </div>
-          </div>
-          <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',background:'var(--bg-secondary)',padding:'1px var(--space-2)',borderRadius:'var(--radius-pill)',fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
+          style=${{display:'flex',flexWrap:'wrap',alignItems:'center',gap:'var(--space-1) var(--space-2)',padding:'var(--space-2) var(--space-2) var(--space-2) var(--space-1)',background:'var(--bg-tertiary)',borderBottom:'1px solid var(--border-subtle)',borderLeft:'3px solid '+sevCol2,position:'sticky',top:0,zIndex:1}}>
+          <button aria-expanded=${isOpen?'true':'false'} onClick=${function(){toggleGroup(g.label)}}
+            style=${{...S_BTN,flex:'1 1 100%',minWidth:0,display:'flex',alignItems:'flex-start',gap:'var(--space-2)',padding:0,background:'none',textAlign:'left',color:'inherit'}}>
+            <span aria-hidden="true" style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',width:10,paddingTop:2}}>${isOpen?'▼':'▶'}</span>
+            <span style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column',gap:'2px'}}>
+              <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',lineHeight:'var(--leading-tight)'}}>${summary.title}</span>
+              <span style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
+                <span class="cc-status-pill" data-cc-group-sev=${summary.severity} style=${sevPill}>${_ccFacetValueLabel('severity', summary.severity)}</span>
+                ${summary.extentSummary && html`<span data-cc-group-extent="1" style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>${summary.extentSummary}</span>`}
+                ${summary.subtitle && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>${summary.subtitle}</span>`}
+                ${summary.storey && html`<span class="cc-status-pill" style=${{padding:'1px var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',textTransform:'none',letterSpacing:0}}>${summary.storey}</span>`}
+                <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${openCount2} open${resolved2?(' · '+resolved2+' resolved'):''}</span>
+              </span>
+            </span>
+          </button>
+          <span style=${{flex:1}}></span>
+          ${isClash && openCount2 > 0 && html`<button data-cc-group-accept="1" title=${_cc_t('vlist.acceptAllTip','Accept every open clash in this group (flag for a later check) — undo with Ctrl+Z')}
+            onClick=${function(e){ e.stopPropagation(); d({t:A.BATCH_UPD_CLASH, ids:openItems2.map(function(it){ return it.id; }), u:{status:'accepted_needs_check'}}); }}
+            style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'1px var(--space-2)',borderRadius:'var(--radius-xs)',border:'1px solid var(--color-info-border)',background:'var(--bg-secondary)',color:'var(--color-info-fg)',fontWeight:'var(--weight-semibold)',whiteSpace:'nowrap'}}>${_cc_t('vlist.acceptAll','Accept all')}</button>`}
+          ${isClash && html`<select data-cc-group-status="1" aria-label=${_cc_t('vlist.setGroupStatus','Set status of all {n} clashes in this group',{n:g.items.length})}
+            onClick=${function(e){ e.stopPropagation(); }}
+            onChange=${function(e){ var v = e.target.value; e.target.value = ''; if (v) d({t:A.BATCH_UPD_CLASH, ids:gIds, u:{status:v}}); }}
+            style=${{fontSize:'var(--text-2xs)',padding:'1px var(--space-1)',borderRadius:'var(--radius-xs)',border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',maxWidth:88}}>
+            <option value="">${_cc_t('vlist.setStatus','Set status…')}</option>
+            ${['open','in_progress','accepted_needs_check','confirmed','resolved','denied'].map(function(st){ return html`<option key=${st} value=${st}>${(STAT[st] && STAT[st].label) || st}</option>`; })}
+          </select>`}
+          <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)',background:'var(--bg-secondary)',padding:'1px var(--space-2)',borderRadius:'var(--radius-pill)',fontFamily:'var(--font-mono)'}}>${g.items.length}</span>
         </div>`;
       }
       if (isClusterGroup(g)) {
@@ -35083,6 +36064,13 @@ function startApp() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
   }
 
+  // BATCH_UPD_CLASH acts on a.ids when given (group header actions), else on
+  // the multi-select — every consumer (reducer, changelog, sync, training)
+  // resolves the target set the same way.
+  function _ccBatchIdSet(a, selected) {
+    if (a && Array.isArray(a.ids)) { var o = {}; a.ids.forEach(function(id){ o[id] = true; }); return o; }
+    return selected || {};
+  }
   function _buildChangelogEntry(action, clashes, state) {
     var user = _ccChangelogUser || 'anonymous';
     var ts = Date.now();
@@ -35098,9 +36086,9 @@ function startApp() {
       return entries.length ? entries : null;
     }
     if (a.t === A.BATCH_UPD_CLASH && a.u) {
-      var entries2 = [];
+      var entries2 = [], _bIds = _ccBatchIdSet(a, state.selected);
       clashes.forEach(function(c) {
-        if (!state.selected[c.id]) return;
+        if (!_bIds[c.id]) return;
         Object.keys(a.u).forEach(function(field) {
           if (field === 'aiSignals') return;
           entries2.push({id:_clId(), ts:ts, user:user, type:'clash_update', targetId:c.id,
@@ -44899,8 +45887,9 @@ function startApp() {
         if (a.t===A.BATCH_UPD_CLASH && a.u && a.u.status) {
           var labelMap2 = {confirmed:1.0, denied:0.0};
           if (labelMap2[a.u.status] != null) {
+            var _bSel = Array.isArray(a.ids) ? _ccBatchIdSet(a, null) : _sel;
             _clashes.forEach(function(c){
-              if (_sel[c.id] && c._trainFV && c.status !== a.u.status) _saveClashTrainRecord(c.id, c._trainFV, labelMap2[a.u.status], 'verdict', false);
+              if (_bSel[c.id] && c._trainFV && c.status !== a.u.status) _saveClashTrainRecord(c.id, c._trainFV, labelMap2[a.u.status], 'verdict', false);
             });
           }
         }
@@ -44924,8 +45913,9 @@ function startApp() {
             } else if (a.t === A.ADD_ISSUE && a.v) {
               _sharedEnqueue(Object.assign({}, a.v, {_updatedAt:_now}));
             } else if (a.t === A.BATCH_UPD_CLASH && a.u) {
+              var _bShared = Array.isArray(a.ids) ? _ccBatchIdSet(a, null) : _selectedRef.current;
               _clashesRef.current.forEach(function(c){
-                if (_selectedRef.current[c.id]) _sharedEnqueue(Object.assign({}, c, a.u, {_updatedAt:_now}));
+                if (_bShared[c.id]) _sharedEnqueue(Object.assign({}, c, a.u, {_updatedAt:_now}));
               });
             } else if (a.t === A.BATCH_UPD_ISSUE && a.u) {
               (_stateRef.current.issues||[]).forEach(function(i){
@@ -45075,7 +46065,7 @@ function startApp() {
       }, 2000);
       return function(){ clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- persist keyed on the data fields that matter; depending on the whole state would save on every hover/selection change
-    }, [s.clashes, s.issues, s.viewpoints, s.measurements, s.rules, s.models]);
+    }, [s.clashes, s.issues, s.viewpoints, s.measurements, s.rules, s.models, s.triage && s.triage.savedViews, s.triage && s.triage.facets]);
     // on pagehide and on visibilitychange→hidden because beforeunload is
     useEffect(function(){
       function flush() {
@@ -45874,6 +46864,7 @@ function startApp() {
           <${Header} s=${s} d=${d} />
           ${is2D ? html`<${View2D} s=${s} d=${d} />` : html`<${Viewer} s=${s} d=${d} />`}
           ${is2D && html`<${ExportBar} s=${s} d=${d} />`}
+          ${!is2D && s.tab === 'clashes' && s.clashes.length > 0 && html`<${ClashOverviewHost} key="cc-overview" s=${s} d=${d} />`}
         </div>
         <${AIChatPanel} s=${s} d=${d} />
       </main>

@@ -85,7 +85,9 @@ test('suggested views are offered only when they select something', () => {
   const none = t.suggestedViews(t.indexItems([{ id: 'x', type: 'soft', aiSeverity: 'minor', status: 'open', assignee: 'Bo', elemAStorey: 'L1' }], ctx));
   assert.deepEqual(none, [], 'one storey and nothing tagged: no suggestions');
   const riser = { id: 'r', type: 'hard', extent: 'through', aiSeverity: 'major', elemAType: 'IfcPipeSegment', elemBType: 'IfcSlab', bboxA: { dx: 100, dy: 3500, dz: 100 }, status: 'open', assignee: 'x' };
-  assert.deepEqual(t.suggestedViews(t.indexItems([riser], ctx)).map((v) => v.id), ['riser-through-slab']);
+  const plain = { id: 'p', type: 'soft', aiSeverity: 'minor', status: 'open', assignee: 'x' };
+  assert.deepEqual(t.suggestedViews(t.indexItems([riser, plain], ctx)).map((v) => v.id), ['riser-through-slab']);
+  assert.deepEqual(t.suggestedViews(t.indexItems([riser], ctx)), [], 'a view that selects everything filters nothing');
 });
 
 test('search: names, types, storeys, GlobalIds; all terms must match; quoted phrases', () => {

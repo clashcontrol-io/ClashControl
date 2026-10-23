@@ -28,6 +28,20 @@
       assignmentRules: state.assignmentRules || [],
       changelog: state.changelog || [],
       comments: state.comments || [],
+      // clash review: facet filters, search, saved views and the overview/list
+      // choice — per project (autoOpen is per run and never stored)
+      triage: serializeTriage(state),
+    };
+  }
+
+  function serializeTriage(state) {
+    var t = state.triage || {};
+    return {
+      facets: t.facets || {},
+      search: (state.filters && state.filters.search) || '',
+      view: t.view === 'list' || t.view === 'overview' ? t.view : 'auto',
+      savedViews: Array.isArray(t.savedViews) ? t.savedViews : [],
+      activeViewId: t.activeViewId || null
     };
   }
 
@@ -58,12 +72,18 @@
     if (data.assignmentRules) data.assignmentRules.forEach(function(rule) { dispatch({t:actions.ADD_ASSIGN_RULE, v:rule}); });
     if (data.changelog && data.changelog.length) dispatch({t:actions.MERGE_CHANGELOG, v:data.changelog});
     if (data.comments && data.comments.length && actions.MERGE_COMMENTS) dispatch({t:actions.MERGE_COMMENTS, v:data.comments});
+    if (actions.TRIAGE_STATE) {
+      var tr = data.triage || {};
+      dispatch({t:actions.TRIAGE_STATE, v:{facets: tr.facets || {}, view: tr.view || 'auto', savedViews: Array.isArray(tr.savedViews) ? tr.savedViews : [], activeViewId: tr.activeViewId || null}});
+      if (actions.UPD_FILTERS && tr.search) dispatch({t:actions.UPD_FILTERS, u:{search: String(tr.search)}});
+    }
   }
 
   return Object.freeze({
     contractVersion: 1,
     serializeProject: serializeProject,
     validateProject: validateProject,
-    restoreProject: restoreProject
+    restoreProject: restoreProject,
+    serializeTriage: serializeTriage
   });
 }));

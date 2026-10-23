@@ -180,11 +180,13 @@ test('removing / replacing a model drops the baseline', () => {
 });
 
 test('UI: full re-run + hide-provided toggles, list notice, row pills — all through _cc_t and design tokens', () => {
-  for (const key of ['run.fullRerun', 'run.hideProvided', 'opening.passThrough', 'opening.show', 'opening.hide', 'opening.tooSmall', 'opening.provided']) {
+  for (const key of ['run.fullRerun', 'run.hideProvided', 'opening.passThrough', 'bucket.showAll', 'bucket.reviewOnly', 'opening.tooSmall', 'opening.provided']) {
     assert.ok(src.includes("_cc_t('" + key + "'"), key);
   }
-  assert.match(src, /\$\{providedCount\} \$\{_cc_t\('opening\.passThrough','pass through provided openings'\)\}/);
-  assert.match(src, /base = base\.filter\(function\(c\)\{ return c\.opening !== 'provided'; \}\)/);
+  // provided-opening clashes are their own review bucket, counted in the bucket bar
+  assert.match(src, /provided: n \+ ' ' \+ _cc_t\('opening\.passThrough', 'pass through provided openings'\)/);
+  assert.match(src, /var _tmR = isClashTab \? _ccTriageModel\(s\) : null;/);
+  assert.match(require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'clash-classification-core.js'), 'utf8'), /if \(c\.opening === 'provided'\) return 'provided';/);
   assert.match(src, /showProvided:false/);
   // pill colours come from tokens, not hex
   const pill = between("${it.opening==='partial'", "${it.status==='accepted_needs_check'");

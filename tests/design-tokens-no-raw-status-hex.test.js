@@ -32,7 +32,7 @@ for (const name of ['DataQualityPanel', 'IDSValidationPanel', 'AccessibilityPane
 const CLASH_PANELS = ['ClashAISummary', 'ClashStatsBar', 'BulkActionBar', 'RunDetectionModal',
   'ClashRulesPanel', 'ModelClashMatrix', 'IssuePanel', 'StandardsPanel', 'PropDiffView',
   'ClashProps', 'VirtualList', 'ClashHistory', 'ClashToleranceEditor', 'IssueDetailEditor',
-  'IssueRow', 'ClashSetupCard'];
+  'IssueRow', 'ClashSetupCard', 'BucketBar', 'TriageFilterBar', 'ClashOverview', 'ClashViewToggle', 'ClashBcfScopeMenu'];
 const CATEGORICAL_OK = new Set(['#fff', '#ffffff', '#3b82f6', '#a855f7', '#8558ec', '#8b5cf6']);
 for (const name of CLASH_PANELS) {
   test(name + ' has no raw hex colour literals (status tokens only)', () => {
