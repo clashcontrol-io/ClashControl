@@ -10226,7 +10226,10 @@ function startApp() {
   // hit/miss test (pen-depth, clash building and merging stay on the main
   // thread), so they need a much larger run before worker start-up + buffer
   // copies pay off.
-  var _ccNarrowPoolCfg = window._ccNarrowPool = { minCandidates: 800, minCandidatesHardOnly: 20000, nativeMinCandidates: 400, disabled: false, forceJs: false, maxWorkers: 0, last: null };
+  // earlyMinElements: on a first run (no smart re-run memo) with at least
+  // this many elements in scope the pool is started before the broad phase
+  // (see _npEarly in _detectClashesCore); 0 = off.
+  var _ccNarrowPoolCfg = window._ccNarrowPool = { earlyMinElements: 3000, minCandidates: 800, minCandidatesHardOnly: 20000, nativeMinCandidates: 400, disabled: false, forceJs: false, maxWorkers: 0, last: null };
   var _NP_JOB_PAIRS = 10;                    // pairs per worker job (small, so element affinity keeps neighbourhoods on one worker)
   var _NP_PICK_SCAN = 64;                    // queued jobs a free worker scores for affinity
   var _NP_SLOT_DEPTH = 2;                    // jobs posted ahead per worker (see pump)
@@ -11001,6 +11004,19 @@ function startApp() {
     if (_sigNow && _provIdx.sig) _sigNow += '#p' + _provIdx.sig;
     if (_sigNow && _roleIdx && _roleIdx.sig) _sigNow += '#r' + _roleIdx.sig;
     var _memo = (!rules.fullRerun && _sigNow && _ccRunMemo && _ccRunMemo.sig === _sigNow) ? _ccRunMemo : null;
+    // First run of a large federation: start the narrow-phase workers now,
+    // so their start-up (spawn, WASM compile, self-check) overlaps the
+    // hashing and the broad phase below instead of following them. Adopted
+    // as the run's pool when the real decision (after the broad phase) says
+    // pool, terminated otherwise; nothing reaches it before then.
+    var _npEarly = null;
+    if (!_memo && resolveAsync && _ccNarrowPoolCfg.earlyMinElements > 0) {
+      var _npEls = 0;
+      grpA.concat(grpB).forEach(function(m) { _npEls += (m.elements || []).length; });
+      if (_npEls >= _ccNarrowPoolCfg.earlyMinElements && !_ccNativeNarrowAvailable() && !_ccNarrowPoolBlocker(Infinity, runGapM > 0) && (rules.hard || runGapM > 0)) {
+        try { _npEarly = _ccNarrowPoolCreate(_ccNarrowPoolWorkerCount(), { seedSq: _ccMinDistSeedSq(runGapM) }); } catch (e) { _npEarly = null; }
+      }
+    }
     var newHashes = {}, _changedEls = new Set(); // changed elements (objects): a pair touching one is recomputed
     var _nChangedEls = 0, _nTotalEls = 0;
     // Per-element engine caches (triangles / BVH / topology, see _getWorldTris)
@@ -11469,6 +11485,7 @@ function startApp() {
 
     // ── Finalize results after all candidates processed ───────────
     function _finalize() {
+      if (_npEarly && _npEarly !== _np) { _npEarly.terminate('unused'); _npEarly = null; } // run ended before the pool decision (one-pass path)
     // Commit the smart re-run baseline — only for a run that genuinely
     // completed (a chunk-loop failure calls _finalize best-effort with
     // _runOK=false) and whose snapshot set fit under the cap.
@@ -11781,9 +11798,13 @@ function startApp() {
     var _npBlocker = _ccNarrowPoolBlocker(_nWork, _npSoft);
     if (!_npBlocker && !(rules.hard || _npSoft)) _npBlocker = 'no-narrow-phase-work';
     if (!_npBlocker) {
-      try { _np = _ccNarrowPoolCreate(_ccNarrowPoolWorkerCount(), { seedSq: _ccMinDistSeedSq(runGapM) }); } catch (e) { _np = null; _npBlocker = 'create-failed'; }
+      if (_npEarly && !_npEarly.dead) _np = _npEarly;
+      else {
+        try { _np = _ccNarrowPoolCreate(_ccNarrowPoolWorkerCount(), { seedSq: _ccMinDistSeedSq(runGapM) }); } catch (e) { _np = null; _npBlocker = 'create-failed'; }
+      }
       if (!_np) _npBlocker = _npBlocker || 'spawn-failed';
     }
+    if (_npEarly && _npEarly !== _np) { _npEarly.terminate('unused'); _npEarly = null; }
     _ccNarrowPoolCfg.last = _npBlocker ? { used: false, reason: _npBlocker } : null;
     function _npBuildWindow(k) {
       var ws = k * _NP_W, we = Math.min(ws + _NP_W, totalCandidates);
