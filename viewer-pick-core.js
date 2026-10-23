@@ -15,6 +15,7 @@
 //   origin and no vertex/edge is ever near the cursor.
 // - firstVisibleHit(hits, opts): first hit that is on a visible object (and
 //   visible ancestors), not ghosted and not cut away by a clip plane.
+//   visiblePredicate(opts) is the same filter for the scene pick index.
 // - snap(opts): vertex > midpoint > edge > face near the cursor, from the
 //   FEATURE edges (boundary or crease > 20 deg) of the hit element's
 //   triangles near the hit point — never triangulation diagonals of a flat
@@ -102,6 +103,22 @@
     if (!hits) return null;
     for (var i = 0; i < hits.length; i++) if (isHitVisible(hits[i], opts)) return hits[i];
     return null;
+  }
+
+  // The same filter as a predicate for the scene pick index
+  // (viewer-pick-index.js first()): skip(o) rejects a whole object (hidden
+  // object or ancestor, ghosted) before it is raycast; accept(hit) is the
+  // full per-hit check (incl. clip planes). first() with it returns exactly
+  // firstVisibleHit(<full-scene hits>, opts).
+  function visiblePredicate(opts) {
+    opts = opts || {};
+    return {
+      skip: function(/** @type {any} */ o) {
+        for (var a = o; a; a = a.parent) if (a.visible === false) return true;
+        return typeof opts.isGhost === 'function' && !!opts.isGhost(o.material);
+      },
+      accept: function(/** @type {any} */ hit) { return isHitVisible(hit, opts); }
+    };
   }
 
   function _get(attr, i, c) {
@@ -260,6 +277,7 @@
     isClipped: isClipped,
     isHitVisible: isHitVisible,
     firstVisibleHit: firstVisibleHit,
+    visiblePredicate: visiblePredicate,
     elementTriangles: elementTriangles,
     snap: snap
   };

@@ -216,7 +216,8 @@
           // Hit-test the model group only (IFC meshes live under S.mg).
           var mg = S3.mg;
           if (mg) {
-            var hits = rc.intersectObjects(mg.children, true);
+            // Scene pick index when the core has one (same hits, fewer raycasts).
+            var hits = (S3.scenePick && typeof S3.scenePick.all === 'function') ? S3.scenePick.all(rc) : rc.intersectObjects(mg.children, true);
             // Skip alignment markers we placed earlier
             for (var i = 0; i < hits.length; i++) {
               if (hits[i].object.userData && hits[i].object.userData._alignMarker) continue;
