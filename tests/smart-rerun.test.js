@@ -101,6 +101,68 @@ test('_hashElement quantises to 0.1 mm (float noise is not a change)', () => {
   assert.equal(h(base), h(cloneEl(base, (c) => { c.box.max.x += 0.00001; })));
 });
 
+// A three.js-like position attribute: version bumped by needsUpdate, getX/Y/Z
+// read the backing array (counted, to prove the sample is cached).
+function threeAttr(coords) {
+  const a = { array: Float32Array.from(coords), count: coords.length / 3, version: 0, reads: 0 };
+  a.getX = (i) => { a.reads++; return a.array[i * 3]; };
+  a.getY = (i) => { a.reads++; return a.array[i * 3 + 1]; };
+  a.getZ = (i) => { a.reads++; return a.array[i * 3 + 2]; };
+  Object.defineProperty(a, 'needsUpdate', { set(v) { if (v) a.version++; } });
+  return a;
+}
+function threeElement(attr, matrix) {
+  return {
+    expressId: 7,
+    box: { min: { x: 0, y: 0, z: 0 }, max: { x: 1, y: 1, z: 1 } },
+    meshes: [{ geometry: { attributes: { position: attr }, index: null }, matrixWorld: { elements: (matrix || IDENT).slice() }, updateWorldMatrix() {} }],
+    props: { ifcType: 'IfcBeam', name: 'B1', globalId: 'gb', storey: 'L0' },
+  };
+}
+
+test('_hashElement caches the vertex sample per position attribute and stays exactly as strict', () => {
+  const h = fns._hashElement;
+  const coords = [];
+  for (let i = 0; i < 300; i++) coords.push(i * 0.01, (i % 7) * 0.1, (i % 3) * 0.2);
+  const attr = threeAttr(coords);
+  const el = threeElement(attr);
+  const h0 = h(el);
+  const readsAfterFirst = attr.reads;
+  assert.ok(readsAfterFirst > 0);
+  assert.equal(h(el), h0, 'unchanged -> same hash');
+  assert.equal(attr.reads, readsAfterFirst, 'second hash reads no vertices (cached per attribute + version)');
+  // the cached value equals a fresh computation over an identical attribute
+  assert.equal(h(threeElement(threeAttr(coords))), h0, 'cache never changes the hash value');
+  // in-place geometry edit that bumps the attribute version (three.js needsUpdate) is detected
+  attr.array[0] += 0.05; attr.needsUpdate = true;
+  const h1 = h(el);
+  assert.notEqual(h1, h0, 'in-place vertex edit + needsUpdate');
+  assert.ok(attr.reads > readsAfterFirst, 're-sampled after the version bump');
+  attr.array[0] -= 0.05; attr.needsUpdate = true;
+  assert.equal(h(el), h0, 'edit undone -> original hash again');
+  // a new backing array on the same attribute (setArray-style swap) is detected even without a version bump
+  const swapped = Float32Array.from(coords); swapped[3 * 299] += 0.1;
+  attr.array = swapped;
+  assert.notEqual(h(el), h0, 'backing array replaced');
+  attr.array = Float32Array.from(coords); attr.needsUpdate = true;
+  assert.equal(h(el), h0);
+  // new geometry (different attribute object with different data)
+  const c2 = coords.slice(); c2[1] += 0.02;
+  assert.notEqual(h(threeElement(threeAttr(c2))), h0, 'new geometry');
+  // matrix / box / props are still hashed every time
+  const moved = IDENT.slice(); moved[12] += 0.01;
+  assert.notEqual(h(threeElement(attr, moved)), h0, 'matrix moved 10 mm, same attribute');
+  const elBox = threeElement(attr); elBox.box.max.y += 0.001;
+  assert.notEqual(h(elBox), h0, 'box');
+  const elProps = threeElement(attr); elProps.props.name = 'B2';
+  assert.notEqual(h(elProps), h0, 'props');
+  // the attribute is shared by two meshes (instanced geometry): both are hashed, one sample computation
+  const before = attr.reads;
+  const two = threeElement(attr); two.meshes.push(two.meshes[0]);
+  assert.notEqual(h(two), h0, 'two meshes');
+  assert.equal(attr.reads, before, 'shared attribute sampled once');
+});
+
 const M1 = { id: 'm1', name: 'Arch', discipline: 'architectural', elements: [1, 2, 3], relatedPairs: { a: 1 } };
 const M2 = { id: 'm2', name: 'MEP', discipline: 'mep', elements: [1, 2], relatedPairs: null };
 const RULES = { hard: true, maxGap: 50, minGap: 0, excludeSelf: true, excludeTypes: [], toleranceByTypePair: {}, modelA: 'all', modelB: 'all' };

@@ -7155,10 +7155,11 @@ function startApp() {
       // Cheap strided vertex sample (<= 64 vertices + the last one): an edit
       // that keeps the counts, the matrix and the box (e.g. a sloped top face
       // reshaped inside the same bounds) must not be carried over unseen.
+      // Hashed once per position attribute (+ its version), see below.
       if (pos && pos.count) {
-        var vstep = Math.max(1, Math.floor(pos.count / 64));
-        for (var vi = 0; vi < pos.count; vi += vstep) { num(pos.getX(vi)); num(pos.getY(vi)); num(pos.getZ(vi)); }
-        num(pos.getX(pos.count - 1)); num(pos.getY(pos.count - 1)); num(pos.getZ(pos.count - 1));
+        var vs = _ccVertexSampleHash(pos);
+        h1 = Math.imul(h1 ^ vs[0], 16777619); h2 = (Math.imul(h2, 33) + vs[0]) | 0;
+        h1 = Math.imul(h1 ^ vs[1], 16777619); h2 = (Math.imul(h2, 33) + vs[1]) | 0;
       }
       try { m.updateWorldMatrix(true, false); } catch (e) {}
       var me = m.matrixWorld && m.matrixWorld.elements;
@@ -7171,6 +7172,32 @@ function startApp() {
     var ops = p.openings;
     if (ops) for (var oi = 0; oi < ops.length; oi++) num(ops[oi]);
     return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36);
+  }
+  // The strided vertex sample of one position attribute as two 32-bit hashes
+  // (numbers quantised to 0.1 mm like _hashElement). Cached per attribute
+  // object, valid while its version (bumped by needsUpdate = true, i.e. by any
+  // edit three.js itself would see), backing array and count are unchanged —
+  // so a re-run hashes only geometry that is new or was edited, not every
+  // vertex sample of the federation. An attribute without a version (not a
+  // three.js attribute) is hashed every time.
+  var _ccVertexSampleCache = new WeakMap();
+  function _ccVertexSampleHash(pos) {
+    var ver = pos.isInterleavedBufferAttribute ? (pos.data && pos.data.version) : pos.version;
+    var arr = pos.array;
+    var e = ver === undefined ? null : _ccVertexSampleCache.get(pos);
+    if (e && e.v === ver && e.a === arr && e.n === pos.count) return e.h;
+    var s1 = 2166136261, s2 = 5381;
+    function num(v) {
+      v = Math.round(v * 10000) | 0;
+      s1 = Math.imul(s1 ^ v, 16777619);
+      s2 = (Math.imul(s2, 33) + v) | 0;
+    }
+    var vstep = Math.max(1, Math.floor(pos.count / 64));
+    for (var vi = 0; vi < pos.count; vi += vstep) { num(pos.getX(vi)); num(pos.getY(vi)); num(pos.getZ(vi)); }
+    num(pos.getX(pos.count - 1)); num(pos.getY(pos.count - 1)); num(pos.getZ(pos.count - 1));
+    var h = [s1 | 0, s2 | 0];
+    if (ver !== undefined) _ccVertexSampleCache.set(pos, { v: ver, a: arr, n: pos.count, h: h });
+    return h;
   }
   // Everything that must be identical for a previous run's per-pair results to
   // still be valid: every rule (except the pure display / mode switches),
