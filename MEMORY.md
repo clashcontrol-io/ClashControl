@@ -239,6 +239,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ---
 
 ## Recently completed (details in git history)
+- **2026-10-23 — first-run narrow phase (branch `first-run`):** the hit refinement now reuses the WASM Engine's BVH (`Engine.bvh_flat` → `_ccBvhFromFlat`, verified node for node) instead of building a second JS BVH per element per worker; stable merge sort in `_buildBVHNode` (same tree); Rust split keys computed once; depth SAT caches own-axis extents; pool: 10-pair jobs, element-affinity picks, two jobs ahead per worker, workers started before the broad phase on large first runs. Results identical on every path (`tests/browser/first-run-cost.mjs`, `tests/bvh-*.test.js`, `tests/refine-depth-identity.test.js`). Synthetic dense federations: single-thread kernel CPU −25…−50 %, first run −10…−35 % wall. Soft (min-distance) traversal untouched.
 - **2026-10-23 — re-run cost:** unchanged re-run on the large generated structure+MEP federation 508 → ~110–130 ms (2.5–5 % of the first run, was 33 %), one moved element recomputes only its own pairs (`pairs_recomputed`), identical results (`tests/browser/rerun-cost.mjs`).
 - **2026-10-23 — action cost (branch `action-cost`):** the always-grouped clash list mounted every row (~24k DOM nodes on a 2k-clash synthetic review set) and recomputed grouping/triage/filters on every dispatch. Now windowed above 50 grouped items, memoised headers/rows/cards, per-clash WeakMap caches, incremental triage + regroup on edits, lazy Run details, idle autosave that clones/sizes only changed clashes. `tests/browser/action-cost.mjs` (synthetic, two sizes): DOM 24k → ~0.7k; no-op prefs 241 → ~11 ms, status edit 225 → ~30–45 ms, select 74 → ~10 ms, keystroke 65 → ~35 ms, autosave long task 394 → < 50 ms (headless SwiftShader medians). See INTERNALS §21.45.
 - **2026-10-23 — viewer zoom + measure snap:** zoom-out always escapes near surfaces and zoom-in stops in front of them (`viewer-camera-core.js` `dollyStep`, wheel + pinch); measure snap works on BatchedMesh, snaps to real edges/midpoints, never to section-clipped geometry (`viewer-pick-core.js`; `tests/browser/measure-snap.mjs`).
@@ -297,6 +298,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- ~~2026-10-23: first-run detection throughput (branch `first-run`): BVH reuse from the Engine, cheaper refinement, pool scheduling.~~ (2026-10-23)
 - ~~2026-10-23: re-run cost proportional to the change (branch `rerun-cost`): cached vertex-sample/props hashes, pool + chunk loop sized by pairs to test (unchanged / tiny edits = one synchronous pass, no workers), classification reused when nothing was recomputed, one history write per run; `tests/browser/rerun-cost.mjs`.~~ (2026-10-23)
 - ~~2026-10-23: action cost — clash list windowed when grouped, memoised rows/headers/cards, incremental triage/grouping on edits, autosave off the interaction path (branch `action-cost`, `tests/browser/action-cost.mjs`).~~ (2026-10-23)
 
