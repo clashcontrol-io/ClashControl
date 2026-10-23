@@ -11148,8 +11148,22 @@ function startApp() {
     // Commit the smart re-run baseline — only for a run that genuinely
     // completed (a chunk-loop failure calls _finalize best-effort with
     // _runOK=false) and whose snapshot set fit under the cap.
+    // emitKeys: the raw (pre-merge) result, pair by pair, in order. When a
+    // run recomputed nothing and emitted exactly the previous run's pairs, its
+    // rows are the previous snapshots in the previous order, so merge and
+    // classification give the previous result: the classification is reused
+    // (see classifyClashes / _ccClassifyMemo below) instead of recomputed.
+    var _emitKeys = new Array(clashes.length);
+    for (var eki = 0; eki < clashes.length; eki++) { var _ek = clashes[eki]; _emitKeys[eki] = _ek.modelAId + ':' + _ek.elemA + '|' + _ek.modelBId + ':' + _ek.elemB + '|' + _ek.type; }
+    var _prevMemo = _memo;
     _ccRunMemo = (_runOK && !_memoOverflow && _sigNow)
-      ? { sig:_sigNow, hashes:newHashes, snaps:_nextSnaps } : null;
+      ? { sig:_sigNow, hashes:newHashes, snaps:_nextSnaps, emitKeys:_emitKeys, classified:null } : null;
+    var _classifyReuse = null;
+    if (_ccRunMemo && _prevMemo && _nRecomputed === 0 && _prevMemo.classified && _prevMemo.emitKeys && _prevMemo.emitKeys.length === _emitKeys.length) {
+      var _sameEmit = true;
+      for (var ekj = 0; ekj < _emitKeys.length; ekj++) { if (_emitKeys[ekj] !== _prevMemo.emitKeys[ekj]) { _sameEmit = false; break; } }
+      if (_sameEmit) _classifyReuse = _prevMemo.classified;
+    }
 
     // ── Update type-pair memo (Phase 2.4) ──────────────────────────
     // Increment empty-run counter for type-pairs that produced zero
@@ -11384,6 +11398,9 @@ function startApp() {
     window._ccDetectProfile = profile;
     window.dispatchEvent(new Event('cc-detect-profile'));
 
+    if (_ccRunMemo) {
+      try { Object.defineProperty(merged, '_ccClassifyMemo', { value: { memo: _ccRunMemo, reuse: _classifyReuse }, configurable: true }); } catch (e) {}
+    }
     return merged;
     } // end _finalize
 
@@ -11793,8 +11810,46 @@ function startApp() {
   // implementation; graduated to the sole implementation after a soak
   // period — see MEMORY.md Architecture Decisions.
   var _ccClassificationCore = window._ccClashClassificationCore;
+  // Every field classifyClashes (clash-classification-core.js) sets on a row.
+  var _CC_CLASSIFY_FIELDS = ['extent', 'aiSeverity', 'aiCategory', 'aiReason', '_sevSource', '_clusterGroup', '_clusterSize'];
   function classifyClashes(clashes) {
-    return _ccClassificationCore.classifyClashes(clashes);
+    // A browser-engine result carries _ccClassifyMemo (see _finalize): its
+    // run memo, and — when the run recomputed nothing and emitted exactly the
+    // previous run's pairs — the previous run's per-row classification, which
+    // is then applied as is (identical input rows -> identical output). The
+    // freshly computed (or reused) classification is stored on the run memo
+    // for the next run. Any row already carrying a verdict (AI triage) means
+    // no reuse: the core is the single source of truth.
+    var cm = clashes && clashes._ccClassifyMemo;
+    var reuse = cm && cm.reuse;
+    if (reuse && reuse.length === clashes.length) {
+      var clean = true;
+      for (var i = 0; i < clashes.length; i++) { if (clashes[i].aiSeverity || clashes[i].extent != null) { clean = false; break; } }
+      if (clean) {
+        for (var j = 0; j < clashes.length; j++) {
+          var rec = reuse[j], c = clashes[j];
+          for (var f = 0; f < rec.length; f += 2) c[rec[f]] = rec[f + 1];
+        }
+        cm.memo.classified = reuse;
+        return;
+      }
+    }
+    var fresh = !!cm;
+    if (fresh) for (var k = 0; k < clashes.length; k++) { if (clashes[k].aiSeverity) { fresh = false; break; } }
+    var r = _ccClassificationCore.classifyClashes(clashes);
+    if (fresh) {
+      var recs = new Array(clashes.length);
+      for (var q = 0; q < clashes.length; q++) {
+        var cq = clashes[q], out = [];
+        for (var fi = 0; fi < _CC_CLASSIFY_FIELDS.length; fi++) {
+          var fk = _CC_CLASSIFY_FIELDS[fi];
+          if (Object.prototype.hasOwnProperty.call(cq, fk)) out.push(fk, cq[fk]);
+        }
+        recs[q] = out;
+      }
+      cm.memo.classified = recs;
+    }
+    return r;
   }
 
 

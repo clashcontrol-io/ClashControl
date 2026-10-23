@@ -6,7 +6,8 @@
 //       first (full) run's time and returns an identical clash list: every
 //       field except the per-run `id`/`createdAt`, in the same order — and the
 //       committed review state (ids included, classification, severity,
-//       buckets, titles) is identical too;
+//       buckets, titles) is identical too — with the classification reused
+//       from the previous run, not recomputed;
 //   (b) moving ONE element re-runs only the pairs touching it
 //       (profile changed_elements = 1, pairs_recomputed <= that element's
 //       broad-phase neighbours) and the re-run time stays proportional (well
@@ -20,7 +21,8 @@
 //
 // Run: CC_CHROMIUM_EXECUTABLE=... CC_BROWSER_OFFLINE_DEPS=1 node tests/browser/rerun-cost.mjs
 //      CC_GEN_SCALE=large (default) | medium | ci | SxBXxBY
-//      CC_RERUN_CPU_PROFILE=1  prints the top self-time functions of an unchanged re-run
+//      CC_RERUN_CPU_PROFILE=1  prints the top inclusive/self-time functions of an unchanged and a one-element re-run
+//      CC_RERUN_SETTLE_MS=N    waits N ms before each one-element re-run (lets background housekeeping finish)
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
@@ -97,7 +99,9 @@ try {
         const ms = performance.now() - t0;
         const prof = Object.assign({}, window._ccDetectProfile);
         const rows = (res || []).map((c) => { const x = Object.assign({}, c); delete x.id; delete x.createdAt; return JSON.stringify(canon(x)); });
-        return { ms, prof, rows };
+        // classification reused from the previous run (all pairs carried, same rows)
+        const reused = !!(res && res._ccClassifyMemo && res._ccClassifyMemo.reuse);
+        return { ms, prof, rows, reused };
       },
       state() {
         const s = window._ccLatestState;
@@ -184,6 +188,7 @@ try {
     same.push(r);
     if (!r.prof.smart_rerun || r.prof.changed_elements !== 0) fail('unchanged re-run should be smart with 0 changed elements, got ' + JSON.stringify({ s: r.prof.smart_rerun, c: r.prof.changed_elements }));
     if (!sameRows(r.rows, full.rows)) fail('unchanged re-run #' + i + ' clash list differs from the full run: ' + firstDiff(r.rows, full.rows));
+    if (!r.reused) fail('unchanged re-run #' + i + ' should reuse the previous classification');
   }
   const tSame = median(same.map((r) => r.ms)), eSame = median(same.map((r) => r.prof.total_ms));
   const stateSame = await page.evaluate(() => window.__rc.state());
@@ -234,6 +239,7 @@ try {
     moves.push(mv);
     console.log(`after moving one element (${moved.neighbours} neighbours within 60 mm): ${Math.round(mv.ms)} ms (engine ${mv.prof.total_ms} ms), changed_elements=${mv.prof.changed_elements}, pairs_recomputed=${mv.prof.pairs_recomputed}, carried=${mv.prof.pair_cache_reemits}`);
     if (mv.prof.changed_elements !== 1) fail('expected exactly 1 changed element, got ' + mv.prof.changed_elements);
+    if (mv.reused) fail('a re-run that recomputed pairs must classify afresh');
     if (!(typeof mv.prof.pairs_recomputed === 'number' && mv.prof.pairs_recomputed >= 1 && mv.prof.pairs_recomputed <= moved.neighbours)) {
       fail(`pairs recomputed (${mv.prof.pairs_recomputed}) must be >= 1 and <= the moved element's neighbours (${moved.neighbours})`);
     }
