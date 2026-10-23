@@ -4813,10 +4813,13 @@ function startApp() {
   // the colour filter runs), 'nonRenderable' (fallback loader's pre-decode
   // skip list), 'noRepresentation' (contained in a storey but never yielded a
   // mesh — assemblies whose parts are drawn are excluded).
-  function createNotDrawnReport(api, modelID) {
+  // typeNameOf (optional): eid -> type name, used instead of the model when
+  // a report is rebuilt from recorded notes (sharded load, main thread).
+  function createNotDrawnReport(api, modelID, typeNameOf) {
     var rep = { total: 0, byReason: {}, byType: {}, samples: [] };
     var noted = {};
     function typeName(eid) {
+      if (typeNameOf) return typeNameOf(eid);
       try { var t = api.GetLineType(modelID, eid); return IFC_TYPE_NAMES[t] || ('#' + t); } catch (e) { return '?'; }
     }
     function note(eid, reason) {
@@ -4831,7 +4834,10 @@ function startApp() {
     // Elements contained in the spatial structure that never reached the
     // mesh stream. `streamed` = ids the stream callback saw; `skip` = ids
     // deliberately not streamed (openings); `scopeSet` = storey scope.
-    function unseen(storeyMap, streamed, skip, scopeSet) {
+    // own (optional): only ids this predicate accepts (a shard checks only
+    // the ids it was given to stream). Ascending id order, like unseen().
+    function unseenIds(storeyMap, streamed, skip, scopeSet, own) {
+      var out = [];
       var assemblies = {};
       try {
         var aggIds = api.GetLineIDsWithType(modelID, IFC.IFCRELAGGREGATES);
@@ -4848,12 +4854,75 @@ function startApp() {
         var id = +ids[i];
         if (streamed[id] || skip[id] || assemblies[id]) continue;
         if (scopeSet && !scopeSet[storeyMap[id] || '']) continue;
-        note(id, 'noRepresentation');
+        if (own && !own(id)) continue;
+        out.push(id);
       }
+      return out;
+    }
+    function unseen(storeyMap, streamed, skip, scopeSet) {
+      var ids = unseenIds(storeyMap, streamed, skip, scopeSet, null);
+      for (var i = 0; i < ids.length; i++) note(ids[i], 'noRepresentation');
     }
     function result() { return rep.total ? rep : null; }
-    return { note: note, unseen: unseen, result: result };
+    return { note: note, unseen: unseen, unseenIds: unseenIds, typeName: typeName, result: result };
   }
+
+  // ── Sharded single-file load: StreamAllMeshes' element order ──
+  // A sharded load (flag shardedLoad) splits ONE file's geometry over
+  // several workers, each streaming a subset of element ids with
+  // StreamMeshes, and the main thread merges them back into the order the
+  // single-worker StreamAllMeshes pass would have produced. That order is
+  // (measured on web-ifc 0.0.77, locked by tests/ifc-shard-order.test.js):
+  // one contiguous block per IFC type, types in a fixed internal order that
+  // is neither numeric nor GetIfcEntityList's, and inside a type the
+  // GetLineIDsWithType order; elements without a representation are never
+  // yielded (by either call). The type order is not hard-coded: it is read
+  // from the running web-ifc itself by streaming a tiny probe model with one
+  // box element of every IfcElement type of the file's schema, so it cannot
+  // go stale with a web-ifc upgrade. The probe also yields the type SET
+  // StreamAllMeshes streams (it skips openings and rooms). A type present in
+  // the file that the probe did not yield and that is not one of those
+  // known skips makes the order unknown: ok=false, and the caller loads the
+  // file in one worker instead.
+  function _ccIfcStreamOrder(api, modelID) {
+    var SKIPPED = { IFCOPENINGELEMENT: 1, IFCOPENINGSTANDARDCASE: 1, IFCSPACE: 1 };
+    var schema = api.GetModelSchema(modelID) || 'IFC4';
+    var cand = api.GetIfcEntityList(modelID).filter(function(t) { return api.IsIfcElement(t); });
+    var L = ['ISO-10303-21;', 'HEADER;', "FILE_DESCRIPTION(('stream order probe'),'2;1');",
+      "FILE_NAME('probe.ifc','',(''),(''),'','','');", "FILE_SCHEMA(('" + schema + "'));", 'ENDSEC;', 'DATA;',
+      "#1=IFCPROJECT('0000000000000000000001',$,$,$,$,$,$,(#4),#2);", '#2=IFCUNITASSIGNMENT((#3));',
+      '#3=IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);', "#4=IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.0E-05,#5,$);",
+      '#5=IFCAXIS2PLACEMENT3D(#6,$,$);', '#6=IFCCARTESIANPOINT((0.,0.,0.));', '#7=IFCLOCALPLACEMENT($,#5);',
+      '#8=IFCAXIS2PLACEMENT2D(#9,$);', '#9=IFCCARTESIANPOINT((0.,0.));', '#10=IFCRECTANGLEPROFILEDEF(.AREA.,$,#8,1.,1.);',
+      '#11=IFCDIRECTION((0.,0.,1.));', '#12=IFCEXTRUDEDAREASOLID(#10,#5,#11,1.);',
+      "#13=IFCSHAPEREPRESENTATION(#4,'Body','SweptSolid',(#12));", '#14=IFCPRODUCTDEFINITIONSHAPE($,$,(#13));'];
+    for (var i = 0; i < cand.length; i++) {
+      L.push('#' + (100 + i) + '=' + String(api.GetNameFromTypeCode(cand[i])).toUpperCase() +
+        "('" + ('0000000000000000000000' + i).slice(-22) + "',$,$,$,$,#7,#14,$,$);");
+    }
+    L.push('ENDSEC;', 'END-ISO-10303-21;');
+    var pm = api.OpenModel(new TextEncoder().encode(L.join('\n')));
+    var types = [], yielded = {};
+    try {
+      api.StreamAllMeshes(pm, function(m) { var t = api.GetLineType(pm, m.expressID); if (!yielded[t]) { yielded[t] = 1; types.push(t); } });
+    } finally { api.CloseModel(pm); }
+    for (var c = 0; c < cand.length; c++) {
+      if (yielded[cand[c]] || SKIPPED[String(api.GetNameFromTypeCode(cand[c])).toUpperCase()]) continue;
+      var have = api.GetLineIDsWithType(modelID, cand[c]);
+      if (have.size() > 0) return { ok: false, why: 'unprobed type ' + api.GetNameFromTypeCode(cand[c]), ids: null, types: types };
+    }
+    var ids = [];
+    for (var ti = 0; ti < types.length; ti++) {
+      var v = api.GetLineIDsWithType(modelID, types[ti]);
+      for (var j = 0; j < v.size(); j++) ids.push(v.get(j));
+    }
+    return { ok: true, why: '', ids: ids, types: types };
+  }
+  // Which positions of the global order shard k (of n) streams: blocks of
+  // `block` consecutive elements dealt round-robin — whole type runs stay
+  // mostly in one worker (shared geometry is decoded once), while every
+  // worker still gets a slice of every part of the file (load balance).
+  function _ccIfcShardBlock(total, n) { return Math.max(32, Math.ceil(total / (n * 16))); }
 
   function extractStoreys(api, modelID) {
     var storeyMap = {};
