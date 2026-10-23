@@ -117,8 +117,8 @@ async function scanCube(page) {
     const x = box.x + gx * box.width, y = box.y + gy * box.height;
     await page.mouse.move(x, y);
     const t = await page.locator('.cc-viewcube-wrap canvas').getAttribute('title');
-    const m = t && t.match(/(FRONT|BACK|RIGHT|LEFT|TOP|BOTTOM)/);
-    if (m) (out[m[1]] = out[m[1]] || []).push([x, y]);
+    const m = t && t.match(/\b(front|back|right|left|top|bottom)\b/i); // tooltip "View Front" (English UI)
+    if (m) { const f = m[1].toUpperCase(); (out[f] = out[f] || []).push([x, y]); }
   }
   await page.mouse.move(box.x - 40, box.y + box.height + 40);
   return out;

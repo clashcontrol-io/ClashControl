@@ -3383,7 +3383,9 @@ function startApp() {
   // IndexedDB put, so the structured clone of hundreds of MB of geometry no
   // longer blocks the UI right after a load. Started when the browser is
   // idle. Any worker problem → the normal main-thread write.
-  var _ccGeoSaveWorker = null, _ccGeoSaveSeq = 0, _ccGeoSavePending = {};
+  // The worker lives only while saves are pending: it is terminated when the
+  // last one settles and started again (same cached source URL) by the next.
+  var _ccGeoSaveWorker = null, _ccGeoSaveSeq = 0, _ccGeoSavePending = {}, _ccGeoSaveUrl = null;
   // Worker protocol (one save = seq): 'begin' {record without meshData /
   // elData}, then 'mesh' / 'el' chunks (structured clone, geometry buffers
   // transferred), then 'end' → assemble + put. Chunked so no single message
@@ -3403,10 +3405,12 @@ function startApp() {
         'db().then(function(d){return new Promise(function(res,rej){var tx=d.transaction(' + STORE + ',"readwrite");tx.objectStore(' + STORE + ').put(rec);' +
         'tx.oncomplete=function(){res();};tx.onerror=function(){rej(tx.error);};tx.onabort=function(){rej(tx.error);};});})' +
         '.then(function(){postMessage({seq:m.seq,ok:true});},function(err){postMessage({seq:m.seq,ok:false,error:String(err&&err.message||err),record:rec},bufs(rec));});}};';
-      _ccGeoSaveWorker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
-      _ccGeoSaveWorker.onmessage = function(e) {
+      if (!_ccGeoSaveUrl) _ccGeoSaveUrl = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+      var w = _ccGeoSaveWorker = new Worker(_ccGeoSaveUrl);
+      w.onmessage = function(e) {
         var m = e.data, p = _ccGeoSavePending[m.seq];
         delete _ccGeoSavePending[m.seq];
+        _ccGeoSaveWorkerIdle();
         if (p) p(m);
       };
       _ccGeoSaveWorker.onerror = function() {
@@ -3417,6 +3421,9 @@ function startApp() {
       };
     } catch (e) { _ccGeoSaveWorker = false; }
     return _ccGeoSaveWorker;
+  }
+  function _ccGeoSaveWorkerIdle() {
+    if (_ccGeoSaveWorker && !Object.keys(_ccGeoSavePending).length) { _ccGeoSaveWorker.terminate(); _ccGeoSaveWorker = null; }
   }
   var _CC_GEO_SAVE_MESH_CHUNK = 400, _CC_GEO_SAVE_EL_CHUNK = 250;
   function _ccIdle(fn, timeout) {
@@ -3444,7 +3451,7 @@ function startApp() {
           resolve(idbSaveGeoCache(fileId, m.record ? m.record.data : data));
         };
         try { w.postMessage({ seq: seq, t: 'begin', rec: rec }); }
-        catch (e) { delete _ccGeoSavePending[seq]; fallback(); return; }
+        catch (e) { delete _ccGeoSavePending[seq]; _ccGeoSaveWorkerIdle(); fallback(); return; }
         var mi = 0, ei = 0;
         var step = function() {
           try {
@@ -3464,7 +3471,7 @@ function startApp() {
           } catch (e) {
             // A failed chunk: the worker drops the half-built job (no 'end');
             // buffers may already be gone — the cache is optional.
-            delete _ccGeoSavePending[seq]; resolve(); return;
+            delete _ccGeoSavePending[seq]; _ccGeoSaveWorkerIdle(); resolve(); return;
           }
           _ccIdle(step, 1000);
         };
