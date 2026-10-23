@@ -291,6 +291,23 @@ try {
   if (coll.stillShown !== 0 || coll.back === 0) fail('collapse/expand a group: ' + JSON.stringify(coll));
   else ok(`collapsing a group unmounts its rows, expanding brings ${coll.back} back`);
 
+  // pinned group header: scrolled into a group, its header stays on top
+  const pin = await page.evaluate(async () => {
+    const sc = document.querySelector('.cc-issue-panel .cc-issue-scroll');
+    const wait = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 50))));
+    sc.scrollTop = 0; sc.dispatchEvent(new Event('scroll')); await wait();
+    const atTop = document.querySelectorAll('.cc-issue-panel [data-pinned-header]').length;
+    // scroll a bit past the first multi-row group's header
+    const hdr = document.querySelector('.cc-issue-panel [data-element-group-key]');
+    const label = hdr && hdr.getAttribute('data-element-group-key');
+    sc.scrollTop = 140; sc.dispatchEvent(new Event('scroll')); await wait(); await wait();
+    const p = document.querySelector('.cc-issue-panel [data-pinned-header]');
+    const pr = p && p.firstElementChild.getBoundingClientRect(), br = sc.getBoundingClientRect();
+    return { atTop, pinned: !!p, atViewportTop: !!pr && Math.abs(pr.top - br.top) <= 2, hasHeader: !!(p && p.querySelector('[data-element-group-key]')), label };
+  });
+  if (pin.atTop !== 0 || !pin.pinned || !pin.atViewportTop || !pin.hasHeader) fail('pinned group header: ' + JSON.stringify(pin));
+  else ok('the current group header stays pinned at the top while scrolling (none at the very top)');
+
   console.log('SUMMARY ' + JSON.stringify({ dom: doms, noop, status, save, select, key, projWrites }));
 } catch (e) {
   fail('exception: ' + (e && e.stack || e));

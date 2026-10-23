@@ -33961,7 +33961,29 @@ function startApp() {
     if (windowedOn) {
       var wWin = _ccComputeVisibleRowWindow(wRows, wOff.offsets, winScrollTop, winViewportH, 600);
       var wVisibleRows = wRows.slice(wWin.startIdx, wWin.endIdx);
+      // Pinned group header: rows are absolutely positioned, so the header's
+      // own position:sticky can't work here. The header of the group the
+      // viewport top is inside is drawn again in a zero-height sticky layer
+      // and pushed up by the next header as it arrives — the same look as the
+      // fully-mounted list.
+      var pin = null, topIdx = Math.min(wWin.startIdx, wRows.length - 1);
+      while (topIdx + 1 < wRows.length && wOff.offsets[topIdx + 1] <= winScrollTop) topIdx++; // row at the viewport top (the window starts with overscan above it)
+      for (var pi = topIdx; pi >= 0; pi--) {
+        var pr = wRows[pi];
+        if (pr.type !== 'header' && pr.type !== 'clusterHeader') continue;
+        if (wOff.offsets[pi] < winScrollTop && pr.group && pr.group.items.length > 1) {
+          var ph = heightCacheRef.current[pr.key] || CC_WINDOW_DEFAULT_HEIGHTS[pr.type === 'clusterHeader' ? 'clusterHeader' : 'header'];
+          var nextTop = null;
+          for (var pj = pi + 1; pj < wRows.length; pj++) { if (wRows[pj].type === 'header' || wRows[pj].type === 'clusterHeader') { nextTop = wOff.offsets[pj]; break; } }
+          var shift = nextTop == null ? 0 : Math.min(0, nextTop - winScrollTop - ph);
+          if (shift > -ph) pin = { row: pr, shift: shift };
+        }
+        break;
+      }
       return html`<div ref=${scrollRef} class="cc-issue-scroll" onScroll=${onWindowedScroll} style=${{flex:1,overflowY:'auto',position:'relative'}}>
+        ${pin && html`<div key="cc-pinned-header" data-pinned-header=${pin.row.group.label} style=${{position:'sticky',top:0,height:0,zIndex:2}}>
+          <div style=${{position:'absolute',top:0,left:0,right:0,transform:'translateY(' + pin.shift + 'px)'}}>${renderHeaderRow(pin.row.group)}</div>
+        </div>`}
         <div style=${{height:wOff.totalHeight,position:'relative'}}>
           ${wVisibleRows.map(function(r, ri) {
             var idx = wWin.startIdx + ri;
