@@ -13921,7 +13921,8 @@ function startApp() {
       var oz = hitPoint.z + corners[i][2];
       var origin = new THREE.Vector3(ox, hitPoint.y + tolY*2, oz);
       var rc = new THREE.Raycaster(origin, new THREE.Vector3(0,-1,0), 0, tolY*4);
-      var hits = rc.intersectObjects(scene.children, true);
+      var _S3 = window._ccState3d;
+      var hits = (_S3 && _S3.scenePick && scene === _S3.mg) ? _S3.scenePick.all(rc) : rc.intersectObjects(scene.children, true);
       var ok = false;
       for (var h=0; h<hits.length; h++){
         var hh = hits[h];
@@ -14279,7 +14280,7 @@ function startApp() {
       _wkRayDir.set(_walkVelX / velLen3, 0, _walkVelZ / velLen3);
       _wkRayCaster.set(_wkRayOrigin, _wkRayDir);
       _wkRayCaster.near = 0; _wkRayCaster.far = actualStep + collisionPad;
-      var hits = _wkRayCaster.intersectObjects(S.mg.children, true);
+      var hits = S.scenePick.all(_wkRayCaster);
       if (hits.length > 0 && hits[0].distance < actualStep + collisionPad) {
         var hn = hits[0].face ? hits[0].face.normal : _wkRayDir;
         var hnx = hn.x, hnz = hn.z;
@@ -14338,7 +14339,7 @@ function startApp() {
         _wkRayDir.set(0, -1, 0);
         _wkRayCaster.set(_wkRayOrigin, _wkRayDir);
         _wkRayCaster.near = 0; _wkRayCaster.far = maxRiser * 2;
-        var kneeHits = _wkRayCaster.intersectObjects(S.mg.children, true);
+        var kneeHits = S.scenePick.all(_wkRayCaster);
         for (var ki = 0; ki < kneeHits.length; ki++) {
           var kh = kneeHits[ki];
           if (!kh.object.visible) continue;
@@ -14368,7 +14369,7 @@ function startApp() {
       _wkRayDir.set(0, -1, 0);
       _wkRayCaster.set(_wkRayOrigin, _wkRayDir);
       _wkRayCaster.near = 0; _wkRayCaster.far = castFrom + maxFall;
-      var dnHits = _wkRayCaster.intersectObjects(S.mg.children, true);
+      var dnHits = S.scenePick.all(_wkRayCaster);
       var floorHit = null;
       for (var h = 0; h < dnHits.length; h++) {
         var ho = dnHits[h].object;
@@ -14598,8 +14599,7 @@ function startApp() {
       var nx = ((e.clientX-rect.left)/rect.width)*2-1;
       var ny = -((e.clientY-rect.top)/rect.height)*2+1;
       _zoomRay.setFromCamera({x:nx,y:ny}, camera);
-      var hits = _zoomRay.intersectObjects(S.mg.children, true);
-      var h = window._ccViewerPick.firstVisibleHit(hits, {planes: window._ccActivePlanes, isGhost: S._isGhostMat});
+      var h = S.scenePick.firstVisible(_zoomRay, {planes: window._ccActivePlanes, isGhost: S._isGhostMat});
       return h ? h.point.clone() : null;
     }
     // Scene diagonal for the zoom-out step floor, recomputed only when the
@@ -15607,7 +15607,15 @@ function startApp() {
           }
           var rc = new THREE.Raycaster();
           rc.setFromCamera({x:nx, y:ny}, S.camera);
-          var hits = rc.intersectObjects(S.mg ? S.mg.children : [], true);
+          if (!S.mg) return;
+          // Index query for the first hit the loop below accepts (same test).
+          var hits = S.scenePick.first(rc, [{accept: function(h){
+            if (!h.object || !h.object.visible) return false;
+            if (typeof _isGhostMat === 'function' && _isGhostMat(h.object.material)) return false;
+            if (!h.face) return false;
+            var n0 = h.face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(h.object.matrixWorld)).normalize();
+            return n0.y >= 0.5;
+          }}]).filter(Boolean);
           var picked = null;
           for (var i=0; i<hits.length; i++){
             var h = hits[i];
@@ -15634,7 +15642,7 @@ function startApp() {
                 var pz = picked.point.z + Math.sin(ang*Math.PI/180)*rd*_walkUnitScale;
                 var origin2 = new THREE.Vector3(px, picked.point.y + tolY*4, pz);
                 var rc2 = new THREE.Raycaster(origin2, new THREE.Vector3(0,-1,0), 0, tolY*8);
-                var hits2 = rc2.intersectObjects(S.mg.children, true);
+                var hits2 = S.scenePick.all(rc2);
                 for (var h2=0; h2<hits2.length; h2++){
                   var hh = hits2[h2];
                   if (!hh.object || !hh.object.visible) continue;
@@ -15743,7 +15751,9 @@ function startApp() {
           else { nx = 0; ny = 0; }
           var rc = new THREE.Raycaster();
           rc.setFromCamera({x:nx, y:ny}, S.camera);
-          var hits = rc.intersectObjects(S.mg ? S.mg.children : [], true);
+          var hits = S.mg ? S.scenePick.first(rc, [{accept: function(h){
+            return !!(h.object && h.object.visible) && !(typeof _isGhostMat === 'function' && _isGhostMat(h.object.material));
+          }}]).filter(Boolean) : [];
           for (var i=0; i<hits.length; i++){
             var h = hits[i];
             if (!h.object || !h.object.visible) continue;
@@ -15873,7 +15883,9 @@ function startApp() {
           var rc = new THREE.Raycaster();
           rc.setFromCamera({x:nx, y:ny}, S.camera);
           if (!S.mg) return;
-          var hits = rc.intersectObjects(S.mg.children, true);
+          var hits = S.scenePick.first(rc, [{accept: function(h){
+            return !!(h.object && h.object.visible) && !(typeof _isGhostMat === 'function' && _isGhostMat(h.object.material));
+          }}]).filter(Boolean);
           var hit = null;
           for (var i = 0; i < hits.length; i++) {
             var h = hits[i];
@@ -16312,7 +16324,7 @@ function startApp() {
         if(dist < 1e-6) return [];
         dir.normalize();
         var _oray = new THREE.Raycaster(origin, dir, 0, Math.max(0, dist - 0.05));
-        var hits = _oray.intersectObjects(S.mg.children, true);
+        var hits = S.scenePick.all(_oray);
         return _ccApplyOccluderHide(_ccResolveOccluderHits(hits, excludeEids));
       }
       window._ccHideOccluders = _ccHideOccluders;
@@ -17502,7 +17514,7 @@ function startApp() {
               var tp = new THREE.Vector3(p.x, p.y, p.z), dist;
               if (persp) { _snapDir.copy(tp).sub(cam.position); dist = _snapDir.length(); _snapDir.divideScalar(dist || 1); _snapRay.set(cam.position, _snapDir); }
               else { cam.getWorldDirection(_snapDir); dist = 1e4; _snapRay.set(tp.clone().addScaledVector(_snapDir, -dist), _snapDir); }
-              var oh = VP.firstVisibleHit(_snapRay.intersectObject(hit.object, false), {planes: planes, isGhost: _isGhostMat});
+              var oh = S.scenePick.firstVisibleOn(_snapRay, hit.object, {planes: planes, isGhost: _isGhostMat});
               return !!oh && oh.distance < dist - Math.max(0.005, dist*0.002);
             }
           });
@@ -18333,9 +18345,10 @@ function startApp() {
           (_measureGeoMap[k].dots||[]).forEach(function(d){allDots.push(d);});
           (_measureGeoMap[k].lines||[]).forEach(function(l){allLines.push(l);});
         }
-        var _dh = window._ccViewerPick.firstVisibleHit(_dragRaycaster.intersectObjects(S.mg.children, true).filter(function(h){
-          return h.object && allDots.indexOf(h.object) < 0 && allLines.indexOf(h.object) < 0;
-        }), {planes: window._ccActivePlanes, isGhost: _isGhostMat});
+        var _dvp = S.scenePick.visiblePred({planes: window._ccActivePlanes, isGhost: _isGhostMat});
+        var _dh = S.scenePick.first(_dragRaycaster, [{skip: _dvp.skip, accept: function(h){
+          return h.object && allDots.indexOf(h.object) < 0 && allLines.indexOf(h.object) < 0 && _dvp.accept(h);
+        }}])[0];
         var hits = _dh ? [_dh] : [];
         if (!hits.length) return;
         var snap = _ccComputeSnap(hits[0], e.clientX, e.clientY) || {point:hits[0].point.clone(), type:'face'};
@@ -18442,10 +18455,15 @@ function startApp() {
         hoverMouse.x = ((e.clientX-rect.left)/rect.width)*2-1;
         hoverMouse.y = -((e.clientY-rect.top)/rect.height)*2+1;
         hoverRaycaster.setFromCamera(hoverMouse, S.camera);
-        var hits = hoverRaycaster.intersectObjects(S.mg.children, true);
-        // Measure/Alt snap only from geometry the user can actually see (not
-        // cut away by a section plane/box, not ghosted or hidden).
-        var _snapHit = _wantSnap ? window._ccViewerPick.firstVisibleHit(hits, {planes: window._ccActivePlanes, isGhost: _isGhostMat}) : null;
+        // One index query for both: the nearest hit of any kind (hover
+        // highlight, as before) and, for measure/Alt snap, the nearest hit
+        // the user can actually see (not cut away by a section plane/box,
+        // not ghosted or hidden).
+        var _hovPicks = S.scenePick.first(hoverRaycaster, _wantSnap
+          ? [{}, S.scenePick.visiblePred({planes: window._ccActivePlanes, isGhost: _isGhostMat})]
+          : [{}]);
+        var _rawHit = _hovPicks[0];
+        var _snapHit = _wantSnap ? _hovPicks[1] : null;
         // Pre-check: when a measure tool is active and nothing is in progress, test
         // endpoint dots BEFORE evaluating model hits. Dots live in scene directly (not
         // S.mg), so the model raycaster misses them. Without this, model geometry under
@@ -18490,10 +18508,10 @@ function startApp() {
           }
         }
         var hitMesh = null, hitInstanceId = -1;
-        if(hits.length>0 && hits[0].object.isMesh) {
-          hitMesh = hits[0].object;
-          hitInstanceId = hits[0].instanceId != null ? hits[0].instanceId
-            : (hits[0].batchId != null ? hits[0].batchId : -1);
+        if(_rawHit && _rawHit.object.isMesh) {
+          hitMesh = _rawHit.object;
+          hitInstanceId = _rawHit.instanceId != null ? _rawHit.instanceId
+            : (_rawHit.batchId != null ? _rawHit.batchId : -1);
         }
         if(hitMesh && _isGhostMat(hitMesh.material)) hitMesh = null;
         if(hitMesh && !hitMesh.isInstancedMesh && !hitMesh.visible) hitMesh = null;
@@ -18739,13 +18757,13 @@ function startApp() {
           }
           return true;
         }
-        var hits = raycaster.intersectObjects(S.mg.children, true).filter(_pickHitOk);
+        var hits = S.scenePick.all(raycaster).filter(_pickHitOk);
         // Rooms (IfcSpace) live on their own layer, so the pass above never
         // hits them — a wall inside a room stays pickable. With spaces shown,
         // a click that hits no building element at all picks the room.
         if (!hits.length && S._spacesShown) {
           raycaster.layers.set(_CC_SPACE_LAYER);
-          try { hits = raycaster.intersectObjects(S.mg.children, true).filter(_pickHitOk); }
+          try { hits = S.scenePick.all(raycaster).filter(_pickHitOk); }
           finally { raycaster.layers.set(0); }
         }
 
@@ -19338,12 +19356,13 @@ function startApp() {
         mouse.x = ((e.clientX-rect.left)/rect.width)*2-1;
         mouse.y = -((e.clientY-rect.top)/rect.height)*2+1;
         raycaster.setFromCamera(mouse, S.camera);
-        var hits = raycaster.intersectObjects(S.mg.children, true).filter(function(h){
+        var _ctxHit = S.scenePick.first(raycaster, [{accept: function(h){
           if(!h.object.visible) return false; // skip storey/type-hidden elements
           if(_isGhostMat(h.object.material)) return false;
           if(h.object.parent && h.object.parent.userData.modelId && !h.object.parent.visible) return false;
           return true;
-        });
+        }}])[0];
+        var hits = _ctxHit ? [_ctxHit] : [];
         if(hits.length>0 && hits[0].face) {
           var hit = hits[0];
           var faceNormal = _ccHitWorldNormal(hit);
@@ -19854,6 +19873,50 @@ function startApp() {
       };
 
       var mg = new THREE.Group(); scene.add(mg); S.mg = mg;
+
+      // Scene pick index (viewer-pick-index.js, docs/INTERNALS.md §21.46):
+      // every ray against the models goes through here — hover, click,
+      // snap, orbit pivot, section pick, right-click, drag-edit, walk mode,
+      // occluders. Results equal the full-scene raycast (+ the same filter);
+      // only the candidate selection is indexed. `bruteForce` is the
+      // test-only switch back to raycaster.intersectObjects(S.mg.children).
+      S.scenePick = (function(){
+        var PIX = window._ccViewerPickIndex, VPk = window._ccViewerPick;
+        var idx = PIX ? PIX.create(THREE) : null;
+        function _brute(rc, preds){
+          var hits = rc.intersectObjects(mg.children, true);
+          return preds.map(function(pr){
+            for (var i = 0; i < hits.length; i++) {
+              if (pr.skip && pr.skip(hits[i].object)) continue;
+              if (pr.accept && !pr.accept(hits[i])) continue;
+              return hits[i];
+            }
+            return null;
+          });
+        }
+        var api = {
+          bruteForce: false,
+          // All hits, sorted — identical to rc.intersectObjects(S.mg.children, true).
+          all: function(rc){ return (api.bruteForce || !idx) ? rc.intersectObjects(mg.children, true) : idx.intersect(rc, mg); },
+          // First hit per predicate {accept?(hit), skip?(object)}, in that order.
+          first: function(rc, preds){ return (api.bruteForce || !idx) ? _brute(rc, preds) : idx.first(rc, mg, preds); },
+          // Predicate for VP.firstVisibleHit semantics (visible, not ghosted, not clipped).
+          visiblePred: function(opts){ return VPk.visiblePredicate(opts); },
+          // First visible hit — = VP.firstVisibleHit(<all hits>, opts).
+          firstVisible: function(rc, opts){ return api.first(rc, [VPk.visiblePredicate(opts)])[0]; },
+          // First visible hit on ONE object — = VP.firstVisibleHit(rc.intersectObject(obj, false), opts).
+          firstVisibleOn: function(rc, obj, opts){
+            var under = false;
+            for (var a = obj; a; a = a.parent) if (a === mg) { under = true; break; }
+            if (api.bruteForce || !idx || !under || !idx.indexes(obj)) return VPk.firstVisibleHit(rc.intersectObject(obj, false), opts);
+            var vp = VPk.visiblePredicate(opts);
+            return idx.first(rc, mg, [{ skip: function(o){ return o !== obj || vp.skip(o); }, accept: vp.accept }])[0];
+          },
+          invalidate: function(){ if (idx) idx.invalidate(); },
+          stats: function(){ return idx ? idx.stats() : null; }
+        };
+        return api;
+      })();
 
       window._ccClearScene = function() {
         while(mg.children.length>0) {
@@ -34871,7 +34934,11 @@ function startApp() {
       var ny = -((e.clientY - r.top) / r.height) * 2 + 1;
       var rc = new THREE.Raycaster();
       rc.setFromCamera({x:nx, y:ny}, S.camera);
-      var hits = rc.intersectObjects(S.mg.children, true);
+      var _okHit = function(h){ return !!(h.object && h.object.visible) && !(S._isGhostMat && S._isGhostMat(h.object.material)) && !!h.face; };
+      var _fp = S.scenePick.first(rc, [{accept: _okHit}, {accept: function(h){
+        return _okHit(h) && h.face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(h.object.matrixWorld)).normalize().y >= 0.5;
+      }}]);
+      var hits = _fp[0] ? (_fp[1] && _fp[1] !== _fp[0] ? [_fp[0], _fp[1]] : [_fp[0]]) : [];
       var floorHit = null, anyHit = null;
       for (var i=0; i<hits.length; i++){
         var h = hits[i];

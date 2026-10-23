@@ -180,36 +180,43 @@
     var _stats = { builds: 0, refits: 0, buildMs: 0, lastQueryCandidates: 0, lastQueryNodes: 0 };
 
     // Heap (min by key) of (slot, id): id >= 0 node, id < 0 entry -(e+1).
-    var hKey = new Float64Array(256), hSlot = new Int32Array(256), hId = new Int32Array(256), hN = 0;
-    function hPush(k, s, id) {
-      if (hN === hKey.length) {
-        var nk = new Float64Array(hN * 2); nk.set(hKey); hKey = nk;
-        var ns = new Int32Array(hN * 2); ns.set(hSlot); hSlot = ns;
-        var ni = new Int32Array(hN * 2); ni.set(hId); hId = ni;
+    // Min-heap by key of (slot, id): id >= 0 node, id < 0 entry -(e+1).
+    // One heap per active query (a predicate may run a nested query, e.g.
+    // the walk-mode footprint check), recycled through a small pool.
+    function Heap() {
+      this.key = new Float64Array(256); this.slot = new Int32Array(256); this.id = new Int32Array(256);
+      this.n = 0; this.popSlot = 0; this.popId = 0;
+    }
+    Heap.prototype.push = function(k, s, id) {
+      if (this.n === this.key.length) {
+        var nk = new Float64Array(this.n * 2); nk.set(this.key); this.key = nk;
+        var ns = new Int32Array(this.n * 2); ns.set(this.slot); this.slot = ns;
+        var ni = new Int32Array(this.n * 2); ni.set(this.id); this.id = ni;
       }
-      var i = hN++;
+      var K = this.key, S = this.slot, I = this.id, i = this.n++;
       while (i > 0) {
         var p = (i - 1) >> 1;
-        if (hKey[p] <= k) break;
-        hKey[i] = hKey[p]; hSlot[i] = hSlot[p]; hId[i] = hId[p]; i = p;
+        if (K[p] <= k) break;
+        K[i] = K[p]; S[i] = S[p]; I[i] = I[p]; i = p;
       }
-      hKey[i] = k; hSlot[i] = s; hId[i] = id;
-    }
-    var popSlot = 0, popId = 0;
-    function hPop() {
-      popSlot = hSlot[0]; popId = hId[0];
-      var n = --hN;
+      K[i] = k; S[i] = s; I[i] = id;
+    };
+    Heap.prototype.pop = function() {
+      var K = this.key, S = this.slot, I = this.id;
+      this.popSlot = S[0]; this.popId = I[0];
+      var n = --this.n;
       if (n <= 0) return;
-      var k = hKey[n], s = hSlot[n], id = hId[n], i = 0;
+      var k = K[n], s = S[n], id = I[n], i = 0;
       for (;;) {
         var l = 2 * i + 1;
         if (l >= n) break;
-        var r = l + 1, c = (r < n && hKey[r] < hKey[l]) ? r : l;
-        if (hKey[c] >= k) break;
-        hKey[i] = hKey[c]; hSlot[i] = hSlot[c]; hId[i] = hId[c]; i = c;
+        var r = l + 1, c = (r < n && K[r] < K[l]) ? r : l;
+        if (K[c] >= k) break;
+        K[i] = K[c]; S[i] = S[c]; I[i] = I[c]; i = c;
       }
-      hKey[i] = k; hSlot[i] = s; hId[i] = id;
-    }
+      K[i] = k; S[i] = s; I[i] = id;
+    };
+    var _heapPool = [];
 
     // ── Exact per-candidate raycast (three's own code paths) ─────
     function raycastInstance(im, id, raycaster, out) {
@@ -558,43 +565,47 @@
     // Visit candidate entries in increasing box-entry distance.
     // visit(slot, e, key) returns false to stop; needKey(key) false stops too.
     function traverse(raycaster, rp, needKey, visit) {
-      hN = 0;
+      var hp = _heapPool.pop() || new Heap();
+      hp.n = 0;
       var nodes = 0, cands = 0;
-      for (var s = 0; s < _slots.length; s++) {
-        var sl = _slots[s];
-        if (!sl.nodeCount) continue;
-        var t = rayBox(sl.nodeBox, 0, rp.ox, rp.oy, rp.oz, rp.dx, rp.dy, rp.dz, rp.ix, rp.iy, rp.iz, rp.tMax);
-        if (t < 0 || _exitT * rp.dlen < rp.near) continue;
-        hPush(t * rp.dlen, s, 0);
-      }
-      while (hN > 0) {
-        var key = hKey[0];
-        if (!needKey(key)) break;
-        hPop();
-        var slot = _slots[popSlot], id = popId;
-        if (id >= 0) {
-          nodes++;
-          var A = slot.nodeA[id], B = slot.nodeB[id];
-          if (B < 0) {
-            for (var q = A, qe = A - B; q < qe; q++) {
-              var ent = slot.perm[q];
-              var te = rayBox(slot.box, ent * 6, rp.ox, rp.oy, rp.oz, rp.dx, rp.dy, rp.dz, rp.ix, rp.iy, rp.iz, rp.tMax);
-              if (te < 0 || _exitT * rp.dlen < rp.near) continue;
-              hPush(te * rp.dlen, popSlot, -(ent + 1));
+      try {
+        for (var s = 0; s < _slots.length; s++) {
+          var sl = _slots[s];
+          if (!sl.nodeCount) continue;
+          var t = rayBox(sl.nodeBox, 0, rp.ox, rp.oy, rp.oz, rp.dx, rp.dy, rp.dz, rp.ix, rp.iy, rp.iz, rp.tMax);
+          if (t < 0 || _exitT * rp.dlen < rp.near) continue;
+          hp.push(t * rp.dlen, s, 0);
+        }
+        while (hp.n > 0) {
+          var key = hp.key[0];
+          if (!needKey(key)) break;
+          hp.pop();
+          var ps = hp.popSlot, id = hp.popId, slot = _slots[ps];
+          if (id >= 0) {
+            nodes++;
+            var A = slot.nodeA[id], B = slot.nodeB[id];
+            if (B < 0) {
+              for (var q = A, qe = A - B; q < qe; q++) {
+                var ent = slot.perm[q];
+                var te = rayBox(slot.box, ent * 6, rp.ox, rp.oy, rp.oz, rp.dx, rp.dy, rp.dz, rp.ix, rp.iy, rp.iz, rp.tMax);
+                if (te < 0 || _exitT * rp.dlen < rp.near) continue;
+                hp.push(te * rp.dlen, ps, -(ent + 1));
+              }
+            } else {
+              var tl = rayBox(slot.nodeBox, A * 6, rp.ox, rp.oy, rp.oz, rp.dx, rp.dy, rp.dz, rp.ix, rp.iy, rp.iz, rp.tMax);
+              if (tl >= 0 && _exitT * rp.dlen >= rp.near) hp.push(tl * rp.dlen, ps, A);
+              var tr = rayBox(slot.nodeBox, B * 6, rp.ox, rp.oy, rp.oz, rp.dx, rp.dy, rp.dz, rp.ix, rp.iy, rp.iz, rp.tMax);
+              if (tr >= 0 && _exitT * rp.dlen >= rp.near) hp.push(tr * rp.dlen, ps, B);
             }
           } else {
-            var ps = popSlot;
-            var tl = rayBox(slot.nodeBox, A * 6, rp.ox, rp.oy, rp.oz, rp.dx, rp.dy, rp.dz, rp.ix, rp.iy, rp.iz, rp.tMax);
-            if (tl >= 0 && _exitT * rp.dlen >= rp.near) hPush(tl * rp.dlen, ps, A);
-            var tr = rayBox(slot.nodeBox, B * 6, rp.ox, rp.oy, rp.oz, rp.dx, rp.dy, rp.dz, rp.ix, rp.iy, rp.iz, rp.tMax);
-            if (tr >= 0 && _exitT * rp.dlen >= rp.near) hPush(tr * rp.dlen, ps, B);
+            cands++;
+            if (visit(slot, -id - 1, key) === false) break;
           }
-        } else {
-          cands++;
-          if (visit(slot, -id - 1, key) === false) break;
         }
+      } finally {
+        hp.n = 0;
+        _heapPool.push(hp);
       }
-      hN = 0;
       _stats.lastQueryNodes = nodes;
       _stats.lastQueryCandidates = cands;
     }

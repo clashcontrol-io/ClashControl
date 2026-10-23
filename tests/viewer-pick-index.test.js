@@ -114,10 +114,7 @@ function key(h) {
 const keys = (hs) => hs.map(key);
 
 function visPreds(planes) {
-  return {
-    accept: (h) => VP.isHitVisible(h, { planes, isGhost }),
-    skip: (o) => { for (let a = o; a; a = a.parent) if (a.visible === false) return true; return isGhost(o.material); },
-  };
+  return VP.visiblePredicate({ planes, isGhost });
 }
 
 function compareAll(idx, root, r, nRays, spread, label, planes) {
@@ -303,4 +300,17 @@ test('rayBox: zero direction components, inside origin, near/far', () => {
   assert.strictEqual(PI.rayBox(b, 0, 2, 0.5, -1, 0, 0, 1, Infinity, Infinity, 1, Infinity), -1);
   assert.strictEqual(PI.rayBox(b, 0, 0.5, 0.5, 0.5, 0, 0, 1, Infinity, Infinity, 1, Infinity), 0);
   assert.strictEqual(PI.rayBox(b, 0, 0.5, 0.5, -1, 0, 0, 1, Infinity, Infinity, 1, 0.5), -1);
+});
+
+test('a predicate may run a nested query (re-entrant traversal)', () => {
+  const idx = PI.create(THREE);
+  const root = buildScene(31, { spread: 10 });
+  const r = rng(31);
+  for (let i = 0; i < 200; i++) {
+    const rc = randRay(r, 10, false);
+    const rc2 = randRay(r, 10, true);
+    const nested = { accept: (h) => { const x = idx.first(rc2, root, [{}])[0]; return !x || h.distance >= 0; } };
+    const plain = { accept: (h) => { const x = rc2.intersectObjects(root.children, true)[0]; return !x || h.distance >= 0; } };
+    assert.deepStrictEqual(key(idx.first(rc, root, [nested])[0]), key(idx.bruteFirst(rc, root, [plain])[0]), 'ray ' + i);
+  }
 });
