@@ -28,7 +28,7 @@
 
 **Addons (`addons/`):** accessibility, align, data-quality, geoplace, local-engine, openaec-bridge, pointcloud, pwa, revit-bridge, shared-project, smart-bridge, splat, tiles, tauri-bridge (desktop only, inert in the browser), training-data, visibility, wasm-engine (+ `wasm-engine-pkg/`).
 
-**Non-addon core modules** (plain `<script defer>`, required, all `// @ts-check`): `cc-runtime.js`, `safety-migrations.js`, `storage-core.js`, `clash-{discipline,assignment,identity,reconciliation,classification}-core.js`, `project-codec.js`, `section-clipping.js`, `viewer-{camera,pick}-core.js`, `occlusion-core.js`, `renderer-contract.js`, `analytics-consent.js`.
+**Non-addon core modules** (plain `<script defer>`, required, all `// @ts-check`): `cc-runtime.js`, `safety-migrations.js`, `storage-core.js`, `clash-{discipline,assignment,identity,reconciliation,classification}-core.js`, `project-codec.js`, `section-clipping.js`, `viewer-{camera,pick,gizmo}-core.js`, `occlusion-core.js`, `renderer-contract.js`, `analytics-consent.js`.
 
 **Backend (`api/`):** `nl` (Groq), `title`/`triage` (Gemma), `project`, `training`, `health`, `tile`, `_lib.js`, `schema.sql`. **Deployment:** Vercel, `www.clashcontrol.io`, no COOP/COEP; `.vercelignore` keeps docs/tests/engine/desktop sources out of the deploy.
 
@@ -292,7 +292,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
-- 2026-10-23: section plane / section box gizmos — one screen-constant plane gizmo at the cut, outline clipped to the model, calm box tabs + corner arc, token colours (`viewer-gizmo-core.js`, branch `viewer-gizmos`).
+- ~~2026-10-23: section plane / section box gizmos — one screen-constant plane gizmo at the cut, outline = model box ∩ plane, calm box tabs + corner arc, token colours (`viewer-gizmo-core.js`, `tests/browser/section-gizmo.mjs`, branch `viewer-gizmos`).~~ (2026-10-23)
 
 - ~~2026-10-23: strict DESIGN.md pass (branch `design-pass`) — `tests/browser/design-conformance.mjs` checks the rendered UI (light/dark/390 px, nl-NL by default): tokens, type/spacing/radius scales, caps, tap targets, clipped/overlapping controls, untranslated words, diagnostics in plain surfaces. No load times/sizes/counts/provenance in the UI; complete Dutch pack; packs auto-activate from the browser language only at ≥95 % coverage (`scripts/locale-coverage.js --write` keeps `coverage` in `locales/manifest.json`).~~ (2026-10-23)
 

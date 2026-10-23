@@ -18,6 +18,7 @@ var PRECACHE = [
   'section-clipping.js',
   'viewer-camera-core.js',
   'viewer-pick-core.js',
+  'viewer-gizmo-core.js',
   'occlusion-core.js',
   'renderer-contract.js',
   'clash-discipline-core.js',
@@ -57,7 +58,6 @@ var PRECACHE = [
   // Loader addons preloaded by the ESM bootstrap in index.html head.
   'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js',
   'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/exporters/GLTFExporter.js',
-  'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/controls/TransformControls.js',
   'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/PLYLoader.js',
   'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/PCDLoader.js',
   'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/postprocessing/EffectComposer.js',

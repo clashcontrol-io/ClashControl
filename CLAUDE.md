@@ -170,6 +170,7 @@ renderer-contract.js        — Non-addon core module: pinned r180 renderer cont
 section-clipping.js         — Non-addon core module: section plane/box clipping helpers
 viewer-camera-core.js       — Non-addon core module: pure orbit/zoom/pan math (`window._ccViewerCamera`), incl. the bounded zoom step `dollyStep` (always escapes on zoom-out, never zooms through a surface)
 viewer-pick-core.js         — Non-addon core module: hit matrices (Mesh/InstancedMesh/BatchedMesh), first-visible-hit filter (clip planes, ghost, hidden) and the measure snap (vertex > midpoint > edge > face from feature edges)
+viewer-gizmo-core.js        — Non-addon core module: viewer gizmos (`window._ccViewerGizmo`) — screen-constant handle sizing (`pxScale`, persp + ortho), DESIGN.md token colours with idle/hover/active states (repainted on theme change), handle builders (tab / corner arc / arrow) and the section outline (model box ∩ plane) for the section plane, section box and floor-plan cut arrow
 occlusion-core.js           — Non-addon core module: conservative CPU occlusion buffer + per-device verdict helpers (`occlusionCulling` flag: culls only after the device passes an offscreen culled-vs-unculled pixel check; never runs during detection)
 analytics-consent.js        — Non-addon core module: consent-gated analytics, loaded by every SEO landing page too
 mcp-server.js                — MCP server (stdio) implementing Model Context Protocol for Claude Desktop/Code — distributed via GitHub Releases, not served from clashcontrol.io
