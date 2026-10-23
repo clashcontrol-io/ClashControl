@@ -18878,7 +18878,7 @@ function startApp() {
       // IndexedDB ('cc-snapshots', budgeted by storage-core planSnapshotGC)
       // under a key of clash identity + both elements' geometry hashes, so a
       // re-run that changes either element invalidates the picture.
-      var _SNAP_VER = 'v1', _SNAP_W = 320, _SNAP_H = 200;
+      var _SNAP_VER = 'v1', _SNAP_W = 320, _SNAP_H = 200, _SNAP_CTX_MAX_ELEMS = 300, _SNAP_CTX_MAX_TRIS = 400000;
       var _snap = {
         mem: new Map(), byIdent: new Map(), queue: [], queued: {}, waiting: {}, timer: 0, db: null, dbFailed: false, writes: 0,
         sliceBudgetMs: 40, memMax: 400,
@@ -19040,30 +19040,53 @@ function startApp() {
           });
         });
         var mk = new THREE.Mesh(markGeo, markMat); mk.position.copy(pt); mk.renderOrder = 10; mk.updateMatrixWorld(true); markScene.add(mk);
+        // context: only the elements whose box meets the section box (visible
+        // models, no rooms/voids), nearest first, capped — the live scene is
+        // never touched, so the picture does not depend on what is hidden,
+        // ghosted or culled on screen right now, and its cost stays bounded
+        var ctxScene = new THREE.Scene(), ctxEls = [];
+        ctxScene.add(new THREE.AmbientLight(0xffffff, 1.6));
+        var dl2 = new THREE.DirectionalLight(0xffffff, 2.2); dl2.position.copy(dl.position); ctxScene.add(dl2);
+        (modelsRef.current || []).forEach(function(m) {
+          if (m.visible === false) return;
+          (m.elements || []).forEach(function(el) {
+            if (el === e.a || el === e.b || !el.box || !el.meshes || !el.meshes.length || _ccIsSpaceEl(el)) return;
+            var t = el.props && el.props.ifcType;
+            if (t === 'IfcOpeningElement' || t === 'IfcOpeningStandardCase' || t === 'IfcVirtualElement') return;
+            if (!el.box.intersectsBox(clip)) return;
+            ctxEls.push({ el: el, d: el.box.distanceToPoint(pt) });
+          });
+        });
+        ctxEls.sort(function(x, y) { return x.d - y.d; });
+        var ctxTris = 0;
+        for (var ci = 0; ci < ctxEls.length && ci < _SNAP_CTX_MAX_ELEMS && ctxTris < _SNAP_CTX_MAX_TRIS; ci++) {
+          (ctxEls[ci].el.meshes || []).forEach(function(m) {
+            if (!m || !m.geometry || m.isInstancedMesh || m.isBatchedMesh) return;
+            if (!m.parent) m.updateMatrixWorld(true);
+            var g = m.geometry, n = g.index ? g.index.count / 3 : (g.attributes.position ? g.attributes.position.count / 3 : 0);
+            ctxTris += n;
+            var cx = new THREE.Mesh(g, ctxMat);
+            cx.matrixAutoUpdate = false; cx.matrix.copy(m.matrixWorld); cx.matrixWorld.copy(m.matrixWorld);
+            ctxScene.add(cx);
+          });
+        }
         var rt = new THREE.WebGLRenderTarget(_SNAP_W, _SNAP_H, { samples: 4 });
         var prevRT = renderer.getRenderTarget(), prevAuto = renderer.autoClear, prevLocal = renderer.localClippingEnabled, prevPlanes = renderer.clippingPlanes;
         var prevClear = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha();
-        var prevOverride = scene.overrideMaterial, prevBg = scene.background;
-        var hidden = [], unculled = [];
         try {
           renderer.setRenderTarget(rt);
           renderer.localClippingEnabled = true; renderer.clippingPlanes = [];
           renderer.setClearColor(0xf1f5f9, 1); renderer.autoClear = false; renderer.clear();
           renderer.render(pairScene, cam);
-          // context: the model only, ghosted + section-boxed, culling undone
-          scene.children.forEach(function(ch) { if (ch !== S.mg && !ch.isLight && ch.visible) { ch.visible = false; hidden.push(ch); } });
-          S.mg.traverse(function(o) { if (o.isMesh && !o.visible && (o.userData._frustumCulled || o.userData._occlCulled)) { o.visible = true; unculled.push(o); } });
-          scene.overrideMaterial = ctxMat; scene.background = null;
-          renderer.render(scene, cam);
-          scene.overrideMaterial = prevOverride; scene.background = prevBg;
+          var tP = performance.now(), tU = tP;
+          renderer.render(ctxScene, cam);
+          var tC = performance.now();
           renderer.clearDepth();
           renderer.render(markScene, cam);
           var px = new Uint8Array(_SNAP_W * _SNAP_H * 4);
           renderer.readRenderTargetPixels(rt, 0, 0, _SNAP_W, _SNAP_H, px);
+          var tR = performance.now();
         } finally {
-          scene.overrideMaterial = prevOverride; scene.background = prevBg;
-          hidden.forEach(function(ch) { ch.visible = true; });
-          unculled.forEach(function(o) { o.visible = false; });
           renderer.setRenderTarget(prevRT); renderer.autoClear = prevAuto; renderer.localClippingEnabled = prevLocal; renderer.clippingPlanes = prevPlanes;
           renderer.setClearColor(prevClear, prevAlpha);
           rt.dispose(); matA.dispose(); matB.dispose(); ctxMat.dispose(); markMat.dispose(); markGeo.dispose();
@@ -19079,6 +19102,7 @@ function startApp() {
         ctx2.putImageData(img, 0, 0);
         var url = cv.toDataURL('image/png');
         var ms = performance.now() - t0;
+        _snap.stats.lastPhases = { setup_pair: Math.round(tP - t0), context: Math.round(tC - tU), contextElements: Math.min(ctxEls.length, _SNAP_CTX_MAX_ELEMS), read: Math.round(tR - tC), encode: Math.round(performance.now() - tR) };
         var st = window._ccLatestState;
         if (st && st.detecting) _snap.stats.renderedWhileDetecting++;
         _snap.stats.rendered++; _snap.stats.ms.push(ms); if (_snap.stats.ms.length > 200) _snap.stats.ms.shift();

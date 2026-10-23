@@ -113,7 +113,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 - **`_ccTriageModel(s)` / `_ccReviewModel(s)`** are module-level memos keyed on state identities (clashes/rules/models[/filters/facets]) shared by list, overview, BCF and report — don't recompute buckets per component.
 - **Overview** is `.cc-overview` absolutely positioned between the floating panels (insets measured from `.cc-left-panel`/`.cc-ai-panel`), fixed sheet on phones. It opens automatically only after INTERACTIVE runs (`triage.autoOpen`, set by `_ccRunDetectionInteractive`) and ≤ 150 review items, so automation/tests never get an overlay over the canvas.
 - **BATCH_UPD_CLASH with `ids`** targets those clashes (selection untouched); changelog/sync/training resolve the set through `_ccBatchIdSet`; undo via `CLASH_BATCH_RESTORE`.
-- Snapshot rendering: SwiftShader ~190 ms per card (ci fixture) — one card per 40 ms slice budget means one per idle slice there; real GPUs are much faster.
+- Snapshot rendering draws ONLY the pair + the elements whose box meets the local section box (≤ 300 elements / 400k triangles, nearest first) into a 320×200 MSAA target — never the live scene (a whole-scene context pass cost 1–3.5 s per card on a 20k-clash federation). SwiftShader: ~140–190 ms median per card, most of it the readback sync; one card per idle slice there. `stats().lastPhases` has the split.
 
 ### React / htm / UI
 - **Rules of Hooks:** never call hooks inside `${cond && function(){...}()}` render IIFEs. That crashed clash review (React #310). Extract a component instead (e.g. `ClashToleranceEditor`). Prefer native `<details>` for disclosure, since it needs no state.
@@ -254,6 +254,8 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 **Memory architecture (V7 P6):** ~39 remaining `element.meshes[]` consumers (a GeometryStore is needed for diff/export/dispose; `_geoSerialize` needs a round-trip test); `storageDetectCaches` soak (Safari/FF); `memorySafeLoad` off; P6.4 WASM streaming cursor; wire `_ccEnsureModelActive` into detection scope (still no callers); persist parked state; residual 1.44× restore heap ratio.
 
 **Scale:** `geoTable` transfer cost; progressive loading / worker backpressure (deliberately not built); COOP/COEP + multithreaded WASM (needs a CDN audit); IFC worker static-file extraction; BVH per unique geometry; re-measure the 145k-element load. The worker pool's real multi-core speed-up hasn't been measured (this sandbox is contended).
+
+**Clash review (2026-10-23):** snapshot of a clash whose element is hidden by the user still shows it (pictures ignore on-screen visibility by design); `rules.hideBuckets` has no settings UI yet (bucket bar is per run); the overview pages 60 cards at a time; facet chips cap at 8 values per facet before "+N more"; storey normalisation reads mm vs m from the largest |elevation| per model (heuristic).
 
 **Clashes:** opening data is missing from geo caches written before 2026-09-29 (re-import to get it); keyboard deny-next can still land on a hidden provided-opening clash; legacy clashes without `_sevSource` keep their stored severity.
 
