@@ -34,6 +34,7 @@ const DYNAMIC = {
   'settings.tab.issues': 'Issues', 'settings.tab.advanced': 'Advanced',
   'ids.severity.error': 'Error', 'ids.severity.warning': 'Warning', 'ids.severity.info': 'Info',
   'nl.reply.viewName.top': 'Top', 'nl.reply.viewName.front': 'Front', 'nl.reply.viewName.back': 'Back',
+  'viewCube.front': 'Front', 'viewCube.back': 'Back', 'viewCube.right': 'Right', 'viewCube.left': 'Left', 'viewCube.top': 'Top', 'viewCube.bottom': 'Bottom',
   'rootCause.crosses': 'crosses {list}', 'rootCause.storeys': '{n} storeys',
   'nl.reply.viewName.left': 'Left', 'nl.reply.viewName.right': 'Right', 'nl.reply.viewName.isometric': 'Isometric',
 };

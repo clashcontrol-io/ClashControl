@@ -663,13 +663,6 @@
       }
       button, a[href], [role=switch], [role=tab], [role=menuitem] { min-width:44px!important; }
       summary, a[href], label:has(> input[type=checkbox]), label:has(> input[type=radio]) { display:flex; align-items:center; }
-      /* Clash / issue panel on a phone: the header stack (buckets, run
-         details, search, filters) can be taller than the screen — the whole
-         panel scrolls and the list keeps a usable height instead of the
-         header being cut off. */
-      .cc-issue-panel{overflow-y:auto!important}
-      .cc-issue-panel>*{flex-shrink:0!important}
-      .cc-issue-panel .cc-issue-scroll{min-height:60vh}
       .cc-side-panel input[type=checkbox], .cc-left-panel input[type=checkbox] {
         width:20px!important; height:20px!important;
       }
@@ -706,12 +699,19 @@
       .cc-welcome-card h1{font-size:2rem!important;}
       .cc-welcome-illus{display:none!important;}
     }
-    /* ── Mobile floating theme toggle ── */
+    /* Clash / issue panel: the header stack (buckets, run details, search,
+       filters, an open menu) can be taller than the panel — the whole panel
+       scrolls and the list keeps a usable height instead of the header being
+       squeezed and cut off. */
+    .cc-issue-panel{overflow-y:auto!important}
+    .cc-issue-panel>*{flex-shrink:0!important}
+    .cc-issue-panel .cc-issue-scroll{min-height:60vh}
     /* Toolbar text labels (e.g. Run detection): icon-only below 1100px,
        icon+text at desktop widths where there's room — detection
        discoverability, MEMORY.md. */
     .cc-btn-text-label{display:none}
     @media(min-width:1100px){ .cc-btn-text-label{display:inline} }
+    /* ── Mobile floating theme toggle ── */
     .cc-mobile-theme{display:none!important}
     body[data-presenting="1"] .cc-mobile-theme{display:none!important}
     .cc-mobile-nav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:calc(var(--z-panel) + 4);
@@ -10269,24 +10269,16 @@ function startApp() {
   }
   window._ccCancelDetection = cancelDetection;
 
-  // Wave 1.7 funnel — a one-line "how did we get from raw pairs to this clash
-  // count" toast, so the matrix/tolerance filtering that already runs on every
-  // detection is visible without opening the diagnostics profile panel
-  // (s.diagnostics-gated, off by default — most users would never see it).
+  // After a browser-engine run: one plain line with the result. The funnel
+  // behind it (pairs checked, matrix-filtered, smart re-run, openings) stays
+  // in window._ccDetectProfile and the diagnostics panel — not in a toast.
   // window._ccDetectProfile is set synchronously at the end of
-  // _detectClashesCore, so reading it right after _browserDetect's own promise
-  // resolves is always the profile for THIS run, not a stale one from a
-  // previous run or the local engine (which doesn't populate this global).
+  // _detectClashesCore, so it is always THIS run's profile.
   function _showFunnelToast() {
     try {
       var p = window._ccDetectProfile;
       if (!p || !window._ccToast || typeof p.candidates !== 'number') return;
-      var msg = p.candidates===1 ? _cc_t('toast.funnelPairOne','{n} pair checked',{n:p.candidates}) : _cc_t('toast.funnelPairMany','{n} pairs checked',{n:p.candidates});
-      if (p.matrix_skipped > 0) msg += ' → ' + _cc_t('toast.funnelMatrix','{n} filtered by discipline matrix',{n:p.matrix_skipped});
-      msg += ' → ' + (p.clashes_found===1 ? _cc_t('toast.funnelClashOne','{n} clash found',{n:p.clashes_found}) : _cc_t('toast.funnelClashMany','{n} clashes found',{n:p.clashes_found}));
-      // Smart re-run: say what was actually recomputed (result equals a full run).
-      if (p.smart_rerun) msg += ' (' + ((p.changed_elements||0)===1 ? _cc_t('toast.funnelSmartOne','smart re-run: {n} changed element recomputed',{n:(p.changed_elements||0)}) : _cc_t('toast.funnelSmartMany','smart re-run: {n} changed elements recomputed',{n:(p.changed_elements||0)})) + ')';
-      if (p.provided_openings > 0) msg += ' · ' + _cc_t('toast.funnelOpenings','{n} pass through provided openings',{n:p.provided_openings});
+      var msg = p.clashes_found===1 ? _cc_t('toast.funnelClashOne','{n} clash found',{n:p.clashes_found}) : _cc_t('toast.funnelClashMany','{n} clashes found',{n:p.clashes_found});
       window._ccToast(msg);
     } catch(e) {}
   }
@@ -22079,12 +22071,12 @@ function startApp() {
       </div>`}
       ${s.clashes.length>0 && s.models.length>0 && html`<div class="cc-overlay-top" style=${{position:'absolute',top:'var(--space-3)',left:'50%',transform:'translateX(-50%)',display:'flex',gap:'var(--space-1)',pointerEvents:'auto'}}>
         <button class="cc-btn-press" onClick=${function(){if(_fitToClashes)_fitToClashes(s.clashes);}}
-          style=${{...S_BTN,background:'var(--overlay-bg-strong)',color:'var(--color-info-fg)',border:'1px solid var(--border-subtle)',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)',border:'1px solid var(--border)'}}>
-          Fit All Clashes
+          style=${{...S_BTN,background:'var(--overlay-bg-strong)',color:'var(--text-primary)',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)',border:'1px solid var(--border)'}}>
+          ${_cc_t('overlay.fitAllClashes','Show all clashes')}
         </button>
-        <button class="cc-btn-press" onClick=${function(){d({t:A.UPD_PREFS,u:{showMarkers:!s.prefs.showMarkers}})}}
-          style=${{...S_BTN,background:s.prefs.showMarkers?'var(--accent)':'var(--overlay-bg-strong)',color:s.prefs.showMarkers?'var(--accent-contrast)':'var(--text-muted)',border:'1px solid var(--border-subtle)',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)',border:'1px solid var(--border)'}}>
-          ${s.prefs.showMarkers?'Markers On':'Markers Off'}
+        <button class="cc-btn-press" aria-pressed=${!!s.prefs.showMarkers} onClick=${function(){d({t:A.UPD_PREFS,u:{showMarkers:!s.prefs.showMarkers}})}}
+          style=${{...S_BTN,background:s.prefs.showMarkers?'var(--accent)':'var(--overlay-bg-strong)',color:s.prefs.showMarkers?'var(--accent-contrast)':'var(--text-muted)',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)',border:'1px solid var(--border)'}}>
+          ${_cc_t('overlay.markers','Markers')}
         </button>
       </div>`}
       ${/* Keyed: htm drops false/null children, so every conditional overlay
@@ -22366,6 +22358,8 @@ function startApp() {
       // <=11px-equivalent bug (previously ~6.4px at the old 74px/21px combo).
       var fontPx = 34;
       ctx.font = 'bold '+fontPx+'px system-ui,sans-serif';
+      // FACES labels are keys (colours, face map); the drawn word follows the UI language.
+      label = _cc_t('viewCube.' + label.toLowerCase(), label.charAt(0) + label.slice(1).toLowerCase()).toLocaleUpperCase();
       var textW = ctx.measureText(label).width;
       var maxW = 112;
       if (textW > maxW) { fontPx = Math.max(22, Math.floor(fontPx*maxW/textW)); ctx.font = 'bold '+fontPx+'px system-ui,sans-serif'; }
@@ -36725,8 +36719,8 @@ function startApp() {
           if(nlN>0) parts.push(nlN===1?_cc_t('settings.privacy.nlCommand','{n} NL command',{n:nlN}):_cc_t('settings.privacy.nlCommands','{n} NL commands',{n:nlN}));
           var countText = parts.length ? _cc_t('settings.privacy.recorded','Recorded: {list}',{list:parts.join(' \u00b7 ')}) : _cc_t('settings.privacy.noData','No local data recorded yet');
           return html`<div style=${{padding:'var(--space-2) 0 var(--space-1)',borderBottom:'1px solid var(--border-subtle)'}}>
-            <div style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',marginBottom:'var(--space-2)'}}>${sentFlash?html`<span style=${{color:'var(--color-success-fg)'}}>${_cc_t('settings.privacy.sentSuccessfully','Sent successfully')}</span>`:countText}</div>
-            <div style=${{display:'flex',gap:'var(--space-2)'}}>
+            <div style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',marginBottom:'var(--space-2)'}}>${sentFlash?html`<span role="status" style=${{color:'var(--color-success-fg)'}}>${_cc_t('settings.privacy.sentSuccessfully','Sent successfully')}</span>`:countText}</div>
+            <div style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-2)'}}>
               <button onClick=${function(){
                 if(!anyData||!dataConsent) return;
                 try{var cur=window._ccLatestState;if(cur){_beaconSendTrainingData();_beaconSendNLTrainingData(cur.models);}_beaconSendDetectionRuns();}catch(e){}
@@ -45815,7 +45809,7 @@ function startApp() {
         data-tour=${opts.dataTour||undefined}
         aria-label=${tipText} aria-pressed=${on}
         style=${Object.assign({
-          height:36,minWidth:36,display:'inline-flex',alignItems:'center',justifyContent:'center',
+          height:36,minWidth:36,flexShrink:0,display:'inline-flex',alignItems:'center',justifyContent:'center',
           gap:'var(--space-1)',padding:opts.textLabel?'0 var(--space-2)':0,
           background:'none',border:'none',cursor:'pointer',position:'relative',
           color:on?'var(--ink-primary)':'var(--ink-muted)',
