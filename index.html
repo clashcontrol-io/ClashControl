@@ -27953,6 +27953,7 @@ function startApp() {
       embedded: _cc_t('bucket.embedded', '{n} embedded by design', {n:n}),
       finish: _cc_t('bucket.finish', '{n} finishes / furniture', {n:n}),
       graze: _cc_t('bucket.graze', '{n} only graze', {n:n}),
+      adjacent: _cc_t('bucket.adjacent', '{n} adjacent by design (wall–slab, wall–beam …)', {n:n}),
       handled: _cc_t('bucket.handled', '{n} handled', {n:n})
     };
     return L[b] || (n + ' ' + b);
@@ -27967,6 +27968,7 @@ function startApp() {
       embedded: _cc_t('bucket.embeddedHint', 'Reinforcement, fasteners, element parts, voids, and doors/windows sitting in a wall or slab of another model'),
       finish: _cc_t('bucket.finishHint', 'Only finishes (coverings) or movable furniture involved'),
       graze: _cc_t('bucket.grazeHint', 'Overlap shallower than 25 mm and 10 % of the thinner element'),
+      adjacent: _cc_t('bucket.adjacentHint', 'Clearance-only findings between architectural and structural elements that sit next to each other by design — near misses (gap ≤ 30 % of the required clearance) stay in review'),
       handled: _cc_t('bucket.handledHint', 'Resolved, closed or denied')
     };
     return H[b] || '';
@@ -28021,13 +28023,13 @@ function startApp() {
     if (k === 'trade') return String(v).split(' × ').map(function(x){ return _ccDisciplineLabel(x); }).join(' × ');
     if (k === 'status') return (STAT[v] && STAT[v].label) || v;
     if (k === 'assignee') return v || _cc_t('facet.unassigned','Unassigned');
-    if (k === 'bucket') return ({review:_cc_t('bucket.name.review','To review'),contact:_cc_t('bucket.name.contact','Contact'),provided:_cc_t('bucket.name.provided','Provided opening'),provision:_cc_t('bucket.name.provision','Provision'),zone:_cc_t('bucket.name.zone','Classified group'),twice:_cc_t('bucket.name.twice','Reported twice'),embedded:_cc_t('bucket.name.embedded','Embedded'),finish:_cc_t('bucket.name.finish','Finish'),graze:_cc_t('bucket.name.graze','Graze'),handled:_cc_t('bucket.name.handled','Handled')})[v] || v;
+    if (k === 'bucket') return ({review:_cc_t('bucket.name.review','To review'),contact:_cc_t('bucket.name.contact','Contact'),provided:_cc_t('bucket.name.provided','Provided opening'),provision:_cc_t('bucket.name.provision','Provision'),zone:_cc_t('bucket.name.zone','Classified group'),twice:_cc_t('bucket.name.twice','Reported twice'),embedded:_cc_t('bucket.name.embedded','Embedded'),finish:_cc_t('bucket.name.finish','Finish'),graze:_cc_t('bucket.name.graze','Graze'),adjacent:_cc_t('bucket.name.adjacent','Adjacent'),handled:_cc_t('bucket.name.handled','Handled')})[v] || v;
     if (k === 'tag') { var sv = ((window._ccClashTriageCore && window._ccClashTriageCore.SUGGESTED) || []).find(function(x){ return x.facets.tag[0] === v; }); return sv ? _ccSuggestedLabel(sv.id, sv.label) : v; }
     return v;
   }
   function _ccSuggestedLabel(id, label) {
     return ({'structural-penetration':_cc_t('view.structuralPenetration','Structural penetrations'),'riser-through-slab':_cc_t('view.riserThroughSlab','Risers through slabs'),
-      'unassigned-critical':_cc_t('view.unassignedCritical','Unassigned critical'),'opening-too-small':_cc_t('view.openingTooSmall','Openings too small'),'new':_cc_t('view.new','New since last run')})[id] || label;
+      'unassigned-critical':_cc_t('view.unassignedCritical','Unassigned critical'),'opening-too-small':_cc_t('view.openingTooSmall','Openings too small'),'near-miss':_cc_t('view.nearMiss','Near misses'),'new':_cc_t('view.new','New since last run')})[id] || label;
   }
   function _ccToggleFacet(facets, k, v) {
     var cur = (facets[k] || []).slice(), i = cur.indexOf(v);

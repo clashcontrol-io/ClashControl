@@ -283,6 +283,8 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- 2026-10-23: clash review design pass P1–P7 — severity by pair class × extent, 'adjacent' bucket + near-miss view, overview header with Filters popover, sidebar de-dup + Run details, visible-first snapshots with skeletons, card/empty-state polish, mobile.
+
 - ~~2026-10-23: clash triage + review overview + smart filtering (severity/extent, review buckets, bucket bar, always-grouped list, overview cards with idle snapshots, facets/suggested/saved views, BCF shown/all; `tests/browser/triage-overview.mjs`).~~ (2026-10-23)
 
 - ~~2026-10-22: smart import — sub-disciplines + provenance, element roles (provision/zone), automatic trade matrix, IfcRelSpaceBoundary (placement with offset detection, adjacency, DQ checks), pack-driven hints/classification tables (`tests/browser/smart-import.mjs`).~~ (2026-10-22)

@@ -90,6 +90,24 @@ test('suggested views are offered only when they select something', () => {
   assert.deepEqual(t.suggestedViews(t.indexItems([riser], ctx)), [], 'a view that selects everything filters nothing');
 });
 
+test('near misses: a clearance gap <= 30 % of the required clearance is tagged and offered as a view', () => {
+  const near = { id: 'n', type: 'soft', clearanceMm: 12, aiSeverity: 'major', status: 'open', assignee: 'x' };
+  const tight = { id: 't', type: 'soft', clearanceMm: 30, requiredClearanceMm: 100, aiSeverity: 'major', status: 'open', assignee: 'x' };
+  const wide = { id: 'w', type: 'soft', clearanceMm: 40, aiSeverity: 'minor', status: 'open', assignee: 'x' };
+  const hardOne = { id: 'h', type: 'hard', distance: -5, aiSeverity: 'minor', status: 'open', assignee: 'x' };
+  assert.ok(t.facetValues(near, ctx).tag.includes('near-miss'));
+  assert.ok(t.facetValues(tight, ctx).tag.includes('near-miss'), 'ratio against the rule\'s required clearance');
+  assert.ok(!t.facetValues(wide, ctx).tag.includes('near-miss'));
+  assert.ok(!t.facetValues(hardOne, ctx).tag.includes('near-miss'), 'hard clashes are never near misses');
+  const idx = t.indexItems([near, tight, wide, hardOne], ctx);
+  const v = t.suggestedViews(idx).find((x) => x.id === 'near-miss');
+  assert.ok(v, 'near-miss view offered');
+  assert.deepEqual(v.facets, { extent: ['clearance'], tag: ['near-miss'] });
+  assert.equal(v.count, 2);
+  assert.equal(t.applyFacets(idx, v.facets).length, 2);
+  assert.deepEqual(t.orderedValues('bucket', { review: 1, adjacent: 1, handled: 1, graze: 1 }), ['review', 'graze', 'adjacent', 'handled']);
+});
+
 test('search: names, types, storeys, GlobalIds; all terms must match; quoted phrases', () => {
   const c = { title: 'Supply duct crosses Beam B-12', elemAName: 'Supply duct', elemBName: 'Beam B-12', elemAType: 'IfcDuctSegment', elemBType: 'IfcBeam',
     elemAStorey: 'Level 1', globalIdA: '2O2Fr$t4X7Zf8NOew3FLOH', modelAId: 'M', modelBId: 'S' };
