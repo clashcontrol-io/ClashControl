@@ -25,6 +25,8 @@
 //                  (a destructive button may use the danger tokens — S_BTN Danger)
 //   tap-target     a control under 44 × 44 px on the phone viewport
 //   overflow       horizontal scroll on the page or a panel root
+//   overlap        a control's content spilling out of its box, or two
+//                  controls drawn on top of each other
 //   untranslated   (non-English locale) common English UI words on controls
 //                  and headings — a mixed-language UI
 //   diagnostics    "No diagnostics in the main UI": percentages, IFC class
@@ -254,6 +256,23 @@ function inPageChecker() {
         }
       }
     }
+    // overlap: a control whose content spills out of its own box (a label
+    // wider than a squeezed toolbar button), or two controls in the same row
+    // drawn on top of each other. Controls of different layers (a menu or
+    // popover over the list) are compared only within their own parent, and
+    // the content of a closed <details> is not rendered.
+    const ctrls = [...seen].filter((el) => el.matches && el.matches(CONTROL) && visible(el) && !exempt(el) && !el.closest('details:not([open]) > :not(summary)'));
+    const rects = ctrls.map((el) => el.getBoundingClientRect());
+    ctrls.forEach((el, i) => {
+      const cs = getComputedStyle(el);
+      if (!/(hidden|clip|auto|scroll)/.test(cs.overflowX) && el.scrollWidth > el.clientWidth + 2 && !el.matches('select')) add('overlap', el, 'content ' + el.scrollWidth + ' > box ' + el.clientWidth);
+      for (let j = i + 1; j < ctrls.length; j++) {
+        if (ctrls[j].parentElement !== el.parentElement) continue;
+        const a = rects[i], b = rects[j];
+        const w = Math.min(a.right, b.right) - Math.max(a.left, b.left), h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        if (w > 2 && h > 2 && getComputedStyle(ctrls[j]).position !== 'absolute' && cs.position !== 'absolute') add('overlap', el, 'overlaps ' + label(ctrls[j]).split(' > ').pop() + ' "' + (ctrls[j].innerText || '').trim().slice(0, 30) + '"');
+      }
+    });
     if (document.scrollingElement.scrollWidth > innerWidth + 1) out.push({ rule: 'overflow', el: 'page', text: '', detail: 'page scrolls sideways ' + document.scrollingElement.scrollWidth + ' > ' + innerWidth });
     return out;
   };
