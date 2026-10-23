@@ -680,6 +680,48 @@ function generateBuilding(opts) {
     hr('M', 'IFCPIPESEGMENT', 'R pipe leaving the compartment', 'x', xr + 11, 2.03, 1.51, 2.2, 0.1, 0.1);
   }
 
+  // Opt-in `nearMiss: n` (default 0 = off, output unchanged): an n x n field of
+  // structure/MEP cells south of the building, each a beam with a parallel pipe
+  // under it, a duct crossing under it, and a column with a riser beside it
+  // (one riser slightly skewed). Gaps come from their own seeded stream:
+  // mostly 0..150 mm (clearance near misses), some exact contacts / small
+  // crossings, some diagonal offsets (per-axis within the gap, Euclidean not),
+  // and some mirror-symmetric pairs (equal-distance ties). A clearance-heavy
+  // federation for min-distance timing (tests/browser/clearance-cost.mjs).
+  const nearMiss = Math.max(0, Math.floor(+opts.nearMiss || 0));
+  if (nearMiss) {
+    const nr = mulberry32((seed ^ 0x5a5a) >>> 0);
+    const sS = S.storeys[0], sM = M.storeys[0];
+    const gap = () => { const u = nr(); return u < 0.08 ? 0 : u < 0.14 ? -0.01 * nr() : u < 0.9 ? 0.15 * nr() : 0.15 + 0.1 * nr(); };
+    for (let i = 0; i < nearMiss; i++) for (let j = 0; j < nearMiss; j++) {
+      const x = 3.5 * i, y = -8 - 3.5 * j, zb = 2.6, id = i + '/' + j;
+      // beam along X (0.3 wide, 0.5 deep, centre zb)
+      hrun(S, 'IFCBEAM', `N beam ${id}`, sS, 'x', x, y, zb, 2.6, 0.3, 0.5, { sig: 'nb' });
+      // parallel pipe under it; every 5th cell offset diagonally
+      const r = 0.04 + 0.04 * nr(), g1 = gap(), diag = (i + j) % 5 === 0 ? 0.15 + 0.05 * nr() : 0;
+      hcirc(M, 'IFCPIPESEGMENT', `N pipe ${id}`, sM, 'x', x + 0.2, y + diag, zb - 0.25 - g1 - r, 2.2, r, { sig: 'np' });
+      // duct along Y crossing under the beam
+      const g2 = gap(), dh = 0.2 + 0.1 * nr();
+      hrun(M, 'IFCDUCTSEGMENT', `N duct ${id}`, sM, 'y', x + 1.6, y - 1.2, zb - 0.25 - g2 - dh / 2, 2.4, 0.4, dh, { sig: 'nd' });
+      // column + riser beside it (odd cells: riser tilted towards the column)
+      const g3 = gap(), rr = 0.03 + 0.03 * nr();
+      vbox(S, 'IFCCOLUMN', `N column ${id}`, sS, x + 2.7, x + 3.1, y + 0.6, y + 1.0, 0, 3, { sig: 'nc' });
+      if ((i + j) % 2) {
+        element(M, 'IFCPIPESEGMENT', `N riser ${id}`, sM, sM.pl, M.ax3([x + 2.9, y + 1.0 + g3 + rr + 0.04, 0.2], [0, -Math.sin(0.015), Math.cos(0.015)], [1, 0, 0]),
+          [M.extrude(M.circ(rr), 2.5)], 'SweptSolid', { sig: 'nrs' });
+      } else {
+        element(M, 'IFCPIPESEGMENT', `N riser ${id}`, sM, sM.pl, M.ax3([x + 3.1 + g3 + rr, y + 0.8, 0.2]), [M.extrude(M.circ(rr), 2.6)], 'SweptSolid', { sig: 'nr' });
+      }
+      // mirror-symmetric tie: two equal pipes either side of a member at the same gap
+      if (j % 3 === 0) {
+        const g4 = Math.abs(gap()) + 0.005;
+        hrun(S, 'IFCMEMBER', `N member ${id}`, sS, 'x', x, y - 1.6, 1.0, 2.0, 0.2, 0.2, { sig: 'nm' });
+        hrun(M, 'IFCPIPESEGMENT', `N tie pipe a ${id}`, sM, 'x', x, y - 1.6 - 0.1 - g4 - 0.05, 1.0, 2.0, 0.1, 0.1, { sig: 'nt' });
+        hrun(M, 'IFCPIPESEGMENT', `N tie pipe b ${id}`, sM, 'x', x, y - 1.6 + 0.1 + g4 + 0.05, 1.0, 2.0, 0.1, 0.1, { sig: 'nt' });
+      }
+    }
+  }
+
   // ── finalize: containment + spaces aggregation ──
   const files = {};
   for (const [key, m] of Object.entries(models)) {
