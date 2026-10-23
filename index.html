@@ -7153,7 +7153,12 @@ function startApp() {
   // Any shard failure, a type the order probe cannot place, or an error
   // in the merge rejects, and the caller loads the file in one worker.
   // Knobs + last run (tests/diagnostics), like _ccNarrowPool:
-  var _ccIfcShard = { minBytes: 40 * 1048576, maxShards: 2, last: null };
+  // minBytes / maxShards: measured on synthetic files on a contended 4-core
+  // box (tests/browser/shard-load.mjs timing report): below ~20 MB the
+  // extra worker start + model open costs more than the split saves, and a
+  // third shard did not beat two; every shard also holds its own copy of
+  // the model in its WASM heap.
+  var _ccIfcShard = { minBytes: 32 * 1048576, maxShards: 2, last: null };
   window._ccIfcShard = _ccIfcShard;
   // How many workers ONE file may use (1 = not sharded). otherJobs: other
   // IFC parses of the same batch — files already parsing side by side

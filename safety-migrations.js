@@ -111,8 +111,14 @@
     // identical. Only for files >= _ccIfcShard.minBytes, >= 4 cores, within
     // the memory budget (every shard holds its own copy of the model), never
     // while other files of the batch parse; any shard failure → one worker.
-    // Fallback = one worker per file.
-    shardedLoad: Object.freeze({ fallback: 'one-worker', defaultEnabled: false })
+    // Fallback = one worker per file. Promoted (defaultEnabled:true)
+    // 2026-10-23: tests/browser/shard-load.mjs (2/3 shards deep-digest
+    // identical to one worker on every synthetic fixture, fingerprint ==
+    // fallback, failing shard, cancel), the differential harness's sharded
+    // case and tests/ifc-shard-order.test.js green; every other loader gate
+    // green with it on (small fixtures stay below the size threshold).
+    // Kill switch ?ccSafety=-shardedLoad.
+    shardedLoad: Object.freeze({ fallback: 'one-worker', defaultEnabled: true })
   });
   var diagnostics = [];
 

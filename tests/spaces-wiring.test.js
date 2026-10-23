@@ -22,7 +22,8 @@ test('both IFC loaders stream IfcSpace geometry in a separate by-id pass', () =>
   assert.match(fallback, /api\.StreamMeshes\(modelID, _spaceIds, function\(ifcMesh\) \{ _onIfcMesh\(ifcMesh, true\); \}\)/);
   assert.match(fallback, /if \(_spaceGeoEids\[_reid\]\) continue;/, 'geometry-less rooms are still re-added, rooms with geometry are not duplicated');
   const worker = slice('function _ifcWorkerMain() {', "_emit({type:'result'");
-  assert.match(worker, /api\.StreamMeshes\(modelID, _spaceIds, function\(ifcMesh\) \{ _onIfcMesh\(ifcMesh, true\); \}\)/);
+  // (the worker also records each room's global stream position for the sharded load)
+  assert.match(worker, /api\.StreamMeshes\(modelID, _spaceIds, function\(ifcMesh\) \{ (_curG = _spPos\[ifcMesh\.expressID\]; )?_onIfcMesh\(ifcMesh, true\); \}\)/);
   assert.doesNotMatch(worker, /_ccMarkSpaceMesh/, 'the worker source is stringified — it must not reference main-thread helpers');
 });
 
