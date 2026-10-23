@@ -18,7 +18,8 @@ const path = require('path');
 
 const AUTO_MIN = 0.95;
 
-// Keys composed at run time ('disc.' + id, …) with their English text.
+// Keys composed at run time ('disc.' + id, …) or looked up through a local
+// alias of _cc_t (pure helpers that also run in node tests), with their English text.
 const DYNAMIC = {
   'disc.structural': 'Structural', 'disc.mep': 'MEP', 'disc.architectural': 'Architectural', 'disc.civil': 'Civil', 'disc.other': 'Other',
   'disc.sub.ventilation': 'Ventilation', 'disc.sub.heating': 'Heating & cooling', 'disc.sub.plumbing': 'Plumbing & drainage',
@@ -33,6 +34,7 @@ const DYNAMIC = {
   'settings.tab.issues': 'Issues', 'settings.tab.advanced': 'Advanced',
   'ids.severity.error': 'Error', 'ids.severity.warning': 'Warning', 'ids.severity.info': 'Info',
   'nl.reply.viewName.top': 'Top', 'nl.reply.viewName.front': 'Front', 'nl.reply.viewName.back': 'Back',
+  'rootCause.crosses': 'crosses {list}', 'rootCause.storeys': '{n} storeys',
   'nl.reply.viewName.left': 'Left', 'nl.reply.viewName.right': 'Right', 'nl.reply.viewName.isometric': 'Isometric',
 };
 

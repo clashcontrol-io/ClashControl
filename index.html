@@ -28606,7 +28606,7 @@ function startApp() {
         </${ClashOverviewSnapshot}>
         <span style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)',padding:'var(--space-2) var(--space-3) var(--space-3)',minWidth:0,width:'100%'}}>
           <span title=${it.title} style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',lineHeight:'var(--leading-tight)',overflow:'hidden',textOverflow:'ellipsis',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical'}}>${it.title}</span>
-          ${ext && html`<span data-cc-card-extent="1" style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${ext}</span>`}
+          ${ext && html`<span data-cc-card-extent="1" style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>${ext}</span>`}
           ${meta && html`<span title=${meta} style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${meta}</span>`}
           <span title=${foot} style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${foot}</span>
         </span>
@@ -29261,26 +29261,26 @@ function startApp() {
             background:active?'var(--accent)':'var(--bg-secondary)',color:active?'var(--accent-contrast)':'var(--text-secondary)',
             fontWeight:active?'var(--weight-semibold)':'var(--weight-regular)',fontFamily:'var(--font-body)',whiteSpace:'nowrap',
             transition:'background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard)'};};
-          return html`<div style=${{padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',display:'flex',gap:'var(--space-2)',alignItems:'center',flexShrink:0}}>
+          return html`<div style=${{padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',display:'flex',flexWrap:'wrap',gap:'var(--space-2)',alignItems:'center',flexShrink:0}}>
             <div role="group" aria-label=${_cc_t('issues.viewMode','View mode')} style=${{display:'inline-flex',gap:0,borderRadius:'var(--radius-xs)',overflow:'hidden'}}>
               <button onClick=${function(){d({t:grpAction,v:['element']});}} aria-pressed=${isGrouped} style=${{...SEG_BTN(isGrouped),borderRadius:'var(--radius-xs) 0 0 var(--radius-xs)'}}>${_cc_t('issues.grouped','Grouped')}</button>
               <button onClick=${function(){d({t:grpAction,v:[]});}} aria-pressed=${!isGrouped} style=${{...SEG_BTN(!isGrouped),borderRadius:'0 var(--radius-xs) var(--radius-xs) 0',borderLeft:'none'}}>${_cc_t('issues.filter.statusAll','All')}</button>
             </div>
-            ${isGrouped && html`<label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:1,minWidth:0}}>
+            ${isGrouped && html`<label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:'1 1 9rem',minWidth:0}}>
               <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap'}}>${_cc_t('issues.groupBy','by')}</span>
-              <select value=${selGrp} style=${{...DS,flex:1,minWidth:0,maxWidth:120}}
+              <select value=${selGrp} style=${{...DS,flex:1,minWidth:0}}
                 onChange=${function(e){var v=e.target.value;d({t:grpAction,v:[v]});}}>
                 ${smartGrpOpts.map(function(g){return html`<option key=${g[0]} value=${g[0]}>${g[1]}</option>`})}
               </select>
             </label>`}
-            ${!isGrouped && html`<label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:1,minWidth:0}}>
+            ${!isGrouped && html`<label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:'1 1 9rem',minWidth:0}}>
               <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap'}}>${_cc_t('issues.groupBy','by')}</span>
-              <select value=${selGrp==='cluster'||selGrp==='element'?'none':selGrp} style=${{...DS,flex:1,minWidth:0,maxWidth:120}}
+              <select value=${selGrp==='cluster'||selGrp==='element'?'none':selGrp} style=${{...DS,flex:1,minWidth:0}}
                 onChange=${function(e){var v=e.target.value;d({t:grpAction,v:v==='none'?[]:[v]});}}>
                 ${secondaryGrpOpts.map(function(g){return html`<option key=${g[0]} value=${g[0]}>${g[1]}</option>`})}
               </select>
             </label>`}
-            <label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:1,minWidth:0}}>
+            <label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:'1 1 9rem',minWidth:0}}>
               <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',whiteSpace:'nowrap'}}>${_cc_t('issues.sort','Sort')}</span>
               <select value=${selSort} style=${{...DS,flex:1,minWidth:0}}
                 onChange=${function(e){var v=e.target.value;d({t:sortAction,v:v==='none'?[]:[v]});}}>
@@ -32203,9 +32203,14 @@ function startApp() {
       if (worstSev == null || (SEV_ORDER[sev] || 0) > (SEV_ORDER[worstSev] || 0)) worstSev = sev;
     });
     var otherKeys = Object.keys(otherTypeCounts).sort(function(a, b) { return otherTypeCounts[b] - otherTypeCounts[a]; });
+    // English reads "crosses 2 beams · 1 wall"; with a language pack active
+    // the type names (IFC types, English) are not pluralised as English
+    // words: "2 × beam · 1 × wall" inside the translated sentence.
+    var english = !(window._ccGetLocale && window._ccGetLocale());
+    var tt = typeof window._cc_t === 'function' ? window._cc_t : function(k, en, v) { return en.replace(/\{(\w+)\}/g, function(m, n) { return v[n]; }); };
     var subtitle = otherKeys.map(function(t) {
       var c = otherTypeCounts[t];
-      return c + ' ' + (c === 1 ? t : _ccPluralizeWord(t));
+      return english ? (c + ' ' + (c === 1 ? t : _ccPluralizeWord(t))) : (c + ' \u00d7 ' + t);
     }).join(' \u00b7 ');
     var storeyKeys = Object.keys(storeys);
     var niceRootType = niceType(rootInfo.type);
@@ -32214,8 +32219,8 @@ function startApp() {
     var extLabel = typeof opts.extentLabel === 'function' ? opts.extentLabel : function(k) { return k; };
     return {
       title: (rootInfo.name || niceRootType) + ' (' + niceRootType + ')',
-      subtitle: subtitle ? ('crosses ' + subtitle) : '',
-      storey: storeyKeys.length === 1 ? storeyKeys[0] : (storeyKeys.length > 1 ? (storeyKeys.length + ' storeys') : ''),
+      subtitle: subtitle ? tt('rootCause.crosses', 'crosses {list}', { list: subtitle }) : '',
+      storey: storeyKeys.length === 1 ? storeyKeys[0] : (storeyKeys.length > 1 ? tt('rootCause.storeys', '{n} storeys', { n: storeyKeys.length }) : ''),
       storeys: storeyKeys,
       severity: worstSev || 'info',
       extents: extents,
