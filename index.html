@@ -25919,8 +25919,9 @@ function startApp() {
           // parallel mode the scheduler normally started it already (a job
           // still held back by the memory budget is started now so the
           // in-order commit always makes progress). A memory-tight batch
-          // first waits for the previous file's worker to be gone.
-          return _memWhenIdle().then(function() {
+          // first waits for the previous file's worker to be gone (a job the
+          // scheduler already started is not held back).
+          return (job.started ? Promise.resolve() : _memWhenIdle()).then(function() {
           if (!job.started) job.start();
           return job.parsed;
           }).then(function(p) {
