@@ -1,20 +1,26 @@
-// ── ClashControl Addon: Regulation Preset Loader ────────────────────────────
-// Regional building-code presets (regulations/*.json) are pure data — no
-// executable code, ever. This is the only file in regulations/ that is JS;
-// contributors add a .json file + a manifest.json entry, nothing else. See
-// regulations/_template.json and regulations/README.md for the contribution
-// format, including the required `source` citation.
+// ── ClashControl Addon: Country Pack Loader ─────────────────────────────────
+// Country packs (regulations/*.json) are pure data — no executable code, ever.
+// This is the only file in regulations/ that is JS; contributors add a .json
+// file + a manifest.json entry, nothing else. See regulations/_template.json
+// and regulations/README.md for the format, including the required `source`
+// citations.
 //
-// The core registry (_ccRegisterRegulationPreset / _ccGetRegulationPreset /
-// _ccSetRegulationRegion) lives in index.html. This loader just knows how to
-// fetch the manifest and turn a requested region id into registered presets,
-// one per check engine the pack declares thresholds for.
+// The core registry (_ccRegisterCountryPack / _ccResolveCountry /
+// _ccGetRegulationPreset / _ccSetRegulationRegion) lives in index.html; the
+// section validation in country-pack-core.js. This loader fetches the manifest
+// and then EVERY pack it lists (they are small) and registers them as data:
+// the region that applies is decided by the loaded models (IfcPostalAddress,
+// projected CRS, site location) or the user's pick in Settings, so the
+// resolver needs every pack's geo section up front. Classification tables are
+// registered from every pack too — a model's codes say which table they come
+// from, not the user's settings. Registering never activates a region.
 (function () {
   'use strict';
   if (typeof window === 'undefined') return;
 
   var MANIFEST_URL = 'regulations/manifest.json';
   var _manifestPromise = null;
+  var _packPromises = {};
 
   function loadManifest() {
     if (_manifestPromise) return _manifestPromise;
@@ -28,16 +34,11 @@
     return _manifestPromise;
   }
 
-  // For the Settings panel picker: [{region, name, contributor, verified}, ...]
+  // For the Settings panel picker: [{region, name, contributor, verified, thresholds}, ...]
   window._ccListRegulationPacks = function () {
     return loadManifest();
   };
 
-  // Classification-code tables (a pack's `classifications` section: NL-SfB,
-  // Uniclass, OmniClass …) are registered from EVERY pack that declares them
-  // in the manifest, independent of the active region: a model's codes say
-  // which table they come from, not the user's settings. Only the tables
-  // are registered here — no thresholds, no region activation.
   function registerPackTables(pack) {
     var core = window._ccClashDisciplineCore;
     if (!core || typeof core.registerClassificationTable !== 'function' || !pack || !Array.isArray(pack.classifications)) return 0;
@@ -45,16 +46,30 @@
     pack.classifications.forEach(function (t) { if (core.registerClassificationTable(t)) n++; });
     return n;
   }
+
+  function fetchPack(entry) {
+    if (_packPromises[entry.region]) return _packPromises[entry.region];
+    _packPromises[entry.region] = fetch('regulations/' + entry.file).then(function (r) {
+      if (!r.ok) throw new Error('country pack fetch failed: ' + r.status);
+      return r.json();
+    }).then(function (pack) {
+      if (!pack || typeof pack !== 'object' || pack.region !== entry.region || typeof pack.engines !== 'object') {
+        throw new Error('Malformed country pack: ' + entry.region);
+      }
+      var tables = registerPackTables(pack);
+      if (typeof window._ccRegisterCountryPack === 'function') window._ccRegisterCountryPack(pack);
+      return { pack: pack, tables: tables };
+    });
+    _packPromises[entry.region].catch(function (e) {
+      console.warn('[Regulations] pack not loaded: ' + entry.region, e);
+      delete _packPromises[entry.region];
+    });
+    return _packPromises[entry.region];
+  }
+
   loadManifest().then(function (list) {
-    var withTables = (list || []).filter(function (p) { return p && p.file && Array.isArray(p.classifications) && p.classifications.length; });
-    return Promise.all(withTables.map(function (entry) {
-      return fetch('regulations/' + entry.file).then(function (r) {
-        if (!r.ok) throw new Error('regulation pack fetch failed: ' + r.status);
-        return r.json();
-      }).then(function (pack) {
-        if (!pack || pack.region !== entry.region) throw new Error('Malformed regulation pack: ' + entry.region);
-        return registerPackTables(pack);
-      }).catch(function (e) { console.warn('[Regulations] classification tables not loaded for ' + entry.region, e); return 0; });
+    return Promise.all((list || []).filter(function (p) { return p && p.file && p.region; }).map(function (entry) {
+      return fetchPack(entry).then(function (r) { return r.tables; }, function () { return 0; });
     }));
   }).then(function (counts) {
     var n = (counts || []).reduce(function (a, b) { return a + b; }, 0);
@@ -62,42 +77,22 @@
     return n;
   });
 
-  // Fetches + registers every engine's thresholds from a region's pack.
-  // Does NOT activate the region (callers call window._ccSetRegulationRegion
-  // once the user picks it, or once model geolocation suggests it).
+  // Fetches + registers one region's pack (already done at startup for every
+  // manifest entry; this returns the same promise). Does NOT activate it.
   window._ccLoadRegulationPack = function (region) {
     return loadManifest().then(function (list) {
       var entry = (list || []).filter(function (p) { return p.region === region; })[0];
       if (!entry || !entry.file) throw new Error('Unknown region: ' + region);
-      return fetch('regulations/' + entry.file).then(function (r) {
-        if (!r.ok) throw new Error('regulation pack fetch failed: ' + r.status);
-        return r.json();
-      });
-    }).then(function (pack) {
-      if (!pack || typeof pack !== 'object' || !pack.region || typeof pack.engines !== 'object') {
-        throw new Error('Malformed regulation pack: ' + region);
-      }
-      registerPackTables(pack);
-      if (typeof window._ccRegisterRegulationPreset === 'function') {
-        Object.keys(pack.engines).forEach(function (engine) {
-          window._ccRegisterRegulationPreset({
-            region: pack.region,
-            engine: engine,
-            name: pack.name,
-            thresholds: pack.engines[engine]
-          });
-        });
-      }
-      return pack;
-    });
+      return fetchPack(entry);
+    }).then(function (r) { return r.pack; });
   };
 
   if (typeof window._ccRegisterAddon === 'function') {
     window._ccRegisterAddon({
       id: 'regulations',
       alwaysOn: true,
-      name: 'Regional regulation presets',
-      description: 'Loads community-contributed building-code threshold presets (regulations/*.json) on demand — pure data, never executable code.'
+      name: 'Country packs',
+      description: 'Loads community-contributed country packs (regulations/*.json): building-code thresholds, national data standards, CRS and 3D-tiles presets — pure data, never executable code.'
     });
   }
 })();

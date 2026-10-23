@@ -1,11 +1,14 @@
 #!/usr/bin/env node
-// Validates a regional regulation pack (regulations/<region>.json) against
-// the contract in regulations/_template.json / regulations/README.md.
-// These are safety-relevant numbers (door widths, ramp slopes, turning
-// clearances) — a `source` citation is mandatory even for a draft pack, and
-// unrecognized threshold keys are flagged since they're most likely a typo
-// rather than a genuinely new field. Pure structural + content checks — no
-// execution of the pack content, ever (see regulations/loader.js).
+// Validates a country pack (regulations/<region>.json) against the contract in
+// regulations/_template.json / regulations/README.md. Thresholds are
+// safety-relevant numbers (door widths, ramp slopes, turning clearances) — a
+// `source` citation is mandatory even for a draft pack, and unrecognized keys
+// are flagged since they're most likely a typo rather than a genuinely new
+// field. Pure structural + content checks — no execution of the pack content,
+// ever (see regulations/loader.js). Regular expressions in a pack are strings,
+// length-capped, without nested quantifiers / backreferences / lookbehind; URLs
+// are https and on an allow-list. The section rules live in
+// country-pack-core.js (validateSections), shared with the app.
 'use strict';
 
 const MAX_BYTES = 200 * 1024;
@@ -15,14 +18,17 @@ const REGION_CODE_RE = /^[a-zA-Z]{2}(-[a-zA-Z0-9]+)*$/;
 // OmniClass …) that map element/system codes to disciplines, MEP
 // sub-disciplines or roles. Structure is owned by clash-discipline-core.js
 // (validateClassificationTable), shared with the app's registry.
-const OPTIONAL_TOP_KEYS = ['classifications'];
+// Country sections (all optional): geo, dataQuality, naming, format — see
+// country-pack-core.js.
+const OPTIONAL_TOP_KEYS = ['classifications', 'geo', 'dataQuality', 'naming', 'format'];
 const { validateClassificationTable } = require('../clash-discipline-core.js');
+const countryCore = require('../country-pack-core.js');
 
-// Known threshold keys per engine — see addons/accessibility.js DEFAULTS.
+// Known threshold keys per engine (addons/accessibility.js reads these).
 // An engine not listed here is still accepted (numbers-only check applies);
 // this only tightens validation for engines the core actually knows about.
 const KNOWN_ENGINE_THRESHOLDS = {
-  accessibility: ['doorClearWidth', 'corridorWidth', 'turningDiameter', 'thresholdHeight', 'rampSlope']
+  accessibility: countryCore.ACCESSIBILITY_KEYS
 };
 
 function validateRegulationPack(raw) {
@@ -69,28 +75,19 @@ function validateRegulationPack(raw) {
   }
 
   if ('engines' in pack) {
+    const hasOther = (Array.isArray(pack.classifications) && pack.classifications.length) ||
+      ['geo', 'dataQuality', 'naming'].some((k) => pack[k] != null);
     if (pack.engines == null || typeof pack.engines !== 'object' || Array.isArray(pack.engines)) {
       errors.push('engines must be an object keyed by check-engine id');
-    } else if (!Object.keys(pack.engines).length && !(Array.isArray(pack.classifications) && pack.classifications.length)) {
-      errors.push('engines must declare at least one check engine (or the pack must carry at least one classification table)');
-    } else {
-      Object.entries(pack.engines).forEach(([engine, thresholds]) => {
-        if (thresholds == null || typeof thresholds !== 'object' || Array.isArray(thresholds)) {
-          errors.push(`engines.${engine} must be an object of numeric thresholds`);
-          return;
-        }
-        const known = KNOWN_ENGINE_THRESHOLDS[engine];
-        Object.entries(thresholds).forEach(([k, v]) => {
-          if (typeof v !== 'number' || !isFinite(v)) {
-            errors.push(`engines.${engine}.${k} must be a finite number`);
-          }
-          if (known && !known.includes(k)) {
-            errors.push(`engines.${engine}.${k} is not a recognized threshold key for '${engine}' (expected one of: ${known.join(', ')})`);
-          }
-        });
-      });
+    } else if (!Object.keys(pack.engines).length && !hasOther) {
+      errors.push('engines must declare at least one check engine (or the pack must carry another section: classifications, geo, dataQuality, naming)');
     }
   }
+  if (pack.region != null && typeof pack.region === 'string' && pack.region !== pack.region.toLowerCase()) {
+    errors.push('region must be lower-case (e.g. "nl", "jp-tokyo")');
+  }
+  // engines (incl. engines.visibility presets), geo, dataQuality, naming, format.
+  countryCore.validateSections(pack).forEach((e) => errors.push(e));
 
   if ('classifications' in pack) {
     if (!Array.isArray(pack.classifications) || !pack.classifications.length) {

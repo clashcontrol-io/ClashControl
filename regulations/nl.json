@@ -1,15 +1,778 @@
 {
   "region": "nl",
   "name": "Nederland",
-  "contributor": "ClashControl maintainers (starter pack — classification table only, no building-code thresholds)",
+  "contributor": "ClashControl maintainers (starter pack: rule data carried over from the former built-in Dutch engines; needs review by someone with Dutch building-code and BIM-standard knowledge)",
   "verified": false,
-  "source": "No building-code thresholds in this pack (engines is empty on purpose). Classification table: NL-SfB, see classifications[].source.",
-  "engines": {},
+  "source": "Accessibility thresholds: carried over unchanged from the former built-in defaults, which were described as \"NL Bbl / NEN-oriented\" (Besluit bouwwerken leefomgeving; NEN 9120). The specific Bbl articles / NEN clauses behind each number have NOT been checked, so the values are unverified. Data-quality standards and the classification table: see each section's own source (dataQuality.standards[].source, classifications[].source). CRS definitions: EPSG Geodetic Parameter Dataset (epsg.org). 3D tiles: Kadaster 3D Basisvoorziening via PDOK (CC-BY 4.0).",
+  "geo": {
+    "countryNames": [
+      "Netherlands",
+      "The Netherlands",
+      "Nederland",
+      "Holland",
+      "NLD"
+    ],
+    "bounds": [
+      [
+        50.7,
+        3.2,
+        53.7,
+        7.3
+      ]
+    ],
+    "crs": {
+      "28992": {
+        "label": "Amersfoort / RD New — Netherlands",
+        "def": "+proj=sterea +lat_0=52.1561605555556 +lon_0=5.38763888888889 +k=0.9999079 +x_0=155000 +y_0=463000 +ellps=bessel +towgs84=565.417,50.3319,465.552,-0.398957,0.343988,-1.8774,4.0725 +units=m +no_defs",
+        "aliases": [
+          "rd new",
+          "amersfoort",
+          "rijksdriehoek"
+        ]
+      },
+      "25831": {
+        "label": "ETRS89 / UTM 31N — NL/BE",
+        "def": "+proj=utm +zone=31 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"
+      },
+      "25832": {
+        "label": "ETRS89 / UTM 32N — DE/NL",
+        "def": "+proj=utm +zone=32 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"
+      }
+    },
+    "defaultCrs": "28992",
+    "tiles3d": [
+      {
+        "id": "nl-pdok",
+        "label": "3D omgeving — NL (PDOK)",
+        "title": "Free Dutch national 3D buildings (Kadaster 3D Basisvoorziening via PDOK, LoD 2.2 from BAG + AHN) around your georeferenced model, no key needed",
+        "url": "https://api.pdok.nl/kadaster/3d-basisvoorziening/ogc/v1_0/collections/gebouwen/3dtiles",
+        "attribution": "3D: Kadaster / PDOK (CC-BY 4.0)",
+        "heightOffsetM": 43
+      }
+    ]
+  },
+  "engines": {
+    "accessibility": {
+      "doorClearWidth": 0.85,
+      "corridorWidth": 1.2,
+      "turningDiameter": 1.5,
+      "thresholdHeight": 0.02,
+      "rampSlope": 0.08333333333333333
+    },
+    "visibility": {
+      "presets": {
+        "workplace-window-view-NL": {
+          "label": "Workplace window view (NL)",
+          "sampleId": "workplace-view-NL",
+          "viewer": {
+            "types": [
+              "IfcFurnishingElement"
+            ],
+            "namePattern": "desk|werkplek|workstation",
+            "sampling": {
+              "mode": "centroid",
+              "eyeHeight": 1.2
+            }
+          },
+          "target": {
+            "types": [
+              "IfcWindow"
+            ]
+          },
+          "obstructer": {
+            "excludeTypes": [
+              "IfcFurnishingElement",
+              "IfcDoor"
+            ]
+          },
+          "maxRange": 6.0,
+          "mode": "obstruction"
+        }
+      }
+    }
+  },
+  "dataQuality": {
+    "standards": [
+      {
+        "id": "ils",
+        "label": "ILS / NL-SfB",
+        "title": "ILS / NL-SfB (NL-BIM Basis ILS v2)",
+        "source": "NL-BIM Basis ILS v2, public standard published via bimloket.nl / buildingSMART Benelux (sections 3.3, 3.5, 4.1, 4.5, 4.6, 4.7.2, 4.8), plus the RVB BIM Norm v1.1 element-level additions 2.2.7.6b (space quantities) and 2.2.7.11 (fixed furnishing in NL-SfB group 90). The rules are re-implementations against the published requirements, carried over unchanged from the former built-in ILS engine; no validator code is copied. Section references not re-checked against the current publication.",
+        "scope": "elements",
+        "headline": "adoption",
+        "adoptionMin": 0.2,
+        "badge": true,
+        "elementTypes": [
+          "IfcWall",
+          "IfcWallStandardCase",
+          "IfcSlab",
+          "IfcRoof",
+          "IfcColumn",
+          "IfcBeam",
+          "IfcMember",
+          "IfcWindow",
+          "IfcDoor",
+          "IfcStair",
+          "IfcStairFlight",
+          "IfcRamp",
+          "IfcRampFlight",
+          "IfcCurtainWall",
+          "IfcPlate",
+          "IfcCovering",
+          "IfcRailing",
+          "IfcBuildingElementProxy",
+          "IfcPipeSegment",
+          "IfcPipeFitting",
+          "IfcDuctSegment",
+          "IfcDuctFitting",
+          "IfcFlowTerminal",
+          "IfcSanitaryTerminal",
+          "IfcLightFixture",
+          "IfcSwitchingDevice",
+          "IfcOutlet",
+          "IfcDistributionElement",
+          "IfcFurnishingElement",
+          "IfcFooting",
+          "IfcPile"
+        ],
+        "classification": {
+          "name": "NL/SfB",
+          "keys": [
+            "nl-sfb",
+            "nl/sfb",
+            "nlsfb",
+            "nl_sfb",
+            "sfbcode",
+            "sfb-code",
+            "sfb code",
+            "classificationcode",
+            "classification code",
+            "classification"
+          ],
+          "psetContains": "sfb",
+          "psetKeys": [
+            "code",
+            "value",
+            "elementcode"
+          ],
+          "objectTypePatterns": [
+            "\\((\\d{2})\\)",
+            "^(\\d{2})[.\\-\\s]"
+          ],
+          "formatPattern": "^\\d{2}(?:\\.\\d\\d?)*$",
+          "groupPattern": "^(\\d{2})",
+          "groups": {
+            "11": "Grondwerk",
+            "13": "Vloeren op grond",
+            "16": "Funderingen",
+            "21": "Buitenwanden",
+            "22": "Binnenwanden",
+            "23": "Vloeren",
+            "24": "Trappen en hellingen",
+            "27": "Daken",
+            "28": "Hoofddraagconstructie",
+            "31": "Buitenramen",
+            "32": "Buitendeuren",
+            "33": "Binnenramen",
+            "34": "Binnendeuren",
+            "37": "Dakramen/lichtkoepels",
+            "41": "Wandafwerkingen buiten",
+            "42": "Wandafwerkingen binnen",
+            "43": "Vloerafwerkingen",
+            "44": "Trapafwerkingen",
+            "45": "Plafondafwerkingen",
+            "47": "Dakafwerkingen",
+            "52": "Afvoer/riolering",
+            "53": "Watervoorziening",
+            "54": "Gasvoorziening",
+            "55": "Koeling",
+            "56": "Verwarming",
+            "57": "Ventilatie",
+            "61": "Elektrische voorziening",
+            "62": "Krachtstroom",
+            "63": "Verlichting",
+            "64": "Communicatie",
+            "66": "Transport (liften)",
+            "68": "Beveiliging",
+            "73": "Terreinverharding",
+            "74": "Terreinafscheiding",
+            "90": "Vaste inrichting"
+          },
+          "expected": {
+            "IfcWall": [
+              "21",
+              "22"
+            ],
+            "IfcWallStandardCase": [
+              "21",
+              "22"
+            ],
+            "IfcSlab": [
+              "13",
+              "23",
+              "43"
+            ],
+            "IfcRoof": [
+              "27"
+            ],
+            "IfcColumn": [
+              "28"
+            ],
+            "IfcBeam": [
+              "28"
+            ],
+            "IfcMember": [
+              "28"
+            ],
+            "IfcWindow": [
+              "31",
+              "33",
+              "37"
+            ],
+            "IfcDoor": [
+              "32",
+              "34"
+            ],
+            "IfcStair": [
+              "24"
+            ],
+            "IfcStairFlight": [
+              "24"
+            ],
+            "IfcRamp": [
+              "24"
+            ],
+            "IfcRampFlight": [
+              "24"
+            ],
+            "IfcCurtainWall": [
+              "21"
+            ],
+            "IfcPlate": [
+              "28"
+            ],
+            "IfcCovering": [
+              "41",
+              "42",
+              "43",
+              "44",
+              "45",
+              "47"
+            ],
+            "IfcRailing": [
+              "34",
+              "28"
+            ],
+            "IfcSpace": [
+              "--"
+            ],
+            "IfcBuildingElementProxy": [
+              "--"
+            ],
+            "IfcPipeSegment": [
+              "52",
+              "53",
+              "54"
+            ],
+            "IfcPipeFitting": [
+              "52",
+              "53",
+              "54"
+            ],
+            "IfcDuctSegment": [
+              "57"
+            ],
+            "IfcDuctFitting": [
+              "57"
+            ],
+            "IfcFlowTerminal": [
+              "53",
+              "55",
+              "56",
+              "57",
+              "63"
+            ],
+            "IfcSanitaryTerminal": [
+              "53"
+            ],
+            "IfcLightFixture": [
+              "63"
+            ],
+            "IfcSwitchingDevice": [
+              "61",
+              "62"
+            ],
+            "IfcOutlet": [
+              "62"
+            ],
+            "IfcDistributionElement": [
+              "52",
+              "53",
+              "54",
+              "55",
+              "56",
+              "57",
+              "61",
+              "62",
+              "63",
+              "64"
+            ],
+            "IfcFurnishingElement": [
+              "90"
+            ]
+          },
+          "unknownGroupLabel": "Onbekend",
+          "noCodeLabel": "(geen code)",
+          "distLabel": "NL/SfB Verdeling"
+        },
+        "compliance": {
+          "minorMax": 2,
+          "label": "ILS Compliance"
+        },
+        "checks": [
+          {
+            "id": "noNLSfB",
+            "kind": "classificationMissing",
+            "label": "Geen NL/SfB classificatie",
+            "sev": "error",
+            "cat": "nlsfb",
+            "weight": 2
+          },
+          {
+            "id": "invalidNLSfB",
+            "kind": "classificationFormat",
+            "label": "Ongeldig NL/SfB formaat",
+            "sev": "error",
+            "cat": "nlsfb",
+            "detail": "Code: \"{code}\""
+          },
+          {
+            "id": "mismatchNLSfB",
+            "kind": "classificationExpected",
+            "label": "NL/SfB komt niet overeen met IFC type",
+            "sev": "warn",
+            "cat": "nlsfb",
+            "detail": "{code} ↔ {ifcType} (verwacht: {expected})"
+          },
+          {
+            "id": "missingILSProp",
+            "kind": "requiredProps",
+            "label": "Ontbrekende ILS-verplichte eigenschappen",
+            "sev": "warn",
+            "cat": "properties",
+            "props": {
+              "IfcWall": [
+                "IsExternal",
+                "LoadBearing",
+                "FireRating",
+                "AcousticRating",
+                "ThermalTransmittance"
+              ],
+              "IfcWallStandardCase": [
+                "IsExternal",
+                "LoadBearing",
+                "FireRating",
+                "AcousticRating",
+                "ThermalTransmittance"
+              ],
+              "IfcSlab": [
+                "IsExternal",
+                "LoadBearing",
+                "FireRating",
+                "AcousticRating"
+              ],
+              "IfcRoof": [
+                "IsExternal",
+                "ThermalTransmittance"
+              ],
+              "IfcDoor": [
+                "IsExternal",
+                "FireRating",
+                "AcousticRating"
+              ],
+              "IfcWindow": [
+                "IsExternal",
+                "ThermalTransmittance"
+              ],
+              "IfcColumn": [
+                "LoadBearing",
+                "FireRating"
+              ],
+              "IfcBeam": [
+                "LoadBearing",
+                "FireRating"
+              ],
+              "IfcMember": [
+                "LoadBearing"
+              ],
+              "IfcCurtainWall": [
+                "IsExternal",
+                "ThermalTransmittance"
+              ],
+              "IfcStair": [
+                "FireRating"
+              ],
+              "IfcRamp": [
+                "FireRating"
+              ],
+              "IfcCovering": [
+                "FireRating"
+              ]
+            }
+          },
+          {
+            "id": "noDescription",
+            "kind": "attribute",
+            "attr": "description",
+            "notEqualAttr": "name",
+            "report": false
+          },
+          {
+            "id": "noMaterial",
+            "kind": "attribute",
+            "attr": "material",
+            "report": false
+          },
+          {
+            "id": "noStorey",
+            "kind": "attribute",
+            "attr": "storey",
+            "report": false
+          },
+          {
+            "id": "noObjectType",
+            "kind": "attribute",
+            "attr": "objectType",
+            "report": false
+          },
+          {
+            "id": "noName",
+            "kind": "attribute",
+            "attr": "name",
+            "label": "Geen elementnaam",
+            "sev": "warn",
+            "cat": "naming"
+          },
+          {
+            "id": "storeyNaming",
+            "kind": "entityName",
+            "ifcTypes": [
+              "IfcBuildingStorey"
+            ],
+            "pattern": "^-?\\d{2}(\\s.+)?$",
+            "emptyDetail": "(empty)",
+            "label": "Bouwlaag naamgeving (ILS 3.3)",
+            "sev": "info",
+            "cat": "naming"
+          },
+          {
+            "id": "doorNaming",
+            "kind": "elementName",
+            "ifcTypes": [
+              "IfcDoor"
+            ],
+            "pattern": "^D[\\s\\-_]?\\d{2,4}",
+            "flags": "i",
+            "emptyDetail": "(empty)",
+            "label": "Deurnaamgeving D-### (ILS 3.5)",
+            "sev": "info",
+            "cat": "naming"
+          },
+          {
+            "id": "spaceIncomplete",
+            "kind": "spaceCompleteness",
+            "ifcTypes": [
+              "IfcSpace"
+            ],
+            "attrs": [
+              "name",
+              "longName",
+              "objectType"
+            ],
+            "props": [
+              "IsExternal"
+            ],
+            "quantities": [
+              {
+                "label": "NetFloorArea",
+                "pattern": "netfloorarea|net\\s*floor\\s*area|netarea"
+              },
+              {
+                "label": "GrossFloorArea",
+                "pattern": "grossfloorarea|gross\\s*floor\\s*area"
+              },
+              {
+                "label": "Height",
+                "pattern": "^(height|finishceilingheight|finish\\s*ceiling\\s*height)$"
+              }
+            ],
+            "label": "IfcSpace onvolledig: naam, classificatie of hoeveelheden (ILS 4.1 / RVB 2.2.7.6)",
+            "sev": "warn",
+            "cat": "properties"
+          },
+          {
+            "id": "fireRatingInvalid",
+            "kind": "propertyPattern",
+            "ifcTypes": [
+              "IfcWall",
+              "IfcWallStandardCase"
+            ],
+            "prop": "FireRating",
+            "pattern": "^(REI|EI|R|E)?\\s*-?\\s*(30|60|90|120|180|240)$",
+            "flags": "i",
+            "detail": "Value: \"{value}\" (expected 30/60/90/120)",
+            "label": "FireRating ongeldige waarde (ILS 4.5)",
+            "sev": "warn",
+            "cat": "properties"
+          },
+          {
+            "id": "extWallNoUValue",
+            "kind": "requiredWhen",
+            "ifcTypes": [
+              "IfcWall",
+              "IfcWallStandardCase"
+            ],
+            "when": "IsExternal",
+            "require": "ThermalTransmittance",
+            "label": "Buitenwand zonder ThermalTransmittance (ILS 4.6)",
+            "sev": "warn",
+            "cat": "properties"
+          },
+          {
+            "id": "loadBearingInvalidMaterial",
+            "kind": "materialPattern",
+            "ifcTypes": [
+              "IfcWall",
+              "IfcWallStandardCase"
+            ],
+            "when": "LoadBearing",
+            "pattern": "\\b(beton|concrete|kalkzandsteen|limestone|cellular|metselwerk|masonry|brick|staal|steel|reinforced)\\b",
+            "flags": "i",
+            "label": "Dragende wand: niet-constructief materiaal (ILS 4.7.2)",
+            "sev": "warn",
+            "cat": "properties"
+          },
+          {
+            "id": "mepNoRenovationStatus",
+            "kind": "propertyValue",
+            "ifcTypes": [
+              "IfcFlowSegment",
+              "IfcPipeSegment",
+              "IfcDuctSegment",
+              "IfcCableSegment",
+              "IfcCableCarrierSegment"
+            ],
+            "props": [
+              "RenovationStatus",
+              "Status"
+            ],
+            "pattern": "^(bestaand|nieuw|te\\s+slopen|existing|new|demolish(ed)?|to\\s+(be\\s+)?demolish(ed)?|retained)$",
+            "flags": "i",
+            "missingDetail": "(missing)",
+            "label": "MEP segment zonder RenovationStatus (ILS 4.8)",
+            "sev": "info",
+            "cat": "properties"
+          }
+        ]
+      },
+      {
+        "id": "rvb",
+        "label": "RVB BIM Norm",
+        "title": "RVB BIM Norm v1.1",
+        "source": "RVB BIM Norm v1.1, Rijksvastgoedbedrijf / buildingSMART Benelux, project-level metadata sections 2.2.7.1-2.2.7.4 and 2.2.7.7. Re-implementations against the published requirements, carried over unchanged from the former built-in RVB engine; section references not re-checked against the current publication.",
+        "note": "Rijksvastgoedbedrijf BIM Norm v1.1 project/site/building/zone metadata — a Dutch central-government client standard, shown for visibility only and excluded from the Quality Score and the issue badge.",
+        "scope": "models",
+        "headline": "never",
+        "badge": false,
+        "checks": [
+          {
+            "id": "projectIncomplete",
+            "kind": "spatialEntity",
+            "entity": "project",
+            "require": [
+              "name"
+            ],
+            "label": "IfcProject zonder naam (RVB 2.2.7.1)",
+            "sev": "warn",
+            "cat": "metadata"
+          },
+          {
+            "id": "siteIncomplete",
+            "kind": "spatialEntity",
+            "entity": "site",
+            "require": [
+              "name",
+              "georefLatLon",
+              "georefElevation"
+            ],
+            "label": "IfcSite: naam of georeferentie ontbreekt (RVB 2.2.7.2)",
+            "sev": "info",
+            "cat": "metadata"
+          },
+          {
+            "id": "buildingIncomplete",
+            "kind": "spatialEntity",
+            "entity": "building",
+            "require": [
+              "name"
+            ],
+            "label": "IfcBuilding zonder naam (RVB 2.2.7.3)",
+            "sev": "warn",
+            "cat": "metadata"
+          },
+          {
+            "id": "zoneIncomplete",
+            "kind": "spatialEntity",
+            "entity": "zone",
+            "require": [
+              "name",
+              "objectType"
+            ],
+            "label": "IfcZone: naam of ObjectType ontbreekt (RVB 2.2.7.7)",
+            "sev": "info",
+            "cat": "metadata"
+          },
+          {
+            "id": "storeyNoElevation",
+            "kind": "spatialEntity",
+            "entity": "storey",
+            "require": [
+              "elevation"
+            ],
+            "label": "Bouwlaag zonder Elevation (RVB 2.2.7.4)",
+            "sev": "info",
+            "cat": "metadata"
+          }
+        ]
+      }
+    ],
+    "idsSpecs": [
+      {
+        "name": "NL-SfB Classification",
+        "description": "Validates that physical elements carry a NL-SfB classification code (checks NL-SfB, NLsfb, Classification.Reference and common Revit psets)",
+        "rules": [
+          {
+            "desc": "Physical elements must have a NL-SfB code",
+            "applicability": {
+              "ifcType": "(?!IfcSpace|IfcZone|IfcGroup|IfcSystem|IfcSite|IfcBuilding|IfcBuildingStorey|IfcAnnotation|IfcGrid).*"
+            },
+            "requirement": {
+              "property": {
+                "pset": "",
+                "name": "NL-SfB",
+                "pattern": ".+"
+              }
+            },
+            "severity": "error"
+          },
+          {
+            "desc": "Physical elements must have a NL-SfB code (NLsfb variant)",
+            "applicability": {
+              "ifcType": "(?!IfcSpace|IfcZone|IfcGroup|IfcSystem|IfcSite|IfcBuilding|IfcBuildingStorey|IfcAnnotation|IfcGrid).*"
+            },
+            "requirement": {
+              "property": {
+                "pset": "",
+                "name": "NLsfb",
+                "pattern": ".+"
+              }
+            },
+            "severity": "warning"
+          },
+          {
+            "desc": "Physical elements must have a classification reference",
+            "applicability": {
+              "ifcType": "(?!IfcSpace|IfcZone|IfcGroup|IfcSystem|IfcSite|IfcBuilding|IfcBuildingStorey|IfcAnnotation|IfcGrid).*"
+            },
+            "requirement": {
+              "property": {
+                "pset": "Classification",
+                "name": "Reference",
+                "pattern": ".+"
+              }
+            },
+            "severity": "warning"
+          }
+        ]
+      }
+    ]
+  },
+  "naming": {
+    "spaceRoles": {
+      "corridor": "corridor|gang|\\bhal\\b|circulat|route|vlucht|escape|passage",
+      "sanitary": "toilet|\\bwc\\b|sanitair|bath|badkamer|douche|mindervalide|accessible|invalide|rolstoel"
+    },
+    "visibilityTerms": {
+      "exit": [
+        "uitgang"
+      ],
+      "desk": [
+        "werkplek"
+      ],
+      "nurse": [
+        "verpleeg"
+      ],
+      "patientRoom": [
+        "kamer"
+      ],
+      "reception": [
+        "balie",
+        "receptie"
+      ],
+      "entrance": [
+        "hoofdingang"
+      ],
+      "smoke": [
+        "rook"
+      ]
+    },
+    "revitDisciplineHints": {
+      "mep": [
+        "elektr",
+        "sanitair",
+        "leiding",
+        "kanaal",
+        "cv",
+        "w-install",
+        "e-install"
+      ],
+      "structural": [
+        "constructie",
+        "constructief",
+        "draag"
+      ],
+      "architectural": [
+        "bouwkund",
+        "interieur"
+      ]
+    },
+    "classificationKeys": [
+      {
+        "system": "NL-SfB",
+        "keys": [
+          "nlsfb",
+          "sfb"
+        ],
+        "objectTypePatterns": [
+          "\\((\\d\\d(?:\\.\\d\\d?)*)\\)",
+          "^(\\d\\d(?:\\.\\d\\d?)*)[.\\-\\s]"
+        ]
+      }
+    ],
+    "codeKeys": [
+      "nummer"
+    ]
+  },
   "classifications": [
     {
       "id": "nl-sfb",
       "name": "NL-SfB",
-      "aliases": ["NL-SfB", "NLSfB", "SfB", "NL/SfB"],
+      "aliases": [
+        "NL-SfB",
+        "NLSfB",
+        "SfB",
+        "NL/SfB"
+      ],
       "codePattern": "^([0-9]{1,2}(\\.[0-9]{1,3})?|[0-9]-)$",
       "source": "NL-SfB classificatie, tabel 1 (elementen), 4e druk — beheerd door BIM Loket, https://www.bimloket.nl/p/36/NL-SfB. Only the installation groups (5-, 6-) and fixed sanitary fixtures (74) are mapped; codes are matched as prefixes (longest wins).",
       "map": {

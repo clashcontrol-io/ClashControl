@@ -69,6 +69,13 @@ const CASES = [
       mapConversion: { eastings: 150000, northings: 450000, epsg: 'RD_New' },
     },
   },
+  // IfcPostalAddress.Country (IfcSite.SiteAddress + IfcBuilding.BuildingAddress):
+  // the country-pack resolver's strongest signal — both paths must read it.
+  {
+    name: 'postal address (IfcPostalAddress.Country)',
+    generate: { storeyCount: 1, wallsPerStorey: 2, postalAddress: { site: 'Nederland', building: 'Netherlands' } },
+    expectAddress: ['Nederland', 'Netherlands'],
+  },
   {
     name: 'degenerate record (null-valued property)',
     generate: { storeyCount: 1, wallsPerStorey: 2, withPsets: true },
@@ -173,6 +180,8 @@ async function loadAndFingerprint(forceFallback, fixtureUrl) {
       unitScale: (model.stats || {}).unitScale != null ? model.stats.unitScale : null,
       georef: (model.spatialHierarchy && model.spatialHierarchy.sites && model.spatialHierarchy.sites[0] && model.spatialHierarchy.sites[0].georef) || null,
       mapConversion: (model.spatialHierarchy && model.spatialHierarchy.mapConversion) || null,
+      addresses: model.spatialHierarchy ? [].concat(model.spatialHierarchy.sites || [], model.spatialHierarchy.buildings || [])
+        .map((x) => (x.address && x.address.country) || null) : null,
       openings: model.elements.filter((e) => e.props && e.props.openings && e.props.openings.length)
         .map((e) => [e.expressId, e.props.openings]).sort((a, b) => a[0] - b[0]),
       semantics: model.elements.map((e) => {
@@ -344,7 +353,7 @@ try {
     const filePath = join(generatedDir, fileName);
     await writeFile(filePath, c.generateSemantic ? generateSemanticIfc(c.generateSemantic) : generateSyntheticIfc(c.generate));
     resolvedCases.push({ name: c.name, url: '/tests/fixtures/_generated-differential/' + fileName, expectSpaces: c.expectSpaces,
-      expectSemantics: c.expectSemantics, expectBoundaries: c.expectBoundaries });
+      expectSemantics: c.expectSemantics, expectBoundaries: c.expectBoundaries, expectAddress: c.expectAddress });
   }
 
   for (const c of resolvedCases) {
@@ -356,7 +365,7 @@ try {
     // silently if only the fingerprint were compared. Extend parity to the
     // full result payload for the fields those extra fixture cases exist
     // to exercise.
-    const pickCmp = (r) => ({ fingerprint: r.fingerprint, unitScale: r.unitScale, georef: r.georef, mapConversion: r.mapConversion, openings: r.openings,
+    const pickCmp = (r) => ({ fingerprint: r.fingerprint, unitScale: r.unitScale, georef: r.georef, mapConversion: r.mapConversion, addresses: r.addresses, openings: r.openings,
       semantics: r.semantics, disciplineInfo: r.disciplineInfo, boundaries: r.boundaries });
     const workerComparable = pickCmp(workerResult);
     const fallbackComparable = pickCmp(fallbackResult);
@@ -375,6 +384,11 @@ try {
     }
     if (c.expectOpenings != null && workerResult.openings.length !== c.expectOpenings) {
       fail('[' + c.name + '] expected ' + c.expectOpenings + ' host elements with openings, got ' + workerResult.openings.length);
+      allOk = false;
+      continue;
+    }
+    if (c.expectAddress && JSON.stringify(workerResult.addresses) !== JSON.stringify(c.expectAddress)) {
+      fail('[' + c.name + '] expected IfcPostalAddress countries ' + JSON.stringify(c.expectAddress) + ', got ' + JSON.stringify(workerResult.addresses));
       allOk = false;
       continue;
     }

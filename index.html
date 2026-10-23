@@ -779,6 +779,7 @@
 <script src="occlusion-core.js" defer></script>
 <script src="renderer-contract.js" defer></script>
 <script src="clash-discipline-core.js" defer></script>
+<script src="country-pack-core.js" defer></script>
 <script src="clash-assignment-core.js" defer></script>
 <script src="clash-identity-core.js" defer></script>
 <script src="clash-reconciliation-core.js" defer></script>
@@ -1953,19 +1954,21 @@ function startApp() {
     if (_savedLocale) _ccActiveLocale = _savedLocale;
   } catch(e){}
 
-  // ── Regulation Preset Registry ───────────────────────────────── i18n plumbing
-  // Regional building-code presets, same pure-JSON contract as locale packs —
-  // see regulations/loader.js. Keyed by the check engine they target — the
-  // registry itself is engine-agnostic (any engine key in a pack's `engines`
-  // object gets registered), but only accessibility.js actually reads it via
-  // its DEFAULTS < regionPreset < opts.thresholds precedence today.
-  // visibility.js is preset/rule-based, not a numeric-threshold dict, and
-  // data-quality.js checks BIM data hygiene rather than physical dimensions —
-  // neither has a natural "regional override" shape to plug into yet.
-  // Presets follow the MODEL's location (IfcSite), not the user's — a manual
-  // pick in Settings always overrides whatever was auto-suggested.
+  // ── Country packs + regulation presets ──────────────────────── i18n plumbing
+  // Country packs (regulations/*.json, pure JSON — see regulations/loader.js and
+  // country-pack-core.js) carry everything country-specific: building-code
+  // thresholds (`engines`), national data standards, CRS / 3D-tiles presets and
+  // name words. The core itself is IFC-neutral. Which pack applies follows the
+  // MODEL (window._ccResolveCountry: user override > IfcPostalAddress.Country >
+  // IfcProjectedCRS EPSG > IfcSite lat/lon), never the UI language. A resolved
+  // region is activated automatically WITHOUT being persisted (like the locale
+  // auto-detect); only a pick in Settings is saved (`cc_regulation_region`:
+  // a region id, 'none' = always IFC-neutral, absent/'' = automatic).
   var _ccRegulationPresets = {};  // {engine: {region: {region, name, engine, thresholds}}}
+  var _ccCountryPacks = {};       // region -> pack (validated sections)
   var _ccActiveRegulationRegion = null;
+  var _ccRegionOverride = null;   // null = automatic, 'none', or a region id
+  var _ccRegionAuto = {region:null, reason:'none', detail:''};
 
   window._ccRegisterRegulationPreset = function(preset) {
     if (!preset || !preset.region || !preset.engine || !preset.thresholds) return;
@@ -1973,29 +1976,106 @@ function startApp() {
     _ccRegulationPresets[preset.engine][preset.region] = preset;
     window.dispatchEvent(new Event('cc-regulation-changed'));
   };
-
-  window._ccSetRegulationRegion = function(region) {
-    _ccActiveRegulationRegion = region || null;
-    try { localStorage.setItem('cc_regulation_region', _ccActiveRegulationRegion || ''); } catch(e){}
+  // Registers a whole country pack (data only — never activates it). Returns
+  // false (nothing registered) when a section fails validation.
+  window._ccRegisterCountryPack = function(pack) {
+    var core = window._ccCountryPackCore;
+    if (!pack || typeof pack.region !== 'string' || !core) return false;
+    var errs = core.validateSections(pack);
+    if (errs.length) { console.warn('[Regulations] pack ' + pack.region + ' rejected:', errs); return false; }
+    _ccCountryPacks[pack.region] = pack;
+    Object.keys(pack.engines || {}).forEach(function(engine) {
+      if (!_ccRegulationPresets[engine]) _ccRegulationPresets[engine] = {};
+      _ccRegulationPresets[engine][pack.region] = {region:pack.region, engine:engine, name:pack.name, thresholds:pack.engines[engine]};
+    });
+    window.dispatchEvent(new Event('cc-country-packs-changed'));
     window.dispatchEvent(new Event('cc-regulation-changed'));
+    return true;
   };
-
+  window._ccGetCountryPacks = function() {
+    return Object.keys(_ccCountryPacks).sort().map(function(r){ return _ccCountryPacks[r]; });
+  };
+  // The active pack (or the named one); null = IFC-neutral.
+  window._ccGetCountryPack = function(region) {
+    var r = region || _ccActiveRegulationRegion;
+    return (r && _ccCountryPacks[r]) || null;
+  };
+  window._ccResolveCountry = function(models) {
+    var core = window._ccCountryPackCore;
+    var ov = _ccRegionOverride === 'none' ? {mode:'none'} : _ccRegionOverride ? {mode:'user', region:_ccRegionOverride} : {mode:'auto'};
+    if (!core) return {region: ov.mode === 'user' ? ov.region : null, reason: ov.mode === 'user' ? 'user' : 'none', detail:''};
+    var ms = models || (window._ccLatestState && window._ccLatestState.models) || [];
+    return core.resolveCountry(window._ccGetCountryPacks(), ms, ov);
+  };
+  function _ccApplyRegion(next) {
+    next = next || null;
+    if (next === _ccActiveRegulationRegion) return;
+    _ccActiveRegulationRegion = next;
+    window.dispatchEvent(new Event('cc-regulation-changed'));
+  }
+  // Re-resolves the region for the loaded models; activates it without saving.
+  window._ccAutoRegion = function(models) {
+    var r = window._ccResolveCountry(models);
+    _ccRegionAuto = r;
+    _ccApplyRegion(r.region && (_ccCountryPacks[r.region] || r.reason === 'user') ? r.region : null);
+    return r;
+  };
+  window._ccGetRegionResolution = function() { return _ccRegionAuto; };
+  // Settings pick: a region id (saved), 'none' (saved: always IFC-neutral) or
+  // null/'' (automatic — the saved choice is cleared). {persist:false} applies
+  // without saving.
+  window._ccSetRegulationRegion = function(region, opts) {
+    _ccRegionOverride = region ? String(region) : null;
+    if (!opts || opts.persist !== false) {
+      try {
+        if (_ccRegionOverride) localStorage.setItem('cc_regulation_region', _ccRegionOverride);
+        else localStorage.removeItem('cc_regulation_region');
+      } catch(e){}
+    }
+    window._ccAutoRegion();
+  };
+  // 'auto' | 'none' | 'user'
+  window._ccGetRegulationMode = function() { return _ccRegionOverride === 'none' ? 'none' : _ccRegionOverride ? 'user' : 'auto'; };
   window._ccGetRegulationRegion = function() { return _ccActiveRegulationRegion; };
   window._ccGetRegulationPresets = function() { return _ccRegulationPresets; };
 
-  // Returns the active region's thresholds for an engine, or null (engine
-  // keeps its own built-in defaults) — never throws on an unknown region/engine.
+  // Returns the active region's thresholds for an engine, or null (no pack:
+  // the engine has no regional values) — never throws on an unknown region/engine.
   window._ccGetRegulationPreset = function(region, engine) {
     var forEngine = _ccRegulationPresets[engine];
     var r = region || _ccActiveRegulationRegion;
     if (!forEngine || !r || !forEngine[r]) return null;
     return forEngine[r].thresholds;
   };
+  window.addEventListener('cc-country-packs-changed', function(){ window._ccAutoRegion(); });
 
   try {
     var _savedRegion = localStorage.getItem('cc_regulation_region');
-    if (_savedRegion) _ccActiveRegulationRegion = _savedRegion;
+    if (_savedRegion) { _ccRegionOverride = _savedRegion; if (_savedRegion !== 'none') _ccActiveRegulationRegion = _savedRegion; }
   } catch(e){}
+
+  // Re-renders a component when the active country pack (or pack data)
+  // changes; returns the active region id (null = IFC-neutral).
+  function useCcRegion() {
+    var st = useState(0), setTick = st[1];
+    useEffect(function(){
+      function on(){ setTick(function(n){ return n + 1; }); }
+      window.addEventListener('cc-regulation-changed', on);
+      return function(){ window.removeEventListener('cc-regulation-changed', on); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setTick is a useState setter (stable identity)
+    }, []);
+    return window._ccGetRegulationRegion ? window._ccGetRegulationRegion() : null;
+  }
+  // Human-readable "why this country pack" line for Settings / panels.
+  function _ccRegionReasonText(res) {
+    if (!res) return '';
+    var d = res.detail || '';
+    if (res.reason === 'address') return _cc_t('region.reason.address','from the model address ({v})',{v:d});
+    if (res.reason === 'crs') return _cc_t('region.reason.crs','from the model\u2019s coordinate system ({v})',{v:d});
+    if (res.reason === 'site') return _cc_t('region.reason.site','from the site location ({v})',{v:d});
+    if (res.reason === 'user') return _cc_t('region.reason.user','chosen in Settings');
+    return '';
+  }
 
   function _itemEids(item) {
     var ids=[];
@@ -4586,6 +4666,18 @@ function startApp() {
 
   function extractSpatialHierarchy(api, modelID) {
     var hierarchy = {project:null, sites:[], buildings:[], zones:[]};
+    // IfcPostalAddress.Country of IfcSite.SiteAddress / IfcBuilding.BuildingAddress:
+    // the strongest country signal for the country-pack resolver. Only the
+    // country is kept (no street/town/postcode in the model object).
+    function _addressOf(ref) {
+      try {
+        var aid = ref && (ref.value != null ? ref.value : ref);
+        if (typeof aid !== 'number') return null;
+        var a = api.GetLine(modelID, aid);
+        var country = a ? safeStr(a.Country).trim() : '';
+        return country ? {country:country.slice(0, 80)} : null;
+      } catch(e) { return null; }
+    }
     try {
       var projIds = api.GetLineIDsWithType(modelID, IFC.IFCPROJECT);
       if (projIds.size() > 0) {
@@ -4615,6 +4707,8 @@ function startApp() {
           if (lat != null || lon != null || elev != null) {
             site.georef = {refLat:lat, refLon:lon, refElev:elev, source:'IfcSite'};
           }
+          var siteAddr = _addressOf(sLine.SiteAddress);
+          if (siteAddr) site.address = siteAddr;
           hierarchy.sites.push(site);
         } catch(e) {}
       }
@@ -4671,7 +4765,10 @@ function startApp() {
       for (var i = 0; i < bldIds.size(); i++) {
         try {
           var bLine = api.GetLine(modelID, bldIds.get(i));
-          hierarchy.buildings.push({id:bldIds.get(i), name:safeStr(bLine.Name)||'IfcBuilding', description:safeStr(bLine.Description), _hasName:!!safeStr(bLine.Name)});
+          var bld = {id:bldIds.get(i), name:safeStr(bLine.Name)||'IfcBuilding', description:safeStr(bLine.Description), _hasName:!!safeStr(bLine.Name)};
+          var bldAddr = _addressOf(bLine.BuildingAddress);
+          if (bldAddr) bld.address = bldAddr;
+          hierarchy.buildings.push(bld);
         } catch(e) {}
       }
       // IfcZone — optional grouping of spaces (fire compartments, HVAC zones,
@@ -35948,7 +36045,11 @@ function startApp() {
     var stLocalePacks = useState([]), localePacks=stLocalePacks[0], setLocalePacks=stLocalePacks[1];
     var stRegionPacks = useState([]), regionPacks=stRegionPacks[0], setRegionPacks=stRegionPacks[1];
     var stLocaleSel = useState(function(){ return (window._ccGetLocale && window._ccGetLocale()) || ''; }), localeSel=stLocaleSel[0], setLocaleSel=stLocaleSel[1];
-    var stRegionSel = useState(function(){ return (window._ccGetRegulationRegion && window._ccGetRegulationRegion()) || ''; }), regionSel=stRegionSel[0], setRegionSel=stRegionSel[1];
+    var stRegionSel = useState(function(){
+      var mode = window._ccGetRegulationMode ? window._ccGetRegulationMode() : 'auto';
+      return mode === 'auto' ? '' : mode === 'none' ? 'none' : ((window._ccGetRegulationRegion && window._ccGetRegulationRegion()) || '');
+    }), regionSel=stRegionSel[0], setRegionSel=stRegionSel[1];
+    var activeRegion = useCcRegion();
     var SETTINGS_TABS = [
       {id:'general', label:'General'},
       {id:'measurement', label:'Measurement'},
@@ -36134,22 +36235,26 @@ function startApp() {
         </div>
         <div style=${TROW}>
           <div>
-            <div style=${TLBL}>${_cc_t('settings.regionalBuildingCode','Regional building code')}</div>
-            <div style=${TSUB}>${_cc_t('settings.thresholdsUsedByThe','Thresholds used by the Accessibility panel (door width, ramp slope, corridor/turning clearance). Defaults to NL Bbl/NEN.')}</div>
+            <div style=${TLBL}>${_cc_t('settings.regionalCode','Regional code (country pack)')}</div>
+            <div style=${TSUB}>${_cc_t('settings.regionalCodeSub','Country-specific rules and presets: accessibility thresholds, national data standards, coordinate systems and 3D context. Chosen automatically from the model (address, coordinate system or site location) unless you pick one here.')}</div>
+            ${!regionSel && html`<div style=${TSUB}>${activeRegion
+              ? _cc_t('settings.regionalCodeAuto','Active: {name} — {why}',{name:((window._ccGetCountryPack && window._ccGetCountryPack(activeRegion))||{}).name||activeRegion, why:_ccRegionReasonText(window._ccGetRegionResolution && window._ccGetRegionResolution())})
+              : _cc_t('settings.regionalCodeNeutral','Active: none — the model gives no country signal, so only IFC-neutral checks run.')}</div>`}
           </div>
-          <select value=${regionSel||''}
+          <select value=${regionSel||''} aria-label=${_cc_t('settings.regionalCode','Regional code (country pack)')}
             onChange=${function(e){
               var region = e.target.value;
               setRegionSel(region);
-              if (!region) { if (window._ccSetRegulationRegion) window._ccSetRegulationRegion(null); return; }
+              if (!region || region === 'none') { if (window._ccSetRegulationRegion) window._ccSetRegulationRegion(region || null); return; }
               if (window._ccLoadRegulationPack) {
                 window._ccLoadRegulationPack(region).then(function(){ if (window._ccSetRegulationRegion) window._ccSetRegulationRegion(region); })
                   .catch(function(){ setRegionSel(''); if (window._ccToast) window._ccToast(_cc_t('toast.couldNotLoadThatRegulation','Could not load that regulation pack.')); });
               }
             }}
             style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:6,padding:'.25rem .5rem',fontSize:'0.8rem'}}>
-            <option value="">${_cc_t('settings.nlBblNenDefault','NL Bbl/NEN (default)')}</option>
-            ${regionPacks.filter(function(pk){return pk.thresholds!==false;}).map(function(pk){return html`<option key=${pk.region} value=${pk.region}>${pk.name}${pk.verified===false?' (unverified)':''}</option>`;})}
+            <option value="">${_cc_t('settings.regionNoneDefault','None (IFC-neutral) — automatic from the model')}</option>
+            <option value="none">${_cc_t('settings.regionNoneAlways','None (IFC-neutral), never automatic')}</option>
+            ${regionPacks.map(function(pk){return html`<option key=${pk.region} value=${pk.region}>${pk.name}${pk.verified===false?' '+_cc_t('settings.unverifiedSuffix','(unverified)'):''}</option>`;})}
           </select>
         </div>
         </${React.Fragment}>`}
@@ -46551,6 +46656,11 @@ function startApp() {
     window._ccMeasurementsRef = s.measurements;  // exposed for render loop label projection
     if ((s.measurements||[]).length !== _prevMeasN && typeof invalidate === 'function') invalidate(2);
     try { if (typeof _sharedStartPolling === 'function') _sharedStartPolling(); } catch(e){}
+    // Country pack follows the loaded models (address / CRS / site location);
+    // activated without being saved — see window._ccAutoRegion.
+    useEffect(function(){
+      if (typeof window._ccAutoRegion === 'function') window._ccAutoRegion(s.models);
+    }, [s.models]);
     useEffect(function(){
       var t = s.prefs.theme||'light';
       document.documentElement.setAttribute('data-theme', t);

@@ -27,6 +27,9 @@ function generateSyntheticIfc(opts) {
   const withPsets = !!opts.withPsets;
   const geo = opts.geo || null; // {lat:[d,m,s], lon:[d,m,s], elev}
   const mapConversion = opts.mapConversion || null; // {eastings, northings, epsg}
+  // postalAddress: {site: 'Country', building: 'Country'} — IfcPostalAddress
+  // (Country only) on IfcSite.SiteAddress / IfcBuilding.BuildingAddress.
+  const postalAddress = opts.postalAddress || null;
   // withSpaces: one IfcSpace (room) per storey, an extruded rectangle that
   // encloses every wall of that storey (decomposed from the storey via
   // IfcRelAggregates, like real authoring tools write it). Its height is
@@ -71,7 +74,14 @@ function generateSyntheticIfc(opts) {
   const refElev = geo && geo.elev != null
     ? (String(geo.elev).indexOf('.') === -1 ? `${geo.elev}.` : `${geo.elev}`)
     : '$';
-  lines.push(`#${siteId}=IFCSITE('0SynthSite0000000000${String(siteId).padStart(2, '0')}',$,'Site',$,$,#${sitePlacementId},$,$,.ELEMENT.,${refLat},${refLon},${refElev},$,$);`);
+  const addrLine = (country) => {
+    const aid = next();
+    lines.push(`#${aid}=IFCPOSTALADDRESS($,$,$,$,('Synthetic street 1'),$,'Synthetic town',$,'0000',${country == null ? '$' : `'${country}'`});`);
+    return `#${aid}`;
+  };
+  const siteAddr = postalAddress && postalAddress.site != null ? addrLine(postalAddress.site) : '$';
+  const bldAddr = postalAddress && postalAddress.building != null ? addrLine(postalAddress.building) : '$';
+  lines.push(`#${siteId}=IFCSITE('0SynthSite0000000000${String(siteId).padStart(2, '0')}',$,'Site',$,$,#${sitePlacementId},$,$,.ELEMENT.,${refLat},${refLon},${refElev},$,${siteAddr});`);
   lines.push(`#${sitePlacementId}=IFCLOCALPLACEMENT($,#${axisId});`);
   if (mapConversion) {
     // IFC4 IfcMapConversion ties the project's local engineering coords
@@ -87,7 +97,7 @@ function generateSyntheticIfc(opts) {
 
   const buildingId = next();
   const buildingPlacementId = next();
-  lines.push(`#${buildingId}=IFCBUILDING('0SynthBldg0000000000${String(buildingId).padStart(2, '0')}',$,'Building',$,$,#${buildingPlacementId},$,$,.ELEMENT.,$,$,$);`);
+  lines.push(`#${buildingId}=IFCBUILDING('0SynthBldg0000000000${String(buildingId).padStart(2, '0')}',$,'Building',$,$,#${buildingPlacementId},$,$,.ELEMENT.,$,$,${bldAddr});`);
   lines.push(`#${buildingPlacementId}=IFCLOCALPLACEMENT(#${sitePlacementId},#${axisId});`);
 
   lines.push(`#${next()}=IFCRELAGGREGATES('0SynthRelAg000000000${id}',$,$,$,#${projectId},(#${siteId}));`);

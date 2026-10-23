@@ -18,8 +18,11 @@ function makeSandbox() {
     fs.copyFileSync(path.join(__dirname, '..', 'scripts', f), path.join(root, 'scripts', f));
   });
   // The validators share their discipline-hint / classification-table
-  // checks with the app's core module (required as ../clash-discipline-core.js).
-  fs.copyFileSync(path.join(__dirname, '..', 'clash-discipline-core.js'), path.join(root, 'clash-discipline-core.js'));
+  // checks with the app's core modules (required as ../clash-discipline-core.js
+  // and ../country-pack-core.js).
+  ['clash-discipline-core.js', 'country-pack-core.js'].forEach((f) => {
+    fs.copyFileSync(path.join(__dirname, '..', f), path.join(root, f));
+  });
   fs.writeFileSync(path.join(root, 'locales', 'manifest.json'), '[]\n');
   fs.writeFileSync(path.join(root, 'regulations', 'manifest.json'), '[]\n');
   return root;

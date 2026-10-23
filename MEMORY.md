@@ -289,6 +289,8 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 Update at the start and end of every session; strike (~~…~~ + date) when done and delete struck items after ~30 days.
 
+- 2026-10-23: country packs — move country/language-specific behaviour out of the core into regulations/*.json (resolver `_ccResolveCountry`, IfcPostalAddress.Country, DQ standards engine with ILS/RVB as nl data, accessibility thresholds, CRS/3D-tiles presets, visibility/revit/smart-bridge name data).
+
 - ~~2026-10-23: IFC loading feels instant — display-only progressive preview, parallel multi-file parsing, "not drawn" report, per-phase memory (flags `progressivePreview`/`parallelLoad`, default on; `tests/browser/progressive-load.mjs`, differential parallel+preview case).~~ (2026-10-23)
 - ~~2026-10-23: pressure-test harness B1–B4 (`tests/pressure/`: dims + seeded covering arrays, harness, invariants I1–I3/I5–I12/I15/I16, ddmin shrinker, round-trips; `tests/pressure.test.js`). Found + fixed: IFC worker Float32 placement transforms (georef far: mm shifts), Cancel not stopping the load batch, demoted contained pairs vanishing, parked models dropped from saved projects, list bucket notices not adding up, BCF topics losing components without a camera, uncaught section-worker spawn error. Next: B5 adapters (roles/exclusion, buckets, shards, storage knobs, status undo), B6 CI wiring.~~ (2026-10-23)
 
