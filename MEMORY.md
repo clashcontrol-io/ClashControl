@@ -297,6 +297,8 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- 2026-10-23: first-load / first-run speed — single-file sharded geometry streaming (branch `shard-load`, result must be identical to the one-worker load), first clash run narrow-phase waste (branch `first-run`, bit-identical). Done on the branch: storage inventory from IndexedDB v4 index keys (`tests/browser/storage-metadata.mjs`), shader error checks off unless `?ccDebugShaders`.
+
 - ~~2026-10-23: re-run cost proportional to the change (branch `rerun-cost`): cached vertex-sample/props hashes, pool + chunk loop sized by pairs to test (unchanged / tiny edits = one synchronous pass, no workers), classification reused when nothing was recomputed, one history write per run; `tests/browser/rerun-cost.mjs`.~~ (2026-10-23)
 - ~~2026-10-23: action cost — clash list windowed when grouped, memoised rows/headers/cards, incremental triage/grouping on edits, autosave off the interaction path (branch `action-cost`, `tests/browser/action-cost.mjs`).~~ (2026-10-23)
 
