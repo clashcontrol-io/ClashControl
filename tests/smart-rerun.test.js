@@ -240,8 +240,9 @@ test('the old mutable LRU pair cache is gone; the memo is only committed by a co
 });
 
 test('carry-over re-emits a fresh clone of the pristine snapshot; recorded snapshots are clones', () => {
-  assert.match(src, /Object\.assign\(\{\}, _snap, \{ id:uid\(\), createdAt:new Date\(\)\.toISOString\(\) \}\)/);
-  assert.match(src, /_nextSnaps\.set\(_pairKey\(pair\.mA, pair\.eA, pair\.mB, pair\.eB\), Object\.assign\(\{\}, clash\)\)/);
+  // object spread (= Object.assign({}, …): same keys/order/values, fast-mode object — see _recordSnap)
+  assert.match(src, /clashes\.push\(\{ \.\.\._snap, id:uid\(\), createdAt:new Date\(\)\.toISOString\(\) \}\)/);
+  assert.match(src, /_nextSnaps\.set\(_pairKey\(pair\.mA, pair\.eA, pair\.mB, pair\.eB\), \{ \.\.\.clash \}\)/);
 });
 
 test('rules.fullRerun bypasses the baseline; a local-engine run invalidates it', () => {

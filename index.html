@@ -3076,14 +3076,25 @@ function startApp() {
   // as _CANDIDATE_EST_BYTES elsewhere in this file), not a forensic
   // measurement — good enough to RANK models and to catch order-of-magnitude
   // drift, not to bill someone for RAM.
-  function _ccGeometryByteSize(g) {
+  // bufSeen (optional Map ArrayBuffer → bytes already counted): arrays that
+  // are views into one buffer (leanMemory: batched source geometry reads the
+  // batch's arrays) are charged once — never more than their buffer holds.
+  function _ccArrayBytes(a, bufSeen) {
+    if (!a || !a.byteLength) return 0;
+    if (!bufSeen || !a.buffer || !a.buffer.byteLength) return a.byteLength;
+    var had = bufSeen.get(a.buffer) || 0;
+    var add = Math.max(0, Math.min(a.byteLength, a.buffer.byteLength - had));
+    bufSeen.set(a.buffer, had + add);
+    return add;
+  }
+  function _ccGeometryByteSize(g, bufSeen) {
     var b = 0;
     if (!g || !g.attributes) return 0;
     for (var k in g.attributes) {
       var attr = g.attributes[k];
-      if (attr && attr.array && attr.array.byteLength) b += attr.array.byteLength;
+      if (attr && attr.array) b += _ccArrayBytes(attr.array, bufSeen);
     }
-    if (g.index && g.index.array && g.index.array.byteLength) b += g.index.array.byteLength;
+    if (g.index && g.index.array) b += _ccArrayBytes(g.index.array, bufSeen);
     return b;
   }
   // The InstancedMesh's BASE geometry is a SHARED reference with the original
@@ -3131,12 +3142,13 @@ function startApp() {
     var perModel = {}, totalBytes = 0, seenPropRefs = new Set();
     models.forEach(function (m) {
       var seenGeo = {}; // geometry.uuid -> true, per-model dedup
+      var bufSeen = new Map(); // shared buffers (batch ↔ source views) counted once
       var geoBytes = 0, batchBytes = 0, instBytes = 0, bvhBytes = 0, propBytes = 0, proxyCount = 0;
       (m.elements || []).forEach(function (el) {
         (el.meshes || []).forEach(function (pm) {
           proxyCount++;
           var g = pm && pm.geometry;
-          if (g && g.uuid && !seenGeo[g.uuid]) { seenGeo[g.uuid] = true; geoBytes += _ccGeometryByteSize(g); }
+          if (g && g.uuid && !seenGeo[g.uuid]) { seenGeo[g.uuid] = true; geoBytes += _ccGeometryByteSize(g, bufSeen); }
         });
         var triBytes = 0;
         if (el._wvCache && el._wvCache.byteLength) bvhBytes += el._wvCache.byteLength;
@@ -3147,7 +3159,7 @@ function startApp() {
       (m.meshes || []).forEach(function (mm) {
         if (!mm) return;
         if (mm.userData && mm.userData._isCCBatch && mm.geometry && mm.geometry.uuid && !seenGeo[mm.geometry.uuid]) {
-          seenGeo[mm.geometry.uuid] = true; batchBytes += _ccGeometryByteSize(mm.geometry);
+          seenGeo[mm.geometry.uuid] = true; batchBytes += _ccGeometryByteSize(mm.geometry, bufSeen);
         }
         if (mm.isInstancedMesh) instBytes += _ccInstancedExtraBytes(mm);
       });
@@ -6864,6 +6876,51 @@ function startApp() {
     return { k: k, budget: dm * 1073741824 * 0.5 };
   }
 
+  // Memory-aware IFC scheduling (leanMemory). The worker budget above is
+  // about the WORKERS' heaps; this one is about the MAIN thread's JS heap,
+  // which every parse lands in (transferred geometry, decode, batching,
+  // preview, props). Before a second parse starts next to running ones the
+  // batch projects its peak: used heap now + factor × (bytes of files still
+  // in flight + this file). factor starts at _CC_IFC_MAIN_COST_FACTOR and is
+  // refined by what the batch measured so far (heap peak above the batch's
+  // start ÷ bytes started). Over safeFraction of the heap limit
+  // (performance.memory.jsHeapSizeLimit, else deviceMemory × 0.5 GB) the
+  // batch goes SERIAL for good: one file at a time, never sharded, and the
+  // next parse starts only after the previous file's worker is gone (its
+  // props merged and its load-only data released). Commits stay in file
+  // order either way, so models, ids and element order are unchanged.
+  // limitBytes: test knob (an artificially low budget); last: the last
+  // batch's decisions (tests/diagnostics).
+  var _CC_IFC_MAIN_COST_FACTOR = 6;
+  var _ccIfcLoadMem = { safeFraction: 0.7, limitBytes: null, factor: _CC_IFC_MAIN_COST_FACTOR, last: null };
+  window._ccIfcLoadMem = _ccIfcLoadMem;
+  function _ccHeapNow() {
+    try {
+      var m = performance.memory;
+      if (m && m.jsHeapSizeLimit) return { used: m.usedJSHeapSize, limit: _ccIfcLoadMem.limitBytes || m.jsHeapSizeLimit, known: true };
+    } catch (_) {}
+    var dm = (typeof navigator !== 'undefined' && navigator.deviceMemory) || 4;
+    return { used: 0, limit: _ccIfcLoadMem.limitBytes || dm * 1073741824 * 0.5, known: false };
+  }
+  function _ccIfcMemBatch() {
+    var h0 = _ccHeapNow();
+    var mb = { startUsed: h0.used, peak: h0.used, startedBytes: 0, pendingBytes: 0, serial: false, committed: 0, decisions: [] };
+    mb.sample = function() { var h = _ccHeapNow(); if (h.used > mb.peak) mb.peak = h.used; return h; };
+    mb.factor = function() {
+      if (!mb.committed || !mb.startedBytes || !_ccHeapNow().known) return _ccIfcLoadMem.factor;
+      return Math.max(2, (mb.peak - mb.startUsed) / mb.startedBytes);
+    };
+    // May `bytes` more start next to what is in flight? (extra: e.g. the
+    // shard merge holding the shards' results and the merged message.)
+    mb.allows = function(bytes, extra) {
+      var h = mb.sample();
+      var projected = h.used + mb.factor() * (mb.pendingBytes + bytes) * (extra || 1);
+      return projected <= h.limit * _ccIfcLoadMem.safeFraction;
+    };
+    _ccIfcLoadMem.last = mb;
+    return mb;
+  }
+
   // Per-phase memory for stats.mem: the worker's per-phase samples (WASM
   // heap = running peak, worker JS heap where exposed) plus this thread's
   // JS heap when the result is decoded. Chrome-only APIs; null elsewhere.
@@ -7556,6 +7613,12 @@ function startApp() {
         _invalidateSoon();
       };
       h.progress = function() {};
+      // The stream ended (the parse result arrived): no batch can reference
+      // an earlier geometry any more, so drop the table — it held the
+      // worker's original arrays (Float32 normals, positions the batch has
+      // since copied) alive until the teardown. The drawn chunks are
+      // unaffected (built at batch time).
+      h.streamEnded = function() { if (!h.done) h.geo = {}; };
       // Tear down now (cancel, failure, fallback, or once the committed
       // model is in the scene).
       h.dispose = function() {
@@ -7941,6 +8004,7 @@ function startApp() {
   }
   function _ccDropEngineCaches(el) {
     if (!el) return;
+    if (typeof _bvhLRU !== 'undefined' && _bvhLRU.has(el)) _bvhLRU.delete(el);
     delete el._wvCache; delete el._triCache; delete el._bvhCache; delete el._topo; delete el._fbox;
   }
   function _ccEnsureWorldOrigin() {
@@ -7980,6 +8044,7 @@ function startApp() {
     });
     el._wvCache = new Float32Array(all);
     _bvhLRU.set(el, true);
+    _bvhLRUAccount(el);
     return el._wvCache;
   }
 
@@ -8025,7 +8090,8 @@ function startApp() {
     }
     el._triCache = out;
     _bvhLRU.set(el, true);
-    return el._triCache;
+    _bvhLRUAccount(el);
+    return out;
   }
   // A BufferAttribute whose getX/getY/getZ(i) are exactly array[i*itemSize+k]
   // (not interleaved, not normalized, not half-float).
@@ -8502,8 +8568,75 @@ function startApp() {
   }
   var _bvhLRU = new Map(); // element → true, insertion-ordered
 
+  // leanMemory: the cache is also capped by BYTES, sized from the heap
+  // headroom when a detection run starts (_ccCacheBudgetForRun). The element
+  // count cap alone bounds nothing on heavy elements (2,500 elements of 50k
+  // triangles hold gigabytes of world triangles + JS BVH nodes). Each cached
+  // element carries its estimated bytes (el._ccCacheBytes) and the map's
+  // delete/clear keep the running total; results never depend on the cap —
+  // an evicted element re-extracts the same triangles / tree on next use.
+  var _bvhLRUBytes = 0, _bvhCacheBytesCap = Infinity, _bvhByteEvictions = 0, _bvhCacheBytesPeak = 0;
+  var _CC_BVH_BYTES_PER_TRI = 60; // = _BVH_NODE_EST_BYTES_PER_TRI (residency ledger); local: tests evaluate this region on its own
+  _bvhLRU.delete = function(k) {
+    if (Map.prototype.has.call(this, k) && k) { _bvhLRUBytes -= (k._ccCacheBytes || 0); k._ccCacheBytes = 0; }
+    return Map.prototype.delete.call(this, k);
+  };
+  _bvhLRU.clear = function() {
+    Map.prototype.forEach.call(this, function(v, k) { if (k) k._ccCacheBytes = 0; });
+    _bvhLRUBytes = 0;
+    return Map.prototype.clear.call(this);
+  };
+  function _ccElCacheBytes(el) {
+    var b = 0, nt = 0;
+    if (el._wvCache) b += el._wvCache.byteLength || 0;
+    if (el._triCache) { b += el._triCache.byteLength || 0; nt = (el._triCache.length / 9) | 0; }
+    if (el._bvhCache) b += 64 + nt * 2 * _CC_BVH_BYTES_PER_TRI + nt * 4; // nodes + leaf index array
+    var t = el._topo;
+    if (t) b += 96 + (t.verts ? t.verts.length * 8 : 0) + (t.axes ? 256 : 0);
+    return b;
+  }
+  // Re-measure one cached element after one of its caches was filled, then
+  // evict the oldest entries (never this one) while over the byte cap.
+  function _bvhLRUAccount(el) {
+    if (!Map.prototype.has.call(_bvhLRU, el)) return;
+    var nb = _ccElCacheBytes(el);
+    _bvhLRUBytes += nb - (el._ccCacheBytes || 0);
+    el._ccCacheBytes = nb;
+    if (_bvhLRUBytes > _bvhCacheBytesPeak) _bvhCacheBytesPeak = _bvhLRUBytes;
+    while (_bvhLRUBytes > _bvhCacheBytesCap && _bvhLRU.size > 1) {
+      var old = _bvhLRU.keys().next().value;
+      if (old === el) break;
+      _bvhLRUEvict1();
+      _bvhByteEvictions++;
+    }
+  }
+  // Called by code that also runs inside the narrow-phase worker (_ccMeshTopo);
+  // the worker defines its own no-op of the same name.
+  function _ccCacheAccount(el) { _bvhLRUAccount(el); }
+  // Byte cap for one run: what is cached already plus a share of the free
+  // heap (performance.memory), else of deviceMemory; never below 64 MB so a
+  // pair's two elements always fit. Explicit override: storage.bvhCache.setMaxBytes.
+  var _bvhCacheBytesOverride = null;
+  var _CC_CACHE_HEADROOM_SHARE = 0.35;
+  function _ccCacheBudgetForRun() {
+    if (_bvhCacheBytesOverride != null) { _bvhCacheBytesCap = _bvhCacheBytesOverride; return _bvhCacheBytesCap; }
+    if (!(typeof _ccLeanMemory === 'function' && _ccLeanMemory())) { _bvhCacheBytesCap = Infinity; return _bvhCacheBytesCap; } // (guard: tests evaluate this region on its own)
+    var free = 0;
+    try {
+      var m = performance.memory;
+      if (m && m.jsHeapSizeLimit) free = Math.max(0, m.jsHeapSizeLimit * 0.9 - m.usedJSHeapSize);
+    } catch (_) {}
+    if (!free) {
+      var dm = (typeof navigator !== 'undefined' && navigator.deviceMemory) || 4;
+      free = dm * 1073741824 * 0.25;
+    }
+    _bvhCacheBytesCap = Math.max(64 * 1048576, _bvhLRUBytes + free * _CC_CACHE_HEADROOM_SHARE);
+    _bvhCacheBytesPeak = _bvhLRUBytes;
+    return _bvhCacheBytesCap;
+  }
+
   function _bvhLRUTouch(el) {
-    if (_bvhLRU.delete(el)) _bvhLRU.set(el, true);
+    if (Map.prototype.delete.call(_bvhLRU, el)) Map.prototype.set.call(_bvhLRU, el, true);
   }
   function _bvhLRUEvict1() {
     var old = _bvhLRU.keys().next().value;
@@ -8710,9 +8843,11 @@ function startApp() {
     if (!tris.length) return (el._bvhCache = null);
     var _we = window._ccWasmEngine, _fl = null;
     if (_we && typeof _we.bvhFlat === 'function' && _ccTrisFinite(tris)) _fl = _ccBvhFromFlat(_we.bvhFlat(tris), tris);
-    el._bvhCache = _fl || _buildBVHForTris(tris);
+    var bvh = _fl || _buildBVHForTris(tris);
+    el._bvhCache = bvh;
     _bvhLRU.set(el, true);
-    return el._bvhCache;
+    _bvhLRUAccount(el);
+    return bvh;
   }
 
   // Expose BVH + tri accessors so addons (visibility check, deviation
@@ -9280,6 +9415,7 @@ function startApp() {
       'var _wkBvhSrc=null;',
       'function _getBVH(E){if(E.bvh===undefined)E.bvh=(_wkBvhSrc&&_wkBvhSrc(E))||_buildBVHForTris(E.tris);return E.bvh;}',
       'function _ccFrameBox(E){return E.fbox;}',
+      'function _ccCacheAccount(E){}', // main thread: the byte-capped cache LRU; a worker element has none
       fns.map(function(f) { return f.toString(); }).join('\n'),
       '(' + _ccNarrowWorkerMain.toString() + ')();'
     ].join('\n');
@@ -9746,6 +9882,7 @@ function startApp() {
     }
     t = { tris: tris, closed: closed, orient: orient, verts: verts, nv: nv, axes: null };
     el._topo = t;
+    if (typeof _ccCacheAccount === 'function') _ccCacheAccount(el); // main: byte-capped LRU; worker: no-op shim
     return t;
   }
   // Up to _CC_SAT_MAX_AXES distinct unit face normals (sign-canonical), the
@@ -11210,6 +11347,17 @@ function startApp() {
     });
   }
 
+  // Exposed so the clash-list grouping/row UI (window._cc* plumbing) can
+  // reuse the IFC-type→human-words mapping of the detection core. Defined
+  // HERE, outside _detectClashesCore: a closure created inside it and stored
+  // on window kept that run's whole closure context — the raw result, the
+  // candidate list, the per-run maps — alive until the next run.
+  window._ccNiceTypeLabel = function(t) {
+    var core = window._ccClashClassificationCore;
+    if (core && typeof core.niceTypeLabel === 'function') return core.niceTypeLabel(t);
+    if (!t) return 'Element';
+    return String(t).replace(/^Ifc/i, '').replace(/([a-z])([A-Z])/g, '$1 $2') || 'Element';
+  };
   function _detectClashesCore(models, rules, onProgress, resolveAsync) {
     var _prof = {t0:performance.now(), phases:{}}; // profiling
     var _npSeq = _ccNarrowPoolRunStart(); // lets a superseded run's late cleanup avoid clobbering the live run's stats
@@ -11235,6 +11383,7 @@ function startApp() {
     var grpA = pick(rules.modelA), grpB = pick(rules.modelB);
     // One engine-frame origin for the whole run (see _ccChooseWorldOrigin).
     _ccChooseWorldOrigin(models);
+    if (typeof _ccCacheBudgetForRun === 'function') _ccCacheBudgetForRun();
     var maxGapM = (rules.maxGap||0)/1000;
     var minGapM = (rules.minGap||0)/1000;
     // Largest clearance any pair can ask for: the global gap or a larger
@@ -11320,11 +11469,6 @@ function startApp() {
       return sameModel ? (t + ' (self)') : t;
     }
 
-    // Exposed so the clash-list grouping/row UI (window._cc* plumbing, far
-    // below in the same startApp closure but nested in a sibling function —
-    // see CLAUDE.md globals discipline) can reuse the same IFC-type→human-
-    // words mapping instead of growing a second copy.
-    window._ccNiceTypeLabel = _niceTypeLabel;
 
     function _buildClashBase(eA, eB, mA, mB, point, sameModel) {
       var pA=eA.props||{}, pB=eB.props||{};
@@ -11474,7 +11618,11 @@ function startApp() {
     }
     function _recordSnap(pair, clash) {
       if (_nextSnaps.size >= _CC_RUNMEMO_MAX) { _memoOverflow = true; return; }
-      _nextSnaps.set(_pairKey(pair.mA, pair.eA, pair.mB, pair.eB), Object.assign({}, clash));
+      // Object spread, not Object.assign: same own keys, order and values,
+      // but V8 builds a fast-mode object (~0.4 KB for a clash) where an
+      // Object.assign copy of a ~50-field clash stays a dictionary (~3 KB) —
+      // and these snapshots live until the next run.
+      _nextSnaps.set(_pairKey(pair.mA, pair.eA, pair.mB, pair.eB), { ...clash });
     }
     var _clsCore = window._ccClashClassificationCore;
 
@@ -11679,7 +11827,7 @@ function startApp() {
         var _pk = _pairKey(mA, eA, mB, eB);
         var _snap = _memo.snaps.get(_pk);
         if (_snap) {
-          clashes.push(Object.assign({}, _snap, { id:uid(), createdAt:new Date().toISOString() }));
+          clashes.push({ ..._snap, id:uid(), createdAt:new Date().toISOString() }); // = Object.assign({}, _snap, {id, createdAt}), fast-mode (see _recordSnap)
           if (_nextSnaps.size < _CC_RUNMEMO_MAX) _nextSnaps.set(_pk, _snap); else _memoOverflow = true;
           _lastCarried = true;
           _nPairCacheReemit++;
@@ -11714,12 +11862,16 @@ function startApp() {
         var sizeDiff=Math.abs(sizeA.x-sizeB.x)+Math.abs(sizeA.y-sizeB.y)+Math.abs(sizeA.z-sizeB.z);
         if (sizeDiff<0.03 && ctrA.distanceTo(ctrB)<0.02) {
           var b=_buildClashBase(eA, eB, mA, mB, [ctrA.x,ctrA.y,ctrA.z], sameModel);
-          clashes.push(Object.assign(b.obj, {
+          // Object spread (= Object.assign(b.obj, {...}): same keys, order,
+          // values) — V8 keeps the ~50-field clash a fast-mode object
+          // (~0.4 KB) instead of a dictionary (~3 KB), and every copy of it
+          // downstream (memo snapshot, merged/state clash) inherits that.
+          clashes.push({ ...b.obj,
             type:'duplicate', distance:0,
             title:'Duplicate '+_niceTypeLabel(b.tA),
             description:b.nA+' \u2261 '+b.nB+' (same location & size)',
             overlapVolM3:sizeA.x*sizeA.y*sizeA.z, clearanceMm:null
-          }));
+          });
           return;
         }
       }
@@ -11867,7 +12019,7 @@ function startApp() {
         try { _rGroup = _roleIdx ? _ccClashRoleGroup(eA, eB, _roleIdx) : null; } catch (_rgErr) { _rGroup = null; }
         if (_rGroup) b.obj.roleGroup = _rGroup;
         if (isSoft) b.obj.requiredClearanceMm = Math.round(pairGapM*1000);
-        clashes.push(Object.assign(b.obj, {
+        clashes.push({ ...b.obj, // fast-mode object, see the duplicate case above
           type:kind, distance:dist,
           title:_niceClashTitle(b.tA, b.tB, sameModel), // placeholder: replaced by _ccApplyDefaultTitle right after the push
           description:b.tA+': '+b.nA+' ('+mA.name+') vs '+b.tB+': '+b.nB+' ('+mB.name+')',
@@ -11902,7 +12054,7 @@ function startApp() {
               max_gap_mm:Math.round(maxGapM*1000)
             };
           }()
-        }));
+        });
         _ccApplyDefaultTitle(clashes[clashes.length - 1]);
       }
     }
@@ -17099,11 +17251,20 @@ function startApp() {
           // (null = automatic sizing) and trims at once. Results never
           // depend on it — evicted elements re-extract when touched.
           bvhCache: {
-            stats: function(){ return { size: _bvhLRU.size, max: _BVH_CACHE_MAX_FN(), override: _bvhCacheMaxOverride, evictions: _bvhEvictions }; },
+            stats: function(){ return { size: _bvhLRU.size, max: _BVH_CACHE_MAX_FN(), override: _bvhCacheMaxOverride, evictions: _bvhEvictions,
+              bytes: _bvhLRUBytes, maxBytes: _bvhCacheBytesCap, bytesOverride: _bvhCacheBytesOverride, byteEvictions: _bvhByteEvictions, peakBytes: _bvhCacheBytesPeak }; },
             setMax: function(n){
               _bvhCacheMaxOverride = (n == null) ? null : Math.max(1, Math.floor(+n) || 1);
               if (_bvhCacheMaxOverride != null) { while (_bvhLRU.size > _bvhCacheMaxOverride) _bvhLRUEvict1(); }
               return _BVH_CACHE_MAX_FN();
+            },
+            // Byte cap (leanMemory): null = sized from the heap headroom at
+            // each run start; a number caps it explicitly and trims at once.
+            setMaxBytes: function(n){
+              _bvhCacheBytesOverride = (n == null) ? null : Math.max(1, Math.floor(+n) || 1);
+              _ccCacheBudgetForRun();
+              while (_bvhLRUBytes > _bvhCacheBytesCap && _bvhLRU.size) _bvhLRUEvict1();
+              return _bvhCacheBytesCap;
             }
           }
         },
@@ -25466,6 +25627,9 @@ function startApp() {
       var _batchGen = _ccLoadGeneration;
       var _ifcJobs = [], _plan = _ccIfcLoadPlan(), _schedParsing = 0, _schedAlive = 0, _schedAliveCost = 0;
       var _batchPreviews = [];
+      // leanMemory: main-heap projection per start (see _ccIfcMemBatch).
+      var _memB = (_parallel && _ccLeanMemory()) ? _ccIfcMemBatch() : null;
+      var _memTimer = _memB ? setInterval(function() { _memB.sample(); }, 100) : null;
       _ccLoadPreview.beginSession();
       function _schedPump() {
         for (var ji = 0; ji < _ifcJobs.length; ji++) {
@@ -25473,8 +25637,28 @@ function startApp() {
           if (j.started) continue;
           if (_schedParsing >= _plan.k) return;
           if (_schedAlive > 0 && _schedAliveCost + j.cost > _plan.budget) return;
+          if (_memB && _schedAlive > 0) {
+            if (_memB.serial) return;
+            if (!_memB.allows(j.f.size)) {
+              _memB.serial = true;
+              _memB.decisions.push({ file: j.f.name, serialAt: ji });
+              console.log('%c[IFC] memory: loading the rest of this batch one file at a time', 'color:#f59e0b');
+              return;
+            }
+          }
           j.start();
         }
+      }
+      // Serial mode: resolves once no parse of this batch is alive (the
+      // previous file's worker is gone and its load-only data released), or
+      // when the batch was cancelled.
+      function _memWhenIdle() {
+        if (!_memB || !_memB.serial || _schedAlive === 0) return Promise.resolve();
+        return new Promise(function(res) {
+          var iv = setInterval(function() {
+            if (_schedAlive === 0 || _ccLoadGeneration !== _batchGen) { clearInterval(iv); res(); }
+          }, 25);
+        });
       }
       function _mkIfcJob(f) {
         var job = { f: f, started: false, preError: null, preview: null,
@@ -25482,11 +25666,14 @@ function startApp() {
         var _resolveParsed, _parseCounted = false, _aliveCounted = false, _gone = false;
         job.parsed = new Promise(function(res) { _resolveParsed = res; });
         job.onProg = function(msg){ setLoadMsg(f.name + ': ' + msg); window._ccModelLoadMsg=f.name+': '+msg; window.dispatchEvent(new CustomEvent('cc-model-loading',{detail:{loading:true,msg:f.name+': '+msg}})); };
+        var _memPending = false;
+        function memSettled() { if (_memPending) { _memPending = false; _memB.pendingBytes -= f.size; _memB.sample(); } }
         function parseSettled() { if (_parseCounted) { _parseCounted = false; _schedParsing--; if (_parallel) _schedPump(); } }
         // The worker is gone (props done/failed/aborted, rejected, or never
         // started): its memory no longer counts against the budget.
         job.gone = function() {
           if (_gone) return; _gone = true;
+          memSettled();
           parseSettled();
           if (_aliveCounted) { _aliveCounted = false; _schedAlive--; _schedAliveCost -= job.cost; if (_parallel) _schedPump(); }
         };
@@ -25507,6 +25694,7 @@ function startApp() {
         };
         job.committed = function(modelId, elements) {
           lazy.modelId = modelId; lazy.elements = elements;
+          if (_memB) { _memB.committed++; memSettled(); }
           if (job.preview) job.preview.commit(modelId);
           if (lazy.pending) {
             var pd = lazy.pending; lazy.pending = null;
@@ -25528,6 +25716,7 @@ function startApp() {
           job.started = true;
           if (_parallel && _ccLoadGeneration !== _batchGen) { job.gone(); _resolveParsed(null); return; }
           _schedParsing++; _parseCounted = true; if (_schedParsing > _ccIfcParallelPeak) _ccIfcParallelPeak = _schedParsing;
+          if (_memB) { _memB.sample(); _memB.startedBytes += f.size; _memB.pendingBytes += f.size; _memPending = true; }
           _schedAlive++; _schedAliveCost += job.cost; _aliveCounted = true;
           var p = _readFileWithProgress(f, function(loaded, total){
             var _rpct = total > 0 ? Math.round(loaded / total * 15) : 0;
@@ -25561,6 +25750,9 @@ function startApp() {
             // the only parse of the batch; any shard failure → one worker
             // (fresh bytes: the buffer went to shard 0), fresh preview.
             var nShards = _ccIfcShardCount(f.size, scope, _parallel ? _ifcJobs.length - 1 : 0);
+            // leanMemory: never shard in a serial (memory-tight) batch, nor
+            // when the merge (shard results + merged message) would not fit.
+            if (nShards > 1 && _memB && (_memB.serial || !_memB.allows(0, 1.5))) nShards = 1;
             var loadP;
             if (nShards > 1) {
               var shardGen = _ccLoadGeneration;
@@ -25577,6 +25769,7 @@ function startApp() {
             var workerGen = _ccLoadGeneration; // capture generation assigned by loadIFCWorker
             var outcome = loadP.then(function(result) {
               parseSettled();
+              if (job.preview && job.preview.streamEnded) job.preview.streamEnded();
               if (!result) job.dropPreview();
               return { result: result };
             }, function(err) {
@@ -25725,9 +25918,12 @@ function startApp() {
           // Sequential mode starts the parse here, exactly as before; in
           // parallel mode the scheduler normally started it already (a job
           // still held back by the memory budget is started now so the
-          // in-order commit always makes progress).
+          // in-order commit always makes progress). A memory-tight batch
+          // first waits for the previous file's worker to be gone.
+          return _memWhenIdle().then(function() {
           if (!job.started) job.start();
-          return job.parsed.then(function(p) {
+          return job.parsed;
+          }).then(function(p) {
             if (job.preError) { errors.push(job.preError); return; }
             if (!p) { job.close(); return; } // batch cancelled before this file started
             var _onProg = job.onProg, col = p.col, disc = 'structural', _declUnit = p.declUnit, _loadScope = p.scope, buf = p.buf;
@@ -25843,10 +26039,12 @@ function startApp() {
           }
         } catch(_) {}
         _batchPreviews.forEach(function(pv) { pv.commit(pv.modelId); }); // any preview not yet torn down goes after its grace period
+        if (_memTimer) { clearInterval(_memTimer); _memTimer = null; }
         if (_loadBatch) _loadBatch.markChainDone();
         else _finishLoadingStrip(0);
       }, function(error) {
         _batchPreviews.forEach(function(pv) { pv.dispose(); });
+        if (_memTimer) { clearInterval(_memTimer); _memTimer = null; }
         console.error(error);
         errors.push(error && error.message || 'File batch failed');
         setErr(errors.join('\n'));

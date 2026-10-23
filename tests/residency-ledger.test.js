@@ -22,7 +22,7 @@ function extract(startMarker, endMarker) {
 }
 
 const block = extract(
-  'function _ccGeometryByteSize(g) {',
+  'function _ccArrayBytes(a, bufSeen) {',
   '\n  window._ccComputeResidencyLedger = _ccComputeResidencyLedger;'
 );
 
@@ -201,4 +201,21 @@ test('restoring a parked model resets the auto-park cooldown (a just-restored mo
   assert.ok(idx !== -1);
   const body = source.slice(idx, idx + 400);
   assert.match(body, /_ccAutoParkNoteAction\(\)/);
+});
+
+test('computeResidencyLedger charges a batch buffer shared with source-geometry views once (leanMemory)', () => {
+  const api = loadApi();
+  // Batch position array of 600 floats; two batched source geometries read
+  // 300 floats each through views into it; each keeps its own index.
+  const batchPos = new Float32Array(600);
+  const batchIdx = new Uint32Array(200);
+  const batchGeo = { uuid: 'b', attributes: { position: { array: batchPos } }, index: { array: batchIdx } };
+  const g1 = { uuid: 'g1', attributes: { position: { array: batchPos.subarray(0, 300) } }, index: { array: new Uint32Array(100) } };
+  const g2 = { uuid: 'g2', attributes: { position: { array: batchPos.subarray(300, 600) } }, index: { array: new Uint32Array(100) } };
+  const models = [{ id: 'm1', elements: [element([proxyMesh(g1)]), element([proxyMesh(g2)])],
+    meshes: [{ userData: { _isCCBatch: true }, geometry: batchGeo }] }];
+  const pm = api.computeResidencyLedger(models).perModel.m1;
+  assert.equal(pm.geoBytes, 600 * 4 + 2 * 100 * 4, 'views + own indices');
+  assert.equal(pm.batchBytes, 200 * 4, 'only the batch index is extra');
+  assert.equal(pm.geoBytes + pm.batchBytes, 600 * 4 + 200 * 4 + 200 * 4, 'every buffer once');
 });

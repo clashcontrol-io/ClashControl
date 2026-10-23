@@ -500,6 +500,8 @@ function generateShardIfc(opts) {
     return pl;
   };
   const side = Math.ceil(Math.sqrt(perStorey));
+  const smallShare = !!opts.smallShare;
+  let few = null;
   let psets = 0;
   for (let s = 0; s < storeyCount; s++) {
     const st = next(), stPl = place(bldPl, 0, 0, s * 3, 0);
@@ -517,6 +519,14 @@ function generateShardIfc(opts) {
       else if (r < 0.04) rep = '#' + shape(0.5, 0.5, 0, styles[1]); // zero-depth extrusion
       else if (r < 0.05) rep = '#' + shape(0.5, 0.5, 1, styles[4]); // ~transparent style
       else if (r < 0.45) rep = '#' + shared[Math.floor(rnd() * shared.length)];
+      else if (smallShare && r < 0.7) {
+        // opts.smallShare: a shape reused by 2-3 elements in the same style —
+        // below the instancing threshold, so they stay plain meshes sharing
+        // one geometry (and get batched). Off by default (other fixtures
+        // stay byte-identical).
+        if (!few || few.left <= 0) few = { rep: '#' + shape(0.2 + rnd(), 0.1 + rnd() * 0.5, 0.2 + rnd() * 2.5, styles[Math.floor(rnd() * 3)]), left: 2 + Math.floor(rnd() * 2) };
+        few.left--; rep = few.rep;
+      }
       else rep = '#' + shape(0.2 + rnd(), 0.1 + rnd() * 0.5, 0.2 + rnd() * 2.5, rnd() < 0.2 ? null : styles[Math.floor(rnd() * 4)]);
       const e = next();
       const tail = Array(nArgs - 7).fill('$').join(',');
