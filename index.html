@@ -29442,6 +29442,7 @@ function startApp() {
   // Bundled IDS rule sets (simplified in-browser format)
   var IDS_BUNDLED_SPECS = [
     {
+      key: 'naming',
       name: 'Naming Convention Check',
       description: 'Validates that all elements have a non-empty Name property',
       rules: [
@@ -29450,6 +29451,7 @@ function startApp() {
       ]
     },
     {
+      key: 'materials',
       name: 'Classification Check',
       description: 'Validates that elements have classification references',
       rules: [
@@ -29460,6 +29462,7 @@ function startApp() {
       ]
     },
     {
+      key: 'psets',
       name: 'Property Completeness',
       description: 'Validates that key elements have essential property sets',
       rules: [
@@ -29471,6 +29474,7 @@ function startApp() {
       ]
     },
     {
+      key: 'storey',
       name: 'Storey Assignment',
       description: 'Validates all physical elements are assigned to a building storey',
       rules: [
@@ -31057,6 +31061,12 @@ function startApp() {
     var _showResults = useState(false), showResults = _showResults[0], setShowResults = _showResults[1];
     var _selRes = useState(null), selectedResIdx = _selRes[0], setSelectedResIdx = _selRes[1];
 
+    var IDS_SPEC_TEXT = {
+      naming: [_cc_t('ids.spec.naming','Names'), _cc_t('ids.spec.namingDesc','Every element has a name and a GlobalId.')],
+      materials: [_cc_t('ids.spec.materials','Materials and types'), _cc_t('ids.spec.materialsDesc','Walls and slabs have a material; columns and beams have a type.')],
+      psets: [_cc_t('ids.spec.psets','Common property sets'), _cc_t('ids.spec.psetsDesc','Walls, doors, windows and rooms carry their common property sets.')],
+      storey: [_cc_t('ids.spec.storey','Storey assignment'), _cc_t('ids.spec.storeyDesc','Every physical element sits on a storey.')]
+    };
     function handleFileUpload(e) {
       var file = e.target.files[0];
       if (!file) return;
@@ -31119,13 +31129,17 @@ function startApp() {
         <span style=${{fontSize: 'var(--text-2xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 'var(--space-1)'}}>${_cc_t('ids.builtInRuleSets','Built-in Rule Sets')}</span>
         ${_ccBundledIdsSpecs().map(function(spec, idx) {
           var isSelected = selectedBundled.indexOf(idx) !== -1;
-          var tooltip = spec.description + '\n\nRules:\n' + spec.rules.map(function(r){ return '• ' + r.desc + ' (' + (r.severity||'error') + ')'; }).join('\n');
+          // Built-in sets: a plain name + one sentence in the UI language (the
+          // stored name stays the result key). Pack sets show their own text.
+          var txt = IDS_SPEC_TEXT[spec.key];
+          var nm = txt ? txt[0] : spec.name, ds = txt ? txt[1] : spec.description;
+          var tooltip = spec.rules.map(function(r){ return '• ' + r.desc; }).join('\n');
           return html`<label key=${idx} title=${tooltip} style=${{display: 'flex', alignItems: 'flex-start', gap: 'var(--space-1)', padding: 'var(--space-1) 0', cursor: 'pointer', fontSize: 'var(--text-2xs)'}}>
             <input type="checkbox" checked=${isSelected} onChange=${function() { toggleBundled(idx); }}
               style=${{accentColor: 'var(--accent)', marginTop: '2px', flexShrink: 0}} />
             <div>
-              <div style=${{color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: 500}}>${spec.name}</div>
-              <div style=${{color: 'var(--text-faint)', fontSize: 'var(--text-2xs)'}}>${spec.description} (${spec.rules.length} rules)</div>
+              <div style=${{color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: 500}}>${nm}</div>
+              ${ds && html`<div style=${{color: 'var(--text-muted)', fontSize: 'var(--text-2xs)'}}>${ds}</div>`}
             </div>
           </label>`;
         })}
@@ -31133,8 +31147,10 @@ function startApp() {
 
       <div>
         <span style=${{fontSize: 'var(--text-2xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 'var(--space-1)'}}>${_cc_t('ids.customIdsFile','Custom IDS File')}</span>
-        <input type="file" accept=".ids,.xml" onChange=${handleFileUpload} aria-label=${_cc_t('ids.customIdsFile','Custom IDS File')}
-          style=${{fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)'}} />
+        <label style=${{...S_BTN, display:'inline-flex', alignItems:'center', fontSize:'var(--text-xs)', padding:'var(--space-1) var(--space-2)', background:'var(--bg-secondary)', color:'var(--text-primary)', border:'1px solid var(--border)', cursor:'pointer'}}>
+          ${_cc_t('ids.chooseFile','Choose an IDS file…')}
+          <input type="file" accept=".ids,.xml" class="cc-sr-only" onChange=${handleFileUpload} aria-label=${_cc_t('ids.customIdsFile','Custom IDS File')} />
+        </label>
         ${customSpecs && customSpecs.length > 0 && html`<div style=${{fontSize: 'var(--text-2xs)', color: 'var(--color-success-fg)', marginTop: 'var(--space-1)'}}>${(customSpecs.length===1?_cc_t('ids.loadedSpecsOne','Loaded: 1 specification'):_cc_t('ids.loadedSpecsMany','Loaded: {n} specifications',{n:customSpecs.length}))}</div>`}
         ${idsParseError && html`<div role="alert" style=${{fontSize: 'var(--text-2xs)', color: 'var(--color-danger-fg)', background:'var(--color-danger-bg)', border:'1px solid var(--color-danger)', borderRadius:'var(--radius-xs)', padding:'var(--space-1) var(--space-2)', marginTop: 'var(--space-1)'}}>${_cc_t('ids.parseFailed','Couldn\'t read this IDS file — {reason}',{reason:idsParseError})}</div>`}
       </div>
@@ -42892,11 +42908,11 @@ function startApp() {
       zIndex:'var(--z-toast)', maxWidth:520, width:'92%',
       background:'var(--bg-secondary)', border:'1px solid var(--accent-subtle)',
       borderRadius:'var(--radius-md)', padding:'var(--space-3) var(--space-4)',
-      boxShadow:'var(--shadow-lg)', display:'flex', alignItems:'center',
+      boxShadow:'var(--shadow-lg)', display:'flex', flexWrap:'wrap', alignItems:'center',
       gap:'var(--space-3)', fontSize:'var(--text-sm)', color:'var(--text-secondary)'
     }}>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style=${{flexShrink:0}}><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-      <span style=${{flex:1}}>${_cc_t('detectBanner.msg','Models loaded. Run clash detection to find clashes.')}</span>
+      <span style=${{flex:'1 1 12rem'}}>${_cc_t('detectBanner.msg','Models loaded. Run clash detection to find clashes.')}</span>
       <button onClick=${run}
         style=${{...S_BTN, padding:'var(--space-2) var(--space-3)', background:'var(--accent)', color:'var(--accent-contrast)', border:'none', borderRadius:'var(--radius-sm)', fontWeight:600, fontSize:'var(--text-xs)', whiteSpace:'nowrap'}}>${_cc_t('detectBanner.run','Run clash detection')}</button>
       <button aria-label=${_cc_t('detectBanner.dismissAria','Dismiss')} onClick=${dismiss}

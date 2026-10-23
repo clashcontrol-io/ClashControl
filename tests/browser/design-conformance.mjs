@@ -367,7 +367,7 @@ async function runVariant(variant, viewport, theme, mobile) {
   const projBtn = await page.$('.cc-header-project > button');
   if (projBtn && await projBtn.isVisible()) {
     await projBtn.click();
-    await surface(page, variant, 'project-menu', ['.cc-header-project'], o);
+    await surface(page, variant, 'project-menu', ['.cc-header-project'], Object.assign({}, o, { overflowRoots: false }));
     await projBtn.click();
   }
   // models panel: cards (one expanded) + geo placement
