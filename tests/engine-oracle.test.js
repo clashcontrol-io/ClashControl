@@ -224,6 +224,24 @@ function sliverBox(x0, x1, y0, y1, z0, z1) {
   return f32(meshFrom(V, F));
 }
 
+// box whose +x face is fanned around a vertex on its top edge (5–6) at
+// fraction f: that edge is split on the side face only (a T-junction)
+function tjBox(x0, x1, y0, y1, z0, z1, f) {
+  const V = boxV(x0, x1, y0, y1, z0, z1);
+  V.push([x1, y0 + (y1 - y0) * (f == null ? 0.5 : f), z1]); // index 8
+  const F = BOXF.filter((t) => !(t[0] === 1 && (t[1] === 2 || t[1] === 6)));
+  F.push([1, 2, 8], [2, 6, 8], [1, 8, 5]);
+  return f32(meshFrom(V, F));
+}
+// box whose top face stops `gap` short of its +x edge: an open slit
+function slitBox(x0, x1, y0, y1, z0, z1, gap) {
+  const V = boxV(x0, x1, y0, y1, z0, z1);
+  V.push([x1 - gap, y0, z1], [x1 - gap, y1, z1]); // 8, 9
+  const F = BOXF.filter((t) => t[0] !== 4 || (t[1] !== 5 && t[1] !== 6));
+  F.push([4, 8, 9], [4, 9, 7]);
+  return f32(meshFrom(V, F));
+}
+
 // ── Analytic fixtures ───────────────────────────────────────────────────────
 // expect: designed truth category; dist: exact Float32-input distance where it
 // is analytic (m); mtd: analytic minimum translation distance for AABB pairs.
@@ -308,6 +326,18 @@ function analyticFixtures() {
   add('open-plate-through-box', plateZ(-1, 2, -1, 2, 0.5), box(0, 1, 0, 1, 0, 1), 'crossing');
   add('open-plate-inside-box', plateZ(0.2, 0.8, 0.2, 0.8, 0.5), box(0, 1, 0, 1, 0, 1), 'contained');
   add('box-inside-open-box', box(0.4, 0.6, 0.4, 0.6, 0.4, 0.6), f32(meshFrom(boxV(0, 1, 0, 1, 0, 1), BOXF.slice(0, 10))), 'separate');
+  // Closed without being edge-manifold (a mod-2 cycle, so ray parity is
+  // defined): a T-junction (exact, and Float32-rounded on a rotated box), and
+  // two solids sharing an edge (that edge used 4 times). A real 3 mm slit is
+  // NOT closed: nothing is inside it.
+  add('box-inside-tjunction-box', box(0.25, 0.75, 0.25, 0.75, 0.25, 0.75), tjBox(0, 1, 0, 1, 0, 1), 'contained');
+  {
+    const R = rot(0.3, 0.7, 1.1), T = [2.5, -1.25, 0.75];
+    add('box-inside-rotated-tjunction-box', transform(box(0.25, 0.75, 0.25, 0.75, 0.25, 0.75), R, T), transform(tjBox(0, 1, 0, 1, 0, 1, 1 / 3), R, T), 'contained',
+      { oracleOpts: { assumeClosed: true } }); // the T vertex is Float32-rounded off the edge (sub-µm): closed up to rounding
+  }
+  add('box-inside-edge-sharing-boxes', box(0.25, 0.75, 0.25, 0.75, 0.25, 0.75), concat(box(0, 1, 0, 1, 0, 1), box(1, 2, 1, 2, 0, 1)), 'contained');
+  add('box-inside-slit-box-3mm', box(0.25, 0.75, 0.25, 0.75, 0.25, 0.75), slitBox(0, 1, 0, 1, 0, 1, 0.003), 'separate');
   // Contact tolerance (0.1 mm, index.html _CC_CONTACT_TOL_M): a 15 µm overlap
   // is Float32-noise scale -> contact; 0.49 mm is a real crossing. Walls that
   // overlap end-to-end with identical height/thickness have NO transversal
@@ -516,10 +546,10 @@ function writeReport() {
 test('oracle self-consistency: designed categories, exact distances, symmetry, invariances', () => {
   const fixtures = analyticFixtures();
   for (const fx of fixtures) {
-    const o = O.classifyPair(fx.a, fx.b);
+    const o = O.classifyPair(fx.a, fx.b, fx.oracleOpts);
     assert.strictEqual(o.category, fx.expect, `${fx.name}: oracle says ${o.category}, fixture designed as ${fx.expect}`);
     if (fx.dist != null) assert.strictEqual(o.distance, fx.dist, `${fx.name}: exact distance ${o.distance} != analytic ${fx.dist}`);
-    const r = O.classifyPair(fx.b, fx.a);
+    const r = O.classifyPair(fx.b, fx.a, fx.oracleOpts);
     assert.strictEqual(r.category, o.category, `${fx.name}: asymmetric category`);
     assert.strictEqual(r.distance, o.distance, `${fx.name}: asymmetric distance`);
     // exact transforms: scale by 2, axis cycle, mirror x
@@ -527,13 +557,13 @@ test('oracle self-consistency: designed categories, exact distances, symmetry, i
     const s2 = (t) => xf(t, (s, i, d) => { d[i] = s[i] * 2; d[i + 1] = s[i + 1] * 2; d[i + 2] = s[i + 2] * 2; });
     const cyc = (t) => xf(t, (s, i, d) => { d[i] = s[i + 1]; d[i + 1] = s[i + 2]; d[i + 2] = s[i]; });
     const mir = (t) => xf(t, (s, i, d) => { d[i] = -s[i]; d[i + 1] = s[i + 1]; d[i + 2] = s[i + 2]; });
-    const os2 = O.classifyPair(s2(fx.a), s2(fx.b), { clearanceWindow: 0.2 });
+    const os2 = O.classifyPair(s2(fx.a), s2(fx.b), Object.assign({ clearanceWindow: 0.2 }, fx.oracleOpts));
     assert.strictEqual(os2.category === 'separate' ? 'clearance' : os2.category, o.category === 'separate' ? 'clearance' : o.category, `${fx.name}: scale-by-2 changed category`);
     assert.strictEqual(os2.distance, o.distance * 2, `${fx.name}: scale-by-2 distance`);
-    assert.strictEqual(O.classifyPair(cyc(fx.a), cyc(fx.b)).category, o.category, `${fx.name}: axis-cycle changed category`);
-    assert.strictEqual(O.classifyPair(mir(fx.a), mir(fx.b)).category, o.category, `${fx.name}: mirror changed category`);
+    assert.strictEqual(O.classifyPair(cyc(fx.a), cyc(fx.b), fx.oracleOpts).category, o.category, `${fx.name}: axis-cycle changed category`);
+    assert.strictEqual(O.classifyPair(mir(fx.a), mir(fx.b), fx.oracleOpts).category, o.category, `${fx.name}: mirror changed category`);
     if (o.category === 'clearance' || o.category === 'separate') {
-      const np = O.classifyPair(fx.a, fx.b, { noPrune: true });
+      const np = O.classifyPair(fx.a, fx.b, Object.assign({ noPrune: true }, fx.oracleOpts));
       assert.strictEqual(np.distance, o.distance, `${fx.name}: pruned and unpruned exact distance differ`);
     }
   }
@@ -541,11 +571,11 @@ test('oracle self-consistency: designed categories, exact distances, symmetry, i
 
 test('oracle float filters agree with pure BigInt evaluation', () => {
   const fixtures = analyticFixtures();
-  const withF = fixtures.map((fx) => O.classifyPair(fx.a, fx.b));
+  const withF = fixtures.map((fx) => O.classifyPair(fx.a, fx.b, fx.oracleOpts));
   O.setFloatFilter(false);
   try {
     fixtures.forEach((fx, i) => {
-      const o = O.classifyPair(fx.a, fx.b);
+      const o = O.classifyPair(fx.a, fx.b, fx.oracleOpts);
       assert.strictEqual(o.category, withF[i].category, `${fx.name}: filter on/off category differs`);
       assert.strictEqual(o.distance, withF[i].distance, `${fx.name}: filter on/off distance differs`);
     });
@@ -566,7 +596,7 @@ test('engine vs exact oracle: analytic fixtures (strict outside the known-discre
   const rows = [];
   const unexpected = [], fixed = [];
   for (const fx of analyticFixtures()) {
-    const { row } = evaluate(js, fx);
+    const { row } = evaluate(js, fx, fx.oracleOpts);
     rows.push(row);
     const known = new Set(KNOWN_DISCREPANCIES[fx.name] || []);
     for (const d of row.disagree) if (!known.has(d)) unexpected.push(`${fx.name}: ${d}`);
@@ -596,7 +626,7 @@ test('engine vs exact oracle: seeded random mesh pairs (recorded, not asserted)'
   const n = +(process.env.CC_ORACLE_RANDOM || 300);
   const rows = [];
   for (const fx of [...randomPairs(7, n), ...randomAabbPairs(99, Math.round(n / 2))]) {
-    const ev = evaluate(js, fx);
+    const ev = evaluate(js, fx, fx.oracleOpts);
     rows.push(ev.row);
     // oracle self-consistency on every random pair: symmetric verdict
     const back = O.classifyPair(fx.b, fx.a);

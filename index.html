@@ -2159,7 +2159,10 @@ function startApp() {
     if (item.elemA) refs.push({modelId: item.modelAId || null, expressId: item.elemA, role: 'A'});
     if (item.elemB) refs.push({modelId: item.modelBId || null, expressId: item.elemB, role: 'B'});
     if (item.elementId) refs.push({modelId: item.modelId || item.modelAId || null, expressId: item.elementId, role: 'single'});
-    if (item._groupedElems) item._groupedElems.forEach(function(eid){ refs.push({modelId: null, expressId: eid, role: 'grouped'}); });
+    // grouped partners sit on the side opposite the row's hub (_groupHub);
+    // rows from before it was recorded leave the model open
+    var gm = item._groupHub === 'A' ? (item.modelBId || null) : item._groupHub === 'B' ? (item.modelAId || null) : null;
+    if (item._groupedElems) item._groupedElems.forEach(function(eid){ refs.push({modelId: gm, expressId: eid, role: 'grouped'}); });
     return refs;
   }
   // ── Legacy selection-set refs (saved before refs carried modelId) ──
@@ -9429,7 +9432,7 @@ function startApp() {
       // pre-computed answer equals what the main thread would compute
       _rayTriHit, _rayAABBHit, _bvhRayCount, _pointInMeshBVH,
       _closestPtTriDistSq, _pointToAABBDistSq, _bvhClosestDistSq, _closestDistToBVH, _bvhClosestWithin, _ccFartherThan, _ccAnyVertexInBox,
-      _ccContactTol, _ccMeshTopo, _ccFaceAxes, _ccLineInterval, _ccCoplanarOverlapWidth,
+      _ccContactTol, _ccOddEdgesCancel, _ccMeshTopo, _ccFaceAxes, _ccLineInterval, _ccCoplanarOverlapWidth,
       _ccTriDeep, _ccRefineTraverse, _ccVertexDeepInside, _ccTouchVerdict, _ccBoxIn,
       _ccContainment, _ccProjExtent, _ccOwnExtents, _estimatePenetrationDepthM, _ccTrisFinite, _ccBvhFromFlat, _ccBvhFlatten
     ];
@@ -9442,7 +9445,7 @@ function startApp() {
       'var _mmdBest=new Float64Array(1),_mmdOutA=new Float64Array(3),_mmdOutB=new Float64Array(3);',
       'var _PEN_RAY_DIRS=' + JSON.stringify(_PEN_RAY_DIRS) + ';',
       'var _CC_CONTACT_TOL_M=' + JSON.stringify(_CC_CONTACT_TOL_M) + ',_CC_CONTACT_TOL_REL=' + JSON.stringify(_CC_CONTACT_TOL_REL) +
-        ',_CC_REFINE_MAX_VERTS=' + JSON.stringify(_CC_REFINE_MAX_VERTS) + ',_CC_SAT_MAX_AXES=' + JSON.stringify(_CC_SAT_MAX_AXES) + ';',
+        ',_CC_REFINE_MAX_VERTS=' + JSON.stringify(_CC_REFINE_MAX_VERTS) + ',_CC_SAT_MAX_AXES=' + JSON.stringify(_CC_SAT_MAX_AXES) + ',_CC_TJUNCTION_MAX_EDGES=' + JSON.stringify(_CC_TJUNCTION_MAX_EDGES) + ';',
       'var _ccIvA=new Float64Array(2),_ccIvB=new Float64Array(2);',
       'var _NP_REC=' + _NP_REC + ';',
       // Worker-side element accessors the refinement functions call. A worker
@@ -9854,9 +9857,57 @@ function startApp() {
     return _CC_CONTACT_TOL_M + _CC_CONTACT_TOL_REL * M;
   }
 
+  // Do the odd-use edges e (vertex-id pairs into verts) cancel mod 2? Edges
+  // are grouped by line (both endpoints within eps of the first edge's
+  // line); along each line, every stretch between breakpoints must be
+  // covered an even number of times. eps = 10 µm + ~4 Float32 ulps of the
+  // coordinates: rounding of a T-junction vertex, 10x below the 0.1 mm
+  // contact tolerance. Cost O(k²) on the k odd edges only, capped by the
+  // caller (_CC_TJUNCTION_MAX_EDGES); anything above the cap stays open.
+  var _CC_TJUNCTION_MAX_EDGES = 512;
+  function _ccOddEdgesCancel(verts, e) {
+    var k = e.length >> 1, M = 0, i, j;
+    for (i = 0; i < verts.length; i++) { var av = verts[i] < 0 ? -verts[i] : verts[i]; if (av > M) M = av; }
+    var eps = 1e-5 + _CC_CONTACT_TOL_REL * M, done = new Uint8Array(k), seg = [], c;
+    for (i = 0; i < k; i++) {
+      if (done[i]) continue;
+      var p = e[2*i] * 3, q = e[2*i+1] * 3;
+      var px = verts[p], py = verts[p+1], pz = verts[p+2];
+      var ux = verts[q] - px, uy = verts[q+1] - py, uz = verts[q+2] - pz, L = Math.sqrt(ux*ux + uy*uy + uz*uz);
+      if (!(L > eps)) return false;
+      ux /= L; uy /= L; uz /= L;
+      seg.length = 0;
+      for (j = i; j < k; j++) {
+        if (done[j]) continue;
+        var t0 = 0, t1 = 0, off = false;
+        for (var s = 0; s < 2 && !off; s++) {
+          var w = e[2*j+s] * 3, wx = verts[w] - px, wy = verts[w+1] - py, wz = verts[w+2] - pz;
+          var t = wx*ux + wy*uy + wz*uz, rx = wx - t*ux, ry = wy - t*uy, rz = wz - t*uz;
+          if (rx*rx + ry*ry + rz*rz > eps*eps) off = true; else if (s) t1 = t; else t0 = t;
+        }
+        if (off) continue;
+        done[j] = 1;
+        seg.push(t0 < t1 ? t0 : t1, t0 < t1 ? t1 : t0);
+      }
+      // breakpoints: clusters of endpoints within eps of each other; every
+      // endpoint is snapped to its cluster's index, so the counting below is
+      // on integers (no endpoint can land on the wrong side of a midpoint)
+      var bp = seg.slice().sort(function(a, b) { return a - b; }), ub = [];
+      for (j = 0; j < bp.length; j++) if (!ub.length || bp[j] - bp[j-1] > eps) ub.push(bp[j]); else ub[ub.length-1] = bp[j];
+      var cov = new Int32Array(ub.length);
+      for (var g = 0; g < seg.length; g += 2) {
+        var lo = 0, hi = 0;
+        while (ub[lo] < seg[g] - eps) lo++;
+        while (ub[hi] < seg[g+1]) hi++;
+        cov[lo]++; cov[hi]--;
+      }
+      for (j = 0, c = 0; j + 1 < ub.length; j++) { c += cov[j]; if (c & 1) return false; }
+    }
+    return true;
+  }
   // Per-element mesh topology, cached against the triangle array identity:
   // vertices welded by exact Float32 position (like the oracle), closedness
-  // (every undirected edge used exactly twice — edge-manifold), consistent
+  // (a mod-2 cycle — see _ccOddEdgesCancel; ray parity is defined), consistent
   // orientation (every directed edge once) and its sign (signed volume), the
   // unique vertices, and the dominant face normals for the depth SAT.
   function _ccMeshTopo(el) {
@@ -9904,8 +9955,19 @@ function startApp() {
         if (eDir[hs] & bit) consistent = false; else eDir[hs] |= bit;
       }
     }
-    var closed = nEdges > 0;
-    for (var ei = 0; ei < ecap && closed; ei++) if (eLo[ei] !== -1 && eCnt[ei] !== 2) closed = false;
+    // closed = the surface is a mod-2 cycle, which is exactly when ray parity
+    // is well defined: every edge used an even number of times (2, or 4 where
+    // two solids share an edge), or the odd ones cancel geometrically (a
+    // T-junction: edge AB on one side, AC + CB on the other with C on AB up
+    // to Float32 rounding — no gap at all, only a vertex the welder cannot
+    // merge). A real hole or slit (open box, missing face) does not cancel.
+    var odd = null, nOdd = 0;
+    for (var ei = 0; ei < ecap; ei++) {
+      if (eLo[ei] === -1 || !(eCnt[ei] & 1)) continue;
+      if (++nOdd > _CC_TJUNCTION_MAX_EDGES) break;
+      (odd || (odd = [])).push(eLo[ei], eHi[ei]);
+    }
+    var closed = nEdges > 0 && (nOdd === 0 || (nOdd <= _CC_TJUNCTION_MAX_EDGES && _ccOddEdgesCancel(verts, odd)));
     var orient = 0;
     if (closed && consistent) {
       var rx = verts[0], ry = verts[1], rz = verts[2], vol = 0;
@@ -12161,30 +12223,42 @@ function startApp() {
     } catch(e) { console.warn('[Detect] type-pair memo update failed:', e.message||e); }
 
     // ── Merge related clashes (IFC segment grouping) ─────────────
+    // A row is one HUB element against the partner elements of one IFC type
+    // it clashes with, each within 250 mm of a member already in the row
+    // (faces / segments of one run against the same element). Every member
+    // shares the row's own hub — never only another member's element — so
+    // each member pair is exactly (hub, a grouped partner): _groupHub ('A' |
+    // 'B') names the row side holding the hub, _groupedElems the partners on
+    // the other side (all in that side's model) and _groupedDist each
+    // partner's own distance (same units as .distance). The row's own pair is the
+    // member with the smallest distance, so the distance and point it shows
+    // belong to the elements it names.
     var merged = [];
-    var mergeMap = {}; // key → array of {idx, point}
+    var mergeMap = {};   // hub key -> [{idx, point}]
+    var rowKeyA = [];    // per row: the hub key of its own A element
+    var rowHubKey = [];  // per row: its hub, fixed by the first merge
     clashes.forEach(function(c) {
       // Rows only merge within one type (hard / soft / contact / duplicate):
       // a merged row carries ONE type and distance, so a near-miss partner
       // absorbed into a hard row (or a contact into a clearance row) would be
       // reported as something it is not.
       var _mk = ':' + c.type;
-      var keyA = c.modelAId+':'+c.elemA+':'+c.modelBId+':'+c.elemBType+_mk;
-      var keyB = c.modelBId+':'+c.elemB+':'+c.modelAId+':'+c.elemAType+_mk;
+      var keyA = c.modelAId+':'+c.elemA+':'+c.modelBId+':'+c.elemBType+_mk; // hub = c's A element
+      var keyB = c.modelBId+':'+c.elemB+':'+c.modelAId+':'+c.elemAType+_mk; // hub = c's B element
 
-      var mergedIdx = null;
-      var mergedSide = null; // 'A' or 'B'
+      var mergedIdx = null, hubKey = null, cHub = null;
       var MERGE_DIST_SQ = 0.25*0.25; // 250mm — covers different pipe faces on the same element
       [['A',keyA],['B',keyB]].forEach(function(pair) {
         if (mergedIdx != null) return;
         var candidates = mergeMap[pair[1]];
         if (!candidates) return;
         for (var k=0; k<candidates.length; k++) {
+          var ci = candidates[k].idx;
+          if (rowHubKey[ci] && rowHubKey[ci] !== pair[1]) continue;
           var ep = candidates[k].point;
           var dx=c.point[0]-ep[0], dy=c.point[1]-ep[1], dz=c.point[2]-ep[2];
           if (dx*dx+dy*dy+dz*dz < MERGE_DIST_SQ) {
-            mergedIdx = candidates[k].idx;
-            mergedSide = pair[0];
+            mergedIdx = ci; hubKey = pair[1]; cHub = pair[0];
             break;
           }
         }
@@ -12192,13 +12266,9 @@ function startApp() {
 
       if (mergedIdx != null) {
         var exist = merged[mergedIdx];
-        if (!exist._groupedElems) exist._groupedElems = [];
-        if (mergedSide === 'A') {
-          if (exist._groupedElems.indexOf(c.elemB) === -1) exist._groupedElems.push(c.elemB);
-        } else {
-          if (exist._groupedElems.indexOf(c.elemA) === -1) exist._groupedElems.push(c.elemA);
-        }
-        exist.mergedCount = (exist.mergedCount||1) + 1;
+        rowHubKey[mergedIdx] = hubKey;
+        var grouped = exist._groupedElems || [], gDist = exist._groupedDist || [];
+        var cPartner = cHub === 'A' ? c.elemB : c.elemA;
         // A merged row is only "provided" when EVERY member is (most visible wins).
         if (_clsCore && _clsCore.openingVisibility(c.opening) > _clsCore.openingVisibility(exist.opening)) {
           if (c.opening) exist.opening = c.opening; else delete exist.opening;
@@ -12206,20 +12276,30 @@ function startApp() {
         if (_ccProvisionVisibility(c.provision) > _ccProvisionVisibility(exist.provision)) {
           if (c.provision) exist.provision = c.provision; else delete exist.provision;
         }
+        var count = (exist.mergedCount||1) + 1;
         if (c.distance < exist.distance) {
-          exist.distance = c.distance;
-          exist.point = c.point;
+          // the closer member becomes the row's own pair
+          var exPartner = hubKey === rowKeyA[mergedIdx] ? exist.elemB : exist.elemA;
+          if (grouped.indexOf(exPartner) === -1) { grouped.push(exPartner); gDist.push(exist.distance); }
+          if (exist.opening) c.opening = exist.opening; else delete c.opening;
+          if (exist.provision) c.provision = exist.provision; else delete c.provision;
+          merged[mergedIdx] = exist = c;
+          rowKeyA[mergedIdx] = keyA;
+        } else if (grouped.indexOf(cPartner) === -1) {
+          grouped.push(cPartner); gDist.push(c.distance);
         }
-        if (!mergeMap[keyA]) mergeMap[keyA] = [];
-        if (!mergeMap[keyB]) mergeMap[keyB] = [];
-        mergeMap[keyA].push({idx:mergedIdx, point:c.point});
-        mergeMap[keyB].push({idx:mergedIdx, point:c.point});
+        exist._groupedElems = grouped;
+        exist._groupedDist = gDist;
+        exist._groupHub = hubKey === rowKeyA[mergedIdx] ? 'A' : 'B';
+        exist.mergedCount = count;
+        (mergeMap[hubKey] || (mergeMap[hubKey] = [])).push({idx:mergedIdx, point:c.point});
       } else {
         var newIdx = merged.length;
         if (!mergeMap[keyA]) mergeMap[keyA] = [];
         if (!mergeMap[keyB]) mergeMap[keyB] = [];
         mergeMap[keyA].push({idx:newIdx, point:c.point});
         mergeMap[keyB].push({idx:newIdx, point:c.point});
+        rowKeyA[newIdx] = keyA;
         c.mergedCount = 1;
         merged.push(c);
       }

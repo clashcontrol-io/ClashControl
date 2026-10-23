@@ -126,10 +126,13 @@ function installChecks(oracleSrc) {
       const base = { type: c.type, opening: c.opening || null, dist: typeof c.distance === 'number' ? c.distance : null, clr: c.clearanceMm, merged: false, same: c.modelAId === c.modelBId, mA: ga && ga.m, mB: gb && gb.m };
       out.push(Object.assign({ a: c.globalIdA, b: c.globalIdB }, base));
       if (c._groupedElems && c._groupedElems.length) {
-        for (const e of c._groupedElems) {
-          const pa = gid.get(c.modelBId + ':' + e), pb = gid.get(c.modelAId + ':' + e);
-          if (pa && pa.t === c.elemBType && pa.g !== c.globalIdB) out.push(Object.assign({ a: c.globalIdA, b: pa.g }, base, { merged: true, mB: pa.m }));
-          if (pb && pb.t === c.elemAType && pb.g !== c.globalIdA) out.push(Object.assign({ a: pb.g, b: c.globalIdB }, base, { merged: true, mA: pb.m }));
+        const mem = (r, i) => { const d = r._groupedDist && r._groupedDist[i]; return typeof d === 'number' ? { dist: d, clr: r.type === 'soft' ? d : r.clearanceMm } : {}; };
+        for (let i = 0; i < c._groupedElems.length; i++) {
+          const e = c._groupedElems[i];
+          // each member pair is (row hub, grouped partner): _groupHub names the hub side
+          if (c._groupHub === 'A') { const pa = gid.get(c.modelBId + ':' + e); if (pa) out.push(Object.assign({ a: c.globalIdA, b: pa.g }, base, mem(c, i), { merged: true, mB: pa.m })); }
+          else if (c._groupHub === 'B') { const pb = gid.get(c.modelAId + ':' + e); if (pb) out.push(Object.assign({ a: pb.g, b: c.globalIdB }, base, mem(c, i), { merged: true, mA: pb.m })); }
+          else throw new Error('merged row without _groupHub');
         }
       }
     }

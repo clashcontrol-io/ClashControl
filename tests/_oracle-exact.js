@@ -38,7 +38,9 @@
 //   'separate'  — disjoint, d > clearanceWindow
 // An open (non-watertight) mesh has no interior: against it, 'crossing' means a
 // transversal surface crossing or a vertex of it strictly inside the other
-// (closed) mesh, and it can only be 'contained' in a closed mesh.
+// (closed) mesh, and it can only be 'contained' in a closed mesh. Closed = a
+// mod-2 cycle: every edge used an even number of times after the odd-use
+// edges are split, exactly, at T-junction vertices lying on them.
 //
 // Completeness note (documented, not hidden): an overlap is certified by one
 // of (1) a transversal triangle crossing in the relative interior of both
@@ -131,6 +133,37 @@ function prepareMesh(tris, opts) {
   }
   let edgeManifold = nT > 0;
   for (const c of edges.values()) if (c !== 2) { edgeManifold = false; break; }
+  // Mod-2 cycle (exactly when ray parity is defined): every edge used an even
+  // number of times once each odd-use edge is split, in exact arithmetic, at
+  // the odd-use edge endpoints lying on it (T-junctions).
+  let mod2Closed = edgeManifold;
+  if (!edgeManifold && nT > 0) {
+    const odd = [];
+    for (const [ek, c] of edges) if (c & 1) odd.push([Math.floor(ek / 4294967296), ek % 4294967296]);
+    const big = (i) => [0, 1, 2].map((a) => toBigScaled(verts[i * 3 + a], S));
+    const ends = [...new Set(odd.flat())], B = new Map(ends.map((i) => [i, big(i)]));
+    const sub = new Map();
+    for (const [p, q] of odd) {
+      const P = B.get(p), Q = B.get(q), d = [Q[0] - P[0], Q[1] - P[1], Q[2] - P[2]];
+      const dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+      const on = [];
+      for (const r of ends) {
+        if (r === p || r === q) continue;
+        const R = B.get(r), w = [R[0] - P[0], R[1] - P[1], R[2] - P[2]];
+        if (d[1] * w[2] - d[2] * w[1] !== 0n || d[2] * w[0] - d[0] * w[2] !== 0n || d[0] * w[1] - d[1] * w[0] !== 0n) continue;
+        const t = d[0] * w[0] + d[1] * w[1] + d[2] * w[2];
+        if (t > 0n && t < dd) on.push([t, r]);
+      }
+      on.sort((x, y) => (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0));
+      const chain = [p, ...on.map((x) => x[1]), q];
+      for (let k = 0; k + 1 < chain.length; k++) {
+        const a = chain[k], b = chain[k + 1], sk = a < b ? a + ',' + b : b + ',' + a;
+        sub.set(sk, (sub.get(sk) || 0) ^ 1);
+      }
+    }
+    mod2Closed = true;
+    for (const v of sub.values()) if (v) { mod2Closed = false; break; }
+  }
   const V = new Float64Array(verts);
   const bb = new Float64Array(nT * 6);
   for (let t = 0; t < nT; t++) {
@@ -151,7 +184,7 @@ function prepareMesh(tris, opts) {
   }
   return {
     _oracleMesh: true, nT, nV: V.length / 3, V, vexp, vi, S, bb, box: { mn, mx },
-    edgeManifold, closed: opts.assumeClosed === true ? true : opts.assumeClosed === false ? false : edgeManifold,
+    edgeManifold, mod2Closed, closed: opts.assumeClosed === true ? true : opts.assumeClosed === false ? false : mod2Closed,
     _big: null, _bigS: -1, _N: null, _deg: null,
   };
 }

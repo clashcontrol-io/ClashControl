@@ -157,12 +157,15 @@ try {
         out.push(Object.assign({ a: c.globalIdA, b: c.globalIdB }, base));
         // merged rows: expand every grouped partner element as its own pair
         if (c._groupedElems && c._groupedElems.length) {
-          for (const e of c._groupedElems) {
-            // the row does not record which side was merged: a grouped element
-            // on the B side has the row's elemBType, on the A side elemAType
-            const ga = gid.get(c.modelBId + ':' + e), gb = gid.get(c.modelAId + ':' + e);
-            if (ga && ga.t === c.elemBType && ga.g !== c.globalIdB) out.push(Object.assign({ a: c.globalIdA, b: ga.g }, base, { merged: true }));
-            if (gb && gb.t === c.elemAType && gb.g !== c.globalIdA) out.push(Object.assign({ a: gb.g, b: c.globalIdB }, base, { merged: true }));
+          // a member's own distance (_groupedDist): clearance for a soft row, -depth for a hard one
+          const mem = (r, i) => { const d = r._groupedDist && r._groupedDist[i]; return typeof d === 'number' ? { distance: d, clearanceMm: r.type === 'soft' ? d : r.clearanceMm } : {}; };
+          for (let i = 0; i < c._groupedElems.length; i++) {
+            const e = c._groupedElems[i];
+            // every member pair is (row hub, grouped partner); _groupHub names
+            // the row side holding the hub, partners sit on the other side
+            if (c._groupHub === 'A') { const ga = gid.get(c.modelBId + ':' + e); if (ga) out.push(Object.assign({ a: c.globalIdA, b: ga.g }, base, mem(c, i), { merged: true })); }
+            else if (c._groupHub === 'B') { const gb = gid.get(c.modelAId + ':' + e); if (gb) out.push(Object.assign({ a: gb.g, b: c.globalIdB }, base, mem(c, i), { merged: true })); }
+            else throw new Error('merged row without _groupHub');
           }
         }
       }
@@ -349,9 +352,9 @@ try {
       const softExp = exp === 'soft';
       if (got === 'soft') { if (softExp) sTP++; else sFP++; } else if (softExp) sFN++;
       // merged rows carry the row's distance, not each partner's: skip them
-      if (got === 'soft' && t && !c.merged && typeof c.clearanceMm === 'number') dErr.push(Math.abs(c.clearanceMm - (t.cat === 'clearance' || t.cat === 'separate' ? t.d * 1000 : 0)));
+      if (got === 'soft' && t && typeof c.clearanceMm === 'number') dErr.push(Math.abs(c.clearanceMm - (t.cat === 'clearance' || t.cat === 'separate' ? t.d * 1000 : 0)));
       const desc = { key: k, pair: (t ? `${t.nameA} [${t.typeA}] x ${t.nameB} [${t.typeB}]` : k.split('|').map((g) => nameOf.get(g) || g).join(' x ')), truth: t ? t.cat : 'not a candidate (AABB > 51 mm apart)', exactMm: t ? +(t.d * 1000).toFixed(3) : null, expected: exp, app: got, appMm: c ? (c.type === 'soft' ? c.clearanceMm : c.distance) : null, merged: c ? c.merged : false, opening: c ? c.opening : null, appOverlapVolM3: c ? c.overlapVolM3 : null };
-      if (got === 'soft' && t && !c.merged && typeof c.clearanceMm === 'number' && dErr[dErr.length - 1] > 1) distWrong.push(desc);
+      if (got === 'soft' && t && typeof c.clearanceMm === 'number' && dErr[dErr.length - 1] > 1) distWrong.push(desc);
       if (got === 'none' && exp !== 'none') missed.push(desc);
       else if (got !== 'none' && exp === 'none') spurious.push(desc);
       else if (got !== exp) wrongType.push(desc);
