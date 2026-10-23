@@ -2579,6 +2579,9 @@ function startApp() {
       // the batch confirm created.
       case A.CLASH_BATCH_RESTORE:
         var _cbr=a.prev||{}, _cbrKeep=a.keepIssueIds||null;
+        // An undone deny must not stay in the denied-pair memory, or the
+        // next detection run would drop the pair again.
+        s.clashes.forEach(function(c){ if (_cbr[c.id] && c.status==='denied' && 'status' in _cbr[c.id] && _cbr[c.id].status!=='denied') _forgetDeniedClash(c); });
         return Object.assign({},s,{
           clashes:s.clashes.map(function(c){ return _cbr[c.id] ? Object.assign({},c,_cbr[c.id]) : c; }),
           issues:_cbrKeep ? s.issues.filter(function(i){ return !(i.clashId && _cbr[i.clashId]) || _cbrKeep[i.id]; }) : s.issues
@@ -11550,6 +11553,15 @@ function startApp() {
       _ccLsSet('cc_denied_clashes', store);
     } catch(e) {}
   }
+  function _forgetDeniedClash(clash) {
+    try {
+      var store = _getDeniedClashStore();
+      var pair = computeClashPair(clash);
+      if (!store[pair]) return;
+      delete store[pair];
+      _ccLsSet('cc_denied_clashes', store);
+    } catch(e) {}
+  }
   function _isDeniedClash(clash) {
     var store = _getDeniedClashStore();
     var pair = computeClashPair(clash);
@@ -13390,6 +13402,24 @@ function startApp() {
         });
         var keep = {}; (prevState.issues || []).forEach(function(i){ keep[i.id] = true; });
         return {label:'Set status', undo:function(){replay({t:A.CLASH_BATCH_RESTORE, prev:prev, keepIssueIds:keep});}, redo:function(){replay(a);}};
+      }
+      case A.UPD_CLASH: {
+        // A single clash's review decision (status / assignee / priority:
+        // row buttons, C/D/V keys, the detail panel) is undoable exactly
+        // like the group action above. Remote merges (_fromSync) and
+        // bookkeeping updates (titles, links, snapshots …) are not user
+        // edits and stay off the stack. Typing an assignee coalesces.
+        if (!a.u || a._fromSync) return null;
+        var uf = Object.keys(a.u);
+        if (!uf.some(function(f){ return f === 'status' || f === 'assignee' || f === 'priority'; })) return null;
+        var c1 = (prevState.clashes || []).find(function(c){ return c.id === a.id; });
+        if (!c1) return null;
+        var p1 = {}; uf.concat(['linkedIssueId', 'aiSignals']).forEach(function(f){ p1[f] = c1[f]; });
+        var prev1 = {}; prev1[a.id] = p1;
+        var keep1 = {}; (prevState.issues || []).forEach(function(i){ keep1[i.id] = true; });
+        var onlyAssignee = uf.length === 1 && uf[0] === 'assignee';
+        return {label:'Set status', coalesceKey: onlyAssignee ? 'clash-assignee:' + a.id : null,
+          undo:function(){replay({t:A.CLASH_BATCH_RESTORE, prev:prev1, keepIssueIds:keep1});}, redo:function(){replay(a);}};
       }
     }
     return null;
