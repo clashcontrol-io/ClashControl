@@ -427,14 +427,17 @@ function generateSemanticIfc(opts) {
 // style and unstyled elements), elements without a representation (not-drawn
 // 'noRepresentation'), zero-depth extrusions, an element assembly, openings
 // voiding walls, rooms (IfcSpace) per storey and a few property sets.
-// Deterministic for a given {storeys, perStorey, seed}.
+// Deterministic for a given {storeys, perStorey, seed}. No IfcVirtualElement:
+// the worker draws its geometry while the main-thread fallback keeps it as a
+// stub (a known worker/fallback difference), which would mask the fallback
+// fingerprint comparison.
 const SHARD_TYPES = [
   ['IFCWALL', 9], ['IFCWALLSTANDARDCASE', 9], ['IFCCOLUMN', 9], ['IFCBEAM', 9], ['IFCSLAB', 9], ['IFCMEMBER', 9],
   ['IFCPLATE', 9], ['IFCCOVERING', 9], ['IFCFOOTING', 9], ['IFCRAILING', 9], ['IFCBUILDINGELEMENTPROXY', 9],
   ['IFCFURNITURE', 9], ['IFCDOOR', 13], ['IFCWINDOW', 13], ['IFCPIPESEGMENT', 9], ['IFCDUCTSEGMENT', 9],
   ['IFCCABLECARRIERSEGMENT', 9], ['IFCPIPEFITTING', 9], ['IFCDUCTFITTING', 9], ['IFCAIRTERMINAL', 9],
   ['IFCVALVE', 9], ['IFCPUMP', 9], ['IFCLIGHTFIXTURE', 9], ['IFCSANITARYTERMINAL', 9], ['IFCSTAIR', 9],
-  ['IFCRAMP', 9], ['IFCROOF', 9], ['IFCCURTAINWALL', 9], ['IFCFLOWTERMINAL', 8], ['IFCVIRTUALELEMENT', 8],
+  ['IFCRAMP', 9], ['IFCROOF', 9], ['IFCCURTAINWALL', 9], ['IFCFLOWTERMINAL', 8],
 ];
 function generateShardIfc(opts) {
   opts = opts || {};

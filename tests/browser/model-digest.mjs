@@ -21,6 +21,9 @@ export function deepModelDigest(nameFilter) {
         const geo = me.geometry, p = geo.attributes.position.array, ix = geo.index ? geo.index.array : null;
         g = hArr(g, p); g = hArr(g, ix); g = hArr(g, geo.attributes.normal && geo.attributes.normal.array);
         const e = me.matrix.elements; g = hArr(g, new Float64Array(e));
+        // colour / opacity / instancing key of the mesh (shared materials)
+        const mt = me.material || {};
+        g = fnv(g, enc.encode((mt.color ? mt.color.getHexString() : '-') + '/' + mt.opacity + '/' + (me.userData && me.userData._instKey || '')));
         const n = ix ? ix.length : p.length / 3;
         const W = (k) => { const x = p[k * 3], y = p[k * 3 + 1], z = p[k * 3 + 2];
           return [e[0] * x + e[4] * y + e[8] * z + e[12], e[1] * x + e[5] * y + e[9] * z + e[13], e[2] * x + e[6] * y + e[10] * z + e[14]]; };
@@ -35,7 +38,15 @@ export function deepModelDigest(nameFilter) {
       const pj = JSON.stringify(el.props);
       rows.push([el.expressId, el.meshes.length, tris, g.toString(16), fnv(2166136261, enc.encode(pj)).toString(16), vol, area]);
     }
-    out[m.name] = { elements: rows.length, meshes: m.meshes.length, rows };
+    // Model level: the scene meshes after instancing/batching (kind, instance
+    // count, colour) and the loader's own report.
+    const st = m.stats || {};
+    const scene = m.meshes.map((x) => (x.isInstancedMesh ? 'I' + x.count : x.isBatchedMesh ? 'B' : 'M') + ':' +
+      (x.material && x.material.color ? x.material.color.getHexString() : '-'));
+    rows.push(['model', fnv(2166136261, enc.encode(JSON.stringify({ scene, notDrawn: st.notDrawn || null, geoUnique: st.geoUnique, geoReused: st.geoReused,
+      instancedGroups: st.instancedGroups, instancedElements: st.instancedElements, storeys: m.storeys, storeyData: m.storeyData,
+      boundaries: m._ccBoundaries ? m._ccBoundaries.placed : null }))).toString(16)]);
+    out[m.name] = { elements: rows.length - 1, meshes: m.meshes.length, rows };
   }
   return out;
 }

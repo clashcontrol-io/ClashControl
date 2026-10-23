@@ -6264,8 +6264,17 @@ function startApp() {
       if (e.data && e.data.v !== IFC_WORKER_PROTOCOL_VERSION) {
         console.warn('[IFC Worker] protocol version mismatch: got', e.data.v, 'expected', IFC_WORKER_PROTOCOL_VERSION);
       }
-      var buf = e.data.buffer;
+      var buf = e.data.buffer || null;
       var _scope = e.data.scope || null;
+      // Sharded load (flag shardedLoad, see loadIFCWorkerSharded): {k, n}.
+      // Every shard opens the whole file and streams its block-cyclic slice
+      // of StreamAllMeshes' element order (_ccIfcStreamOrder); shard 0 also
+      // does everything else (rooms, storeys/hierarchy, relations, openings,
+      // semantics, boundaries, the lazy props). Other shards get the File
+      // itself (each reads its own copy) instead of a transferred buffer.
+      var _shard = e.data.shard || null;
+      var _aux = !!(_shard && _shard.k > 0);
+      var _bufP = buf ? Promise.resolve(buf) : (e.data.file ? e.data.file.arrayBuffer() : Promise.reject(new Error('no input')));
       // Progressive preview (flag progressivePreview, set by the caller):
       // geometry buffers are TRANSFERRED to the main thread in ordered
       // 'geo' batches while the stream runs, instead of all at once in the
@@ -6317,7 +6326,9 @@ function startApp() {
         });
       }
 
-      ready.then(function(api) {
+      Promise.all([ready, _bufP]).then(function(parts) {
+        var api = parts[0];
+        buf = parts[1];
         mark('WASM ready');
         progress('Opening your file 20%');
         var modelID = api.OpenModel(new Uint8Array(buf), {USE_FAST_BOOLS: true});
@@ -6327,10 +6338,10 @@ function startApp() {
         var storeyResult = extractStoreys(api, modelID);
         var storeyMap = storeyResult.map;
         var storeyData = storeyResult.data;
-        var spatialHierarchy = extractSpatialHierarchy(api, modelID);
+        var spatialHierarchy = _aux ? {} : extractSpatialHierarchy(api, modelID);
         var matMap = buildMaterialMap(api, modelID);
         var propMap = {};
-        var relatedPairs = buildRelationsMap(api, modelID);
+        var relatedPairs = _aux ? {} : buildRelationsMap(api, modelID);
         var allStoreys = {};
         Object.keys(storeyMap).forEach(function(k) { allStoreys[storeyMap[k]] = true; });
         mark('Property maps');
@@ -6373,8 +6384,30 @@ function startApp() {
 
         var _tGetGeo = 0, _tDeinterleave = 0, _tProps = 0;
 
-        var _estTotal = Math.max(500, Math.round(buf.byteLength / 500));
+        var _estTotal = Math.max(500, Math.round(buf.byteLength / 500 / (_shard ? _shard.n : 1)));
         var _streamCount = 0;
+
+        // Sharded: the global element order, this shard's slice, and the
+        // global position of the element being streamed (_curG) — recorded
+        // per packed element (pkOrder) and per not-drawn note, so the main
+        // thread can merge the shards back into the single-worker order.
+        var _ord = null, _gpos = null, _block = 0, _curG = -1, pkOrder = null, _ndRec = null;
+        if (_shard) {
+          _ord = _ccIfcStreamOrder(api, modelID);
+          if (!_ord.ok) throw new Error('shard-unsupported: ' + _ord.why);
+          _block = _ccIfcShardBlock(_ord.ids.length, _shard.n);
+          _gpos = new Map();
+          for (var _gi = 0; _gi < _ord.ids.length; _gi++) _gpos.set(_ord.ids[_gi], _gi);
+          pkOrder = [];
+          _ndRec = { g: [], eid: [], reason: [], type: [] };
+          var _ndReal = _notDrawn;
+          _notDrawn = {
+            note: function(eid, reason) { _ndRec.g.push(_curG); _ndRec.eid.push(eid); _ndRec.reason.push(reason); _ndRec.type.push(_ndReal.typeName(eid)); },
+            unseenIds: _ndReal.unseenIds, typeName: _ndReal.typeName,
+            unseen: function() {}, result: function() { return null; }
+          };
+        }
+        function _shardOf(gp) { return Math.floor(gp / _block) % _shard.n; }
 
         // ── Streaming batches (only when _stream) ──
         // A batch carries (a) geometry entries first seen since the last
@@ -6554,6 +6587,7 @@ function startApp() {
             var elProps = extractProperties(api, modelID, eid);
             _tProps += performance.now() - _tP;
             pkExpressIds.push(eid);
+            if (pkOrder) pkOrder.push(_curG);
             pkGeoCounts.push(geoCount);
             pkGlobalIds.push(elProps.globalId);
             pkNames.push(elProps.name);
@@ -6573,24 +6607,49 @@ function startApp() {
             }
           }
         }
-        api.StreamAllMeshes(modelID, function(ifcMesh) { _onIfcMesh(ifcMesh, false); });
-        if (_spaceIds.length) {
-          try { api.StreamMeshes(modelID, _spaceIds, function(ifcMesh) { _onIfcMesh(ifcMesh, true); }); }
+        if (!_shard) {
+          api.StreamAllMeshes(modelID, function(ifcMesh) { _onIfcMesh(ifcMesh, false); });
+        } else {
+          var _mine = [];
+          for (var _mi = 0; _mi < _ord.ids.length; _mi++) if (_shardOf(_mi) === _shard.k) _mine.push(_ord.ids[_mi]);
+          if (_mine.length) api.StreamMeshes(modelID, _mine, function(ifcMesh) { _curG = _gpos.get(ifcMesh.expressID); _onIfcMesh(ifcMesh, false); });
+        }
+        if (_spaceIds.length && !_aux) {
+          // Rooms come after every element (global positions total + j).
+          var _spPos = {};
+          for (var _spj = 0; _spj < _spaceIds.length; _spj++) _spPos[_spaceIds[_spj]] = (_ord ? _ord.ids.length : 0) + _spj;
+          try { api.StreamMeshes(modelID, _spaceIds, function(ifcMesh) { _curG = _spPos[ifcMesh.expressID]; _onIfcMesh(ifcMesh, true); }); }
           catch(e) { console.warn('[IFC Worker] IfcSpace geometry pass failed:', e); }
         }
         _flushBatch(true);
         mark('Meshes streamed');
-        try { _notDrawn.unseen(storeyMap, _streamed, _skipGeoEids, _scopeSet); } catch (_ndE) {}
+        var _unseen = null;
+        if (!_shard) {
+          try { _notDrawn.unseen(storeyMap, _streamed, _skipGeoEids, _scopeSet); } catch (_ndE) {}
+        } else {
+          // Each shard checks the ids it was given (shard 0 also every id
+          // outside the stream order); the main thread drops the ones
+          // another shard did stream and notes the rest in id order.
+          try {
+            var _uIds = _notDrawn.unseenIds(storeyMap, _streamed, _skipGeoEids, _scopeSet, function(id) {
+              var gp = _gpos.get(id);
+              return gp === undefined ? !_aux : _shardOf(gp) === _shard.k;
+            });
+            _unseen = { eid: _uIds, type: _uIds.map(function(id) { return _notDrawn.typeName(id); }) };
+          } catch (_ndE2) { _unseen = { eid: [], type: [] }; }
+        }
 
         // Provision for void: opening boxes per host, converted on the main thread.
         var openingRecs = {};
-        try { openingRecs = extractOpeningRecords(api, modelID); } catch (_opE) { openingRecs = {}; }
+        if (!_aux) { try { openingRecs = extractOpeningRecords(api, modelID); } catch (_opE) { openingRecs = {}; } }
         // Discipline/role evidence + space boundaries (applied on the main
         // thread by the same helpers the fallback uses).
         var _tSem = performance.now();
         var semRecs = null, sbRecs = null;
-        try { semRecs = extractSemanticRecords(api, modelID); } catch (_smE) { semRecs = null; }
-        try { sbRecs = extractSpaceBoundaryRecords(api, modelID); } catch (_sbE) { sbRecs = null; }
+        if (!_aux) {
+          try { semRecs = extractSemanticRecords(api, modelID); } catch (_smE) { semRecs = null; }
+          try { sbRecs = extractSpaceBoundaryRecords(api, modelID); } catch (_sbE) { sbRecs = null; }
+        }
         var _semMs = performance.now() - _tSem;
         // below, because that function also calls api.GetLine and needs the
         mark('Geometry stream');
@@ -6631,6 +6690,13 @@ function startApp() {
           packedEls.placementColors.buffer, packedEls.placementTransforms.buffer);
 
         var _geoUnique = Object.keys(_geoTable).length;
+        var shardInfo = null;
+        if (_shard) {
+          shardInfo = { k: _shard.k, n: _shard.n, total: _ord.ids.length, order: new Uint32Array(pkOrder),
+            geoKeys: new Uint32Array(Object.keys(_geoTable).map(Number)), notes: _ndRec, unseen: _unseen,
+            spaceCount: _aux ? 0 : _spaceIds.length };
+          xfer.push(shardInfo.order.buffer, shardInfo.geoKeys.buffer);
+        }
         if (sbRecs) xfer.push(sbRecs.b.buffer, sbRecs.polyB.buffer, sbRecs.polyOff.buffer, sbRecs.pts.buffer);
         mark('Packed');
         // Streaming: every geometry entry already went out in a 'geo' batch
@@ -6643,7 +6709,8 @@ function startApp() {
           storeys:Object.keys(allStoreys).sort(), storeyData:storeyData,
           spatialHierarchy:spatialHierarchy,
           relatedPairs:relatedPairs, fileSize:buf.byteLength, phases:phases,
-          streamSub:streamSub}, xfer);
+          streamSub:streamSub, shard:shardInfo}, xfer);
+        if (_aux) { try { api.CloseModel(modelID); } catch (_cE) {} return; } // geometry only: no lazy props
 
         // ── Phase 2: lazy property extraction ──────────────────────
         try {
@@ -6684,6 +6751,8 @@ function startApp() {
       + 'var extractSemanticRecords=' + extractSemanticRecords.toString() + ';\n'
       + 'var extractSpaceBoundaryRecords=' + extractSpaceBoundaryRecords.toString() + ';\n'
       + 'var createNotDrawnReport=' + createNotDrawnReport.toString() + ';\n'
+      + 'var _ccIfcStreamOrder=' + _ccIfcStreamOrder.toString() + ';\n'
+      + 'var _ccIfcShardBlock=' + _ccIfcShardBlock.toString() + ';\n'
       + 'var ccSpacePlacementFix=' + ccSpacePlacementFix.toString() + ';\n'
       + 'var extractStoreys=' + extractStoreys.toString() + ';\n'
       + 'var extractSpatialHierarchy=' + extractSpatialHierarchy.toString() + ';\n'
@@ -6759,6 +6828,181 @@ function startApp() {
     var out = { worker: workerMem || null, mainHeapMB: null };
     try { if (performance.memory) out.mainHeapMB = Math.round(performance.memory.usedJSHeapSize / 1048576); } catch (_) {}
     return out;
+  }
+
+  // Decodes a worker 'result' (protocol v2 packedEls + geometry table) into
+  // the loader result. Shared by the single-worker load and the sharded load
+  // (which first merges its shards into one message of the same shape), so
+  // both build the model through the very same code.
+  function _ccDecodeIfcWorkerResult(msg, gt, fallbackColor, loadStart) {
+    // Protocol v2 decode — see the packedEls comment block in
+    // _ifcWorkerMain (worker side) for the full encoding rationale.
+    // Reconstructs the exact same elements/meshes shape the v1
+    // rawEls-array decode produced, from flat typed + string arrays
+    // instead of a structured-cloned object graph.
+    var pk = msg.packedEls;
+    var pkStrTable = pk.stringTable;
+    function _pkStr(idx) { return idx === -1 ? '' : pkStrTable[idx]; }
+    var meshes = [];
+    var elements = [];
+    var matCache = {};
+    var geoCache = {}; // geoId → BufferGeometry (shared across identical elements)
+
+    var _tGeoBuild = 0, _tMesh = 0, _tBBox = 0;
+    var _sbStart = performance.now();
+    var _tmpMtx4 = new THREE.Matrix4(); // reused per placement to avoid 5k-50k allocations per load
+
+    var _placementOffset = 0; // running index into placement-flat arrays
+    for (var i = 0; i < pk.expressIds.length; i++) {
+      var eid = pk.expressIds[i];
+      var gc = pk.geoCounts[i];
+      var _isSp = _pkStr(pk.ifcTypeIdx[i]) === 'IfcSpace';
+      var elMeshes = [];
+      var elBox = new THREE.Box3();
+      for (var g = 0; g < gc; g++) {
+        var pOff = _placementOffset + g;
+        var geoId = pk.placementGeoIds[pOff];
+        var geo = geoCache[geoId];
+        if (!geo) {
+          var gEntry = gt[geoId];
+          if (gEntry) {
+            var _tGB = performance.now();
+            geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(gEntry.pos, 3));
+            geo.setAttribute('normal', new THREE.BufferAttribute(gEntry.nrm, 3));
+            geo.setIndex(new THREE.BufferAttribute(gEntry.idx, 1));
+            _ccQuantizeNormalAttr(geo);
+            _tGeoBuild += performance.now() - _tGB;
+            geoCache[geoId] = geo;
+          } else { continue; }
+        }
+        var _tM = performance.now();
+        var hasColor = pk.placementHasColor[pOff];
+        var cOff = pOff * 4;
+        var ca = hasColor ? pk.placementColors[cOff + 3] : 1;
+        if (!_isSp && hasColor && ca < 0.05) continue; // rooms are often styled fully transparent
+        var col;
+        if (hasColor) col = { r:pk.placementColors[cOff], g:pk.placementColors[cOff+1], b:pk.placementColors[cOff+2] };
+        else { var _fb2 = new THREE.Color(fallbackColor); col = { r:_fb2.r, g:_fb2.g, b:_fb2.b }; }
+        var mat = _ccGetSharedPhongMat(col.r, col.g, col.b, ca);
+        var matKey = mat ? mat.color.r.toFixed(3)+','+mat.color.g.toFixed(3)+','+mat.color.b.toFixed(3)+','+ca.toFixed(3) : 'na';
+        var mesh = new THREE.Mesh(geo, mat);
+        mesh.applyMatrix4(_tmpMtx4.fromArray(pk.placementTransforms, pOff * 16));
+        mesh.userData.expressId = eid;
+        mesh.userData._ifcMaterial = _pkStr(pk.materialIdx[i]);
+        _ccBakeMesh(mesh);
+        if (_isSp) _ccMarkSpaceMesh(mesh);
+        else mesh.userData._instKey = geoId + ':' + matKey;
+        _tMesh += performance.now() - _tM;
+        var _tB = performance.now();
+        elBox.expandByObject(mesh);
+        _tBBox += performance.now() - _tB;
+        elMeshes.push(mesh); meshes.push(mesh);
+      }
+      _placementOffset += gc;
+      if (elMeshes.length > 0) {
+        var props = {
+          expressId: eid,
+          globalId: pk.globalIds[i], name: pk.names[i], description: pk.descriptions[i], objectType: pk.objectTypes[i],
+          ifcType: _pkStr(pk.ifcTypeIdx[i]),
+          storey: _pkStr(pk.storeyIdx[i]), storeyId: null,
+          material: _pkStr(pk.materialIdx[i]),
+          // Always empty on this path — see the packedEls comment
+          // block (worker side) on why quantities/psets are never
+          // encoded here. _ccCanonPsets/_ccCanonQuantities are still
+          // called on the empty objects, matching v1's behavior
+          // exactly (v1's `if (raw.props.psets)` guard was truthy for
+          // `{}` too, so the canonicalizer always ran there as well).
+          quantities: _ccCanonQuantities({}), psets: _ccCanonPsets({})
+        };
+        if (pk.typeId[i] !== -1) props.typeId = pk.typeId[i];
+        if (pk.predefIdx && pk.predefIdx[i] !== -1) props.predefinedType = _pkStr(pk.predefIdx[i]);
+        if (msg.openingRecs && msg.openingRecs[eid]) { var _wOpen = _ccOpeningsFlat(msg.openingRecs[eid]); if (_wOpen) props.openings = _wOpen; }
+        if (pk.hasAxis[i]) {
+          var ax = pk.axisX[i], ay = pk.axisY[i], az = pk.axisZ[i];
+          props.axis = (ax === 0 && ay === 0 && az === 0) ? null : [ax, ay, az];
+        }
+        elements.push({expressId:eid, meshes:elMeshes, box:elBox, props:props});
+      }
+    }
+
+    var _loopEnd = performance.now();
+    var _tStrip = performance.now();
+    var _sm = _ccStripSurveyMarkers(elements, meshes); elements = _sm.elements; meshes = _sm.meshes;
+    _ccApplySemanticRecords(elements, msg.semantics);
+    _tStrip = performance.now() - _tStrip;
+    var _tInstance = performance.now();
+    var _instResult = _buildInstancedMeshes(elements, meshes);
+    meshes = _instResult.meshes;
+    _tInstance = performance.now() - _tInstance;
+    var _tBatch = performance.now();
+    var _batchRes = _ccBatchPathological(elements, meshes, msg.geoUnique || 0);
+    meshes = _batchRes.meshes;
+    _tBatch = performance.now() - _tBatch;
+
+    var loadTime = Math.round(performance.now() - loadStart);
+    var phases = msg.phases || {};
+    phases['Scene build'] = performance.now() - loadStart;
+    // transferGap: time between the worker finishing its own 'Geometry
+    // stream' mark (worker-relative clock) and this handler starting to
+    // process the result (_sbStart, main-thread-relative to loadStart)
+    // — structured-clone deserialization + event-loop queueing of the
+    // postMessage payload. Both clocks share the page's time origin, so
+    // the delta is a real (if approximate — sub-millisecond dispatch
+    // latency aside) measurement, not a guess.
+    var _workerGeoStreamMark = (msg.phases && msg.phases['Geometry stream']) || 0;
+    var _transferGap = Math.max(0, (_sbStart - loadStart) - _workerGeoStreamMark);
+    var sceneSub = {
+      bufferGeo:    Math.round(_tGeoBuild),
+      mesh:         Math.round(_tMesh),
+      expandBBox:   Math.round(_tBBox),
+      reconstructLoopTotal: Math.round(_loopEnd - _sbStart),
+      transferGap:  Math.round(_transferGap),
+      stripSurveyMarkers: Math.round(_tStrip),
+      instancing:   Math.round(_tInstance),
+      batching:     Math.round(_tBatch)
+    };
+    var streamSub = msg.streamSub || null;
+    var _gu = msg.geoUnique || Object.keys(geoCache).length, _gr = msg.geoReused || 0;
+    var stats = {loadTime:loadTime, fileSize:msg.fileSize, elementCount:elements.length, meshCount:meshes.length, geoUnique:_gu, geoReused:_gr, instancedGroups:_instResult.groups, instancedElements:_instResult.instanced, phases:phases, streamSub:streamSub, sceneSub:sceneSub, loadType:'IFC', loadedScope:msg.loadedScope||null, scopedOutCount:msg.scopedOutCount||0, semanticsMs:streamSub ? streamSub.semantics : null,
+      notDrawn:msg.notDrawn||null, mem:_ccLoadMemStats(msg.mem), streamedBatches:msg.streamed||0};
+
+    (function() {
+      var ph = phases, prev = 0;
+      var rows = [];
+      var phaseNames = ['WASM ready','Model open','Property maps','Geometry stream','Scene build'];
+      phaseNames.forEach(function(name) {
+        if (ph[name] === undefined) return;
+        var t = Math.round(ph[name]);
+        var dt = Math.round(ph[name] - prev);
+        var pct = Math.round(dt / loadTime * 100);
+        rows.push({Phase: name, Time: dt+'ms', Pct: pct+'%', Cumulative: t+'ms'});
+        prev = ph[name];
+        if (name === 'Geometry stream' && streamSub) {
+          var streamTotal = dt || 1;
+          rows.push({Phase: '  ↳ GetGeometry (WASM)',  Time: streamSub.getGeometry  + 'ms', Pct: Math.round(streamSub.getGeometry  / streamTotal * 100) + '% of phase', Cumulative: ''});
+          rows.push({Phase: '  ↳ Vertex deinterleave', Time: streamSub.deinterleave + 'ms', Pct: Math.round(streamSub.deinterleave / streamTotal * 100) + '% of phase', Cumulative: ''});
+          rows.push({Phase: '  ↳ extractProperties',   Time: streamSub.extractProps + 'ms', Pct: Math.round(streamSub.extractProps / streamTotal * 100) + '% of phase', Cumulative: ''});
+        }
+        if (name === 'Scene build') {
+          var sbTotal = dt || 1;
+          rows.push({Phase: '  ↳ Worker→main transfer', Time: sceneSub.transferGap + 'ms', Pct: Math.round(sceneSub.transferGap / sbTotal * 100) + '% of phase', Cumulative: ''});
+          rows.push({Phase: '  ↳ BufferGeometry',      Time: sceneSub.bufferGeo  + 'ms', Pct: Math.round(sceneSub.bufferGeo  / sbTotal * 100) + '% of phase', Cumulative: ''});
+          rows.push({Phase: '  ↳ Mesh + material',     Time: sceneSub.mesh       + 'ms', Pct: Math.round(sceneSub.mesh       / sbTotal * 100) + '% of phase', Cumulative: ''});
+          rows.push({Phase: '  ↳ expandByObject bbox', Time: sceneSub.expandBBox + 'ms', Pct: Math.round(sceneSub.expandBBox / sbTotal * 100) + '% of phase', Cumulative: ''});
+          rows.push({Phase: '  ↳ reconstruct loop (total)', Time: sceneSub.reconstructLoopTotal + 'ms', Pct: Math.round(sceneSub.reconstructLoopTotal / sbTotal * 100) + '% of phase', Cumulative: ''});
+          rows.push({Phase: '  ↳ stripSurveyMarkers',  Time: sceneSub.stripSurveyMarkers + 'ms', Pct: Math.round(sceneSub.stripSurveyMarkers / sbTotal * 100) + '% of phase', Cumulative: ''});
+          rows.push({Phase: '  ↳ buildInstancedMeshes', Time: sceneSub.instancing + 'ms', Pct: Math.round(sceneSub.instancing / sbTotal * 100) + '% of phase', Cumulative: ''});
+          rows.push({Phase: '  ↳ batchPathological',   Time: sceneSub.batching + 'ms', Pct: Math.round(sceneSub.batching / sbTotal * 100) + '% of phase', Cumulative: ''});
+        }
+      });
+      rows.push({Phase: 'TOTAL', Time: loadTime+'ms', Pct: '100%', Cumulative: loadTime+'ms'});
+      var _wPsetStats = _ccPsetCacheStats();
+      console.groupCollapsed('%c[IFC Load Profile · Worker] ' + elements.length + ' elements · ' + (msg.fileSize/1024/1024).toFixed(1) + ' MB · ' + loadTime + 'ms total · geo dedup: ' + _gu + ' unique / ' + (_gu+_gr) + ' total (' + _gr + ' reused) · pset dedup: ' + _wPsetStats.psetContainers + ' containers / ' + _wPsetStats.psetInner + ' inner / ' + _wPsetStats.quantities + ' qto', 'color:#38bdf8;font-weight:bold');
+      console.table(rows);
+      console.groupEnd();
+    })();
+    return {meshes:meshes, elements:elements, storeys:msg.storeys, storeyData:msg.storeyData, spatialHierarchy:msg.spatialHierarchy||{}, relatedPairs:msg.relatedPairs, spaceBoundaries:msg.spaceBoundaries||null, stats:stats};
   }
 
   // opts.stream: ask the worker for ordered 'geo' batches while it streams
@@ -6853,175 +7097,9 @@ function startApp() {
             worker.terminate(); resolve(null); return;
           }
           if (onProgress) onProgress('Placing elements in the scene 85%');
-          // Protocol v2 decode — see the packedEls comment block in
-          // _ifcWorkerMain (worker side) for the full encoding rationale.
-          // Reconstructs the exact same elements/meshes shape the v1
-          // rawEls-array decode produced, from flat typed + string arrays
-          // instead of a structured-cloned object graph.
-          var pk = msg.packedEls;
-          var pkStrTable = pk.stringTable;
-          function _pkStr(idx) { return idx === -1 ? '' : pkStrTable[idx]; }
           var gt = msg.geoTable || {};
           if (_streamGt) { for (var _rk in gt) _streamGt[_rk] = gt[_rk]; gt = _streamGt; _streamGt = null; }
-          var meshes = [];
-          var elements = [];
-          var matCache = {};
-          var geoCache = {}; // geoId → BufferGeometry (shared across identical elements)
-
-          var _tGeoBuild = 0, _tMesh = 0, _tBBox = 0;
-          var _sbStart = performance.now();
-          var _tmpMtx4 = new THREE.Matrix4(); // reused per placement to avoid 5k-50k allocations per load
-
-          var _placementOffset = 0; // running index into placement-flat arrays
-          for (var i = 0; i < pk.expressIds.length; i++) {
-            var eid = pk.expressIds[i];
-            var gc = pk.geoCounts[i];
-            var _isSp = _pkStr(pk.ifcTypeIdx[i]) === 'IfcSpace';
-            var elMeshes = [];
-            var elBox = new THREE.Box3();
-            for (var g = 0; g < gc; g++) {
-              var pOff = _placementOffset + g;
-              var geoId = pk.placementGeoIds[pOff];
-              var geo = geoCache[geoId];
-              if (!geo) {
-                var gEntry = gt[geoId];
-                if (gEntry) {
-                  var _tGB = performance.now();
-                  geo = new THREE.BufferGeometry();
-                  geo.setAttribute('position', new THREE.BufferAttribute(gEntry.pos, 3));
-                  geo.setAttribute('normal', new THREE.BufferAttribute(gEntry.nrm, 3));
-                  geo.setIndex(new THREE.BufferAttribute(gEntry.idx, 1));
-                  _ccQuantizeNormalAttr(geo);
-                  _tGeoBuild += performance.now() - _tGB;
-                  geoCache[geoId] = geo;
-                } else { continue; }
-              }
-              var _tM = performance.now();
-              var hasColor = pk.placementHasColor[pOff];
-              var cOff = pOff * 4;
-              var ca = hasColor ? pk.placementColors[cOff + 3] : 1;
-              if (!_isSp && hasColor && ca < 0.05) continue; // rooms are often styled fully transparent
-              var col;
-              if (hasColor) col = { r:pk.placementColors[cOff], g:pk.placementColors[cOff+1], b:pk.placementColors[cOff+2] };
-              else { var _fb2 = new THREE.Color(fallbackColor); col = { r:_fb2.r, g:_fb2.g, b:_fb2.b }; }
-              var mat = _ccGetSharedPhongMat(col.r, col.g, col.b, ca);
-              var matKey = mat ? mat.color.r.toFixed(3)+','+mat.color.g.toFixed(3)+','+mat.color.b.toFixed(3)+','+ca.toFixed(3) : 'na';
-              var mesh = new THREE.Mesh(geo, mat);
-              mesh.applyMatrix4(_tmpMtx4.fromArray(pk.placementTransforms, pOff * 16));
-              mesh.userData.expressId = eid;
-              mesh.userData._ifcMaterial = _pkStr(pk.materialIdx[i]);
-              _ccBakeMesh(mesh);
-              if (_isSp) _ccMarkSpaceMesh(mesh);
-              else mesh.userData._instKey = geoId + ':' + matKey;
-              _tMesh += performance.now() - _tM;
-              var _tB = performance.now();
-              elBox.expandByObject(mesh);
-              _tBBox += performance.now() - _tB;
-              elMeshes.push(mesh); meshes.push(mesh);
-            }
-            _placementOffset += gc;
-            if (elMeshes.length > 0) {
-              var props = {
-                expressId: eid,
-                globalId: pk.globalIds[i], name: pk.names[i], description: pk.descriptions[i], objectType: pk.objectTypes[i],
-                ifcType: _pkStr(pk.ifcTypeIdx[i]),
-                storey: _pkStr(pk.storeyIdx[i]), storeyId: null,
-                material: _pkStr(pk.materialIdx[i]),
-                // Always empty on this path — see the packedEls comment
-                // block (worker side) on why quantities/psets are never
-                // encoded here. _ccCanonPsets/_ccCanonQuantities are still
-                // called on the empty objects, matching v1's behavior
-                // exactly (v1's `if (raw.props.psets)` guard was truthy for
-                // `{}` too, so the canonicalizer always ran there as well).
-                quantities: _ccCanonQuantities({}), psets: _ccCanonPsets({})
-              };
-              if (pk.typeId[i] !== -1) props.typeId = pk.typeId[i];
-              if (pk.predefIdx && pk.predefIdx[i] !== -1) props.predefinedType = _pkStr(pk.predefIdx[i]);
-              if (msg.openingRecs && msg.openingRecs[eid]) { var _wOpen = _ccOpeningsFlat(msg.openingRecs[eid]); if (_wOpen) props.openings = _wOpen; }
-              if (pk.hasAxis[i]) {
-                var ax = pk.axisX[i], ay = pk.axisY[i], az = pk.axisZ[i];
-                props.axis = (ax === 0 && ay === 0 && az === 0) ? null : [ax, ay, az];
-              }
-              elements.push({expressId:eid, meshes:elMeshes, box:elBox, props:props});
-            }
-          }
-
-          var _loopEnd = performance.now();
-          var _tStrip = performance.now();
-          var _sm = _ccStripSurveyMarkers(elements, meshes); elements = _sm.elements; meshes = _sm.meshes;
-          _ccApplySemanticRecords(elements, msg.semantics);
-          _tStrip = performance.now() - _tStrip;
-          var _tInstance = performance.now();
-          var _instResult = _buildInstancedMeshes(elements, meshes);
-          meshes = _instResult.meshes;
-          _tInstance = performance.now() - _tInstance;
-          var _tBatch = performance.now();
-          var _batchRes = _ccBatchPathological(elements, meshes, msg.geoUnique || 0);
-          meshes = _batchRes.meshes;
-          _tBatch = performance.now() - _tBatch;
-
-          var loadTime = Math.round(performance.now() - loadStart);
-          var phases = msg.phases || {};
-          phases['Scene build'] = performance.now() - loadStart;
-          // transferGap: time between the worker finishing its own 'Geometry
-          // stream' mark (worker-relative clock) and this handler starting to
-          // process the result (_sbStart, main-thread-relative to loadStart)
-          // — structured-clone deserialization + event-loop queueing of the
-          // postMessage payload. Both clocks share the page's time origin, so
-          // the delta is a real (if approximate — sub-millisecond dispatch
-          // latency aside) measurement, not a guess.
-          var _workerGeoStreamMark = (msg.phases && msg.phases['Geometry stream']) || 0;
-          var _transferGap = Math.max(0, (_sbStart - loadStart) - _workerGeoStreamMark);
-          var sceneSub = {
-            bufferGeo:    Math.round(_tGeoBuild),
-            mesh:         Math.round(_tMesh),
-            expandBBox:   Math.round(_tBBox),
-            reconstructLoopTotal: Math.round(_loopEnd - _sbStart),
-            transferGap:  Math.round(_transferGap),
-            stripSurveyMarkers: Math.round(_tStrip),
-            instancing:   Math.round(_tInstance),
-            batching:     Math.round(_tBatch)
-          };
-          var streamSub = msg.streamSub || null;
-          var _gu = msg.geoUnique || Object.keys(geoCache).length, _gr = msg.geoReused || 0;
-          var stats = {loadTime:loadTime, fileSize:msg.fileSize, elementCount:elements.length, meshCount:meshes.length, geoUnique:_gu, geoReused:_gr, instancedGroups:_instResult.groups, instancedElements:_instResult.instanced, phases:phases, streamSub:streamSub, sceneSub:sceneSub, loadType:'IFC', loadedScope:msg.loadedScope||null, scopedOutCount:msg.scopedOutCount||0, semanticsMs:streamSub ? streamSub.semantics : null,
-            notDrawn:msg.notDrawn||null, mem:_ccLoadMemStats(msg.mem), streamedBatches:msg.streamed||0};
-
-          (function() {
-            var ph = phases, prev = 0;
-            var rows = [];
-            var phaseNames = ['WASM ready','Model open','Property maps','Geometry stream','Scene build'];
-            phaseNames.forEach(function(name) {
-              if (ph[name] === undefined) return;
-              var t = Math.round(ph[name]);
-              var dt = Math.round(ph[name] - prev);
-              var pct = Math.round(dt / loadTime * 100);
-              rows.push({Phase: name, Time: dt+'ms', Pct: pct+'%', Cumulative: t+'ms'});
-              prev = ph[name];
-              if (name === 'Geometry stream' && streamSub) {
-                var streamTotal = dt || 1;
-                rows.push({Phase: '  ↳ GetGeometry (WASM)',  Time: streamSub.getGeometry  + 'ms', Pct: Math.round(streamSub.getGeometry  / streamTotal * 100) + '% of phase', Cumulative: ''});
-                rows.push({Phase: '  ↳ Vertex deinterleave', Time: streamSub.deinterleave + 'ms', Pct: Math.round(streamSub.deinterleave / streamTotal * 100) + '% of phase', Cumulative: ''});
-                rows.push({Phase: '  ↳ extractProperties',   Time: streamSub.extractProps + 'ms', Pct: Math.round(streamSub.extractProps / streamTotal * 100) + '% of phase', Cumulative: ''});
-              }
-              if (name === 'Scene build') {
-                var sbTotal = dt || 1;
-                rows.push({Phase: '  ↳ Worker→main transfer', Time: sceneSub.transferGap + 'ms', Pct: Math.round(sceneSub.transferGap / sbTotal * 100) + '% of phase', Cumulative: ''});
-                rows.push({Phase: '  ↳ BufferGeometry',      Time: sceneSub.bufferGeo  + 'ms', Pct: Math.round(sceneSub.bufferGeo  / sbTotal * 100) + '% of phase', Cumulative: ''});
-                rows.push({Phase: '  ↳ Mesh + material',     Time: sceneSub.mesh       + 'ms', Pct: Math.round(sceneSub.mesh       / sbTotal * 100) + '% of phase', Cumulative: ''});
-                rows.push({Phase: '  ↳ expandByObject bbox', Time: sceneSub.expandBBox + 'ms', Pct: Math.round(sceneSub.expandBBox / sbTotal * 100) + '% of phase', Cumulative: ''});
-                rows.push({Phase: '  ↳ reconstruct loop (total)', Time: sceneSub.reconstructLoopTotal + 'ms', Pct: Math.round(sceneSub.reconstructLoopTotal / sbTotal * 100) + '% of phase', Cumulative: ''});
-                rows.push({Phase: '  ↳ stripSurveyMarkers',  Time: sceneSub.stripSurveyMarkers + 'ms', Pct: Math.round(sceneSub.stripSurveyMarkers / sbTotal * 100) + '% of phase', Cumulative: ''});
-                rows.push({Phase: '  ↳ buildInstancedMeshes', Time: sceneSub.instancing + 'ms', Pct: Math.round(sceneSub.instancing / sbTotal * 100) + '% of phase', Cumulative: ''});
-                rows.push({Phase: '  ↳ batchPathological',   Time: sceneSub.batching + 'ms', Pct: Math.round(sceneSub.batching / sbTotal * 100) + '% of phase', Cumulative: ''});
-              }
-            });
-            rows.push({Phase: 'TOTAL', Time: loadTime+'ms', Pct: '100%', Cumulative: loadTime+'ms'});
-            var _wPsetStats = _ccPsetCacheStats();
-            console.groupCollapsed('%c[IFC Load Profile · Worker] ' + elements.length + ' elements · ' + (msg.fileSize/1024/1024).toFixed(1) + ' MB · ' + loadTime + 'ms total · geo dedup: ' + _gu + ' unique / ' + (_gu+_gr) + ' total (' + _gr + ' reused) · pset dedup: ' + _wPsetStats.psetContainers + ' containers / ' + _wPsetStats.psetInner + ' inner / ' + _wPsetStats.quantities + ' qto', 'color:#38bdf8;font-weight:bold');
-            console.table(rows);
-            console.groupEnd();
-          })();
+          var _decoded = _ccDecodeIfcWorkerResult(msg, gt, fallbackColor, loadStart);
 
           _unreg();
           // Worker stays alive for lazy buildPropertyMap; if it hangs there
@@ -7031,7 +7109,7 @@ function startApp() {
             try { if (onProps) onProps({}, 'props-timeout'); } catch(_) {}
             try { worker.terminate(); } catch(_) {}
           }, 120000);
-          resolve({meshes:meshes, elements:elements, storeys:msg.storeys, storeyData:msg.storeyData, spatialHierarchy:msg.spatialHierarchy||{}, relatedPairs:msg.relatedPairs, spaceBoundaries:msg.spaceBoundaries||null, stats:stats});
+          resolve(_decoded);
         }
       };
       worker.onerror = function(err) {
@@ -7055,6 +7133,233 @@ function startApp() {
         try { worker.terminate(); } catch(e) {}
         reject(postErr);
       }
+    });
+  }
+
+  // ── Sharded single-file load (flag shardedLoad) ──────────────────
+  // ONE large IFC file parsed by several web-ifc workers at once. Every
+  // shard opens the whole file (its own WASM copy of the model — memory
+  // grows with the shard count, which the gate budgets for) and streams a
+  // block-cyclic slice of the element order StreamAllMeshes would produce
+  // (_ccIfcStreamOrder); shard 0 also streams the rooms and does all the
+  // non-geometry work and the lazy props. The main thread merges the
+  // shards' packed elements back into that single order
+  // (_ccMergeIfcShards) and decodes the merged message with the SAME
+  // _ccDecodeIfcWorkerResult as the single-worker load, so the model is
+  // identical: elements, order, geometry (first occurrence wins, as in
+  // one worker), instancing, colours, not-drawn report, rooms, semantics.
+  // Any shard failure, a type the order probe cannot place, or an error
+  // in the merge rejects, and the caller loads the file in one worker.
+  // Knobs + last run (tests/diagnostics), like _ccNarrowPool:
+  var _ccIfcShard = { minBytes: 40 * 1048576, maxShards: 2, last: null };
+  window._ccIfcShard = _ccIfcShard;
+  // How many workers ONE file may use (1 = not sharded). otherJobs: other
+  // IFC parses of the same batch — files already parsing side by side
+  // (parallelLoad) own the cores, so a multi-file batch never shards.
+  function _ccIfcShardCount(fileSize, scope, otherJobs) {
+    if (!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('shardedLoad'))) return 1;
+    if (scope && scope.storeys && scope.storeys.length) return 1; // storey-scoped loads are small already
+    if (otherJobs > 0 || !(fileSize >= _ccIfcShard.minBytes)) return 1;
+    var hc = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 2;
+    if (hc < 4) return 1;
+    var plan = _ccIfcLoadPlan(); // cores-1 (<= 3), capped on small-memory devices / a busy heap
+    var perShard = fileSize * _CC_IFC_JOB_COST_FACTOR + 64 * 1048576;
+    var n = Math.min(_ccIfcShard.maxShards | 0, plan.k, Math.floor(plan.budget / perShard));
+    return n >= 2 ? n : 1;
+  }
+
+  // Merge the shards' 'result' messages into one message of the single-
+  // worker shape (packedEls in global stream order + one geometry table).
+  // gts[k]: geometry received in shard k's 'geo' batches (stream mode).
+  function _ccMergeIfcShards(results, gts) {
+    var n = results.length, r0 = results[0], k, i;
+    var total = r0.shard.total;
+    for (k = 0; k < n; k++) {
+      var sh = results[k].shard;
+      if (!sh || sh.k !== k || sh.n !== n || sh.total !== total) throw new Error('shard ' + k + ': mismatched shard header');
+      if (sh.order.length !== results[k].packedEls.expressIds.length) throw new Error('shard ' + k + ': order/element count mismatch');
+    }
+    // Elements by global position (each shard's list is already ascending).
+    var ent = [];
+    for (k = 0; k < n; k++) {
+      var ord = results[k].shard.order;
+      for (i = 0; i < ord.length; i++) {
+        if (i && ord[i] <= ord[i - 1]) throw new Error('shard ' + k + ': order not ascending');
+        ent.push([ord[i], k, i]);
+      }
+    }
+    ent.sort(function(a, b) { return a[0] - b[0]; });
+    for (i = 1; i < ent.length; i++) if (ent[i][0] === ent[i - 1][0]) throw new Error('two shards streamed position ' + ent[i][0]);
+    // Per-shard placement offsets and string-table offsets.
+    var pOff = [], sOff = [], strings = [], nPl = 0;
+    for (k = 0; k < n; k++) {
+      var pk = results[k].packedEls, o = new Uint32Array(pk.geoCounts.length + 1);
+      for (i = 0; i < pk.geoCounts.length; i++) o[i + 1] = o[i] + pk.geoCounts[i];
+      pOff.push(o); nPl += o[pk.geoCounts.length];
+      sOff.push(strings.length);
+      for (i = 0; i < pk.stringTable.length; i++) strings.push(pk.stringTable[i]);
+    }
+    var N = ent.length;
+    var M = {
+      expressIds: new Uint32Array(N), geoCounts: new Uint32Array(N),
+      globalIds: new Array(N), names: new Array(N), descriptions: new Array(N), objectTypes: new Array(N),
+      ifcTypeIdx: new Int32Array(N), storeyIdx: new Int32Array(N), materialIdx: new Int32Array(N),
+      typeId: new Int32Array(N), predefIdx: new Int32Array(N), hasAxis: new Uint8Array(N),
+      axisX: new Float32Array(N), axisY: new Float32Array(N), axisZ: new Float32Array(N),
+      placementGeoIds: new Uint32Array(nPl), placementHasColor: new Uint8Array(nPl),
+      placementColors: new Float32Array(nPl * 4), placementTransforms: new Float64Array(nPl * 16),
+      stringTable: strings
+    };
+    function sx(v, off) { return v === -1 ? -1 : v + off; }
+    var gt = {}, p = 0;
+    for (var e = 0; e < N; e++) {
+      k = ent[e][1]; i = ent[e][2];
+      var S = results[k].packedEls, so = sOff[k];
+      M.expressIds[e] = S.expressIds[i]; M.geoCounts[e] = S.geoCounts[i];
+      M.globalIds[e] = S.globalIds[i]; M.names[e] = S.names[i]; M.descriptions[e] = S.descriptions[i]; M.objectTypes[e] = S.objectTypes[i];
+      M.ifcTypeIdx[e] = sx(S.ifcTypeIdx[i], so); M.storeyIdx[e] = sx(S.storeyIdx[i], so); M.materialIdx[e] = sx(S.materialIdx[i], so);
+      M.typeId[e] = S.typeId[i]; M.predefIdx[e] = sx(S.predefIdx[i], so); M.hasAxis[e] = S.hasAxis[i];
+      M.axisX[e] = S.axisX[i]; M.axisY[e] = S.axisY[i]; M.axisZ[e] = S.axisZ[i];
+      var sg = results[k].geoTable || {}, bg = gts[k] || {};
+      for (var q = pOff[k][i]; q < pOff[k][i + 1]; q++, p++) {
+        var gid = S.placementGeoIds[q];
+        M.placementGeoIds[p] = gid; M.placementHasColor[p] = S.placementHasColor[q];
+        M.placementColors.set(S.placementColors.subarray(q * 4, q * 4 + 4), p * 4);
+        M.placementTransforms.set(S.placementTransforms.subarray(q * 16, q * 16 + 16), p * 16);
+        // First occurrence in stream order wins — the entry one worker
+        // would have decoded.
+        if (!Object.prototype.hasOwnProperty.call(gt, gid)) { var ge = bg[gid] || sg[gid]; if (ge) gt[gid] = ge; }
+      }
+    }
+    // Geometry dedup counters as one worker counts them.
+    var uniq = new Set(), seen = 0;
+    for (k = 0; k < n; k++) {
+      var gk = results[k].shard.geoKeys;
+      for (i = 0; i < gk.length; i++) uniq.add(gk[i]);
+      seen += (results[k].geoUnique || 0) + (results[k].geoReused || 0);
+    }
+    // Not-drawn report replayed in single-worker order: stream notes by
+    // global position, then the never-streamed ids ascending (minus those
+    // another shard did stream).
+    var tn = {}, notes = [], streamedElsewhere = new Set();
+    for (k = 0; k < n; k++) {
+      var nr = results[k].shard.notes;
+      for (i = 0; i < nr.g.length; i++) { notes.push([nr.g[i], nr.eid[i], nr.reason[i]]); tn[nr.eid[i]] = nr.type[i]; }
+      var pe = results[k].packedEls.expressIds;
+      for (i = 0; i < pe.length; i++) streamedElsewhere.add(pe[i]);
+      for (i = 0; i < nr.eid.length; i++) streamedElsewhere.add(nr.eid[i]);
+    }
+    notes.sort(function(a, b) { return a[0] - b[0]; });
+    var uns = [];
+    for (k = 0; k < n; k++) {
+      var u = results[k].shard.unseen || { eid: [], type: [] };
+      for (i = 0; i < u.eid.length; i++) { if (!streamedElsewhere.has(u.eid[i])) { uns.push(u.eid[i]); tn[u.eid[i]] = u.type[i]; } }
+    }
+    uns.sort(function(a, b) { return a - b; });
+    var rep = createNotDrawnReport(null, 0, function(eid) { return tn[eid]; });
+    for (i = 0; i < notes.length; i++) rep.note(notes[i][1], notes[i][2]);
+    for (i = 0; i < uns.length; i++) rep.note(uns[i], 'noRepresentation');
+    var batches = 0;
+    for (k = 0; k < n; k++) batches += results[k].streamed || 0;
+    var msg = Object.assign({}, r0, {
+      packedEls: M, geoTable: gt, notDrawn: rep.result(), streamed: batches,
+      geoUnique: uniq.size, geoReused: seen - uniq.size, shard: null
+    });
+    return { msg: msg, gt: gt };
+  }
+
+  // Same contract as loadIFCWorker (resolves the decoded result, null when
+  // cancelled; rejects on any failure WITHOUT calling onProps, so the
+  // caller's single-worker retry delivers the props), with n workers.
+  // `buffer` goes to shard 0 (transferred); the others read `file`.
+  function loadIFCWorkerSharded(buffer, file, fallbackColor, onProgress, onProps, opts, n) {
+    opts = opts || {};
+    var loadStart = performance.now();
+    var _myGen = _ccLoadGeneration;
+    return new Promise(function(resolve, reject) {
+      var shards = [], results = new Array(n), got = 0, settled = false, propsDone = false, propsGuard = null;
+      var resolvedOk = false, heldProps = null;
+      // Props are delivered only after the result resolved (shard 0 can
+      // finish its props while other shards still stream); a failure before
+      // that drops them — the caller's single-worker retry delivers its own.
+      function giveProps(map, err) {
+        if (propsDone) return;
+        if (!resolvedOk && err !== 'aborted') { heldProps = [map, err]; return; }
+        propsDone = true;
+        if (propsGuard) { clearTimeout(propsGuard); propsGuard = null; }
+        try { if (onProps) onProps(map, err); } catch (e) { console.warn('[IFC] onProps callback failed:', e); }
+      }
+      function killAll() { shards.forEach(function(sh) { if (sh.wd) clearTimeout(sh.wd); try { sh.w.terminate(); } catch (_) {} }); }
+      var reg = { worker: { terminate: killAll }, settle: function(v) { if (!settled) { settled = true; resolve(v); } },
+        onAbort: function() { giveProps({}, 'aborted'); } };
+      _ccActiveLoads.push(reg);
+      function unreg() { var ix = _ccActiveLoads.indexOf(reg); if (ix !== -1) _ccActiveLoads.splice(ix, 1); }
+      function fail(err) {
+        if (settled) { if (resolvedOk) giveProps({}, 'props-error'); killAll(); return; } // shard 0 died in its props phase
+        settled = true; killAll(); unreg(); reject(err);
+      }
+      function arm(sh) { if (sh.wd) clearTimeout(sh.wd); sh.wd = setTimeout(function() { sh.wd = null; fail(new Error('IFC shard ' + sh.k + ' timed out (no progress in 20s)')); }, 20000); }
+      function complete() {
+        if (settled) return;
+        if (_myGen !== _ccLoadGeneration) { settled = true; killAll(); unreg(); giveProps({}, 'aborted'); resolve(null); return; }
+        var decoded;
+        try {
+          if (onProgress) onProgress('Placing elements in the scene 85%');
+          var tM = performance.now();
+          var merged = _ccMergeIfcShards(results, shards.map(function(sh) { return sh.gt; }));
+          var mergeMs = Math.round(performance.now() - tM);
+          decoded = _ccDecodeIfcWorkerResult(merged.msg, merged.gt, fallbackColor, loadStart);
+          decoded.stats.shards = { n: n, mergeMs: mergeMs, perShard: results.map(function(r) {
+            var ph = r.phases || {};
+            return { open: Math.round((ph['Model open'] || 0) - (ph['WASM ready'] || 0)), streamed: Math.round(ph['Meshes streamed'] || 0), elements: r.packedEls.expressIds.length };
+          }) };
+        } catch (mergeErr) { fail(mergeErr); return; }
+        settled = true; unreg();
+        _ccIfcShard.last = { n: n, fileSize: decoded.stats.fileSize, loadTime: decoded.stats.loadTime, shards: decoded.stats.shards };
+        // Shard 0 stays alive for the lazy props; cap that phase like loadIFCWorker.
+        resolve(decoded);
+        resolvedOk = true;
+        if (heldProps) { giveProps(heldProps[0], heldProps[1]); heldProps = null; }
+        else propsGuard = setTimeout(function() { propsGuard = null; giveProps({}, 'props-timeout'); killAll(); }, 120000);
+      }
+      function spawn(k) {
+        var w = new Worker(_getIFCWorkerUrl());
+        var sh = { k: k, w: w, gt: {}, wd: null };
+        shards.push(sh);
+        arm(sh);
+        w.onmessage = function(e) {
+          var msg = e.data;
+          if (msg && msg.v !== IFC_WORKER_PROTOCOL_VERSION) console.warn('[IFC] worker protocol version mismatch: got', msg.v, 'expected', IFC_WORKER_PROTOCOL_VERSION);
+          if (msg.type === 'progress') { arm(sh); if (k === 0 && onProgress) onProgress(msg.msg); return; }
+          if (msg.type === 'geo') {
+            arm(sh);
+            var bg = msg.geoTable || {};
+            for (var bk in bg) sh.gt[bk] = bg[bk];
+            if (opts.onBatch && _myGen === _ccLoadGeneration) { try { opts.onBatch(msg); } catch (pbE) { console.warn('[IFC] preview batch failed:', pbE); } }
+            return;
+          }
+          if (sh.wd) { clearTimeout(sh.wd); sh.wd = null; }
+          if (msg.type === 'error') { fail(new Error('IFC shard ' + k + ': ' + msg.msg)); return; }
+          if (msg.type === 'props' || msg.type === 'props-error') {
+            if (msg.type === 'props-error') console.warn('[IFC] Lazy property extraction failed (model loaded without psets):', msg.msg);
+            giveProps(msg.type === 'props' ? (msg.propMap || {}) : {}, msg.type === 'props' ? null : (msg.msg || 'props-error'));
+            try { w.terminate(); } catch (_) {}
+            return;
+          }
+          if (msg.type === 'result') {
+            if (k > 0) { try { w.terminate(); } catch (_) {} } // geometry only: free its WASM heap now
+            if (results[k]) return;
+            results[k] = msg; got++;
+            if (got === n) complete();
+          }
+        };
+        w.onerror = function(err) { fail(new Error('IFC shard ' + k + ' failed: ' + (err.message || err))); };
+        var base = { scope: null, stream: !!opts.stream, shard: { k: k, n: n }, v: IFC_WORKER_PROTOCOL_VERSION };
+        if (k === 0) w.postMessage(Object.assign({ buffer: buffer }, base), [buffer]);
+        else w.postMessage(Object.assign({ file: file }, base));
+      }
+      try { for (var k = 0; k < n; k++) spawn(k); }
+      catch (spawnErr) { fail(spawnErr); }
     });
   }
 
@@ -24988,7 +25293,23 @@ function startApp() {
             job.preview = _ccLoadPreview.create(f.name);
             if (job.preview) _batchPreviews.push(job.preview);
             var wOpts = job.preview ? { stream: true, onBatch: job.preview.addBatch } : null;
-            var loadP = loadIFCWorker(buf, col, job.onProg, job.onProps, scope, wOpts);
+            // shardedLoad: one large file over several workers when it is
+            // the only parse of the batch; any shard failure → one worker
+            // (fresh bytes: the buffer went to shard 0), fresh preview.
+            var nShards = _ccIfcShardCount(f.size, scope, _parallel ? _ifcJobs.length - 1 : 0);
+            var loadP;
+            if (nShards > 1) {
+              var shardGen = _ccLoadGeneration;
+              loadP = loadIFCWorkerSharded(buf, f, col, job.onProg, job.onProps, wOpts, nShards).catch(function(shErr) {
+                console.warn('[IFC] sharded load failed, loading in one worker:', (shErr && shErr.message) || shErr);
+                if (_ccLoadGeneration !== shardGen) return null; // cancelled meanwhile
+                if (job.preview) { job.preview.dispose(); job.preview = _ccLoadPreview.create(f.name); if (job.preview) _batchPreviews.push(job.preview); }
+                var wOpts1 = job.preview ? { stream: true, onBatch: job.preview.addBatch } : null;
+                return f.arrayBuffer().then(function(fresh) { return loadIFCWorker(fresh, col, job.onProg, job.onProps, scope, wOpts1); });
+              });
+            } else {
+              loadP = loadIFCWorker(buf, col, job.onProg, job.onProps, scope, wOpts);
+            }
             var workerGen = _ccLoadGeneration; // capture generation assigned by loadIFCWorker
             var outcome = loadP.then(function(result) {
               parseSettled();
