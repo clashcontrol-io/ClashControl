@@ -302,6 +302,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- 2026-10-23: scene-level pick index (branch `pick-index`) — BVH over world boxes of meshes / instances / batch instances; hover, click, snap, orbit pivot, section pick, right-click, drag-edit go through it with results identical to the full-scene raycast + `firstVisibleHit`; `tests/browser/pick-index.mjs`.
 - ~~2026-10-23: first-load speed — storage inventory from IndexedDB v4 index keys (`tests/browser/storage-metadata.mjs`), shader error checks off unless `?ccDebugShaders`, single-file sharded loading (branch `shard-load`).~~ (2026-10-23)
 - ~~2026-10-23: first-run detection throughput (branch `first-run`): BVH reuse from the Engine, cheaper refinement, pool scheduling.~~ (2026-10-23)
 - ~~2026-10-23: clearance narrow phase faster, bit-identical (branch `clearance`): edge-edge skip, 0-stop, exact pair dismissal, per-pair worker seeds; `tests/clearance-exact.test.js`, `tests/browser/clearance-cost.mjs` (generator `nearMiss`).~~ (2026-10-23)

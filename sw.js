@@ -18,6 +18,7 @@ var PRECACHE = [
   'section-clipping.js',
   'viewer-camera-core.js',
   'viewer-pick-core.js',
+  'viewer-pick-index.js',
   'viewer-gizmo-core.js',
   'occlusion-core.js',
   'renderer-contract.js',
