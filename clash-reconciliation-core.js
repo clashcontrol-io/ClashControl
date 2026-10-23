@@ -24,6 +24,11 @@
     return typeof options.coverage !== 'function' || !!options.coverage(c);
   }
 
+  // Rows are copied with object spread, not Object.assign({}, c, {...}):
+  // the same own keys, order and values, but V8 keeps a ~50-field clash a
+  // fast-mode object (~0.4 KB) — Object.assign adding two or more new keys
+  // to a copy produces a dictionary-mode object (~3 KB), and these rows are
+  // the clash list held in state.
   function mergeDetectionResults(newClashes, prevClashes, options) {
     options = options || {};
     var identityKey = options.computeClashIdentityKey;
@@ -37,7 +42,7 @@
     if (!prevClashes || prevClashes.length === 0) {
       var now0 = options.now != null ? options.now : Date.now();
       var firstRun = newClashes.map(function(c, i) {
-        return Object.assign({}, c, {_identityKey:identityKey(c), _delta:'new', _firstSeen:now0, _lastSeen:now0, _runCount:1, number:i+1});
+        return {...c, _identityKey:identityKey(c), _delta:'new', _firstSeen:now0, _lastSeen:now0, _runCount:1, number:i+1};
       });
       return {clashes:firstRun, deltaSummary:{newCount:firstRun.length,persisting:0,autoResolved:0,ts:now0}};
     }
@@ -129,7 +134,7 @@
         } else if (typeof options.isDefaultTitle === 'function' && prev.title && !options.isDefaultTitle(prev)) {
           titleCarry = { title: prev.title };
         }
-        return Object.assign({}, c, sevCarry, titleCarry, {
+        return {...c, ...sevCarry, ...titleCarry,
           id: prev.id,
           _identityKey: key,
           _delta: 'persisting',
@@ -150,9 +155,9 @@
           _clusterSize: prev._clusterSize,
           clashTypeConfirmed: prev.clashTypeConfirmed,
           linkedIssueId: prev.linkedIssueId,
-        });
+        };
       }
-      return Object.assign({}, c, {_identityKey:key, _delta:'new', _firstSeen:now, _lastSeen:now, _runCount:1});
+      return {...c, _identityKey:key, _delta:'new', _firstSeen:now, _lastSeen:now, _runCount:1};
     });
 
     var arCount = 0, arOverflow = 0, notChecked = 0;
@@ -169,7 +174,7 @@
         // clash of any status was previously dropped entirely by the
         // status guard below running first.
         notChecked++;
-        merged.push(Object.assign({}, c, {_identityKey:key, _delta:'not_checked'}));
+        merged.push({...c, _identityKey:key, _delta:'not_checked'});
         return;
       }
       if (!(c.status==='open' || c.status==='in_progress')) return;
@@ -186,10 +191,10 @@
         // a fresh not_checked/auto_resolved/persisting/new record --
         // _delta is user-visible (badges, filters).
         arOverflow++;
-        merged.push(Object.assign({}, c, {_identityKey:key, _delta:'auto_resolve_capped'}));
+        merged.push({...c, _identityKey:key, _delta:'auto_resolve_capped'});
         return;
       }
-      merged.push(Object.assign({}, c, {_identityKey:key, _delta:'auto_resolved', _lastSeen:now, status:'auto_resolved'}));
+      merged.push({...c, _identityKey:key, _delta:'auto_resolved', _lastSeen:now, status:'auto_resolved'});
       arCount++;
     });
 

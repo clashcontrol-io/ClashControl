@@ -31,7 +31,7 @@
       var update = {};
       if (rule.assignee) update.assignee = rule.assignee;
       if (rule.priority) update.priority = rule.priority;
-      return Object.keys(update).length ? Object.assign({}, clash, update) : clash;
+      return Object.keys(update).length ? {...clash, ...update} : clash; // spread: fast-mode copy (see clash-reconciliation-core.js)
     });
   }
 

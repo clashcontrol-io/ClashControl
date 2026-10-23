@@ -308,7 +308,7 @@ Graduated autonomy: the envelope (`s.prefs.aiEnvelope`) decides what's allowed w
 
 Keeps the last `_BVH_CACHE_MAX` element BVHs alive between detection runs so re-runs on the same model don't rebuild. A `Map` preserves insertion order, so `delete+set` gives O(1) move-to-end (LRU touch) and `keys().next()` gives O(1) eviction of the oldest entry.
 
-Cap is adaptive to available heap when the runtime exposes it (Chromium). Average BVH is ~50 KB; we allow ~5% of the heap budget, clamped to [300, 2500] so small devices stay safe and big workstations don't thrash.
+Cap is adaptive to available heap when the runtime exposes it (Chromium). Average BVH is ~50 KB; we allow ~5% of the heap budget, clamped to [300, 2500] so small devices stay safe and big workstations don't thrash. With `leanMemory` the cache is also capped by BYTES from the heap headroom at each run start (§21.46) — the count alone bounds nothing on heavy elements.
 
 ### 21.9 Int8 normal quantization
 
@@ -587,6 +587,19 @@ Rule: a small state change must not recompute or re-render everything.
 - **Closed means not built.** "Run details" and the filter dropdown lists are computed only while open.
 - Anyone mutating a clash object in place after it is in state breaks these caches — make a new object instead.
 - Render counts for tests: `?ccRenderCount=1` exposes `window.__ccRenderCount` ({rows, headers, cards}).
+
+### 21.46 Federation memory — one copy of everything (leanMemory)
+
+**Code reference:** `_ccShareBatchArrays`, `_ccBatchPathological`, `_ccArrayBytes`/`_ccComputeResidencyLedger`, `_bvhLRUAccount`/`_ccCacheBudgetForRun`, `_ccIfcMemBatch`/`_ccIfcLoadMem`, `_ccLoadPreview` `streamEnded`, `_recordSnap`, `clash-reconciliation-core.js`; safety flag `leanMemory` (default on, `?ccSafety=-leanMemory`); test `tests/browser/memory-federation.mjs`.
+
+Rule: remove true duplicates and data that is provably no longer needed — never lower precision, simplify geometry or drop anything a feature reads.
+- **Batched geometry has ONE CPU copy.** `BatchedMesh.addGeometry` copies a source geometry's vertex attributes verbatim (`TypedArray#set` when the array types match) into the batch's arrays; the off-scene source geometry (`element.meshes[]` — engine, picking, snapping, export, geo cache) then reads `position`/`normal` through a `subarray` view of the batch's array. The index stays separate (the batch's holds vertexStart-offset values). A geometry used by several plain meshes is added to its batch once (one range, one instance per mesh); window membership is measured as before. Anything not a verbatim copy (interleaved, other array type/itemSize/normalized) keeps its own array. Never transfer or detach a geometry array's `.buffer` — it may be the batch's. Memory reports charge a shared buffer once (`_ccArrayBytes`).
+- **Detection caches are capped by bytes** as well as by count: each cached element carries its estimated bytes (world tris + verts + JS BVH nodes + topology, `el._ccCacheBytes`), the LRU map's `delete`/`clear` keep the total, and the cap is set at every run start from the heap headroom (35 % of `0.9 × jsHeapSizeLimit − used`, else deviceMemory; ≥ 64 MB; override `ClashControl.storage.bvhCache.setMaxBytes`). An evicted element re-extracts the same triangles / tree, so results never depend on the cap.
+- **No per-run context outlives the run.** `window._ccNiceTypeLabel` used to be a closure created inside `_detectClashesCore`, which kept that run's whole closure context (raw result rows, candidates, per-run maps) alive until the next run; it is defined outside now. Don't store closures created inside `_detectClashesCore` anywhere long-lived.
+- **Clash rows are fast-mode objects.** V8 keeps an object built by `Object.assign(target, {…two or more new keys})` / `Object.assign({}, row, {…})` of a ~50-field clash in dictionary mode (~3 KB); object spread with the same operands gives the same keys, order and values as a fast-mode object (~0.4 KB). The raw hit, the run-memo snapshot, the carried re-emit and the reconciled rows (`mergeDetectionResults`) use spread. Keep it that way for anything copied per clash.
+- **Load-only data:** the progressive preview drops its geometry-table references when the parse result arrives (`streamEnded`; its chunks are already drawn).
+- **Memory-aware IFC scheduling.** Before a second parse starts next to running ones, the batch projects the main-heap peak (used now + factor × bytes in flight incl. this file; factor 6, refined by the batch's measured peak ÷ bytes started). Over 70 % of the limit the batch goes serial for good: one file at a time, never sharded, the next parse only after the previous worker is gone (props merged). Commits stay in file order, so models/ids/element order are unchanged. Knob: `_ccIfcLoadMem.limitBytes` (tests), last decisions on `_ccIfcLoadMem.last`.
+- Not done (reasons in the commit history): sharing the index (offset values), slimmer `Object3D` proxies (non-configurable `modelViewMatrix`/`normalMatrix`, exactness of lazily re-derived position/quaternion/scale), per-mesh render-style materials.
 
 ## 22. Companion-app port & protocol registry
 

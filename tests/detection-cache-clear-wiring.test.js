@@ -92,6 +92,8 @@ test('the BVH LRU honours an explicit cap, counts evictions and drops the evicte
 
 test('ClashControl.storage.bvhCache exposes stats() and setMax() (trims at once)', () => {
   const body = sliceFrom('bvhCache: {', 900);
-  assert.match(body, /stats: function\(\)\{ return \{ size: _bvhLRU\.size, max: _BVH_CACHE_MAX_FN\(\), override: _bvhCacheMaxOverride, evictions: _bvhEvictions \}; \}/);
+  assert.match(body, /stats: function\(\)\{ return \{ size: _bvhLRU\.size, max: _BVH_CACHE_MAX_FN\(\), override: _bvhCacheMaxOverride, evictions: _bvhEvictions,\s+bytes: _bvhLRUBytes, maxBytes: _bvhCacheBytesCap, bytesOverride: _bvhCacheBytesOverride, byteEvictions: _bvhByteEvictions, peakBytes: _bvhCacheBytesPeak \}; \}/);
   assert.match(body, /while \(_bvhLRU\.size > _bvhCacheMaxOverride\) _bvhLRUEvict1\(\);/);
+  // leanMemory byte cap: explicit override trims at once
+  assert.match(sliceFrom('bvhCache: {', 1600), /setMaxBytes: function\(n\)\{[\s\S]*while \(_bvhLRUBytes > _bvhCacheBytesCap && _bvhLRU\.size\) _bvhLRUEvict1\(\);/);
 });

@@ -118,7 +118,16 @@
     // case and tests/ifc-shard-order.test.js green; every other loader gate
     // green with it on (small fixtures stay below the size threshold).
     // Kill switch ?ccSafety=-shardedLoad.
-    shardedLoad: Object.freeze({ fallback: 'one-worker', defaultEnabled: true })
+    shardedLoad: Object.freeze({ fallback: 'one-worker', defaultEnabled: true }),
+    // Memory: remove duplicate / provably unneeded data without changing any
+    // result — batched geometry keeps ONE CPU copy (the off-scene source
+    // geometry reads the batch's arrays through views; a geometry shared by
+    // several meshes is added to its batch once), detection caches are capped
+    // by bytes from the heap headroom, and IFC parses are scheduled by
+    // memory headroom (serial under pressure). Identity gate:
+    // tests/browser/memory-federation.mjs (deep model digest + clash list
+    // identical to ?ccSafety=-leanMemory). Kill switch ?ccSafety=-leanMemory.
+    leanMemory: Object.freeze({ fallback: 'duplicate-copies', defaultEnabled: true })
   });
   var diagnostics = [];
 
