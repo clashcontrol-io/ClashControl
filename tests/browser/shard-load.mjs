@@ -109,6 +109,7 @@ async function loadOne(page, url, name, noLazyProps) {
     return { firstLoadMs: Math.round(committedAt - t0), batches, shards: (m.stats && m.stats.shards) || null, elements: m.elements.length,
       notDrawn: m.stats.notDrawn || null, spaces: m.elements.filter((e) => e.props.ifcType === 'IfcSpace' && e.meshes.length).length,
       fingerprint: window._ccSafetyMigrations.modelFingerprint([Object.assign({}, m, { id: 'fixed' })]),
+      workerStreamedMs: Math.round((m.stats.phases && m.stats.phases['Meshes streamed']) || 0),
       wasmMB: (() => { let w = 0; const wm = (m.stats.mem && m.stats.mem.worker) || {}; for (const k in wm) if (wm[k] && wm[k].wasm > w) w = wm[k].wasm; return w || null; })(),
       workers: window.__workers ? window.__workers.length : 0, preview: window._ccLoadPreview.info() };
   }, { url, name, noLazyProps: !!noLazyProps });
@@ -222,7 +223,7 @@ try {
       await page.close();
       rows.push(label.padEnd(11) + ' first load ' + String(r.firstLoadMs).padStart(6) + ' ms' + (r.shards ? '  (merge ' + r.shards.mergeMs + ' ms; per shard open/streamed ' +
         r.shards.perShard.map((p) => p.open + '/' + p.streamed + ' ms').join(', ') + '; web-ifc heap per shard ' +
-        r.shards.perShard.map((p) => p.wasmMB + ' MB').join(', ') + ')' : '  (web-ifc heap ' + r.wasmMB + ' MB)'));
+        r.shards.perShard.map((p) => p.wasmMB + ' MB').join(', ') + ')' : '  (worker streamed at ' + r.workerStreamedMs + ' ms; web-ifc heap ' + r.wasmMB + ' MB)'));
     }
     console.log('SHARD-LOAD TIMING — synthetic shard fixture, ' + (size / 1048576).toFixed(1) + ' MB, ' + storeys * perStorey + ' placed elements; navigator.hardwareConcurrency=' + hc);
     rows.forEach((r) => console.log('  ' + r));
