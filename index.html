@@ -835,6 +835,7 @@
 <script src="clash-triage-core.js" defer></script>
 <script src="project-codec.js" defer></script>
 <script src="storage-core.js" defer></script>
+<script src="shared-log-core.js" defer></script>
 <script>
 window.addEventListener('error', function(e) {
   console.error('[ClashControl] Uncaught error:', e.error || e.message);
@@ -30697,7 +30698,7 @@ function startApp() {
   }
   function _ccSuggestedLabel(id, label) {
     return ({'structural-penetration':_cc_t('view.structuralPenetration','Structural penetrations'),'riser-through-slab':_cc_t('view.riserThroughSlab','Risers through slabs'),
-      'unassigned-critical':_cc_t('view.unassignedCritical','Unassigned critical'),'opening-too-small':_cc_t('view.openingTooSmall','Openings too small'),'near-miss':_cc_t('view.nearMiss','Near misses'),'new':_cc_t('view.new','New since last run')})[id] || label;
+      'unassigned-critical':_cc_t('view.unassignedCritical','Unassigned critical'),'opening-too-small':_cc_t('view.openingTooSmall','Openings too small'),'near-miss':_cc_t('view.nearMiss','Near misses'),'new':_cc_t('view.new','New since last run'),'shared-conflict':_cc_t('view.sharedConflict','Conflicts')})[id] || label;
   }
   function _ccToggleFacet(facets, k, v) {
     var cur = (facets[k] || []).slice(), i = cur.indexOf(v);
@@ -31054,6 +31055,22 @@ function startApp() {
   // clashes are unchanged; the handlers are stable), so one clash's edit
   // re-renders one card.
   ClashOverviewCard = React.memo(ClashOverviewCard);
+  // Clashes carrying a shared-folder conflict, counted once per triage index
+  // (the index is rebuilt only for clashes whose object changed).
+  var _ccSharedConflictMemo = new WeakMap();
+  function _ccSharedConflictStats(tm) {
+    var idx = (tm && tm.index) || [];
+    var hit = _ccSharedConflictMemo.get(idx);
+    if (hit) return hit;
+    var n = 0, buckets = [];
+    for (var i = 0; i < idx.length; i++) {
+      var c = idx[i].c;
+      if (c._sharedConflict && c._sharedConflict.length) { n++; var b = tm.bucketOf.get(c.id) || 'review'; if (buckets.indexOf(b) === -1) buckets.push(b); }
+    }
+    var out = { n: n, buckets: buckets };
+    _ccSharedConflictMemo.set(idx, out);
+    return out;
+  }
   function ClashOverview(props) {
     var s = props.s, d = props.d;
     var rm = _ccReviewModel(s), tm = _ccTriageModel(s);
@@ -31172,6 +31189,20 @@ function startApp() {
       <div style=${{display:'flex',alignItems:'center',flexWrap:'wrap',gap:'var(--space-1) var(--space-3)',padding:'var(--space-3) var(--space-4) var(--space-2)'}}>
         <h2 id="cc-overview-title" style=${{margin:0,fontSize:'var(--text-lg)',fontWeight:'var(--weight-semibold)',lineHeight:'var(--leading-tight)'}}>${_cc_t('overview.title','Review overview')}</h2>
         <span data-cc-overview-count="1" style=${{fontSize:'var(--text-sm)',color:'var(--text-secondary)'}}>${_cc_t('overview.count','{items} review items · {clashes} clashes · {total} found',{items:cards.length,clashes:nClashes,total:tm.total})}</span>
+        ${function(){
+          var sc = _ccSharedConflictStats(tm);
+          if (!sc.n) return null;
+          return html`<button class="cc-tap" data-cc-overview-conflicts=${sc.n} onClick=${function(){
+              var f = Object.assign({}, (s.triage && s.triage.facets) || {}); f.tag = ['shared-conflict'];
+              d({t:A.TRIAGE_UPD, u:{facets:f, activeViewId:null}});
+              var hidden = sc.buckets.filter(function(b){ return b !== 'review'; });
+              if (hidden.length) d({t:A.UPD_FILTERS, u:{showBuckets: ((s.filters && s.filters.showBuckets) || []).concat(hidden).filter(function(b, i, a){ return a.indexOf(b) === i; })}});
+            }}
+            title=${_cc_t('sharedConflict.overviewTip','Decisions teammates changed at the same time — show them')}
+            style=${{...S_BTN,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',border:'1px solid var(--color-warning-border)',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)'}}>
+            ${sc.n === 1 ? _cc_t('sharedConflict.countOne','1 conflict to resolve') : _cc_t('sharedConflict.countMany','{n} conflicts to resolve',{n:sc.n})}
+          </button>`;
+        }()}
         <span style=${{flex:1}}></span>
         <button class="cc-tap" data-cc-overview-close="1" onClick=${close} style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-3)'}}>${_cc_t('overview.close','3D view')}</button>
       </div>
@@ -36135,6 +36166,77 @@ function startApp() {
     </div>`;
   }
 
+  // ── Shared-folder conflicts (addons/shared-project.js, INTERNALS §21.55) ──
+  // A field teammates changed at the same time carries `_sharedConflict` on
+  // the clash / issue / note: [{kind, key, field, agreed, heads:[{id, user,
+  // mine, ts, value}]}]. Nobody wins automatically: the row shows a badge, the
+  // detail shows every competing value with who / when, and "Use this" or a
+  // new value resolves it for everyone (window._ccSharedResolve).
+  function _ccSharedFieldLabel(f) {
+    if (f.indexOf('comment:') === 0) return _cc_t('sharedConflict.field.comment','Comment');
+    if (f.indexOf('reply:') === 0) return _cc_t('sharedConflict.field.reply','Reply');
+    return ({status:_cc_t('sharedConflict.field.status','Status'), priority:_cc_t('sharedConflict.field.priority','Priority'), assignee:_cc_t('sharedConflict.field.assignee','Assignee'),
+      title:_cc_t('sharedConflict.field.title','Title'), description:_cc_t('sharedConflict.field.description','Description'), category:_cc_t('sharedConflict.field.category','Category'),
+      dueDate:_cc_t('sharedConflict.field.dueDate','Due date'), text:_cc_t('sharedConflict.field.text','Text'), resolved:_cc_t('sharedConflict.field.resolved','Resolved'),
+      created:_cc_t('sharedConflict.field.created','Created'), deleted:_cc_t('sharedConflict.field.deleted','Deleted')})[f] || f;
+  }
+  function _ccSharedValueLabel(f, v) {
+    if (v == null || v === '') return _cc_t('sharedConflict.empty','(empty)');
+    if (f === 'status') return _ccStatusWord(v);
+    if (typeof v === 'boolean') return v ? _cc_t('common.yes','Yes') : _cc_t('common.no','No');
+    if (typeof v === 'object') return String(v.text || v.title || '…');
+    return String(v);
+  }
+  function _ccSharedConflictBadge(it) {
+    var list = it && it._sharedConflict;
+    if (!list || !list.length) return null;
+    var who = [];
+    list.forEach(function(c){ (c.heads || []).forEach(function(h){ var n = h.mine ? _cc_t('sharedConflict.byYou','you') : h.user; if (who.indexOf(n) === -1) who.push(n); }); });
+    var tip = _cc_t('sharedConflict.badgeTip','{fields} changed at the same time by {names}. Open the item to choose the value to keep.',
+      {fields:list.map(function(c){ return _ccSharedFieldLabel(c.field); }).join(', '), names:who.join(', ')});
+    return html`<span class="cc-status-pill" data-cc-shared-conflict="1" title=${tip} style=${{background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',flexShrink:0}}>${_cc_t('sharedConflict.badge','Conflict')}</span>`;
+  }
+  function SharedConflictResolver(props) {
+    var it = props.item, list = (it && it._sharedConflict) || [];
+    var dr = useState({}), drafts = dr[0], setDrafts = dr[1];
+    if (!list.length) return null;
+    function resolve(c, v) { if (typeof window._ccSharedResolve === 'function') window._ccSharedResolve({kind:c.kind, key:c.key, field:c.field, value:v}); }
+    var MUTED = {fontSize:'var(--text-2xs)',color:'var(--text-muted)'};
+    var SMALL = {...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',flexShrink:0};
+    var stOpts = Object.keys(STAT).filter(function(k){ return k !== 'auto_resolved'; });
+    return html`<div data-cc-shared-resolver="1" role="group" aria-label=${_cc_t('sharedConflict.groupAria','Conflicting changes')} onClick=${function(e){ e.stopPropagation(); }}
+      style=${{marginTop:'var(--space-2)',padding:'var(--space-2)',border:'1px solid var(--color-warning-border)',borderRadius:'var(--radius-sm)',background:'var(--bg-secondary)',display:'flex',flexDirection:'column',gap:'var(--space-2)'}}>
+      ${list.map(function(c){
+        var free = c.field.indexOf(':') === -1 && c.field !== 'created' && c.field !== 'deleted' && c.field !== 'resolved';
+        var draft = drafts[c.field] != null ? drafts[c.field] : '';
+        function setDraft(v){ var n = Object.assign({}, drafts); n[c.field] = v; setDrafts(n); }
+        return html`<div key=${c.field} data-cc-shared-field=${c.field} style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
+          <div style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)'}}>${_cc_t('sharedConflict.title','{field} was changed by more than one person at the same time',{field:_ccSharedFieldLabel(c.field)})}</div>
+          ${c.agreed && html`<div style=${MUTED}>${_cc_t('sharedConflict.keeping','Until someone chooses, everyone sees the last agreed value: {value}',{value:_ccSharedValueLabel(c.field, c.agreed.value)})}</div>`}
+          ${(c.heads || []).map(function(h){
+            return html`<div key=${h.id} data-cc-shared-head=${h.id} style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexWrap:'wrap'}}>
+              <span data-cc-shared-value="1" style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',overflowWrap:'anywhere'}}>${_ccSharedValueLabel(c.field, h.value)}</span>
+              <span style=${MUTED}>${h.mine ? _cc_t('sharedConflict.byYou','you') : h.user} · ${window._ccDateFmt(h.ts, 'datetime')}</span>
+              <span style=${{flex:1}}></span>
+              <button class="cc-btn-press" data-cc-shared-use=${h.id} onClick=${function(){ resolve(c, h.value); }} style=${SMALL}
+                aria-label=${_cc_t('sharedConflict.useThisAria','Use this: {value}',{value:_ccSharedValueLabel(c.field, h.value)})}>${_cc_t('sharedConflict.useThis','Use this')}</button>
+            </div>`;
+          })}
+          ${free && html`<form onSubmit=${function(e){ e.preventDefault(); if (String(draft).trim() !== '' || c.field !== 'status') resolve(c, c.field === 'status' ? (draft || stOpts[0]) : draft); }}
+            style=${{display:'flex',alignItems:'center',gap:'var(--space-2)'}}>
+            ${c.field === 'status'
+              ? html`<select data-cc-shared-new=${c.field} aria-label=${_cc_t('sharedConflict.newValue','New value')} value=${draft || ''} onChange=${function(e){ setDraft(e.target.value); }} style=${{...S_INPUT,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',flex:1}}>
+                  <option value="" disabled>${_cc_t('sharedConflict.newValue','New value')}</option>
+                  ${stOpts.map(function(k){ return html`<option key=${k} value=${k}>${_ccStatusWord(k)}</option>`; })}
+                </select>`
+              : html`<input data-cc-shared-new=${c.field} aria-label=${_cc_t('sharedConflict.newValue','New value')} placeholder=${_cc_t('sharedConflict.newValue','New value')} value=${draft} onInput=${function(e){ setDraft(e.target.value); }} style=${{...S_INPUT,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',flex:1}} />`}
+            <button type="submit" class="cc-btn-press" data-cc-shared-use-new=${c.field} disabled=${c.field === 'status' && !draft} style=${SMALL}>${_cc_t('sharedConflict.useNew','Use new value')}</button>
+          </form>`}
+        </div>`;
+      })}
+    </div>`;
+  }
+
   function IssueRow(props) {
     _ccCountRender('rows');
     var it=props.item, active=props.active, d=props.d, isClash=props.isClash, rowModels=props.models||[];
@@ -36236,6 +36338,7 @@ function startApp() {
                 return _pair && _pair !== it.title ? (it.title + '\n' + _pair) : it.title;
               }()} style=${{color:'var(--text-primary)',fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',overflowWrap:'anywhere',flex:1,minWidth:0,lineHeight:'var(--leading-base)'}}>${it.title}</span>
             <span class="cc-status-pill" style=${{background:stEntry.tintBg||(stBg+'22'),color:stEntry.fg||stBg,flexShrink:0}}>${stEntry.label}</span>
+            ${it._sharedConflict && _ccSharedConflictBadge(it)}
             ${isClash && trainingMode && function(){
               var fb=it.aiFeedback;
               return html`<span style=${{display:'inline-flex',alignItems:'center',gap:'2px',flexShrink:0}}>
@@ -36352,6 +36455,7 @@ function startApp() {
           <button onClick=${function(e){e.stopPropagation();d({t:A.ACTIVE,id:null});if(_unghostAll)_unghostAll();if(window._ccRemoveActiveClashMarker)window._ccRemoveActiveClashMarker();}}
             title=${_cc_t('issueRow.collapse','Collapse')} aria-label=${_cc_t('issueRow.collapseDetailsAria','Collapse details')} style=${{...S_BTN,marginLeft:'auto',padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-base)',flexShrink:0}}>▲</button>
         </div>
+        ${it._sharedConflict && html`<${SharedConflictResolver} item=${it} />`}
         ${html`<${ClashProps} item=${it} models=${rowModels} isClash=${isClash} />`}
         <div style=${{display:'flex',gap:'var(--space-1)',alignItems:'center',marginTop:'var(--space-1)',marginBottom:'var(--space-1)'}}>
           <span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',flexShrink:0}}>${_cc_t('issueRow.assignLabel','Assign:')}</span>
@@ -38171,8 +38275,8 @@ function startApp() {
               <div style=${{fontWeight:600,color:'var(--text-primary)',marginBottom:'var(--space-2)'}}>${_cc_t('share.howFolderSyncWorks','How folder sync works')}</div>
               <ol style=${{margin:0,paddingLeft:'var(--space-5)'}}>
                 <li style=${{marginBottom:'var(--space-1)'}}>${_cc_t('share.folderSyncStep1','Choose a folder that you and your teammates can both reach — for example a shared OneDrive, Dropbox, Google Drive, or company network drive.')}</li>
-                <li style=${{marginBottom:'var(--space-1)'}}>${_cc_t('share.folderSyncStep2','ClashControl saves a small project file in that folder and keeps it up to date automatically (about once a minute).')}</li>
-                <li>${_cc_t('share.folderSyncStep3','Anyone on your team can open ClashControl, point it at the same folder, and they\'ll see the same comments, issues, and viewpoints. Changes from everyone show up for everyone.')}</li>
+                <li style=${{marginBottom:'var(--space-1)'}}>${_cc_t('share.folderSyncStep2','ClashControl writes each person\'s decisions as small new files of their own in that folder, so nobody overwrites anyone else\'s work.')}</li>
+                <li>${_cc_t('share.folderSyncStep3','Anyone on your team can point ClashControl at the same folder to see the same clash decisions, issues and comments. When two people change the same thing at the same time, everyone sees it as a conflict and anyone can choose the value to keep.')}</li>
               </ol>
               <div style=${{marginTop:'var(--space-2)',padding:'var(--space-2) var(--space-3)',background:'var(--bg-primary)',border:'1px solid var(--border-subtle)',borderRadius:'var(--radius-sm)',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
                 <strong style=${{color:'var(--text-primary)'}}>${_cc_t('share.modelStaysLocal','Your model stays on your computer.')}</strong> ${_cc_t('share.modelStaysLocalSub','Only the things your team needs to discuss — comments, viewpoints, and clash decisions — are written into the shared folder. Your IFC file is never uploaded anywhere.')}
@@ -38290,11 +38394,13 @@ function startApp() {
             <span style=${{fontSize:'var(--text-xs)',fontWeight:600,color:'var(--text-primary)'}}>${c.author||_cc_t('share.anonymous','Anonymous')}</span>
             <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${c.ts?window._ccDateFmt(c.ts,'datetime'):''}</span>
             ${c.resolved && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--color-success-fg)',padding:'1px var(--space-1)',borderRadius:'var(--radius-pill)',background:'rgba(34,197,94,.1)',border:'1px solid rgba(34,197,94,.3)'}}>${_cc_t('share.filterResolved','Resolved')}</span>`}
+            ${c._sharedConflict && _ccSharedConflictBadge(c)}
             <div style=${{flex:1}}></div>
             ${c.anchor && c.anchor.point && html`<button onClick=${function(){flyToComment(c);}} style=${btnGhost} title=${_cc_t('share.flyToPin','Fly to pin')}>📍</button>`}
             <button onClick=${function(){toggleResolve(c);}} style=${btnGhost}>${c.resolved?_cc_t('share.reopen','Reopen'):_cc_t('share.resolve','Resolve')}</button>
             <button onClick=${function(){delComment(c);}} style=${{...btnGhost,color:'var(--color-danger-fg)',borderColor:'var(--color-danger-border)'}} title=${_cc_t('share.delete','Delete')}>✕</button>
           </div>
+          ${c._sharedConflict && html`<${SharedConflictResolver} item=${c} />`}
           ${(!c.text && isActive) ? html`<${ShareCommentDraft} c=${c} sp=${sp} d=${d} />` : html`<div style=${{fontSize:'var(--text-base)',color:'var(--text-secondary)',whiteSpace:'pre-wrap',lineHeight:'var(--leading-base)'}}>${c.text
             ? c.text.split(/(@[A-Za-z0-9_-]+)/).map(function(part,i){
                 if(part.charAt(0)==='@') return html`<span key=${i} style=${{color:'var(--accent)',fontWeight:600,background:'var(--accent-bg)',padding:'0 var(--space-1)',borderRadius:'var(--radius-xs)'}}>${part}</span>`;
@@ -49730,6 +49836,13 @@ function startApp() {
             }
           }
         } catch(e3) {}
+        // ── Shared folder change log (addons/shared-project.js, INTERNALS §21.55) ──
+        try {
+          if (typeof window._ccSharedLogNote === 'function') {
+            var _slIds = (a.t === A.BATCH_UPD_CLASH || a.t === A.BATCH_UPD_ISSUE) ? (Array.isArray(a.ids) ? _ccBatchIdSet(a, null) : _selectedRef.current) : null;
+            window._ccSharedLogNote(a, _stateRef.current, _slIds);
+          }
+        } catch(e4) {}
       }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- _rawD is the useReducer dispatch (stable identity)
     }, []);

@@ -1,205 +1,62 @@
 'use strict';
 
-// Incident regression locks for PR #676: a transient read failure must never
-// become permission to overwrite the shared file, and remote-only records must
-// be ingested before the next write. The tests execute the production function
-// bodies from addons/shared-project.js with small dependency stubs.
+// Shared folder (addons/shared-project.js, docs/INTERNALS.md §21.55): the
+// folder is a per-user append-only change log. Wiring checks on the addon
+// source + the idle-sync guard that MERGE_COMMENTS still needs.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'addons', 'shared-project.js'), 'utf8');
+const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 
-function between(startMarker, endMarker) {
-  const start = source.indexOf(startMarker);
-  assert.notEqual(start, -1, startMarker + ' not found');
-  const end = source.indexOf(endMarker, start);
-  assert.notEqual(end, -1, endMarker + ' not found');
-  return source.slice(start, end);
-}
-
-const syncSource = between(
-  'var _SHARED_SLICES = [',
-  '  // Returns true when remote-only records were dispatched'
-);
-const replaySource = between(
-  'function _replayRemoteChanges(remote, d) {',
-  '  function _startSharedSync(d) {'
-);
-
-function makeSync(overrides) {
-  const deps = Object.assign({
-    dir: {},
-    state: { sharedProject: { enabled: true } },
-    read: () => Promise.resolve(null),
-    write: () => Promise.resolve(),
-    replay: () => false,
-  }, overrides);
-  const factory = new Function('deps', `
-    var _sharedDirHandle = deps.dir;
-    var _sharedLastSynced = deps.lastSynced || null;
-    var window = { _ccLatestState: deps.state };
-    var A_UPD = 'UPD_SHARED_PROJECT';
-    var A_MERGE = 'MERGE_CHANGELOG';
-    var _readSharedFile = deps.read;
-    var _writeSharedFile = deps.write;
-    var _replayRemoteChanges = deps.replay;
-    ${syncSource}
-    var sync = function(d, opts) { return _syncSharedProject(d, opts); };
-    sync.sig = _sharedSig;
-    return sync;
-  `);
-  return factory(deps);
-}
-
-function flushPromises() {
-  return new Promise((resolve) => setImmediate(resolve));
-}
-
-test('shared sync: a transient read failure never writes over the remote file', async () => {
-  let writes = 0;
-  const actions = [];
-  const sync = makeSync({
-    read: () => Promise.resolve({ __readError: true }),
-    write: () => { writes++; return Promise.resolve(); },
-  });
-  sync((a) => actions.push(a));
-  await flushPromises();
-
-  assert.equal(writes, 0);
-  assert.ok(actions.some((a) => a.t === 'UPD_SHARED_PROJECT' && a.u.syncing === false));
+test('linking a folder iterates the directory with for-await (dirHandle.values() is not a promise)', () => {
+  assert.ok(!/\.values\(\)\.then/.test(source), 'the old .values().then never completed in Chrome');
+  assert.ok(!/\.entries\(\)\.then/.test(source));
+  assert.match(source, /for await \(var pair of dir\.entries\(\)\)/);
 });
 
-test('shared sync: ingesting remote-only records skips the same-cycle write', async () => {
-  let writes = 0;
-  let replays = 0;
-  const sync = makeSync({
-    read: () => Promise.resolve({ clashes: [{ id: 'remote-c1' }] }),
-    replay: () => { replays++; return true; },
-    write: () => { writes++; return Promise.resolve(); },
-  });
-  sync(() => {});
-  await flushPromises();
-
-  assert.equal(replays, 1);
-  assert.equal(writes, 0, 'the old local arrays must not overwrite records just dispatched from remote');
+test('nothing is ever rewritten: every write creates a new, uniquely named file', () => {
+  // the only writer
+  const writes = source.match(/createWritable\(/g) || [];
+  assert.strictEqual(writes.length, 1, 'one write helper');
+  assert.match(source, /async function _writeNew\(dir, name, obj\)/);
+  // its callers: the change file (writer + seq), the snapshot (user + ts),
+  // the project id file (random), the migration snapshot (content hash)
+  const calls = source.match(/_writeNew\(/g) || [];
+  assert.strictEqual(calls.length, 5, 'definition + 4 callers: ' + calls.length);
+  assert.match(source, /C\.changeFileName\(_writer, seq\)/);
+  assert.match(source, /C\.snapshotName\(_userId, ts\)/);
+  assert.match(source, /'project-' \+ _rand\(12\) \+ '\.json'/);
+  assert.ok(!/\.ccproject', \{create:true\}/.test(source), 'the old project file is never written');
 });
 
-test('shared sync: a genuinely absent file is the only read outcome that initializes it', async () => {
-  let writes = 0;
-  const sync = makeSync({
-    read: () => Promise.resolve(null),
-    write: () => { writes++; return Promise.resolve(); },
-  });
-  sync(() => {});
-  await flushPromises();
-  await flushPromises();
-
-  assert.equal(writes, 1);
+test('a failed write keeps the changes pending (and in localStorage) instead of looking synced', () => {
+  assert.match(source, /_outbox = _outbox\.slice\(recs\.length\);/);
+  assert.match(source, /write failed, will retry/);
+  assert.match(source, /Shared folder access lost/);
+  assert.match(source, /localStorage\.setItem\(key, JSON\.stringify\(\{pk:_projKey/);
 });
 
-test('shared sync: remote-only clashes, issues, and viewpoints are additive', () => {
-  const state = {
-    clashes: [{ id: 'local-c1' }],
-    issues: [{ id: 'local-i1' }],
-    viewpoints: [{ id: 'local-v1' }],
-    comments: [],
-    changelog: [],
-  };
-  const factory = new Function('window', `
-    ${replaySource}
-    return _replayRemoteChanges;
-  `);
-  const replay = factory({ _ccLatestState: state });
-  const actions = [];
-  const ingested = replay({
-    clashes: [{ id: 'remote-c1' }],
-    issues: [{ id: 'remote-i1' }],
-    viewpoints: [{ id: 'remote-v1' }],
-    comments: [{ id: 'remote-comment' }],
-    changelog: [],
-  }, (a) => actions.push(a));
-
-  assert.equal(ingested, true);
-  assert.deepEqual(actions.find((a) => a.t === 'ADD_CLASHES').v.map((c) => c.id), ['remote-c1']);
-  assert.equal(actions.find((a) => a.t === 'ADD_ISSUE').v.id, 'remote-i1');
-  assert.equal(actions.find((a) => a.t === 'ADD_VIEWPOINT').v.id, 'remote-v1');
-  assert.deepEqual(actions.find((a) => a.t === 'MERGE_COMMENTS').v, [{ id: 'remote-comment' }]);
+test('the core dispatch wrapper feeds local (non-sync) edits to the change log', () => {
+  const i = html.indexOf("if (typeof window._ccSharedLogNote === 'function') {");
+  assert.ok(i > 0);
+  const block = html.slice(html.lastIndexOf("if (!a._fromSync && a.t !== A.APPEND_CHANGELOG", i), i);
+  assert.ok(block.length > 0 && block.length < 6000, 'inside the !_fromSync branch');
+  assert.match(html.slice(i, i + 600), /window\._ccSharedLogNote\(a, _stateRef\.current, _slIds\)/);
+  // remote changes are applied with _fromSync, so they are never re-recorded
+  (source.match(/_d\(\{t:'(UPD_ISSUE|ADD_ISSUE|DEL_ISSUE|ADD_COMMENT|UPD_COMMENT|DEL_COMMENT|CLASH_BATCH_RESTORE)'.*?\}\);/g) || [])
+    .forEach((m) => assert.match(m, /_fromSync:true/, m));
 });
 
-
-// ── an idle tick costs nothing (docs/INTERNALS.md §21.53) ──────────────
-
-function idleSetup(fileMeta) {
-  const state = { sharedProject: { enabled: true, fileName: 'p.ccproject' }, rules: {}, clashes: [{ id: 'c1' }], issues: [],
-    floors: [], viewpoints: [], measurements: [], changelog: [], comments: [], models: [{ id: 'm', name: 'A', visible: true }] };
-  const counts = { reads: 0, writes: 0, getFile: 0, actions: [] };
-  const dir = { getFileHandle: () => Promise.resolve({ getFile: () => { counts.getFile++; return Promise.resolve(fileMeta()); } }) };
-  return { state, counts, dir };
-}
-
-test('shared sync: nothing changed on either side → no read, no write, no dispatch', async () => {
-  const meta = { lastModified: 1000, size: 42 };
-  const { state, counts, dir } = idleSetup(() => meta);
-  const deps = { dir, state, read: () => { counts.reads++; return Promise.resolve({}); }, write: () => { counts.writes++; return Promise.resolve(); } };
-  const probe = makeSync(deps);
-  deps.lastSynced = { sig: probe.sig(state), lastModified: 1000, size: 42 };
-  const sync = makeSync(deps);
-  sync((a) => counts.actions.push(a));
-  await flushPromises(); await flushPromises();
-  assert.equal(counts.getFile, 1, 'only the file metadata is looked at');
-  assert.deepEqual([counts.reads, counts.writes, counts.actions.length], [0, 0, 0]);
-});
-
-test('shared sync: the remote file changed (lastModified/size) → full read + merge as before', async () => {
-  const { state, counts, dir } = idleSetup(() => ({ lastModified: 2000, size: 42 }));
-  const deps = { dir, state, read: () => { counts.reads++; return Promise.resolve({ changelog: [] }); }, write: () => { counts.writes++; return Promise.resolve(); } };
-  deps.lastSynced = { sig: makeSync(deps).sig(state), lastModified: 1000, size: 42 };
-  makeSync(deps)((a) => counts.actions.push(a));
-  await flushPromises(); await flushPromises();
-  assert.equal(counts.reads, 1);
-  assert.equal(counts.writes, 1);
-  assert.ok(counts.actions.some((a) => a.u && a.u.syncing === true));
-});
-
-test('shared sync: a local slice changed identity → full sync, without even a metadata look', async () => {
-  const { state, counts, dir } = idleSetup(() => ({ lastModified: 1000, size: 42 }));
-  const deps = { dir, state, read: () => { counts.reads++; return Promise.resolve({ changelog: [] }); }, write: () => { counts.writes++; return Promise.resolve(); } };
-  deps.lastSynced = { sig: makeSync(deps).sig(state), lastModified: 1000, size: 42 };
-  deps.state = Object.assign({}, state, { clashes: [{ id: 'c1', status: 'resolved' }] });
-  makeSync(deps)(() => {});
-  await flushPromises(); await flushPromises();
-  assert.equal(counts.getFile, 0);
-  assert.equal(counts.reads, 1);
-  assert.equal(counts.writes, 1);
-});
-
-test('shared sync: a model field the file carries changed → full sync; a non-written model field → none', async () => {
-  const { state, counts, dir } = idleSetup(() => ({ lastModified: 1000, size: 42 }));
-  const deps = { dir, state, read: () => { counts.reads++; return Promise.resolve({ changelog: [] }); }, write: () => { counts.writes++; return Promise.resolve(); } };
-  deps.lastSynced = { sig: makeSync(deps).sig(state), lastModified: 1000, size: 42 };
-  deps.state = Object.assign({}, state, { models: [Object.assign({}, state.models[0], { hiddenStoreys: ['L1'] })] });
-  makeSync(deps)(() => {});
-  await flushPromises(); await flushPromises();
-  assert.deepEqual([counts.reads, counts.writes], [0, 0]);
-  deps.state = Object.assign({}, state, { models: [Object.assign({}, state.models[0], { visible: false })] });
-  makeSync(deps)(() => {});
-  await flushPromises(); await flushPromises();
-  assert.deepEqual([counts.reads, counts.writes], [1, 1]);
-});
-
-test('shared sync: Sync Now (force) always syncs', async () => {
-  const { state, counts, dir } = idleSetup(() => ({ lastModified: 1000, size: 42 }));
-  const deps = { dir, state, read: () => { counts.reads++; return Promise.resolve({ changelog: [] }); }, write: () => { counts.writes++; return Promise.resolve(); } };
-  deps.lastSynced = { sig: makeSync(deps).sig(state), lastModified: 1000, size: 42 };
-  makeSync(deps)(() => {}, { force: true });
-  await flushPromises(); await flushPromises();
-  assert.deepEqual([counts.reads, counts.writes], [1, 1]);
+test('shared-log-core.js is loaded, precached and type-checked like the other core modules', () => {
+  assert.match(html, /<script src="shared-log-core\.js" defer><\/script>/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8'), /'shared-log-core\.js'/);
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'), /shared-log-core\.js/);
 });
 
 test('MERGE_COMMENTS with nothing new keeps the state object (an idle sync is not a change)', () => {
-  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   const start = html.indexOf('case A.MERGE_COMMENTS: {');
   const body = html.slice(html.indexOf('{', start) + 1, html.indexOf('\n      }', start));
   const reduce = new Function('s', 'a', body);
