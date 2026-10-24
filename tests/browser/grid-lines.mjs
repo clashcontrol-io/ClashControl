@@ -129,6 +129,32 @@ try {
   if (!tog.hidden || !tog.shown || tog.saved !== 'false') fail('Show grids toggle: ' + JSON.stringify(tog));
   else ok('Show grids hides and shows the overlay, choice persisted');
 
+  // Park + restore from the geometry cache: the grid lines come back with
+  // the model (gr:1), without re-parsing the IFC.
+  const rest = await page.evaluate(async () => {
+    const t0 = Date.now();
+    for (;;) {
+      const db = await new Promise((res) => { const r = indexedDB.open('ClashControlFiles'); r.onsuccess = () => res(r.result); });
+      const keys = await new Promise((res) => { const q = db.transaction('geoCache', 'readonly').objectStore('geoCache').getAllKeys(); q.onsuccess = () => res(q.result); });
+      db.close();
+      if (keys.length >= 1) break;
+      if (Date.now() - t0 > 120000) return { error: 'geometry cache not written' };
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    const m = window._ccLatestState.models.find((x) => x.name === 'grid');
+    const before = JSON.stringify(m.gridLines), ser = performance.getEntriesByName('cc:geoSerialize').length;
+    if (!window.ClashControl.parkModel(m.id)) return { error: 'could not park' };
+    for (let t = 0; t < 600 && !(window._ccLatestState.parkedModels || []).some((p) => p.id === m.id); t++) await new Promise((r) => setTimeout(r, 100));
+    window.ClashControl.restoreModel(m.id);
+    for (let t = 0; t < 1200 && (window._ccLatestState.parkedModels || []).length; t++) await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 300));
+    const m2 = window._ccLatestState.models.find((x) => x.id === m.id);
+    return { same: !!m2 && JSON.stringify(m2.gridLines) === before, reparsed: performance.getEntriesByName('cc:geoSerialize').length !== ser,
+      overlay: window._ccState3d.gridOverlay.children.length };
+  });
+  if (rest.error || !rest.same || rest.reparsed || rest.overlay !== 10) fail('grid lines after park + restore: ' + JSON.stringify(rest));
+  else ok('park + restore from the geometry cache keeps the grid lines and overlay (no re-parse)');
+
   await load(page, '/__walls.ifc', 'walls.ifc');
   const det = await page.evaluate(async () => {
     const res = await window.ClashControl.runDetection({ modelA: 'all', modelB: 'all', excludeSameDiscipline: false });

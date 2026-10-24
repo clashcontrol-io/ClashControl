@@ -3960,7 +3960,7 @@ function startApp() {
     // refreshed once the same way (docs/INTERNALS.md §21.49).
     // gs:1 — shared geometries stored once (geoData + md.g, see above);
     // caches without it hold pos/n8/nrm/idx on every mesh and still restore.
-    return {v:_ccGeoCacheV8Enabled()?8:7, sp:2, sem:1, xp:1, np:1, hasPsets:hasPsets, pp:propsComplete ? 1 : 0, gs:1, geoData:geoData, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, spaceBoundaries:result.spaceBoundaries||null, stats:result.stats};
+    return {v:_ccGeoCacheV8Enabled()?8:7, sp:2, sem:1, xp:1, np:1, hasPsets:hasPsets, pp:propsComplete ? 1 : 0, gs:1, geoData:geoData, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, spaceBoundaries:result.spaceBoundaries||null, gr:1, gridAxes:result.gridAxes||null, stats:result.stats};
   }
 
 
@@ -4168,7 +4168,7 @@ function startApp() {
         catch(e){ console.warn('[restore] instancing skipped:', e); }
       }
     }
-    return {meshes:meshes, elements:elements, storeys:cached.storeys, storeyData:cached.storeyData, spatialHierarchy:cached.spatialHierarchy||{}, relatedPairs:cached.relatedPairs||{}, spaceBoundaries:cached.spaceBoundaries||null, stats:cached.stats};
+    return {meshes:meshes, elements:elements, storeys:cached.storeys, storeyData:cached.storeyData, spatialHierarchy:cached.spatialHierarchy||{}, relatedPairs:cached.relatedPairs||{}, spaceBoundaries:cached.spaceBoundaries||null, gridAxes:cached.gridAxes||null, stats:cached.stats};
   }
 
   // A geo cache written before the current room handling (sp !== 2) would
@@ -4178,9 +4178,26 @@ function startApp() {
   // current cache; with no source bytes the old cache is still the best we have.
   // The same applies to caches without exact geometry (xp !== 1) and to
   // caches written before non-physical elements were stubs on both loader
-  // paths (np !== 1).
+  // paths (np !== 1). A cache written before grids were kept (gr !== 1) is
+  // only stale when its IFC actually has grid axes — one byte scan instead
+  // of re-parsing every older cache.
   function _ccGeoCacheLacksSpaces(cached, entry) {
-    return !!(cached && (cached.sp !== 2 || cached.sem !== 1 || cached.xp !== 1 || cached.np !== 1) && entry && entry.buffer);
+    if (!cached || !entry || !entry.buffer) return false;
+    if (cached.sp !== 2 || cached.sem !== 1 || cached.xp !== 1 || cached.np !== 1) return true;
+    return cached.gr !== 1 && _ccIfcHasBytes(entry.buffer, 'IFCGRIDAXIS(');
+  }
+  // Whether an IFC-SPF buffer contains `word` (ASCII), scanned as bytes.
+  function _ccIfcHasBytes(buf, word) {
+    var b;
+    try { b = buf instanceof Uint8Array ? buf : new Uint8Array(buf.buffer || buf, buf.byteOffset || 0, buf.byteLength); } catch (_) { return false; }
+    var w = [], n = word.length, i, j;
+    for (i = 0; i < n; i++) w.push(word.charCodeAt(i));
+    var w0 = w[0], end = b.length - n;
+    for (i = b.indexOf(w0); i !== -1 && i <= end; i = b.indexOf(w0, i + 1)) {
+      for (j = 1; j < n && b[i + j] === w[j]; j++) {}
+      if (j === n) return true;
+    }
+    return false;
   }
 
   function _ccRestoredGeoMatchesCache(cached, result) {

@@ -68,7 +68,8 @@ test('candidate semantic mismatch also cold-parses instead of accepting geometry
 // once instead of restoring missing or displaced rooms forever.
 function realLacksSpaces() {
   const start = source.indexOf('  function _ccGeoCacheLacksSpaces(cached, entry) {');
-  const end = source.indexOf('\n  }\n', start) + 4;
+  // through _ccIfcHasBytes, which the grid rule calls
+  const end = source.indexOf('\n  }\n', source.indexOf('  function _ccIfcHasBytes(buf, word) {', start)) + 4;
   assert.ok(start >= 0 && end > start, '_ccGeoCacheLacksSpaces not found');
   const ctx = {};
   vm.runInNewContext(source.slice(start, end) + '\nthis.fn = _ccGeoCacheLacksSpaces;', ctx);
@@ -138,4 +139,19 @@ test('a props-complete cache (pp:1) restores even when the model has no psets', 
   assert.equal(h.coldParses, 1);
   const h8 = restoreDecisionHarness({ _ccGeoCacheLacksSpaces: realLacksSpaces(), _geoDeserialize: () => 'v8' });
   assert.equal(await h8.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, Object.assign({}, markers, { v: 8, hasPsets: false, pp: 1 })), 'v8');
+});
+
+// gr:1 — caches written before grids were kept are re-parsed once only when
+// the stored IFC has grid axes; other older caches restore as they are.
+test('pre-grid cache (no gr marker) re-parses only when the IFC has IfcGridAxis', () => {
+  const lacks = realLacksSpaces();
+  const current = { sp: 2, sem: 1, xp: 1, np: 1 };
+  const enc = (t) => new TextEncoder().encode(t).buffer;
+  const withGrid = enc("ISO-10303-21;\nDATA;\n#45=IFCGRIDAXIS('A',#44,.T.);\nENDSEC;");
+  const noGrid = enc("ISO-10303-21;\nDATA;\n#45=IFCGRID('x',$,$,$,$,#1,$,(),(),$,$);\nENDSEC;");
+  assert.equal(lacks(current, { buffer: withGrid }), true);
+  assert.equal(lacks(current, { buffer: noGrid }), false);
+  assert.equal(lacks(Object.assign({ gr: 1 }, current), { buffer: withGrid }), false);
+  assert.equal(lacks(current, {}), false, 'no source bytes: the old cache is still the best there is');
+  assert.equal(lacks(current, { buffer: new Uint8Array(enc('xxIFCGRIDAXIS(')) }), true, 'typed-array buffers too');
 });

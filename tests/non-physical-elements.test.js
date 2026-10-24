@@ -123,7 +123,7 @@ test('both loaders use the same helpers; the worker blob carries them', () => {
 });
 
 test('geo caches written before stubs on both paths (np !== 1) re-parse once when the source is stored', () => {
-  const fn = new Function(extractFn('_ccGeoCacheLacksSpaces') + '\nreturn _ccGeoCacheLacksSpaces;')();
+  const fn = new Function(extractFn('_ccGeoCacheLacksSpaces') + '\n' + extractFn('_ccIfcHasBytes') + '\nreturn _ccGeoCacheLacksSpaces;')();
   const buf = { buffer: new ArrayBuffer(4) };
   assert.equal(fn({ sp: 2, sem: 1, xp: 1 }, buf), true);
   assert.equal(fn({ sp: 2, sem: 1, xp: 1, np: 1 }, buf), false);
