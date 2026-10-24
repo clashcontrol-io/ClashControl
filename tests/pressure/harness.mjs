@@ -459,7 +459,12 @@ function installHelpers() {
       const db = await new Promise((res, rej) => { const r = indexedDB.open('ClashControlFiles'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
       try {
         if (!db.objectStoreNames.contains('projects')) return null;
-        return await new Promise((res, rej) => { const tx = db.transaction('projects', 'readonly'); const q = tx.objectStore('projects').get(pid); q.onsuccess = () => res(q.result || null); q.onerror = () => rej(q.error); });
+        // header + clash/issue pages, reassembled like the app reads them (§21.53)
+        const tx = db.transaction('projects', 'readonly'), os = tx.objectStore('projects');
+        const get = (q) => new Promise((res, rej) => { q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+        const header = await get(os.get(pid));
+        const pages = await get(os.getAll(IDBKeyRange.bound([pid], [pid, []])));
+        return window._ccStorageCore.assembleProjectRecord(header || null, pages || []);
       } finally { db.close(); }
     },
     async autosaveCheck(editIdx) {

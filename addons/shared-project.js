@@ -16,6 +16,8 @@
   var _sharedDirHandle = null;
   var _sharedFileHandle = null;
   var _sharedSyncTimer = null;
+  // {sig, lastModified, size} of this client's last successful write
+  var _sharedLastSynced = null;
 
   // Action type constant
   var A_UPD = 'UPD_SHARED_PROJECT';
@@ -54,6 +56,7 @@
         saved.dirHandle.queryPermission({mode:'readwrite'}).then(function(perm) {
           if (perm === 'granted') {
             _sharedDirHandle = saved.dirHandle;
+            _sharedLastSynced = null;
             dispatch({t:A_UPD, u:{enabled:true, folderName:saved.dirHandle.name, fileName:saved.fileName||'project.ccproject'}});
             _startSharedSync(dispatch);
           }
@@ -65,6 +68,7 @@
       if (_sharedSyncTimer) { clearTimeout(_sharedSyncTimer); _sharedSyncTimer = null; }
       _sharedDirHandle = null;
       _sharedFileHandle = null;
+      _sharedLastSynced = null;
     },
 
     panel: function(html, s, d) {
@@ -97,7 +101,7 @@
             style=${{padding:'.3rem .6rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'none',fontFamily:'inherit',
               background:canUse?'var(--accent)':'var(--bg-tertiary)',color:canUse?'#fff':'var(--text-faint)',
               opacity:canUse?1:0.5}}>${_i18n('sharedProject.linkFolder','Link Folder')}</button>`}
-          ${enabled && html`<button onClick=${function(){_syncSharedProject(d);}}
+          ${enabled && html`<button onClick=${function(){_syncSharedProject(d, {force:true});}}
             disabled=${sp.syncing}
             style=${{padding:'.3rem .6rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',
               border:'1px solid var(--border)',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontFamily:'inherit',
@@ -159,6 +163,7 @@
     }
     window.showDirectoryPicker({mode:'readwrite'}).then(function(dirHandle) {
       _sharedDirHandle = dirHandle;
+      _sharedLastSynced = null;
       var fileName = 'project.ccproject';
       dirHandle.values().then(function(iter) {
         var found = null;
@@ -189,6 +194,7 @@
     if (_sharedSyncTimer) { clearTimeout(_sharedSyncTimer); _sharedSyncTimer = null; }
     _sharedDirHandle = null;
     _sharedFileHandle = null;
+    _sharedLastSynced = null;
     _clearSharedHandle();
     d({t:A_UPD, u:{enabled:false, folderName:'', fileName:'', lastSync:null, syncing:false, lastRemoteTs:null}});
   }
@@ -199,13 +205,14 @@
   // | {__readError:true} (transient failure — permission hiccup, half-synced
   // cloud file, parse error). The distinction matters: writing local state
   // over a file we merely FAILED TO READ would erase the team's records.
-  function _readSharedFile() {
+  // file (optional): the File already obtained by _statSharedFile this cycle.
+  function _readSharedFile(file) {
     if (!_sharedDirHandle) return Promise.resolve(null);
     var state = window._ccLatestState;
     var fn = state && state.sharedProject ? state.sharedProject.fileName : 'project.ccproject';
     return _sharedDirHandle.getFileHandle(fn, {create:false}).then(function(fh) {
       _sharedFileHandle = fh;
-      return fh.getFile().then(function(file) { return file.text(); }).then(function(txt) {
+      return (file ? Promise.resolve(file) : fh.getFile()).then(function(f) { return f.text(); }).then(function(txt) {
         var data = JSON.parse(txt);
         return data._cc === 'ClashControl' ? data : null;
       }).catch(function(e) {
@@ -224,6 +231,7 @@
     var state = window._ccLatestState;
     if (!state) return Promise.resolve();
     var fn = state.sharedProject ? state.sharedProject.fileName : 'project.ccproject';
+    var sig = _sharedSig(state);
     var CC_VERSION = window.CC_VERSION || {v:'0.0.0'};
     var data = {
       _cc: 'ClashControl', _v: CC_VERSION.v,
@@ -251,8 +259,18 @@
     }).then(function(writable) {
       return writable.write(json).then(function() { return writable.close(); });
     }).then(function() {
+      // remember what is now in the file: the next tick skips when neither
+      // side changed since (see _syncSharedProject)
+      // (a size other than what we wrote: someone wrote after us — no memo,
+      // so the next tick reads their file)
+      var bytes = new Blob([json]).size;
+      return _sharedFileHandle.getFile().then(function(f) {
+        _sharedLastSynced = f.size === bytes ? { sig: sig, lastModified: f.lastModified, size: f.size } : null;
+      }, function() { _sharedLastSynced = null; });
+    }).then(function() {
       d({t:A_UPD, u:{lastSync:Date.now()}});
     }).catch(function(e) {
+      _sharedLastSynced = null;
       console.warn('Shared project write failed:', e);
       if (window._ccToast && e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
         window._ccToast(_i18n('sharedProject.sharedFolderAccessLostOpen','Shared folder access lost — open Integrations and re-link the folder.'), 'error');
@@ -263,13 +281,53 @@
 
   // ── Sync ───────────────────────────────────────────────────────
 
-  function _syncSharedProject(d) {
+  // What a write puts in the file, as identities (state is immutable: a slice
+  // with the same identity is unchanged) + the model fields it writes.
+  var _SHARED_SLICES = ['rules', 'clashes', 'issues', 'floors', 'lastDeltaSummary', 'viewpoints', 'measurements', 'changelog', 'comments'];
+  function _sharedSig(state) {
+    var sig = { fileName: state.sharedProject ? state.sharedProject.fileName : 'project.ccproject' };
+    _SHARED_SLICES.forEach(function(k) { sig[k] = state[k]; });
+    sig.models = JSON.stringify((state.models || []).map(function(m) {
+      return [m.id, m.name, m.discipline, m.color, m.visible, m.tag || ''];
+    }));
+    return sig;
+  }
+  function _sharedSigEqual(a, b) {
+    if (!a || !b || a.fileName !== b.fileName || a.models !== b.models) return false;
+    for (var i = 0; i < _SHARED_SLICES.length; i++) if (a[_SHARED_SLICES[i]] !== b[_SHARED_SLICES[i]]) return false;
+    return true;
+  }
+  // The shared file's File object (metadata: lastModified/size — the
+  // contents are not read here); null when it does not exist or can't be
+  // opened (the full sync below then handles it exactly as before).
+  function _statSharedFile() {
+    var state = window._ccLatestState;
+    var fn = state && state.sharedProject ? state.sharedProject.fileName : 'project.ccproject';
+    return _sharedDirHandle.getFileHandle(fn, {create:false}).then(function(fh) { return fh.getFile(); })
+      .catch(function() { return null; });
+  }
+
+  // opts.force (the Sync Now button): sync even when nothing changed.
+  function _syncSharedProject(d, opts) {
     if (!_sharedDirHandle) return;
     var state = window._ccLatestState;
     if (!state || !state.sharedProject.enabled) return;
+    var force = !!(opts && opts.force);
+    var last = _sharedLastSynced;
+    // Nothing to do when this client's written slices are the ones last
+    // written AND the file is the one we left (same lastModified + size, read
+    // from metadata only): no read, no write, no state update.
+    var pre = (!force && last && _sharedSigEqual(_sharedSig(state), last.sig)) ? _statSharedFile() : Promise.resolve(null);
+    pre.then(function(file) {
+      if (file && last && file.lastModified === last.lastModified && file.size === last.size) return;
+      _syncSharedProjectNow(d, file);
+    });
+  }
+
+  function _syncSharedProjectNow(d, file) {
     d({t:A_UPD, u:{syncing:true}});
 
-    _readSharedFile().then(function(remote) {
+    _readSharedFile(file).then(function(remote) {
       if (remote && remote.__readError) {
         // Transient read failure — do NOT write (we'd clobber records we
         // couldn't see). Next tick retries.

@@ -53,8 +53,33 @@
   }
 
   // ── Clash Training Data (localStorage) ─────────────────────────
+  // The parsed store is kept in memory (write-through): the count read on
+  // every clash/issue edit and each verdict save no longer re-parse the
+  // whole localStorage value. localStorage holds exactly what it held
+  // before (each save still writes the whole store). The memory copy is
+  // dropped when the key changes outside this addon: another tab ('storage'
+  // event), or the core removing it ('cc-ls-removed': Clear training data,
+  // the localStorage quota pruner), and after a failed write.
+  var _CLASH_KEY = 'cc_clash_training_data';
+  var _clashMem = null; // {store, count} — count null until asked
+  function _dropClashMem() { _clashMem = null; }
+  try {
+    window.addEventListener('storage', function(e) { if (!e || e.key == null || e.key === _CLASH_KEY) _dropClashMem(); });
+    window.addEventListener('cc-ls-removed', function(e) {
+      var keys = e && e.detail && e.detail.keys;
+      if (!keys || keys.indexOf(_CLASH_KEY) !== -1) _dropClashMem();
+    });
+  } catch(e) {}
+  // The in-memory store; callers read it, only _saveClashTrainRecord changes it.
   function _getClashTrainStore() {
-    try { return JSON.parse(localStorage.getItem('cc_clash_training_data')||'{}'); } catch(e) { return {}; }
+    if (_clashMem) return _clashMem.store;
+    var raw;
+    try { raw = localStorage.getItem(_CLASH_KEY); } catch(e) { return {}; }
+    var store;
+    try { store = JSON.parse(raw||'{}'); } catch(e) { store = {}; }
+    if (!store || typeof store !== 'object') store = {};
+    _clashMem = { store: store, count: null };
+    return store;
   }
   function _saveClashTrainRecord(id, fv, label, labelSource, synthetic) {
     try {
@@ -66,28 +91,35 @@
         if ((srcPri[labelSource]||0) < (srcPri[existing.label_source]||0)) return;
         if ((srcPri[labelSource]||0) === (srcPri[existing.label_source]||0) && label <= existing.label) return;
       }
-      store[id] = {fv:fv, label:label, label_source:labelSource, synthetic:!!synthetic, ts:Date.now()};
+      // the record as it reads back from localStorage (undefined dropped,
+      // NaN → null), so the memory copy equals a fresh parse of the store
+      store[id] = JSON.parse(JSON.stringify({fv:fv, label:label, label_source:labelSource, synthetic:!!synthetic, ts:Date.now()}));
       var keys = Object.keys(store);
       if (keys.length > _CLASH_TRAIN_CAP) {
         keys.sort(function(a,b){return (store[a].ts||0)-(store[b].ts||0);});
         while(keys.length > _CLASH_TRAIN_CAP) { delete store[keys.shift()]; }
       }
-      if (typeof window._ccLsSet === 'function') window._ccLsSet('cc_clash_training_data', store);
-      else localStorage.setItem('cc_clash_training_data', JSON.stringify(store));
+      if (_clashMem) _clashMem.count = null;
+      var ok;
+      if (typeof window._ccLsSet === 'function') ok = window._ccLsSet(_CLASH_KEY, store);
+      else { localStorage.setItem(_CLASH_KEY, JSON.stringify(store)); ok = true; }
+      if (ok === false) _dropClashMem(); // not stored: memory must not run ahead of localStorage
       window.dispatchEvent(new Event('cc-training-data-change'));
-    } catch(e) {}
+    } catch(e) { _dropClashMem(); }
   }
   function _clearClashTrainStore() {
-    try { localStorage.removeItem('cc_clash_training_data'); } catch(e) {}
+    try { localStorage.removeItem(_CLASH_KEY); } catch(e) {}
+    _dropClashMem();
     window.dispatchEvent(new Event('cc-training-data-change'));
   }
   function _getClashTrainCount() {
     try {
-      var s = localStorage.getItem('cc_clash_training_data');
-      if (!s) return 0;
-      var store = JSON.parse(s), count = 0;
+      var store = _getClashTrainStore();
+      if (_clashMem && _clashMem.count != null) return _clashMem.count;
+      var count = 0;
       var _countSources = {verdict:1, thumbs_feedback:1, explicit_feedback:1};
-      Object.keys(store).forEach(function(k){ if(_countSources[store[k].label_source]) count++; });
+      Object.keys(store).forEach(function(k){ if(store[k] && _countSources[store[k].label_source]) count++; });
+      if (_clashMem) _clashMem.count = count;
       return count;
     } catch(e) { return 0; }
   }
