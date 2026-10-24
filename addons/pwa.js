@@ -13,6 +13,16 @@
   }
 
   var _ccInstallPrompt = null;
+  // The core reads _ccPwaInstallPrompt() / _ccUpdateAvailable when these
+  // events fire (install banner, avatar menu, update banner) — no polling.
+  function _announce(name) { try { window.dispatchEvent(new CustomEvent(name)); } catch (_) {} }
+  var _dispatch = null;
+  function _setInstallPrompt(p) {
+    _ccInstallPrompt = p;
+    if (_dispatch) _dispatch({t:'UPD_PWA', u:{installAvailable:!!p}});
+    _announce('cc-install-available');
+  }
+  var _onAppInstalled = function() { _setInstallPrompt(null); };
   var _updateCheckTimer = null;
   var _onControllerChange = null;
   var _onBeforeInstallPrompt = null;
@@ -42,6 +52,7 @@
     },
 
     init: function(dispatch, getState) {
+      _dispatch = dispatch;
       // Register service worker
       if ('serviceWorker' in navigator) {
         // Listen for controller change — fires when SW calls clients.claim()
@@ -66,6 +77,8 @@
               if (sw.state === 'activated') window.location.reload();
             });
             dispatch({t:'UPD_PWA', u:{updateAvailable:true}});
+            window._ccUpdateAvailable = true;
+            _announce('cc-update-available');
           }
           if (reg.waiting) _swReady(reg.waiting);
           reg.addEventListener('updatefound', function() {
@@ -84,16 +97,17 @@
       // PWA install prompt
       _onBeforeInstallPrompt = function(e) {
         e.preventDefault();
-        _ccInstallPrompt = e;
-        dispatch({t:'UPD_PWA', u:{installAvailable:true}});
+        _setInstallPrompt(e);
       };
       window.addEventListener('beforeinstallprompt', _onBeforeInstallPrompt);
+      window.addEventListener('appinstalled', _onAppInstalled);
     },
 
     destroy: function() {
       if (_updateCheckTimer) { clearInterval(_updateCheckTimer); _updateCheckTimer = null; }
       if (_onControllerChange) { try { navigator.serviceWorker.removeEventListener('controllerchange', _onControllerChange); } catch(_){} _onControllerChange = null; }
       if (_onBeforeInstallPrompt) { window.removeEventListener('beforeinstallprompt', _onBeforeInstallPrompt); _onBeforeInstallPrompt = null; }
+      window.removeEventListener('appinstalled', _onAppInstalled);
       // Note: we don't unregister the service worker — just stop checking for updates
     },
 
@@ -124,7 +138,7 @@
         }} style=${{padding:'.35rem .7rem',borderRadius:6,background:'var(--accent)',color:'#fff',fontWeight:600,fontSize:'0.8rem',border:'none',cursor:'pointer',marginBottom:'.4rem',fontFamily:'inherit'}}>
           ${_i18n('pwa.updateAvailable', 'Update available — click to update')}</button>`}
         ${canInstall && html`<button onClick=${function(){
-          if(_ccInstallPrompt){_ccInstallPrompt.prompt();_ccInstallPrompt.userChoice.then(function(){_ccInstallPrompt=null;d({t:'UPD_PWA',u:{installAvailable:false}});});}
+          if(_ccInstallPrompt){_ccInstallPrompt.prompt();_ccInstallPrompt.userChoice.then(function(){_setInstallPrompt(null);});}
         }} style=${{padding:'.35rem .7rem',borderRadius:6,background:'#2563eb',color:'#fff',fontWeight:600,fontSize:'0.8rem',border:'none',cursor:'pointer',fontFamily:'inherit'}}>
           ${_i18n('pwa.installAsDesktopApp', 'Install as Desktop App')}</button>`}
         ${!hasUpdate && !canInstall && html`<span style=${{color:'var(--text-faint)'}}>${_i18n('pwa.everythingUpToDate','Everything up to date.')}</span>`}
@@ -137,7 +151,7 @@
   window._ccPwaPromptInstall = function() {
     if (_ccInstallPrompt) {
       _ccInstallPrompt.prompt();
-      _ccInstallPrompt.userChoice.then(function(){ _ccInstallPrompt = null; });
+      _ccInstallPrompt.userChoice.then(function(){ _setInstallPrompt(null); });
     }
   };
 })();

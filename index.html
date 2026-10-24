@@ -16247,6 +16247,10 @@ function startApp() {
     // window._ccSelectedRefs, the same shape already used by multi-select).
     window._ccSelectedModelId = selectedEl ? (selectedEl.modelId || null) : null;
     window._ccSelectedEl = selectedEl || null;
+    // every change of the selection, deselect included (the Details drawer)
+    useEffect(function(){
+      try { window.dispatchEvent(new CustomEvent('cc-selected-el-changed')); } catch(e) {}
+    }, [selectedEl]);
     var cm = useState(null), ctxMenu=cm[0], setCtxMenu=cm[1];
     var hlRef = useRef(null); // highlighted mesh outline
     var outlineRef = useRef(null); // outliner mesh
@@ -24494,11 +24498,9 @@ function startApp() {
       sync();
       window.addEventListener('cc-panel-resize', sync);
       window.addEventListener('resize', sync);
-      var iv = setInterval(sync, 400); // cheap fallback if the event is ever missed
       return function(){
         window.removeEventListener('cc-panel-resize', sync);
         window.removeEventListener('resize', sync);
-        clearInterval(iv);
       };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setPanelOff is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
@@ -28144,9 +28146,10 @@ function startApp() {
         setShow(canInstall && !standalone && !dismissed);
       }
       refresh();
-      window.addEventListener('beforeinstallprompt', refresh);
-      var t = setInterval(refresh, 2000); // pick up late prompts
-      return function(){ window.removeEventListener('beforeinstallprompt', refresh); clearInterval(t); };
+      // addons/pwa.js announces every change of the deferred prompt (stored,
+      // used, app installed) after storing it
+      window.addEventListener('cc-install-available', refresh);
+      return function(){ window.removeEventListener('cc-install-available', refresh); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setShow is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     if (!show) return null;
@@ -46705,7 +46708,7 @@ function startApp() {
 
     // Drive the Details tab from element selection.
     //   • element selected → switch to Details tab + uncollapse panel
-    //   • element deselected (poll) → reset tab to AI; keep collapse state
+    //   • selection changes (deselect included) → the drawer follows (cc-selected-el-changed)
     var wsRef = useRef(s.workspace);
     wsRef.current = s.workspace;
     useEffect(function(){
@@ -46721,18 +46724,12 @@ function startApp() {
         }
       }
       window.addEventListener('cc-element-selected', onElSelected);
-      // Polling fallback: catches deselection and edge cases
-      var prev = window._ccSelectedEl || null;
-      var t = setInterval(function(){
-        var cur = window._ccSelectedEl || null;
-        if (cur !== prev) {
-          prev = cur;
-          setDrawerEl(cur);
-        }
-      }, 300);
+      // every selection change, deselect included (the Viewer announces it)
+      function onSelChanged() { setDrawerEl(window._ccSelectedEl || null); }
+      window.addEventListener('cc-selected-el-changed', onSelChanged);
       return function(){
         window.removeEventListener('cc-element-selected', onElSelected);
-        clearInterval(t);
+        window.removeEventListener('cc-selected-el-changed', onSelChanged);
       };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setCollapsed, setDrawerEl, setDrawerTab are useState setters (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
@@ -46776,7 +46773,10 @@ function startApp() {
     useEffect(function(){
       window._ccRightPanelOpenWidth = (collapsed || !_panelHasModel) ? 0 : (effectivePanelW + 16);
       try { window.dispatchEvent(new CustomEvent('cc-panel-resize')); } catch(e) {}
-      return function(){ window._ccRightPanelOpenWidth = 0; };
+      return function(){
+        window._ccRightPanelOpenWidth = 0;
+        try { window.dispatchEvent(new CustomEvent('cc-panel-resize')); } catch(e) {}
+      };
     }, [collapsed, effectivePanelW, _panelHasModel]);
 
     // Collapsed: thin tab on the right edge
@@ -50120,7 +50120,7 @@ function startApp() {
     }, []);
     useEffect(function(){
       function onUpdate(){ setPwaUpdateAvail(true); }
-      function onInstall(){ setPwaInstallAvail(true); }
+      function onInstall(){ setPwaInstallAvail(!!(window._ccPwaInstallPrompt && window._ccPwaInstallPrompt())); }
       window.addEventListener('cc-update-available', onUpdate);
       window.addEventListener('cc-install-available', onInstall);
       return function(){ window.removeEventListener('cc-update-available', onUpdate); window.removeEventListener('cc-install-available', onInstall); };
