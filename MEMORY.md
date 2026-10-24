@@ -246,6 +246,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ---
 
 ## Recently completed (details in git history)
+- **2026-10-24 — BCF clipping planes:** viewpoints capture the live model clipping planes (`vp.clip`, scene `[nx,ny,nz,c]`) and keep a section plane and box together; export writes `<ClippingPlanes>` (Direction into the clipped side, IFC Z-up; validated against the official 2.1 / 3.0 visinfo XSDs); import rebuilds a section box from 6 planes (+ one section plane), warns about planes it cannot show (`_ccBcfClipFromPlanes` / `_ccBcfSectionFromClip`, `tests/bcf-clipping-planes.test.js`, `tests/browser/bcf-clipping.mjs`).
 - **2026-10-24 — Confirm / Deny → next:** UPD_CLASH no longer picks a "next" clash or flies the camera (it chose from every non-denied clash, hidden ones included, 100 ms after the list's own advance — and on statuses arriving from sync / the AI bridge); the list's `_ccAdvanceToNext` advances in the order on screen and steps back from the last row.
 - **2026-10-24 — geo cache after props + native seeds:** worker-path loads wrote the geo cache without psets and the lazy-props patch missed it when the props won the race → `hasPsets:false` → every reopen re-parsed; now one write after the props merge, `pp:1` marks a props-complete cache (models without psets restore too). `addons/tauri-bridge.js` uses the per-pair seeds (`spec.sd`) like the web worker pool (`tests/tauri-bridge.test.js`).
 - **2026-10-23 — non-physical elements:** both IFC loaders share `_ccIfcNonPhysical`/`_ccIfcStubIds` (stream order without them, stubs incl. rooms without geometry, notes); `_ccIsNonPhysicalEl` in both sweeps + local engine; grids/annotations stay hidden (web-ifc yields no mesh for curve grids/2D annotations). Worker `typeId` was Int32 (codes > 2^31 negative) → Float64. INTERNALS §21.49.
@@ -292,7 +293,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 **Reducer decomposition:** only slice 1 done; next is Area 2 (cache invalidation).
 
-**BCF:** `<ClippingPlanes>` export; cross-tool round-trip validation (Solibri/BIMcollab).
+**BCF:** ~~`<ClippingPlanes>` export~~ (done 2026-10-24: export + import, XSD-valid for 2.1 and 3.0); cross-tool round-trip validation (Solibri/BIMcollab); viewpoints captured before 2026-10-24 carry no `clip` and export no planes.
 
 **IDS:** act on `ids-conformance` results, then pin the corpus and make it a gate; Phase 2 (PredefinedType/Tag extraction, dataType, IfcTester CI); Phase 3 authoring on `mcp-server.js`; `exportIDS` lacks the RVB checks.
 

@@ -1,8 +1,8 @@
 name: CI
 
-# Runs the lightweight node:test suite (api/ validation + shared utils).
-# No build step and no dependency install — the tests only touch api/*.js,
-# which depend on nothing outside the standard library.
+# Runs the node:test suite. No build step; the only install is the
+# test-only packages a job needs (three and web-ifc, pinned to the CDN versions; jszip and
+# playwright for the browser checks), never saved to package.json.
 
 on:
   pull_request:
@@ -26,6 +26,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      # Tests that check against the real libraries, pinned to the versions
+      # index.html loads from the CDN: three.js (tests/viewer-*.test.js,
+      # tests/geo-bounds.test.js) and web-ifc (the fixture / stream-order /
+      # non-physical-element tests parse real IFC).
+      - name: Install test-only dependencies
+        run: npm install --no-save three@0.180.0 web-ifc@0.0.77
 
       - name: Run tests
         run: npm test
@@ -87,7 +94,7 @@ jobs:
 
       - name: Install Playwright Chromium
         run: |
-          npm install --no-save playwright@1
+          npm install --no-save playwright@1 jszip@3.10.1
           npx playwright install --with-deps chromium
 
       - name: Run browser smoke test
@@ -107,6 +114,9 @@ jobs:
 
       - name: Run country-pack resolution check (IFC-neutral vs auto-activated pack)
         run: node tests/browser/country-packs.mjs
+
+      - name: Run BCF clipping-plane round trip (section box + plane, BCF 2.1 and 3.0)
+        run: node tests/browser/bcf-clipping.mjs
 
   # Path filter for the heavier differential probes below. index.html is the
   # whole single-file app (loader, engine, UI all in one file), so this can't

@@ -13550,8 +13550,14 @@ function startApp() {
                 }
               }
             }
+            // <ClippingPlanes>: the section the author was looking at
+            var _cps = vdoc.querySelectorAll('ClippingPlanes > ClippingPlane'), _bcfPl = [];
+            var _rv = function(el, tag) { var n = el.querySelector(tag); if (!n) return null; var xn = n.querySelector('X'), yn = n.querySelector('Y'), zn = n.querySelector('Z'); return xn && yn && zn ? { x: parseFloat(xn.textContent), y: parseFloat(yn.textContent), z: parseFloat(zn.textContent) } : null; };
+            for (var cpi = 0; cpi < _cps.length; cpi++) { var _L = _rv(_cps[cpi], 'Location'), _D = _rv(_cps[cpi], 'Direction'); if (_L && _D) _bcfPl.push({ L: _L, D: _D }); }
+            var _sec = _bcfPl.length ? _ccBcfSectionFromClip(_bcfPl) : null;
+            if (_sec && _sec.dropped) console.warn('[BCF] viewpoint ' + p.base + ': ' + _sec.dropped + ' clipping plane(s) beyond one plane + one section box cannot be shown');
             var arr = vpByFolder[p.folder] || (vpByFolder[p.folder] = []);
-            arr.push({ guids: guids, camera: camera, base: p.base });
+            arr.push({ guids: guids, camera: camera, base: p.base, section: _sec ? _sec.section : null, clip: _sec && _sec.clip.length ? _sec.clip : null });
           } catch(_e) {}
         });
         var markups = parts.filter(function(p) { return p.kind === 'markup'; });
@@ -13742,7 +13748,7 @@ function startApp() {
               var _snap = snapshotsByKey[m.folder + '/' + _vpWithCam.base] || null;
               d({t:A.ADD_VIEWPOINT, v:{
                 id: uid(), name: title, linkedId: issuePayload.id,
-                createdAt: creationDate, snapshot: _snap, camera: _vpWithCam.camera, section: null
+                createdAt: creationDate, snapshot: _snap, camera: _vpWithCam.camera, section: _vpWithCam.section || null, clip: _vpWithCam.clip || null
               }});
             }
             imported++;
@@ -13825,9 +13831,8 @@ function startApp() {
   // state.models[i].elements[j].box (the same authoritative per-element
   // data window._ccElemsBBox unions live, ~7861) — no live Three.js scene
   // access needed or used, which is what makes this feasible at export
-  // time at all (contrast ClippingPlanes export, still deferred: that
-  // needs live section→world-plane conversion that only exists inside
-  // reducer-driven effects). There's no "current camera angle" to imitate
+  // time at all (ClippingPlanes, by contrast, come from the live world
+  // planes a captured viewpoint stores in vp.clip). There's no "current camera angle" to imitate
   // outside a live scene, so this always uses a fixed isometric-ish
   // offset rather than trying to guess one. Distance formula duplicated
   // from the private _zoomDist (~9409, a different closure) — same
@@ -13884,6 +13889,71 @@ function startApp() {
     return partial.length ? {complete: false, partialModels: partial} : {complete: true};
   }
 
+  // BCF <ClippingPlanes> (BCF-XML 2.1 / 3.0): each plane is a Location on
+  // it and a Direction pointing into the CLIPPED half-space. three.js keeps
+  // n·p + c >= 0, so the clipped side is -n: Direction = -n/|n|, Location =
+  // -c·n/|n|². Scene planes [nx,ny,nz,c] (viewpoint.clip) <-> BCF planes in
+  // IFC space (Z-up, via _bcfSceneToIfc).
+  function _ccBcfClipFromPlanes(planes) {
+    var out = [];
+    (planes || []).forEach(function(p) {
+      var nx = p[0], ny = p[1], nz = p[2], c = p[3], l2 = nx * nx + ny * ny + nz * nz;
+      if (!(l2 > 0) || !isFinite(c)) return;
+      var l = Math.sqrt(l2);
+      out.push({ L: _bcfSceneToIfc({ x: -c * nx / l2, y: -c * ny / l2, z: -c * nz / l2 }), D: _bcfSceneToIfc({ x: -nx / l, y: -ny / l, z: -nz / l }) });
+    });
+    return out;
+  }
+  // BCF planes (IFC space) -> the app's section state: three opposite pairs
+  // with one vertical pair are a section box (rotation about the vertical,
+  // as the box tool makes); one remaining plane is a custom section plane
+  // (its normal points into the clipped side, like BCF's Direction).
+  // Returns {section, clip, dropped}: clip = the scene planes as given,
+  // dropped = planes the app cannot show (more than one loose plane).
+  function _ccBcfSectionFromClip(bcfPlanes) {
+    var P = [];
+    (bcfPlanes || []).forEach(function(bp) {
+      var L = _bcfIfcToScene(bp.L), D = _bcfIfcToScene(bp.D);
+      var l = Math.sqrt(D.x * D.x + D.y * D.y + D.z * D.z);
+      if (!(l > 0) || !isFinite(L.x + L.y + L.z)) return;
+      P.push({ L: L, D: { x: D.x / l, y: D.y / l, z: D.z / l }, used: false });
+    });
+    var clip = P.map(function(q) { return [-q.D.x, -q.D.y, -q.D.z, q.D.x * q.L.x + q.D.y * q.L.y + q.D.z * q.L.z]; });
+    var EPS = 1e-6, dot = function(a, b) { return a.x * b.x + a.y * b.y + a.z * b.z; };
+    function pairAlong(u) {
+      var hi = null, lo = null;
+      P.forEach(function(q) {
+        if (q.used) return;
+        var d = dot(q.D, u);
+        if (d > 1 - EPS && !hi) hi = q; else if (d < -1 + EPS && !lo) lo = q;
+      });
+      return hi && lo ? { hi: hi, lo: lo, h: dot(hi.L, u), l: dot(lo.L, u) } : null;
+    }
+    var box = null, axY = { x: 0, y: 1, z: 0 };
+    var py = pairAlong(axY);
+    if (py && py.h > py.l) {
+      var cand = P.filter(function(q) { return !q.used && q !== py.hi && q !== py.lo && Math.abs(q.D.y) < EPS; });
+      for (var i = 0; i < cand.length && !box; i++) {
+        var axX = cand[i].D, rot = Math.atan2(-axX.z, axX.x);
+        var axZ = { x: Math.sin(rot), y: 0, z: Math.cos(rot) };
+        var px = pairAlong(axX), pz = pairAlong(axZ);
+        if (!px || !pz || !(px.h > px.l) || !(pz.h > pz.l)) continue;
+        var cx = (px.h + px.l) / 2, cy = (py.h + py.l) / 2, cz = (pz.h + pz.l) / 2;
+        var ctr = { x: cx * axX.x + cy * axY.x + cz * axZ.x, y: cx * axX.y + cy * axY.y + cz * axZ.y, z: cx * axX.z + cy * axY.z + cz * axZ.z };
+        var hx = (px.h - px.l) / 2, hy = (py.h - py.l) / 2, hz = (pz.h - pz.l) / 2;
+        box = { enabled: true, min: [ctr.x - hx, ctr.y - hy, ctr.z - hz], max: [ctr.x + hx, ctr.y + hy, ctr.z + hz], rotation: rot };
+        [px.hi, px.lo, py.hi, py.lo, pz.hi, pz.lo].forEach(function(q) { q.used = true; });
+      }
+    }
+    var loose = P.filter(function(q) { return !q.used; });
+    var section = null;
+    if (loose.length) {
+      var q0 = loose[0];
+      section = { kind: 'custom', custom: { normal: [q0.D.x, q0.D.y, q0.D.z], point: [q0.L.x, q0.L.y, q0.L.z] }, pos: 0.5, flip: false };
+      if (box) section.box = box;
+    } else if (box) section = { kind: 'box', box: box };
+    return { section: section, clip: clip, dropped: Math.max(0, loose.length - 1) };
+  }
   // opts.labelFor(item) -> extra <Labels> text (the "shown" clash export
   // labels every topic with its review item's title, so a group stays a
   // group in BIMcollab/Solibri).
@@ -14282,6 +14352,14 @@ function startApp() {
             vpXml += '    <AspectRatio>'+_ar.toFixed(6)+'</AspectRatio>\n';
           }
           vpXml += _vpIsOrtho ? '  </OrthogonalCamera>\n' : '  </PerspectiveCamera>\n';
+        }
+        // <ClippingPlanes> after the camera (and <Lines>), per the schema order
+        var _bcfClip = _ccBcfClipFromPlanes(vp.clip);
+        if (_bcfClip.length) {
+          var _v3 = function(t, v) { return '      <'+t+'><X>'+v.x.toFixed(6)+'</X><Y>'+v.y.toFixed(6)+'</Y><Z>'+v.z.toFixed(6)+'</Z></'+t+'>\n'; };
+          vpXml += '  <ClippingPlanes>\n';
+          _bcfClip.forEach(function(cp) { vpXml += '    <ClippingPlane>\n' + _v3('Location', cp.L) + _v3('Direction', cp.D) + '    </ClippingPlane>\n'; });
+          vpXml += '  </ClippingPlanes>\n';
         }
         vpXml += '</VisualizationInfo>';
         f.file(vpGuid+'.bcfv', vpXml);
@@ -20140,6 +20218,11 @@ function startApp() {
         if(_st.sectionAxis){ _section = {kind:'axis', axis:_st.sectionAxis, pos:_st.sectionPos, flip:!!_st.sectionFlip}; }
         else if(_st.sectionCustom){ _section = {kind:'custom', custom:_st.sectionCustom, pos:_st.sectionPos, flip:!!_st.sectionFlip}; }
         else if(_st.sectionBox && _st.sectionBox.enabled){ _section = {kind:'box', box:_st.sectionBox}; }
+        // a section plane and the section box can be on together: keep both
+        if(_section && _section.kind!=='box' && _st.sectionBox && _st.sectionBox.enabled) _section.box = _st.sectionBox;
+        // the live model clipping planes (scene space [nx,ny,nz,c], three's
+        // keep-side n·p + c >= 0) — what BCF export writes as <ClippingPlanes>
+        var _clip = (window._ccActivePlanes || []).map(function(p){ return [p.normal.x, p.normal.y, p.normal.z, p.constant]; });
         // Orthographic cameras (the ortho-view toggle, _ccToggleOrtho) have
         // no .fov — BCF-XML's OrthogonalCamera carries ViewToWorldScale
         // ("view's visible vertical size in meters") instead of
@@ -20159,7 +20242,8 @@ function startApp() {
             ux:+up.x.toFixed(4), uy:+up.y.toFixed(4), uz:+up.z.toFixed(4),
             tx:+S.orbit.target.x.toFixed(4), ty:+S.orbit.target.y.toFixed(4), tz:+S.orbit.target.z.toFixed(4)
           }, _camFields),
-          section:_section
+          section:_section,
+          clip:_clip.length ? _clip : null
         };
       };
       _restoreViewpoint = function(vp) {
@@ -20204,6 +20288,8 @@ function startApp() {
           window._ccDispatch({t:A.SECTION,axis:null});
           window._ccDispatch({t:A.SECTION_CUSTOM,v:null});
           window._ccDispatch({t:A.SECTION_BOX,v:null});
+          // the box first: turning the box on replaces a plane, a plane added after it stays
+          if(sec && sec.kind!=='box' && sec.box) window._ccDispatch({t:A.SECTION_BOX,v:sec.box});
           if(sec && sec.kind==='axis'){
             window._ccDispatch({t:A.SECTION,axis:sec.axis,pos:sec.pos});
             if(sec.flip) window._ccDispatch({t:A.SECTION_FLIP});

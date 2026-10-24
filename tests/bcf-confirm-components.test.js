@@ -37,6 +37,7 @@ const bundle = [
   extractFn('_lookupElBox'),
   extractFn('_ccBoxFinite'),
   extractFn('_ccSynthesizeViewpoint'),
+  extractFn('_ccBcfClipFromPlanes'),
   extractExportBCF(),
 ].join('\n');
 
