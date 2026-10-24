@@ -39,8 +39,10 @@
     if (/^[+-]?\d{1,3}$/.test(s)) return parseInt(s, 10);
     return null;
   }
-  // entries: [{modelId, name, elevation}] — elevation in model units; a model
-  // whose largest |elevation| exceeds 1000 is taken to store millimetres.
+  // entries: [{modelId, name, elevation, unitScale?}] — elevation in model
+  // units; unitScale = model units per metre when the model declares its
+  // length unit (1000 = mm, 1 = m). Without it, a model whose largest
+  // |elevation| exceeds 1000 is taken to store millimetres.
   // Returns { label(modelId, name) -> canonical label ('' for no storey),
   //           labels: [canonical labels ordered by elevation] }.
   function buildStoreyNormaliser(entries) {
@@ -53,7 +55,9 @@
     var rows = list.map(function(e) {
       var k = String(e.modelId || ''), el = Number(e.elevation);
       var hasEl = e.elevation != null && isFinite(el);
-      return { modelId: k, name: String(e.name), elev: hasEl ? (maxAbs[k] > 1000 ? el / 1000 : el) : null, level: levelNumber(e.name) };
+      var us = Number(e.unitScale);
+      var elev = !hasEl ? null : (us > 0 && isFinite(us)) ? el / us : (maxAbs[k] > 1000 ? el / 1000 : el);
+      return { modelId: k, name: String(e.name), elev: elev, level: levelNumber(e.name) };
     });
     // elevation clusters (single linkage over the sorted elevations)
     var withEl = rows.filter(function(r) { return r.elev != null; }).sort(function(a, b) { return a.elev - b.elev || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0); });

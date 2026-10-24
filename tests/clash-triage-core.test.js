@@ -32,6 +32,23 @@ test('same floor across models: by level number, else by elevation (mm models de
   assert.deepEqual(N.labels.slice(0, 3), ['Fundering', 'L0', 'L1'], 'ordered by elevation');
 });
 
+test('a declared length unit (unitScale) beats the largest-elevation guess', () => {
+  // a mm model whose storeys all sit below 1000 mm (a low building, or only
+  // the lower floors): the guess reads them as metres and puts its level 0.8
+  // nowhere near the m model's 0.8 m — the declared unit gets it right
+  const guess = t.buildStoreyNormaliser([
+    { modelId: 'm', name: 'Entresol', elevation: 0.8 }, { modelId: 'mm', name: 'Tussenvloer', elevation: 800 },
+  ]);
+  assert.notEqual(guess.label('m', 'Entresol'), guess.label('mm', 'Tussenvloer'), 'without a unit, 800 is read as metres');
+  const N = t.buildStoreyNormaliser([
+    { modelId: 'm', name: 'Entresol', elevation: 0.8, unitScale: 1 }, { modelId: 'mm', name: 'Tussenvloer', elevation: 800, unitScale: 1000 },
+  ]);
+  assert.equal(N.label('m', 'Entresol'), N.label('mm', 'Tussenvloer'), 'same floor once the mm model declares millimetres');
+  // and a metre model with a storey above 1000 m stays metres when declared
+  const tall = t.buildStoreyNormaliser([{ modelId: 'a', name: 'Top', elevation: 1200, unitScale: 1 }, { modelId: 'b', name: 'Peak', elevation: 1200000, unitScale: 1000 }]);
+  assert.equal(tall.label('a', 'Top'), tall.label('b', 'Peak'));
+});
+
 // ── facets ───────────────────────────────────────────────────────────────
 function items(n) {
   const out = [];

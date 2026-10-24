@@ -8646,7 +8646,8 @@ function startApp() {
     (s.models || []).forEach(function(m) {
       if (m.visible !== false) vis[m.id] = true;
       names[m.id] = m.name || m.id;
-      (m.storeyData || []).forEach(function(st) { if (st && st.name) stE.push({ modelId: m.id, name: st.name, elevation: st.elevation }); });
+      var _us = _ccModelUnitScale(m, s.prefs);
+      (m.storeyData || []).forEach(function(st) { if (st && st.name) stE.push({ modelId: m.id, name: st.name, elevation: st.elevation, unitScale: _us }); });
     });
     var bucketOf = new Map(), counts = {}, visible = [], zoneGroups = {};
     ((ccore && ccore.REVIEW_BUCKETS) || ['review']).forEach(function(b) { counts[b] = 0; });
@@ -38993,6 +38994,13 @@ function startApp() {
     }).sort(function(a, b) { return a.elevation - b.elevation; });
   }
 
+  // One model's storey units per metre: the user's override, else the unit
+  // the model declares (IFCSIUNIT, stats.unitScale), else null (unknown).
+  function _ccModelUnitScale(m, prefs) {
+    if (prefs && prefs.unitScaleOverride && prefs.unitScaleOverride !== 'auto') return Number(prefs.unitScaleOverride) || 1;
+    var us = m && m.stats && m.stats.unitScale;
+    return us > 0 ? us : null;
+  }
   function _ccDetectUnitScale(models) {
     var st = window._ccLatestState;
     if (st && st.prefs && st.prefs.unitScaleOverride && st.prefs.unitScaleOverride !== 'auto') {

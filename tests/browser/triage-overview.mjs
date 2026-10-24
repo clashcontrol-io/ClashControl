@@ -68,6 +68,9 @@ async function newPage(viewport) {
   // order in which snapshot pictures land (visible-first check)
   await ctx.addInitScript(() => { window.__snapOrder = []; window.addEventListener('cc-snapshot', (e) => { if (e && e.detail) window.__snapOrder.push(e.detail.key); }); });
   const page = await ctx.newPage();
+  // the app honours prefers-reduced-motion: theme switches then settle at once,
+  // so axe never measures a colour half-way through its transition
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   page.on('pageerror', (e) => pageErrors.push(e.message));
   if (process.env.CC_BROWSER_OFFLINE_DEPS === '1') {
     const local = async (route, f, ct) => route.fulfill({ status: 200, body: await readFile(join(root, 'node_modules', f)), headers: { 'content-type': ct || 'text/javascript', 'access-control-allow-origin': '*' } });
