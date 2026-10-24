@@ -719,15 +719,16 @@ fn bvh_flat_into(node: &BvhNode, out: &mut Vec<f64>) {
     ]);
     match &node.kind {
         bvh::BvhKind::Leaf { indices } => {
+            let indices = indices.as_slice();
             out.push(-(indices.len() as f64));
             for &i in indices {
                 out.push(i as f64);
             }
         }
-        bvh::BvhKind::Inner { left, right, count } => {
+        bvh::BvhKind::Inner { children, count } => {
             out.push(*count as f64);
-            bvh_flat_into(left, out);
-            bvh_flat_into(right, out);
+            bvh_flat_into(&children[0], out);
+            bvh_flat_into(&children[1], out);
         }
     }
 }
@@ -783,5 +784,128 @@ mod bvh_flat_tests {
         assert!(seen.iter().all(|&c| c == 1));
         assert_eq!(eng.bvh_flat(2).unwrap(), Vec::<f64>::new());
         assert!(eng.bvh_flat(3).is_none());
+    }
+}
+
+// ── BVH build speed (2026-10-23) ─────────────────────────────────────
+// `BvhNode::build` now reads per-triangle boxes, sorts (key, index) pairs
+// and keeps leaf indices inline; the tree must stay the one the original
+// build made (= JS `_buildBVHNode`). The original build is kept here, test
+// only, and compared node for node (boxes as bits, counts, leaf order).
+#[cfg(test)]
+mod bvh_build_equivalence_tests {
+    use super::*;
+
+    // The pre-2026-10-23 build, verbatim apart from returning the flat layout.
+    fn reference_flat(tris: &[f32]) -> Vec<f64> {
+        fn rec(tris: &[f32], keys: &[f64], indices: &mut [usize], lo: usize, hi: usize, out: &mut Vec<f64>) {
+            let mut mn = [f32::INFINITY; 3];
+            let mut mx = [f32::NEG_INFINITY; 3];
+            for &idx in &indices[lo..hi] {
+                let o = idx * 9;
+                for v in 0..3 {
+                    for c in 0..3 {
+                        let val = tris[o + v * 3 + c];
+                        if val < mn[c] { mn[c] = val; }
+                        if val > mx[c] { mx[c] = val; }
+                    }
+                }
+            }
+            out.extend_from_slice(&[mn[0] as f64, mn[1] as f64, mn[2] as f64, mx[0] as f64, mx[1] as f64, mx[2] as f64]);
+            let count = hi - lo;
+            if count <= 4 {
+                out.push(-(count as f64));
+                for &i in &indices[lo..hi] { out.push(i as f64); }
+                return;
+            }
+            let dx = mx[0] as f64 - mn[0] as f64;
+            let dy = mx[1] as f64 - mn[1] as f64;
+            let dz = mx[2] as f64 - mn[2] as f64;
+            let axis = if dx >= dy && dx >= dz { 0 } else if dy >= dz { 1 } else { 2 };
+            indices[lo..hi].sort_by(|&a, &b| keys[a * 3 + axis].partial_cmp(&keys[b * 3 + axis]).unwrap_or(std::cmp::Ordering::Equal));
+            out.push(count as f64);
+            let mid = (lo + hi) / 2;
+            rec(tris, keys, indices, lo, mid, out);
+            rec(tris, keys, indices, mid, hi, out);
+        }
+        let n = tris.len() / 9;
+        let mut out = Vec::new();
+        if n == 0 { return out; }
+        let mut indices: Vec<usize> = (0..n).collect();
+        let mut keys = vec![0.0f64; n * 3];
+        for t in 0..n {
+            for axis in 0..3 {
+                keys[t * 3 + axis] = tris[t * 9 + axis] as f64 + tris[t * 9 + 3 + axis] as f64 + tris[t * 9 + 6 + axis] as f64;
+            }
+        }
+        rec(tris, &keys, &mut indices, 0, n, &mut out);
+        out
+    }
+
+    fn new_flat(tris: &[f32]) -> Vec<f64> {
+        let mut out = Vec::new();
+        if tris.len() >= 9 { bvh_flat_into(&BvhNode::build(tris), &mut out); }
+        out
+    }
+
+    fn same_bits(a: &[f64], b: &[f64]) -> bool {
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
+    }
+
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> f32 {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((self.0 >> 33) as f32) / (1u64 << 31) as f32
+        }
+    }
+
+    #[test]
+    fn new_build_equals_reference_build() {
+        let mut rng = Lcg(7);
+        for case in 0..400 {
+            let n = 1 + (rng.next() * 300.0) as usize;
+            let mode = case % 5;
+            let mut t = Vec::with_capacity(n * 9);
+            for _ in 0..n * 9 {
+                let v = match mode {
+                    0 => rng.next() * 10.0 - 5.0,                          // soup
+                    1 => ((rng.next() * 6.0) as i32 - 3) as f32 * 0.5,      // grid: many ties, +-0
+                    2 => if rng.next() < 0.3 { -0.0 } else { (rng.next() * 3.0).floor() }, // -0 vs +0
+                    3 => (rng.next() * 4.0).floor() * 1e-3 + 100.0,         // far, near-flat
+                    _ => rng.next() * 0.001,                                 // tiny
+                };
+                t.push(v);
+            }
+            // long thin member along one axis (same split axis level after level)
+            if mode == 4 { for k in 0..n { t[k * 9] += k as f32; t[k * 9 + 3] += k as f32; t[k * 9 + 6] += k as f32; } }
+            assert!(same_bits(&new_flat(&t), &reference_flat(&t)), "case {} mode {} n {}", case, mode, n);
+        }
+    }
+
+    #[test]
+    fn non_finite_inputs_build_the_reference_tree() {
+        let mut rng = Lcg(11);
+        for case in 0..200 {
+            let n = 2 + (rng.next() * 60.0) as usize;
+            let mut t: Vec<f32> = (0..n * 9).map(|_| (rng.next() * 8.0).floor() - 4.0).collect();
+            for _ in 0..1 + case % 4 {
+                let i = (rng.next() * (n * 9) as f32) as usize % (n * 9);
+                t[i] = match case % 3 { 0 => f32::NAN, 1 => f32::INFINITY, _ => f32::NEG_INFINITY };
+            }
+            // NaN split keys (a NaN coordinate, or +Inf and -Inf in one
+            // triangle) are not a total order: the sort may panic (Rust's
+            // sort detects it) — the new build must then panic too, and
+            // otherwise build the same tree.
+            let (a, b) = (t.clone(), t.clone());
+            let got = std::panic::catch_unwind(move || new_flat(&a)).ok();
+            let want = std::panic::catch_unwind(move || reference_flat(&b)).ok();
+            match (got, want) {
+                (Some(g), Some(w)) => assert!(same_bits(&g, &w), "case {}", case),
+                (None, None) => {}
+                (g, w) => panic!("case {}: new build {} but the reference {}", case,
+                    if g.is_some() { "succeeded" } else { "panicked" }, if w.is_some() { "succeeded" } else { "panicked" }),
+            }
+        }
     }
 }

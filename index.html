@@ -8833,7 +8833,7 @@ function startApp() {
     if (el._triCache) { b += el._triCache.byteLength || 0; nt = (el._triCache.length / 9) | 0; }
     if (el._bvhCache) b += 64 + nt * 2 * _CC_BVH_BYTES_PER_TRI + nt * 4; // nodes + leaf index array
     var t = el._topo;
-    if (t) b += 96 + (t.verts ? t.verts.length * 8 : 0) + (t.axes ? 256 : 0);
+    if (t) b += 96 + (t.verts ? (t.verts.byteLength || t.verts.length * 8) : 0) + (t.axes ? 256 : 0);
     return b;
   }
   // Re-measure one cached element after one of its caches was filled, then
@@ -8946,6 +8946,10 @@ function startApp() {
       return;
     }
     var n = hi - lo, i, j, k, sc = _bvhStableSort._s;
+    // Already in order (the parent split on the same axis — most levels of a
+    // long member): the stable sort of a sorted range is the identity.
+    for (i = lo + 1; i < hi && keys[indices[i-1]*3+axis] <= keys[indices[i]*3+axis]; i++);
+    if (i >= hi) return;
     if (!sc || sc.si.length < n) {
       var cap = Math.max(n, 1024);
       sc = _bvhStableSort._s = { si: new Int32Array(cap), sk: new Float64Array(cap), di: new Int32Array(cap), dk: new Float64Array(cap) };
@@ -8985,17 +8989,32 @@ function startApp() {
         keys[k*3+2] = tris[ko+2] + tris[ko+5] + tris[ko+8];
       }
       for (var kn = 0; kn < keys.length; kn++) if (keys[kn] !== keys[kn]) { keys.nan = true; break; }
+      // Per-triangle boxes with the node loop's own comparisons, in vertex
+      // order: a node's box (running min / max over its triangles' vertices
+      // in index order) is the running min / max over these boxes in the same
+      // order — the first value reaching the extreme wins either way (+-0
+      // included) and NaN never wins. Same boxes, 6 reads instead of 9.
+      // (Float64: the triangle arrays need not be Float32 here.)
+      var tb = keys.tb = new Float64Array(nk * 6);
+      for (var t = 0; t < nk; t++) {
+        var to = t * 9, bmnx=Infinity,bmny=Infinity,bmnz=Infinity,bmxx=-Infinity,bmxy=-Infinity,bmxz=-Infinity;
+        for (var tv=0; tv<9; tv+=3) {
+          var wx=tris[to+tv],wy=tris[to+tv+1],wz=tris[to+tv+2];
+          if(wx<bmnx)bmnx=wx; if(wx>bmxx)bmxx=wx;
+          if(wy<bmny)bmny=wy; if(wy>bmxy)bmxy=wy;
+          if(wz<bmnz)bmnz=wz; if(wz>bmxz)bmxz=wz;
+        }
+        tb[t*6]=bmnx; tb[t*6+1]=bmny; tb[t*6+2]=bmnz; tb[t*6+3]=bmxx; tb[t*6+4]=bmxy; tb[t*6+5]=bmxz;
+      }
     }
     var mnx=Infinity,mny=Infinity,mnz=Infinity;
-    var mxx=-Infinity,mxy=-Infinity,mxz=-Infinity;
+    var mxx=-Infinity,mxy=-Infinity,mxz=-Infinity, B = keys.tb;
     for (var i=lo; i<hi; i++) {
-      var o=indices[i]*9;
-      for (var v=0; v<3; v++) {
-        var vx=tris[o+v*3],vy=tris[o+v*3+1],vz=tris[o+v*3+2];
-        if(vx<mnx)mnx=vx; if(vx>mxx)mxx=vx;
-        if(vy<mny)mny=vy; if(vy>mxy)mxy=vy;
-        if(vz<mnz)mnz=vz; if(vz>mxz)mxz=vz;
-      }
+      var o=indices[i]*6;
+      var vx=B[o],vy=B[o+1],vz=B[o+2];
+      if(vx<mnx)mnx=vx; if(vy<mny)mny=vy; if(vz<mnz)mnz=vz;
+      vx=B[o+3]; vy=B[o+4]; vz=B[o+5];
+      if(vx>mxx)mxx=vx; if(vy>mxy)mxy=vy; if(vz>mxz)mxz=vz;
     }
     var node = {mnx:mnx,mny:mny,mnz:mnz,mxx:mxx,mxy:mxy,mxz:mxz};
     if (hi-lo <= 4) { node.lo=lo; node.hi=hi; node.idx=indices; return node; } // leaf
@@ -9175,7 +9194,7 @@ function startApp() {
 
   // Scratch buffers reused across pairs — a big detection run calls this
   // for every overlapping candidate; fresh arrays per call were pure GC churn.
-  var _miProbe = [], _miPts = [], _miValid = [], _miProbeDepth = [0], _miMaxDepth = [0];
+  var _miPts = [], _miValid = [], _miMaxDepth = [0];
   var _MI_MARGIN = 0.01; // 10mm tolerance for point-in-box check
   // A raw tri-tri hit point can sit outside both elements' AABBs (near-tangent /
   // degenerate configurations); both engines must agree on what counts as a real
@@ -9207,17 +9226,16 @@ function startApp() {
     for (var i=0; i<valid.length; i+=3) { sx+=valid[i]; sy+=valid[i+1]; sz+=valid[i+2]; }
     return [sx/n, sy/n, sz/n, maxDepth];
   }
-  // JS reference narrow phase over two ALREADY-BUILT BVHs: probe pass
-  // (early-exit, cap 3) then the collect pass (cap 24 floats), then the
-  // shared post-processing. Used by _meshesIntersect's JS fallback AND, via
-  // Function.prototype.toString, by the narrow-phase worker kernel — one
-  // implementation, two threads.
+  // JS reference narrow phase over two ALREADY-BUILT BVHs: the collect pass
+  // (cap 24 floats), then the shared post-processing. Used by
+  // _meshesIntersect's JS fallback AND, via Function.prototype.toString, by
+  // the narrow-phase worker kernel — one implementation, two threads.
+  // (There used to be an early-exit probe pass first: it visited exactly the
+  // collect pass's prefix up to the first hit and decided nothing the collect
+  // pass does not — no hit there iff no point collected — so a hit pair paid
+  // that prefix twice. The Rust port never had it.)
   function _jsIntersectBVH(bA, bB, boxA, boxB) {
     if (!bA || !bB) return false;
-    var probe = _miProbe, probeDepth = _miProbeDepth;
-    probe.length = 0; probeDepth[0] = 0;
-    _bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, probe, 3, probeDepth, true);
-    if (!probe.length) return false;
     var pts = _miPts, maxDepth = _miMaxDepth;
     pts.length = 0; maxDepth[0] = 0;
     _bvhTraverseAll(bA.root, bA.tris, bB.root, bB.tris, pts, 24, maxDepth, false);
@@ -9728,12 +9746,12 @@ function startApp() {
       _rayTriHit, _rayAABBHit, _bvhRayCount, _pointInMeshBVH,
       _closestPtTriDistSq, _pointToAABBDistSq, _bvhClosestDistSq, _closestDistToBVH, _bvhClosestWithin, _ccFartherThan, _ccAnyVertexInBox,
       _ccContactTol, _ccOddEdgesCancel, _ccMeshTopo, _ccFaceAxes, _ccLineInterval, _ccCoplanarOverlapWidth,
-      _ccTriDeep, _ccRefineTraverse, _ccVertexDeepInside, _ccTouchVerdict, _ccBoxIn,
+      _ccTriDeep, _ccTriBox6, _ccRefineTraverse, _ccVertexDeepInside, _ccTouchVerdict, _ccBoxIn,
       _ccContainment, _ccProjExtent, _ccOwnExtents, _estimatePenetrationDepthM, _ccTrisFinite, _ccBvhFromFlat, _ccBvhFlatten
     ];
     return [
       'var _ttIvalA=new Float64Array(8),_ttIvalB=new Float64Array(8);',
-      'var _miProbe=[],_miPts=[],_miValid=[],_miProbeDepth=[0],_miMaxDepth=[0];',
+      'var _miPts=[],_miValid=[],_miMaxDepth=[0];',
       'var _MI_MARGIN=' + JSON.stringify(_MI_MARGIN) + ';',
       'var _ttdPtA=new Float64Array(3),_ttdPtB=new Float64Array(3);',
       'var _bmdPtA=new Float64Array(3),_bmdPtB=new Float64Array(3),_bmdBoxA=new Float64Array(7),_bmdBoxB=new Float64Array(28);',
@@ -9741,7 +9759,7 @@ function startApp() {
       'var _PEN_RAY_DIRS=' + JSON.stringify(_PEN_RAY_DIRS) + ';',
       'var _CC_CONTACT_TOL_M=' + JSON.stringify(_CC_CONTACT_TOL_M) + ',_CC_CONTACT_TOL_REL=' + JSON.stringify(_CC_CONTACT_TOL_REL) +
         ',_CC_REFINE_MAX_VERTS=' + JSON.stringify(_CC_REFINE_MAX_VERTS) + ',_CC_SAT_MAX_AXES=' + JSON.stringify(_CC_SAT_MAX_AXES) + ',_CC_TJUNCTION_MAX_EDGES=' + JSON.stringify(_CC_TJUNCTION_MAX_EDGES) + ';',
-      'var _ccIvA=new Float64Array(2),_ccIvB=new Float64Array(2);',
+      'var _ccIvA=new Float64Array(2),_ccIvB=new Float64Array(2),_ccRtBoxA=new Float64Array(6),_ccRtBoxB=new Float64Array(24);',
       'var _NP_REC=' + _NP_REC + ';',
       // Worker-side element accessors the refinement functions call. A worker
       // element E = {tris, box (world), fbox (engine frame), bvh, _topo}.
@@ -10216,28 +10234,50 @@ function startApp() {
     var f32 = tris instanceof Float32Array ? tris : Float32Array.from(tris);
     var bits = new Uint32Array(f32.buffer, f32.byteOffset, f32.length);
     var cap = 16; while (cap < nc * 2) cap <<= 1;
-    var slot = new Int32Array(cap).fill(-1), mask = cap - 1;
-    var verts = [], vi = new Int32Array(nc), vbits = [];
+    var ecap = 16; while (ecap < n * 6) ecap <<= 1;
+    // Hash tables are scratch, reused across calls up to a size (they were
+    // allocated and filled per element: ~110 bytes per triangle of zeroed
+    // memory and GC churn): a slot is taken iff its stamp is this call's
+    // generation, so nothing is cleared. Same table sizes, hash and probe
+    // order as before, so the same vertex ids, edge slots and odd-edge order.
+    var S = _ccMeshTopo._s || (_ccMeshTopo._s = { gen: 0, vcap: 0, ecap: 0, nc: 0 });
+    var gen = 1, vSt, vId, vbits, vi, eSt, eLo, eHi, eCnt;
+    if (cap <= 1048576 && ecap <= 1048576) {
+      if (S.vcap < cap) { S.vcap = cap; S.vSt = new Int32Array(cap); S.vId = new Int32Array(cap); }
+      if (S.nc < nc) { S.nc = Math.max(nc, 1024); S.vbits = new Uint32Array(S.nc * 3); S.vi = new Int32Array(S.nc); }
+      if (S.ecap < ecap) { S.ecap = ecap; S.eSt = new Int32Array(ecap); S.eLo = new Int32Array(ecap); S.eHi = new Int32Array(ecap); S.eCnt = new Int32Array(ecap); }
+      if (S.gen >= 0x7ffffffe) { S.vSt.fill(0); S.eSt.fill(0); S.gen = 0; }
+      gen = ++S.gen;
+      vSt = S.vSt; vId = S.vId; vbits = S.vbits; vi = S.vi; eSt = S.eSt; eLo = S.eLo; eHi = S.eHi; eCnt = S.eCnt;
+    } else {
+      vSt = new Int32Array(cap); vId = new Int32Array(cap); vbits = new Uint32Array(nc * 3); vi = new Int32Array(nc);
+      eSt = new Int32Array(ecap); eLo = new Int32Array(ecap); eHi = new Int32Array(ecap); eCnt = new Int32Array(ecap);
+    }
+    var mask = cap - 1, nv = 0;
     for (var i = 0; i < nc; i++) {
       var bx = bits[i*3], by = bits[i*3+1], bz = bits[i*3+2];
       if (bx === 0x80000000) bx = 0; if (by === 0x80000000) by = 0; if (bz === 0x80000000) bz = 0;
       var h = (Math.imul(bx, 73856093) ^ Math.imul(by, 19349663) ^ Math.imul(bz, 83492791)) & mask;
       var id = -1;
-      while (slot[h] !== -1) {
-        var cand = slot[h];
+      while (vSt[h] === gen) {
+        var cand = vId[h];
         if (vbits[cand*3] === bx && vbits[cand*3+1] === by && vbits[cand*3+2] === bz) { id = cand; break; }
         h = (h + 1) & mask;
       }
-      if (id < 0) { id = verts.length / 3; slot[h] = id; vbits.push(bx, by, bz); verts.push(f32[i*3], f32[i*3+1], f32[i*3+2]); }
-      vi[i] = id;
+      if (id < 0) { id = nv++; vSt[h] = gen; vId[h] = id; vbits[id*3] = bx; vbits[id*3+1] = by; vbits[id*3+2] = bz; vi[i] = -1 - i; }
+      else vi[i] = id;
     }
-    var nv = verts.length / 3;
+    // The unique vertices, first occurrences in order (the same numbers the
+    // former JS array held, -0 included); first occurrences were marked -1-i.
+    var verts = new Float32Array(nv * 3);
+    for (var i2 = 0, k2 = 0; i2 < nc; i2++) {
+      if (vi[i2] < 0) { vi[i2] = k2 / 3; verts[k2++] = f32[i2*3]; verts[k2++] = f32[i2*3+1]; verts[k2++] = f32[i2*3+2]; }
+    }
     // Undirected edge table (open addressing on the (lo,hi) vertex-id pair):
-    // use count + which of the two directions were seen. closed = some edge
-    // and every edge used exactly twice; consistent = no directed edge twice.
-    var ecap = 16; while (ecap < n * 6) ecap <<= 1;
-    var emask = ecap - 1, eLo = new Int32Array(ecap).fill(-1), eHi = new Int32Array(ecap);
-    var eCnt = new Int32Array(ecap), eDir = new Uint8Array(ecap), nEdges = 0, consistent = true;
+    // use count + which of the two directions were seen (eCnt = count*4 | dirs).
+    // closed = some edge and every edge used exactly twice; consistent = no
+    // directed edge twice. nOddLive tracks the odd-use edges as they change.
+    var emask = ecap - 1, nEdges = 0, consistent = true, nOddLive = 0;
     for (var f = 0; f < n; f++) {
       var a = vi[f*3], b = vi[f*3+1], c = vi[f*3+2];
       if (a === b || b === c || a === c) continue;
@@ -10245,10 +10285,12 @@ function startApp() {
         var p = e === 0 ? a : e === 1 ? b : c, q = e === 0 ? b : e === 1 ? c : a;
         var lo = p < q ? p : q, hi = p < q ? q : p, bit = p < q ? 1 : 2;
         var hs = (Math.imul(lo, 73856093) ^ Math.imul(hi, 19349663)) & emask;
-        while (eLo[hs] !== -1 && !(eLo[hs] === lo && eHi[hs] === hi)) hs = (hs + 1) & emask;
-        if (eLo[hs] === -1) { eLo[hs] = lo; eHi[hs] = hi; nEdges++; }
-        eCnt[hs]++;
-        if (eDir[hs] & bit) consistent = false; else eDir[hs] |= bit;
+        while (eSt[hs] === gen && !(eLo[hs] === lo && eHi[hs] === hi)) hs = (hs + 1) & emask;
+        if (eSt[hs] !== gen) { eSt[hs] = gen; eLo[hs] = lo; eHi[hs] = hi; eCnt[hs] = 0; nEdges++; }
+        var ec = eCnt[hs] + 4;
+        if (ec & 4) nOddLive++; else nOddLive--;
+        if (ec & bit) consistent = false; else ec |= bit;
+        eCnt[hs] = ec;
       }
     }
     // closed = the surface is a mod-2 cycle, which is exactly when ray parity
@@ -10257,11 +10299,14 @@ function startApp() {
     // T-junction: edge AB on one side, AC + CB on the other with C on AB up
     // to Float32 rounding — no gap at all, only a vertex the welder cannot
     // merge). A real hole or slit (open box, missing face) does not cancel.
+    // The odd edges are listed in slot order only when there are any.
     var odd = null, nOdd = 0;
-    for (var ei = 0; ei < ecap; ei++) {
-      if (eLo[ei] === -1 || !(eCnt[ei] & 1)) continue;
-      if (++nOdd > _CC_TJUNCTION_MAX_EDGES) break;
-      (odd || (odd = [])).push(eLo[ei], eHi[ei]);
+    if (nOddLive > 0) {
+      for (var ei = 0; ei < ecap; ei++) {
+        if (eSt[ei] !== gen || !(eCnt[ei] & 4)) continue;
+        if (++nOdd > _CC_TJUNCTION_MAX_EDGES) break;
+        (odd || (odd = [])).push(eLo[ei], eHi[ei]);
+      }
     }
     var closed = nEdges > 0 && (nOdd === 0 || (nOdd <= _CC_TJUNCTION_MAX_EDGES && _ccOddEdgesCancel(verts, odd)));
     var orient = 0;
@@ -10409,15 +10454,42 @@ function startApp() {
     var ov = Math.min(_ccIvA[1], _ccIvB[1]) - Math.max(_ccIvA[0], _ccIvB[0]);
     return ov * Math.sqrt(Dx*Dx+Dy*Dy+Dz*Dz) / dAx > tau;
   }
+  // A triangle's box [mnx,mny,mnz,mxx,mxy,mxz] into out[k..k+6].
+  function _ccTriBox6(t, o, out, k) {
+    var x0 = t[o], x1 = t[o+3], x2 = t[o+6], y0 = t[o+1], y1 = t[o+4], y2 = t[o+7], z0 = t[o+2], z1 = t[o+5], z2 = t[o+8];
+    out[k] = x0 < x1 ? (x0 < x2 ? x0 : x2) : (x1 < x2 ? x1 : x2);
+    out[k+1] = y0 < y1 ? (y0 < y2 ? y0 : y2) : (y1 < y2 ? y1 : y2);
+    out[k+2] = z0 < z1 ? (z0 < z2 ? z0 : z2) : (z1 < z2 ? z1 : z2);
+    out[k+3] = x0 > x1 ? (x0 > x2 ? x0 : x2) : (x1 > x2 ? x1 : x2);
+    out[k+4] = y0 > y1 ? (y0 > y2 ? y0 : y2) : (y1 > y2 ? y1 : y2);
+    out[k+5] = z0 > z1 ? (z0 > z2 ? z0 : z2) : (z1 > z2 ? z1 : z2);
+  }
+  var _ccRtBoxA = new Float64Array(6), _ccRtBoxB = new Float64Array(24);
   function _ccRefineTraverse(nA, tA, nB, tB, tau, st) {
     if (st.cross) return;
     if (nA.mnx > nB.mxx + tau || nA.mxx < nB.mnx - tau || nA.mny > nB.mxy + tau || nA.mxy < nB.mny - tau ||
         nA.mnz > nB.mxz + tau || nA.mxz < nB.mnz - tau) return;
     var aLeaf = nA.lo !== undefined, bLeaf = nB.lo !== undefined;
     if (aLeaf && bLeaf) {
-      for (var i = nA.lo; i < nA.hi; i++)
-        for (var j = nB.lo; j < nB.hi; j++)
-          if (_ccTriDeep(tA, nA.idx[i]*9, tB, nB.idx[j]*9, tau, st)) { st.cross = true; return; }
+      // Triangle pairs whose boxes are more than tau (+0.1 %) apart on an
+      // axis are skipped: _ccTriDeep cannot certify anything for them (both
+      // of its certificates lie within tau of both triangles — a transversal
+      // overlap inside both, or a coplanar patch inside the prism over A within
+      // tau of A's plane), it would return false without side effects. The
+      // 0.1 % margin dwarfs its rounding (~1e-14 m on engine-frame
+      // coordinates; < 1e-8 m even for near-parallel planes). Same pairs in
+      // the same order otherwise, so the same verdict and samples.
+      var gm = tau * 1.001, kb = 0, bb = _ccRtBoxB;
+      for (var jb = nB.lo; jb < nB.hi; jb++, kb += 6) _ccTriBox6(tB, nB.idx[jb]*9, bb, kb);
+      for (var i = nA.lo; i < nA.hi; i++) {
+        var oA = nA.idx[i]*9;
+        _ccTriBox6(tA, oA, _ccRtBoxA, 0);
+        var amnx = _ccRtBoxA[0], amny = _ccRtBoxA[1], amnz = _ccRtBoxA[2], amxx = _ccRtBoxA[3], amxy = _ccRtBoxA[4], amxz = _ccRtBoxA[5];
+        for (var j = nB.lo, k = 0; j < nB.hi; j++, k += 6) {
+          if (amnx - bb[k+3] > gm || bb[k] - amxx > gm || amny - bb[k+4] > gm || bb[k+1] - amxy > gm || amnz - bb[k+5] > gm || bb[k+2] - amxz > gm) continue;
+          if (_ccTriDeep(tA, oA, tB, nB.idx[j]*9, tau, st)) { st.cross = true; return; }
+        }
+      }
       return;
     }
     if (bLeaf || (!aLeaf && (nA.cnt||1) >= (nB.cnt||1))) {
