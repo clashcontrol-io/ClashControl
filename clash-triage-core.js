@@ -121,20 +121,72 @@
     var dy = Number(bb.dy), h = Math.max(Number(bb.dx) || 0, Number(bb.dz) || 0);
     return dy > 0 && dy >= 2 * h;               // scene space is Y-up
   }
-  // The one facet value that reads the model names (a rename patches only it).
-  /** @param {any} c @param {(id: any) => any} [modelName] */
-  function modelPairValue(c, modelName) {
-    var mn = modelName || function(id) { return id; };
-    return _pair(mn(c.modelAId), mn(c.modelBId || c.modelAId), ' ↔ ');
+  // ── Model pair: keyed by model ids, labelled by the current names ──
+  // The facet value is the pair of model IDS ('mp:' + sorted ids), so a
+  // rename re-files nothing and a saved view / filter keeps matching after a
+  // rename; the label ("Arch ↔ MEP", names sorted, one name for a pair of
+  // equally named models) is resolved from the current names when drawn.
+  // Values saved before (the label itself) are 'legacy' and are migrated to
+  // ids by migrateModelPairValues while their names still resolve.
+  var MP_PREFIX = 'mp:', MP_SEP = '\u0001';
+  /** @param {any} c */
+  function modelPairKey(c) {
+    var a = String(c.modelAId || '?'), b = String(c.modelBId || c.modelAId || '?');
+    return MP_PREFIX + (a === b ? a : (a < b ? a + MP_SEP + b : b + MP_SEP + a));
   }
-  // ctx: { severity(c), bucket(c), storey(modelId, name), modelName(id), trade(c, side) }
+  /** @param {any} v */
+  function isModelPairKey(v) { return typeof v === 'string' && v.indexOf(MP_PREFIX) === 0; }
+  /** @param {any} v @returns {string[]} */
+  function modelPairIds(v) {
+    if (!isModelPairKey(v)) return [];
+    var ids = v.slice(MP_PREFIX.length).split(MP_SEP);
+    return ids.length === 1 ? [ids[0], ids[0]] : ids;
+  }
+  /** @param {any} v @param {(id: any) => any} [modelName] */
+  function modelPairLabel(v, modelName) {
+    if (!isModelPairKey(v)) return String(v == null ? '' : v);       // legacy (name) value
+    var mn = modelName || function(id) { return id; }, ids = modelPairIds(v);
+    var nm = function(id) { return id === '?' ? '?' : (mn(id) || id || '?'); };
+    return _pair(nm(ids[0]), nm(ids[1]), ' \u2194 ');
+  }
+  // Kept for callers of the old name: the facet value (now the id key).
+  /** @param {any} c */
+  function modelPairValue(c) { return modelPairKey(c); }
+  // Legacy values (the old name label) → the id keys whose CURRENT label is
+  // that value — every pair the old value matched, so the filter selects the
+  // same clashes. A legacy value no current pair produces (models not loaded
+  // yet, renamed since) is kept as is: it matches nothing, as it did before,
+  // and is migrated once a pair of that name exists. Returns the same array
+  // when nothing changed. models: [{id, name}].
+  /** @param {any} values @param {any[]} models */
+  function migrateModelPairValues(values, models) {
+    if (!Array.isArray(values) || !values.some(function(v) { return !isModelPairKey(v); })) return values;
+    var ms = (models || []).filter(function(m) { return m && m.id != null; });
+    if (!ms.length) return values;
+    var names = {};
+    ms.forEach(function(m) { names[m.id] = m.name || m.id; });
+    var mn = function(id) { return names[id]; };
+    var byLabel = {};
+    for (var i = 0; i < ms.length; i++) for (var j = i; j < ms.length; j++) {
+      var k = modelPairKey({ modelAId: ms[i].id, modelBId: ms[j].id }), lab = modelPairLabel(k, mn);
+      (byLabel[lab] = byLabel[lab] || []).push(k);
+    }
+    var out = [], changed = false;
+    values.forEach(function(v) {
+      var hit = !isModelPairKey(v) && byLabel[v];
+      if (hit) { changed = true; hit.forEach(function(k) { out.push(k); }); } else out.push(v);
+    });
+    if (!changed) return values;
+    return out.filter(function(v, i, a) { return a.indexOf(v) === i; }).sort();
+  }
+  // ctx: { severity(c), bucket(c), storey(modelId, name), trade(c, side) } —
+  // no model names: the model pair is keyed by ids (modelPairKey)
   function facetValues(c, ctx) {
     ctx = ctx || {};
     var sev = c.aiSeverity || (ctx.severity ? ctx.severity(c) : 'minor');
     var ext = c.type === 'hard' ? (c.extent || 'unknown') : (c.type === 'soft' ? 'clearance' : (c.type || 'other'));
     var stA = ctx.storey ? ctx.storey(c.modelAId, c.elemAStorey) : (c.elemAStorey || '');
     var stB = ctx.storey ? ctx.storey(c.modelBId, c.elemBStorey) : (c.elemBStorey || '');
-    var mn = ctx.modelName || function(id) { return id; };
     var tA = ctx.trade ? ctx.trade(c, 'A') : ((c.trades && c.trades[0]) || (c.disciplines && c.disciplines[0]) || '');
     var tB = ctx.trade ? ctx.trade(c, 'B') : ((c.trades && c.trades[1]) || (c.disciplines && c.disciplines[1]) || '');
     var tags = [];
@@ -161,7 +213,7 @@
       severity: sev,
       extent: ext,
       storey: stA || stB || '',
-      modelPair: modelPairValue(c, mn),
+      modelPair: modelPairKey(c),
       trade: _pair(tA || 'other', tB || 'other', ' × '),
       typePair: _pair(_nice(c.elemAType), _nice(c.elemBType), ' × '),
       status: c.status || 'open',
@@ -228,7 +280,9 @@
     bucket: ['review', 'contact', 'provided', 'provision', 'zone', 'twice', 'embedded', 'finish', 'graze', 'adjacent', 'handled'],
     status: ['open', 'in_progress', 'accepted_needs_check', 'confirmed', 'resolved', 'closed', 'denied']
   };
-  function orderedValues(key, counts, storeyLabels) {
+  // labelOf (optional): the display label — ties in count are broken by it
+  // (the model pair's value is an id key; it sorts by its names).
+  function orderedValues(key, counts, storeyLabels, labelOf) {
     var vals = Object.keys(counts || {});
     var base = ORDER[key] || (key === 'storey' ? (storeyLabels || []) : null);
     return vals.sort(function(a, b) {
@@ -238,6 +292,7 @@
         if (ia !== ib) return ia - ib;
       }
       if (counts[b] !== counts[a]) return counts[b] - counts[a];
+      if (labelOf) { var la = String(labelOf(a)), lb = String(labelOf(b)); if (la !== lb) return la < lb ? -1 : 1; }
       return a < b ? -1 : a > b ? 1 : 0;
     });
   }
@@ -329,6 +384,11 @@
     SEV_RANK: SEV_RANK,
     facetValues: facetValues,
     modelPairValue: modelPairValue,
+    modelPairKey: modelPairKey,
+    isModelPairKey: isModelPairKey,
+    modelPairIds: modelPairIds,
+    modelPairLabel: modelPairLabel,
+    migrateModelPairValues: migrateModelPairValues,
     indexItems: indexItems,
     applyFacets: applyFacets,
     matchesFacets: matchesFacets,

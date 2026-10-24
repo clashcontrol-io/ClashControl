@@ -250,8 +250,12 @@ test('scene effects key on what they read, not on s.models identity', () => {
 
 test('triage / review / list memos key on the model fields they read', () => {
   const tri = between('  function _ccTriageModelsSig(s) {', '  // Legacy per-bucket "show" switches');
-  assert.match(tri, /\[m\.id, m\.visible !== false, m\.name \|\| m\.id, m\.storeyData,/);
+  // the names are not read: the model pair is keyed by ids (a rename keeps the model)
+  assert.match(tri, /\[m\.id, m\.visible !== false, m\.storeyData,/);
+  assert.doesNotMatch(tri.slice(0, tri.indexOf('function _ccTriageSigSame')), /m\.name/);
   assert.match(tri, /if \(sameModels && L\.clashes === s\.clashes && L\.rules === s\.rules\)/);
+  // a visibility change reuses the buckets and every facet row (hidden models included)
+  assert.match(tri, /if \(P && P\.storeyNorm === norm && P\._rowAt\) \{ rowAt = P\._rowAt; rowById = P\.rowById; \}/);
   const rev = between('  function _ccReviewModel(s) {', '  // ── Truthful empty/filtered states');
   assert.match(rev, /L\.tm === tm/);
   assert.doesNotMatch(rev, /L\.models === s\.models/);
