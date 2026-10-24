@@ -147,12 +147,13 @@ async function loadAll(page, names, knob) {
     const t0 = performance.now();
     window.ClashControl.loadFiles(fs);
     await new Promise((resolve, reject) => {
+      let idleAt = 0;
       const w = setInterval(() => {
         const s = window._ccLatestState;
         if (s && s.models.length === names.length && window._ccModelLoading === false) {
           if (s.models.every((m) => m._propsVersion)) { clearInterval(w); resolve(); return; }
-          if (!w.idleAt) w.idleAt = performance.now();
-          if (performance.now() - w.idleAt > 15000) { clearInterval(w); reject(new Error('loaded, but props never merged into: ' + s.models.filter((m) => !m._propsVersion).map((m) => m.name).join(', '))); }
+          if (!idleAt) idleAt = performance.now();
+          if (performance.now() - idleAt > 15000) { clearInterval(w); reject(new Error('loaded, but props never merged into: ' + s.models.filter((m) => !m._propsVersion).map((m) => m.name).join(', '))); }
         }
         if (performance.now() - t0 > (+window.__loadTimeoutMs || 1_500_000)) { clearInterval(w); reject(new Error('load timed out: ' + JSON.stringify({ models: s && s.models.map((m) => [m.name, m.elements.length, !!m._propsVersion]), loading: window._ccModelLoading, msg: window._ccModelLoadMsg }))); }
       }, 50);
