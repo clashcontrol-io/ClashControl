@@ -244,10 +244,29 @@
   <script>
   (function(g) {
     var HOLE = '\0';
-    g.htm = function(statics) {
-      var fields = [];
-      for (var a = 1; a < arguments.length; a++) fields.push(arguments[a]);
-      var h = this;
+    // Each template is parsed ONCE into a small tree (holes as indexes) and
+    // cached on its strings array — the same frozen array for every call from
+    // one call site — so a render only fills the holes and calls h(). The
+    // tree reproduces exactly what parsing the template string on every call
+    // produced (tests/htm-parser.test.js, and tests/htm-compile-cache.test.js
+    // checks every html`...` template in this file against the old parser).
+    var cache = typeof WeakMap === 'function' ? new WeakMap() : null;
+    // Elements whose *direct* children the HTML table/select algorithms
+    // treat specially: a text node there that is only inter-element
+    // formatting whitespace (no visible content) is never meaningful and
+    // real browsers drop/foster-parent it. Since the JSX whitespace rule
+    // (below) preserves same-line whitespace-only chunks instead of
+    // trimming everything, a same-line space between e.g. `<tr> <td>` or
+    // `<select> <option>` would otherwise become a stray text child - so
+    // for these parents specifically, a whitespace-only chunk (regardless
+    // of newlines) is dropped rather than pushed as a child.
+    var WS_ONLY_DROP_PARENTS = { table: 1, thead: 1, tbody: 1, tfoot: 1, tr: 1, select: 1, optgroup: 1 };
+    // Tree: a child is an element {tag, attrs, kids}, a hole {h: index}, a
+    // text string, or {ws} (whitespace-only text under a hole tag: dropped
+    // when the tag's value turns out to be a table / select parent). tag is a string or a hole; attrs is null or a list of
+    // {spread: index} / {name, v} where v is true, a string, a hole, or
+    // {parts: [string | hole]} (a quoted value with holes in it).
+    function compile(statics) {
       var tpl = statics[0];
       for (var a = 1; a < statics.length; a++) tpl += HOLE + (a-1) + HOLE + statics[a];
       var i = 0, len = tpl.length;
@@ -256,22 +275,14 @@
         var n = '';
         while (tpl[i] !== HOLE) n += tpl[i++];
         i++;
-        return fields[parseInt(n)];
+        return { h: parseInt(n) };
       }
       function ws() { while (i < len && (tpl[i] === ' ' || tpl[i] === '\t' || tpl[i] === '\n' || tpl[i] === '\r')) i++; }
-      // Elements whose *direct* children the HTML table/select algorithms
-      // treat specially: a text node there that is only inter-element
-      // formatting whitespace (no visible content) is never meaningful and
-      // real browsers drop/foster-parent it. Since the JSX whitespace rule
-      // (below) now preserves same-line whitespace-only chunks instead of
-      // trimming everything, a same-line space between e.g. `<tr> <td>` or
-      // `<select> <option>` would otherwise become a stray text child - so
-      // for these parents specifically, a whitespace-only chunk (regardless
-      // of newlines) is dropped rather than pushed as a child.
-      var WS_ONLY_DROP_PARENTS = { table: 1, thead: 1, tbody: 1, tfoot: 1, tr: 1, select: 1, optgroup: 1 };
+      // parentTag: the tag string, null at the top, or true when the tag is a
+      // hole (its value — and so the whitespace rule — is known per call)
       function parseChildren(parentTag) {
         var ch = [];
-        var dropWsOnly = parentTag && WS_ONLY_DROP_PARENTS[parentTag];
+        var dropWsOnly = typeof parentTag === 'string' && WS_ONLY_DROP_PARENTS[parentTag];
         while (i < len) {
           if (tpl[i] === '<') {
             if (tpl[i+1] === '/') { while (i < len && tpl[i] !== '>') i++; i++; return ch; }
@@ -279,13 +290,12 @@
             i++;
             ch.push(parseElement());
           } else if (tpl[i] === HOLE) {
-            var v = readHole();
-            if (Array.isArray(v)) { for (var x = 0; x < v.length; x++) if (v[x] != null && v[x] !== false) ch.push(v[x]); }
-            else if (v != null && v !== false && v !== true) ch.push(v);
+            ch.push(readHole());
           } else {
             var txt = '';
             while (i < len && tpl[i] !== '<' && tpl[i] !== HOLE) txt += tpl[i++];
             if (dropWsOnly && /^\s*$/.test(txt)) continue;
+            var wsOnly = parentTag === true && /^\s*$/.test(txt);
             // JSX whitespace semantics, not naive trim: only whitespace runs
             // that contain a newline are collapsed/dropped. A same-line run
             // of spaces/tabs (e.g. between a hole and a tag, or two holes)
@@ -293,7 +303,7 @@
             txt = txt.replace(/^[ \t]*\r?\n\s*/, '');
             txt = txt.replace(/\s*\r?\n[ \t]*$/, '');
             txt = txt.replace(/[ \t]*\r?\n\s*/g, ' ');
-            if (txt) ch.push(txt);
+            if (txt) ch.push(wsOnly ? { ws: txt } : txt);
           }
         }
         return ch;
@@ -303,35 +313,76 @@
         var tag;
         if (tpl[i] === HOLE) { tag = readHole(); }
         else { tag = ''; while (i < len && tpl[i] !== ' ' && tpl[i] !== '>' && tpl[i] !== '/' && tpl[i] !== '\n' && tpl[i] !== '\t' && tpl[i] !== '\r') tag += tpl[i++]; }
-        var props = null;
+        var attrs = null;
         ws();
         while (i < len && tpl[i] !== '>' && !(tpl[i] === '/' && (i+1 >= len || tpl[i+1] === '>'))) {
           ws();
           if (i >= len || tpl[i] === '>' || (tpl[i] === '/' && (i+1 >= len || tpl[i+1] === '>'))) break;
-          if (tpl[i] === '.' && tpl[i+1] === '.' && tpl[i+2] === '.') { i += 3; if (tpl[i] === HOLE) props = Object.assign(props || {}, readHole()); ws(); continue; }
+          if (tpl[i] === '.' && tpl[i+1] === '.' && tpl[i+2] === '.') { i += 3; if (tpl[i] === HOLE) (attrs || (attrs = [])).push({ spread: readHole().h }); ws(); continue; }
           var name = '';
           while (i < len && tpl[i] !== '=' && tpl[i] !== ' ' && tpl[i] !== '>' && tpl[i] !== '/' && tpl[i] !== '\n' && tpl[i] !== '\t' && tpl[i] !== '\r' && tpl[i] !== HOLE) name += tpl[i++];
           if (!name) { i++; continue; }
+          var v = true;
           if (tpl[i] === '=') {
             i++;
-            var val;
-            if (tpl[i] === HOLE) { val = readHole(); }
-            else if (tpl[i] === '"' || tpl[i] === "'") { var q = tpl[i++]; val = ''; while (i < len && tpl[i] !== q) { if (tpl[i] === HOLE) val += readHole(); else val += tpl[i++]; } i++; }
-            else { val = ''; while (i < len && tpl[i] !== ' ' && tpl[i] !== '>' && tpl[i] !== '/') val += tpl[i++]; }
-            props = props || {};
-            props[name] = val;
-          } else { props = props || {}; props[name] = true; }
+            if (tpl[i] === HOLE) { v = readHole(); }
+            else if (tpl[i] === '"' || tpl[i] === "'") {
+              var q = tpl[i++], parts = [], s = '', holes = false;
+              while (i < len && tpl[i] !== q) { if (tpl[i] === HOLE) { if (s) parts.push(s); s = ''; parts.push(readHole()); holes = true; } else s += tpl[i++]; }
+              i++;
+              if (s) parts.push(s);
+              v = holes ? { parts: parts } : parts.join('');
+            }
+            else { v = ''; while (i < len && tpl[i] !== ' ' && tpl[i] !== '>' && tpl[i] !== '/') v += tpl[i++]; }
+          }
+          (attrs || (attrs = [])).push({ name: name, v: v });
           ws();
         }
         var selfClose = false;
         if (tpl[i] === '/') { i++; selfClose = true; }
         if (tpl[i] === '>') i++;
-        var children = selfClose ? [] : parseChildren(typeof tag === 'string' ? tag : null);
-        var args = [tag, props];
-        for (var c = 0; c < children.length; c++) args.push(children[c]);
-        return h.apply(null, args);
+        return { tag: tag, attrs: attrs, kids: selfClose ? [] : parseChildren(typeof tag === 'string' ? tag : true) };
       }
-      var result = parseChildren();
+      return parseChildren();
+    }
+    function build(h, nodes, fields, parentTag) {
+      var out = [];
+      for (var k = 0; k < nodes.length; k++) {
+        var n = nodes[k];
+        if (typeof n === 'string') out.push(n);
+        else if (n.ws !== undefined) { if (!(typeof parentTag === 'string' && WS_ONLY_DROP_PARENTS[parentTag])) out.push(n.ws); }
+        else if (n.kids === undefined) {
+          var v = fields[n.h];
+          if (Array.isArray(v)) { for (var x = 0; x < v.length; x++) if (v[x] != null && v[x] !== false) out.push(v[x]); }
+          else if (v != null && v !== false && v !== true) out.push(v);
+        } else {
+          var props = null, at = n.attrs;
+          if (at) for (var j = 0; j < at.length; j++) {
+            var a = at[j];
+            if (a.spread !== undefined) { props = Object.assign(props || {}, fields[a.spread]); continue; }
+            var val = a.v;
+            if (val !== true && typeof val === 'object') {
+              if (val.parts) { var str = ''; for (var p = 0; p < val.parts.length; p++) { var pt = val.parts[p]; str += typeof pt === 'string' ? pt : fields[pt.h]; } val = str; }
+              else val = fields[val.h];
+            }
+            props = props || {};
+            props[a.name] = val;
+          }
+          var tag = typeof n.tag === 'string' ? n.tag : fields[n.tag.h];
+          var args = [tag, props];
+          var kids = build(h, n.kids, fields, tag);
+          for (var c = 0; c < kids.length; c++) args.push(kids[c]);
+          out.push(h.apply(null, args));
+        }
+      }
+      return out;
+    }
+    g.htm = function(statics) {
+      var fields = [];
+      for (var a = 1; a < arguments.length; a++) fields.push(arguments[a]);
+      var tree = cache && cache.get(statics);
+      if (!tree) { tree = compile(statics); if (cache) cache.set(statics, tree); }
+      var result = build(this, tree, fields);
       return result.length === 1 ? result[0] : result.length === 0 ? null : result;
     };
   })(window);
@@ -21314,6 +21365,7 @@ function startApp() {
           });
         }
         S.renderer.clippingPlanes=[];
+        S._modelsSceneSig = null; // the next models effect runs in full
         invalidate();
       };
 
@@ -22662,6 +22714,21 @@ function startApp() {
 
     useEffect(function() {
       var S = state3d.current; if(!S.mg) return;
+      // Only what this effect reads: model set + order, committed meshes,
+      // visibility, hidden storeys, grid lines. A rename, colour, tag or
+      // props merge changes s.models but nothing in the scene, so it costs
+      // no cull / occlusion pass and no frame.
+      var _sceneSig = s.models.map(function(m){
+        var hs = m.hiddenStoreys || {};
+        return { id: m.id, mesh0: m.meshes && m.meshes[0], n: m.meshes ? m.meshes.length : 0, vis: m.visible !== false,
+          hs: Object.keys(hs).filter(function(k){ return hs[k]; }).sort().join(','), grid: m.gridLines || null };
+      });
+      var _sigWas = S._modelsSceneSig;
+      S._modelsSceneSig = _sceneSig;
+      if (_sigWas && _sigWas.length === _sceneSig.length && _sceneSig.every(function(x, i){
+        var y = _sigWas[i];
+        return x.id === y.id && x.mesh0 === y.mesh0 && x.n === y.n && x.vis === y.vis && x.hs === y.hs && x.grid === y.grid;
+      })) return;
       var ids = s.models.map(function(m){return m.id});
       S._lastCullCamKey = '';
       // Force the next tick's culling pass to run immediately, bypassing the
@@ -22769,9 +22836,6 @@ function startApp() {
         S.camera.lookAt(S.orbit.target);
         S.orbit.sync(); S.orbit.apply();
       }
-      // Grid overlay: redrawn only when the set of visible grid lines changes
-      // (a model with grids added / removed / shown / hidden), not on every
-      // model update.
       // grid overlay: rebuilt only when a visible model's grid lines change
       var _grids = s.models.map(function(m){ return m.visible !== false && m.gridLines && m.gridLines.length ? m.gridLines : null; }).filter(Boolean);
       var _gridsWas = S._gridsDrawn || [];
