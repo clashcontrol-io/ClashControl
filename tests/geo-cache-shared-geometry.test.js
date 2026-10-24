@@ -237,3 +237,36 @@ test('v8 validator: gs:1 references must resolve; legacy quantised and exact pay
   const missing = clone(p); missing.meshData[0].g = 1e9;
   assert.throws(() => api._geoDeserialize(missing), /missing geometry/);
 });
+
+// A restore holds what a fresh load holds, without copies (INTERNALS §6
+// "Heap after a restore"): every attribute is the plain BufferAttribute class
+// the loaders use (the Int8 normals used to be an Int8BufferAttribute, which
+// copied each normal array once more), and the position / normal arrays are
+// views of the stored buffers rather than copies of them.
+test('restore builds loader-class attributes over the stored buffers (no copies)', () => {
+  const api = load(true);
+  api.__bake = (m) => { m.updateMatrix(); m.updateMatrixWorld(true); m.matrixAutoUpdate = false; };
+  const result = makeResult(api, 31);
+  const srcKinds = new Set();
+  for (const el of result.elements) for (const m of el.meshes) for (const a of ['position', 'normal']) srcKinds.add(a + ':' + m.geometry.attributes[a].constructor.name);
+  const stored = clone(api._geoSerialize(result, true));
+  const restored = api._geoDeserialize(stored);
+  const byBuffer = new Map();
+  stored.geoData.forEach((g, i) => { byBuffer.set(g.pos, i); byBuffer.set(g.n8, i); });
+  const gotKinds = new Set();
+  let geos = 0;
+  const seen = new Set();
+  for (const el of restored.elements) for (const m of el.meshes) {
+    const g = m.geometry;
+    for (const a of ['position', 'normal']) gotKinds.add(a + ':' + g.attributes[a].constructor.name);
+    if (seen.has(g)) continue; seen.add(g); geos++;
+    const n = g.attributes.normal, p = g.attributes.position;
+    assert.equal(n.constructor, THREE.BufferAttribute);
+    assert.ok(n.array instanceof Int8Array && n.normalized && n.itemSize === 3);
+    assert.ok(byBuffer.has(n.array.buffer), 'normal array is a view of the stored n8 buffer');
+    assert.ok(byBuffer.has(p.array.buffer), 'position array is a view of the stored pos buffer');
+    assert.equal(byBuffer.get(n.array.buffer), byBuffer.get(p.array.buffer));
+  }
+  assert.equal(geos, stored.geoData.length);
+  assert.deepEqual([...gotKinds].sort(), [...srcKinds].sort());
+});

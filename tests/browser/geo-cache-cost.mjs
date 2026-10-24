@@ -13,7 +13,11 @@
 //     _geoDeserialize part of it ('cc:geoDeserialize'), checking no model
 //     was re-parsed. Wall time includes waiting for frames rendered in the
 //     GPU process, so it swings with other load on the machine.
-//   - heap after restore (post-GC, performance.memory)
+//   - heap after the fresh load / after restore: the page's main-isolate heap
+//     after a CDP (memory-reducing) GC, read with nothing of the harness in
+//     scope — the cache records it reads back and its mesh lists used to be
+//     live during the fresh-load reading (+~75 MB on this federation), which
+//     made a restore look cheaper than the load it equals (INTERNALS §6)
 // Prints the median of GEO_COST_RUNS (default 3) runs. With
 // GEO_COST_REF_ROOT=<another checkout> the same runs are made against that
 // code as well (its _geoSerialize must record the same User Timing entry).
@@ -59,6 +63,17 @@ function serve(dir) {
 const browser = await chromium.launch({ executablePath: process.env.CC_CHROMIUM_EXECUTABLE,
   args: ['--enable-precise-memory-info', '--js-flags=--expose-gc --max-old-space-size=8192'] });
 
+// Main-isolate heap (MB) after a CDP memory-reducing GC, once two readings
+// 1 s apart agree (see tests/browser/restore-heap.mjs for why not gc()).
+async function heapMB(page) {
+  const cdp = await page.context().newCDPSession(page);
+  const read = async () => { await cdp.send('HeapProfiler.collectGarbage'); return (await cdp.send('Runtime.getHeapUsage')).usedSize / 1048576; };
+  let prev = await read();
+  for (let i = 0; i < 30; i++) { await page.waitForTimeout(1000); const v = await read(); if (Math.abs(v - prev) < 0.5) { prev = v; break; } prev = v; }
+  await cdp.detach();
+  return prev;
+}
+
 async function run(port) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   if (offlineDepsEnabled()) await routeOfflineDeps(context, root);
@@ -69,7 +84,6 @@ async function run(port) {
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function' && window._ccState3d && window._ccState3d.mg, null, { timeout: 60_000 });
   const r = await page.evaluate(async (names) => {
-    const gcMB = async () => { for (let i = 0; i < 4; i++) { gc(); await new Promise((res) => setTimeout(res, 40)); } return performance.memory.usedJSHeapSize / 1048576; };
     const idb = async (fn) => { const db = await new Promise((res) => { const q = indexedDB.open('ClashControlFiles'); q.onsuccess = () => res(q.result); }); try { return await fn(db); } finally { db.close(); } };
     const req = (q) => new Promise((res) => { q.onsuccess = () => res(q.result); });
     const fs = await Promise.all(names.map(async (n) => new File([await (await fetch(n)).arrayBuffer()], n.split('/').pop())));
@@ -97,17 +111,19 @@ async function run(port) {
     // distinct geometries among the live meshes = what the cache must hold
     let live = 0; const seen = new Set();
     for (const m of window._ccLatestState.models) for (const e of m.elements) for (const ms of e.meshes) { live++; seen.add(ms.geometry); }
-    const heapLoad = await gcMB();
+    return { serialiseMs: ser.reduce((n, e) => n + e.duration, 0), serialiseN: ser.length, geoMB: geoBytes / 1048576, stampMB: stamp / 1048576,
+      records: recs.length, meshes, geoms, live, liveGeoms: seen.size };
+  }, FED);
+  r.heapLoad = await heapMB(page);
+  await page.evaluate(async () => {
     const ids = window._ccLatestState.models.map((m) => m.id);
     for (const id of ids) {
       await window.ClashControl.parkModel(id);
       while (!(window._ccLatestState.parkedModels || []).some((p) => p.id === id)) await new Promise((res) => setTimeout(res, 20));
     }
-    const heapParked = await gcMB();
     window.__geoCost = { ids, serBefore: performance.getEntriesByName('cc:geoSerialize').length };
-    return { serialiseMs: ser.reduce((n, e) => n + e.duration, 0), serialiseN: ser.length, geoMB: geoBytes / 1048576, stampMB: stamp / 1048576,
-      records: recs.length, meshes, geoms, live, liveGeoms: seen.size, heapLoad, heapParked };
-  }, FED);
+  });
+  r.heapParked = await heapMB(page);
   // Main-thread busy time of the restore (CDP Performance.TaskDuration): the
   // wall time also waits for frames rendered in the GPU process (SwiftShader
   // in headless runs), which swings with any other load on the machine.
@@ -127,7 +143,7 @@ async function run(port) {
       reparsed: performance.getEntriesByName('cc:geoSerialize').length - serBefore };
   }));
   r.restoreBusyMs = (await task()) - t0;
-  r.heapRestore = await page.evaluate(async () => { await new Promise((res) => setTimeout(res, 1000)); for (let i = 0; i < 4; i++) { gc(); await new Promise((res) => setTimeout(res, 40)); } return performance.memory.usedJSHeapSize / 1048576; });
+  r.heapRestore = await heapMB(page);
   r.errors = errors.length;
   await context.close();
   return r;
@@ -135,7 +151,7 @@ async function run(port) {
 
 const med = (a) => { const s = a.slice().sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
 const KEYS = [['serialiseMs', 'serialise at commit (ms, main thread)'], ['geoMB', 'cache geometry buffers (MB)'], ['stampMB', 'cache records, size stamp (MB)'],
-  ['restoreMs', 'restore all from cache (ms, wall)'], ['restoreBusyMs', 'restore: main-thread busy (ms)'], ['deserialiseMs', '_geoDeserialize in that restore (ms)'], ['heapRestore', 'heap after restore (MB, post-GC)'], ['heapLoad', 'heap after fresh load (MB, post-GC)']];
+  ['restoreMs', 'restore all from cache (ms, wall)'], ['restoreBusyMs', 'restore: main-thread busy (ms)'], ['deserialiseMs', '_geoDeserialize in that restore (ms)'], ['heapLoad', 'heap after fresh load (MB, main isolate)'], ['heapRestore', 'heap after restore (MB, main isolate)']];
 const servers = [];
 const fmt = (r) => JSON.stringify(Object.fromEntries(Object.entries(r).map(([k, v]) => [k, typeof v === 'number' ? +v.toFixed(1) : v])));
 // Runs alternate between the two code versions so background load on the

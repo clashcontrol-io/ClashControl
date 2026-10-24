@@ -4234,7 +4234,11 @@ function startApp() {
         // xp:1 — exact positions + the live normal array, byte for byte.
         geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(md.pos), 3));
         if (md.n8) {
-          geo.setAttribute('normal', new THREE.Int8BufferAttribute(new Int8Array(md.n8), 3, true));
+          // A plain BufferAttribute over a view of the stored buffer, like
+          // both loaders (§21.50): Int8BufferAttribute copied every normal
+          // array once more and left a different attribute class than a
+          // fresh load holds.
+          geo.setAttribute('normal', new THREE.BufferAttribute(new Int8Array(md.n8), 3, true));
           geo.userData._nrmQuantized = true;
         } else {
           geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(md.nrm), 3));
