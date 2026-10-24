@@ -287,26 +287,43 @@ try {
   // collapse the first group from its header
   const coll = await page.evaluate(async () => {
     const sc = document.querySelector('.cc-issue-panel .cc-issue-scroll'); sc.scrollTop = 0; sc.dispatchEvent(new Event('scroll'));
-    let hdr = null;
-    for (let t = 0; t < 30 && !hdr; t++) { await new Promise((r) => setTimeout(r, 100)); hdr = document.querySelector('.cc-issue-panel [data-element-group-key]'); }
-    if (!hdr) return { error: 'no group header mounted at the top of the list' };
-    const key = hdr.getAttribute('data-element-group-key');
+    // a header whose rows are on screen — right after the scroll the list can
+    // still show the group it was scrolled to (the last one) until it re-renders
     const sm = window.ClashControl.review.summary();
-    const grp = sm.items.find((it) => it.key === key);
+    const onScreen = (g) => g && g.ids.some((id) => document.querySelector('.cc-issue-panel [data-item-id="' + id + '"]'));
+    let key = null, grp = null;
+    for (let t = 0; t < 30 && !grp; t++) {
+      await new Promise((r) => setTimeout(r, 100));
+      for (const h of document.querySelectorAll('.cc-issue-panel [data-element-group-key]')) {
+        const g = sm.items.find((it) => it.key === h.getAttribute('data-element-group-key'));
+        if (onScreen(g)) { key = g.key; grp = g; break; }
+      }
+    }
+    if (!grp) return { error: 'no group header with its rows on screen at the top of the list' };
     // re-query the header's button per click: collapsing re-renders the header
-    const btn = () => document.querySelector('.cc-issue-panel [data-element-group-key="' + key + '"] button[aria-expanded]');
+    // (any header copy carrying the key — the pinned one may have no toggle)
+    const btn = () => [...document.querySelectorAll('.cc-issue-panel [data-element-group-key="' + CSS.escape(key) + '"]')]
+      .map((h) => h.querySelector('button[aria-expanded]')).find(Boolean) || null;
     const shownNow = () => grp.ids.filter((id) => document.querySelector('.cc-issue-panel [data-item-id="' + id + '"]')).length;
     // wait for the outcome itself (a busy machine can take longer than a frame or two to render)
     const until = async (ok) => { for (let t = 0; t < 30 && !ok(); t++) await new Promise((r) => setTimeout(r, 100)); };
+    if (!btn()) return { error: 'no toggle on the group header' };
     btn().click();
     await until(() => shownNow() === 0);
     const stillShown = shownNow();
+    await until(() => !!btn());
+    if (!btn()) {
+      const sc2 = document.querySelector('.cc-issue-panel .cc-issue-scroll');
+      return { error: 'group header toggle gone after collapsing', key, scrollTop: sc2 && sc2.scrollTop,
+        headers: [...document.querySelectorAll('.cc-issue-panel [data-element-group-key]')].slice(0, 4).map((h) => h.getAttribute('data-element-group-key')),
+        stillListed: window.ClashControl.review.summary().items.some((it) => it.key === key) };
+    }
     btn().click();
     await until(() => shownNow() > 0);
     const back = shownNow();
     return { stillShown, back };
   });
-  if (coll.stillShown !== 0 || coll.back === 0) fail('collapse/expand a group: ' + JSON.stringify(coll));
+  if (coll.error || coll.stillShown !== 0 || coll.back === 0) fail('collapse/expand a group: ' + JSON.stringify(coll));
   else ok(`collapsing a group unmounts its rows, expanding brings ${coll.back} back`);
 
   // pinned group header: scrolled into a group, its header stays on top
