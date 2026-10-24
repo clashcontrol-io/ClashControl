@@ -3944,6 +3944,39 @@ function startApp() {
   }
 
 
+  // Bounding box + sphere of a loader geometry (plain Float32 xyz positions,
+  // no morph targets) straight from the typed array, with three r180's own
+  // arithmetic: Box3.setFromBufferAttribute is Math.min / Math.max per
+  // component from an empty box; computeBoundingSphere's centre is the box's
+  // getCenter ((min + max) * 0.5, the origin for an empty box) and its radius
+  // sqrt of the largest dx*dx + dy*dy + dz*dz. Bit-identical to
+  // computeBoundingBox / computeBoundingSphere (tests/geo-bounds.test.js)
+  // without their per-vertex accessor calls — they ran for every unique
+  // geometry of every load (expandByObject, then frustum culling).
+  function _ccGeoBounds(geo) {
+    var pos = geo && geo.attributes.position;
+    if (!pos || pos.isInterleavedBufferAttribute || pos.isGLBufferAttribute || pos.normalized || pos.itemSize !== 3 ||
+        !(pos.array instanceof Float32Array) || geo.morphAttributes.position) return false;
+    var a = pos.array, n = pos.count * 3, i, x, y, z;
+    var mnx = Infinity, mny = Infinity, mnz = Infinity, mxx = -Infinity, mxy = -Infinity, mxz = -Infinity;
+    for (i = 0; i < n; i += 3) {
+      x = a[i]; y = a[i + 1]; z = a[i + 2];
+      mnx = Math.min(mnx, x); mny = Math.min(mny, y); mnz = Math.min(mnz, z);
+      mxx = Math.max(mxx, x); mxy = Math.max(mxy, y); mxz = Math.max(mxz, z);
+    }
+    var box = geo.boundingBox || (geo.boundingBox = new THREE.Box3());
+    box.min.set(mnx, mny, mnz); box.max.set(mxx, mxy, mxz);
+    var sph = geo.boundingSphere || (geo.boundingSphere = new THREE.Sphere());
+    var cx = 0, cy = 0, cz = 0;
+    if (!(mxx < mnx || mxy < mny || mxz < mnz)) { cx = (mnx + mxx) * 0.5; cy = (mny + mxy) * 0.5; cz = (mnz + mxz) * 0.5; }
+    var r2 = 0, dx, dy, dz;
+    for (i = 0; i < n; i += 3) {
+      dx = cx - a[i]; dy = cy - a[i + 1]; dz = cz - a[i + 2];
+      r2 = Math.max(r2, dx * dx + dy * dy + dz * dz);
+    }
+    sph.center.set(cx, cy, cz); sph.radius = Math.sqrt(r2);
+    return true;
+  }
   function _geoDeserialize(cached) {
     var isV3 = cached.v >= 3; // v3+ uses quantized positions + oct-encoded normals
     var meshByEid = {};
@@ -3974,6 +4007,7 @@ function startApp() {
       // dequantizes oct-normals to Float32 above; re-pack to Int8 so a
       // reloaded session matches the memory profile of a fresh load.
       _ccQuantizeNormalAttr(geo);
+      _ccGeoBounds(geo);
       var c = md.col;
       // Share materials across the whole session (same RGBA → one material),
       // same as the live load path. Before this, restore minted a fresh
@@ -6161,6 +6195,7 @@ function startApp() {
               geo.setAttribute('normal',   new THREE.BufferAttribute(nrm, 3));
               geo.setIndex(new THREE.BufferAttribute(indices, 1));
               _ccQuantizeNormalAttr(geo);
+              _ccGeoBounds(geo);
               geoCache[geoExpId] = geo;
             } else { _geoReused++; }
             _nOk++; _nTris += geo.index ? geo.index.count : 0;
@@ -7227,6 +7262,7 @@ function startApp() {
             geo.setAttribute('normal', new THREE.BufferAttribute(gEntry.nrm, 3));
             geo.setIndex(new THREE.BufferAttribute(gEntry.idx, 1));
             _ccQuantizeNormalAttr(geo);
+            _ccGeoBounds(geo);
             _tGeoBuild += performance.now() - _tGB;
             geoCache[geoId] = geo;
           } else { continue; }
@@ -7853,7 +7889,7 @@ function startApp() {
         var gg = new THREE.BufferGeometry();
         var pa = new THREE.BufferAttribute(P, 3), ca = new THREE.BufferAttribute(C, 3, true), ia = new THREE.BufferAttribute(I, 1);
         gg.setAttribute('position', pa); gg.setAttribute('color', ca); gg.setIndex(ia);
-        gg.computeBoundingSphere(); gg.computeBoundingBox();
+        if (!_ccGeoBounds(gg)) { gg.computeBoundingSphere(); gg.computeBoundingBox(); }
         pa.onUpload(_dropArray); ca.onUpload(_dropArray); ia.onUpload(_dropArray);
         var mesh = new THREE.Mesh(gg, h.mat);
         mesh.raycast = function() {};
