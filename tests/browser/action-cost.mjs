@@ -287,19 +287,15 @@ try {
   // collapse the first group from its header
   const coll = await page.evaluate(async () => {
     const sc = document.querySelector('.cc-issue-panel .cc-issue-scroll'); sc.scrollTop = 0; sc.dispatchEvent(new Event('scroll'));
-    // a header whose rows are on screen — right after the scroll the list can
-    // still show the group it was scrolled to (the last one) until it re-renders
+    // right after the scroll the list can still show the group it was
+    // scrolled to (the last one, header and rows) until it re-renders
     const sm = window.ClashControl.review.summary();
     const onScreen = (g) => g && g.ids.some((id) => document.querySelector('.cc-issue-panel [data-item-id="' + id + '"]'));
-    let key = null, grp = null;
-    for (let t = 0; t < 30 && !grp; t++) {
-      await new Promise((r) => setTimeout(r, 100));
-      for (const h of document.querySelectorAll('.cc-issue-panel [data-element-group-key]')) {
-        const g = sm.items.find((it) => it.key === h.getAttribute('data-element-group-key'));
-        if (onScreen(g)) { key = g.key; grp = g; break; }
-      }
-    }
-    if (!grp) return { error: 'no group header with its rows on screen at the top of the list' };
+    // the first group in list order is what the top of the list shows
+    const grp = sm.items[0], key = grp && grp.key;
+    const hdrOf = () => document.querySelector('.cc-issue-panel [data-element-group-key="' + CSS.escape(key) + '"]');
+    for (let t = 0; t < 50 && grp && !(hdrOf() && onScreen(grp)); t++) await new Promise((r) => setTimeout(r, 100));
+    if (!grp || !hdrOf() || !onScreen(grp)) return { error: 'the first group is not on screen at the top of the list', key };
     // re-query the header's button per click: collapsing re-renders the header
     // (any header copy carrying the key — the pinned one may have no toggle)
     const btn = () => [...document.querySelectorAll('.cc-issue-panel [data-element-group-key="' + CSS.escape(key) + '"]')]
