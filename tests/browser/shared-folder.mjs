@@ -13,6 +13,10 @@
 //     the row, "Conflicts" view in the filters, count in the review overview,
 //     detail with both values (who / when) and the last agreed value kept
 //   * resolving on one page clears it on both
+//   * viewpoints are shared (camera / section / clip, never the picture)
+//   * the issue a Confirm creates in the reducer reaches the teammate
+//   * a delete made while a teammate edited the issue is a conflict on both
+//     pages (the issue stays), resolved with Keep / Delete
 //
 // Run: CC_CHROMIUM_EXECUTABLE=... CC_BROWSER_OFFLINE_DEPS=1 node tests/browser/shared-folder.mjs
 import { createServer } from 'node:http';
@@ -259,6 +263,63 @@ try {
     const badge = await P.$(`[data-item-id="${c.id}"] [data-cc-shared-conflict]`);
     check(!badge, 'page ' + who + ': badge gone');
     check(await P.evaluate(() => window._ccLatestState.sharedProject.conflicts) === 0, 'page ' + who + ': conflict count 0');
+  }
+
+  // ── gap 1: viewpoints are shared again (camera / section / name, no picture) ──
+  const vpKey = K[0];
+  await A.evaluate((k) => {
+    const c = window._ccLatestState.clashes.find((x) => x._identityKey === k);
+    window._ccDispatch({ t: 'ADD_VIEWPOINT', v: { id: 'vp-shared-1', name: 'Riser view', linkedId: c.id, createdAt: new Date().toISOString(),
+      snapshot: 'data:image/png;base64,' + 'A'.repeat(4000), camera: { px: 1, py: 2, pz: 3, dx: 0, dy: 0, dz: -1, ux: 0, uy: 1, uz: 0, tx: 1, ty: 2, tz: 0, isOrtho: false, fov: 50 },
+      section: { kind: 'axis', axis: 'y', pos: 1.5, flip: false }, clip: [[0, -1, 0, 1.5]] } });
+  }, vpKey);
+  await settle(A); await tick(B);
+  const bvp = await B.evaluate((k) => {
+    const v = window._ccLatestState.viewpoints.find((x) => x.id === 'vp-shared-1');
+    const c = window._ccLatestState.clashes.find((x) => x._identityKey === k);
+    return v && { name: v.name, pz: v.camera.pz, section: v.section, clip: v.clip, snapshot: v.snapshot || null, linked: v.linkedId === c.id };
+  }, vpKey);
+  check(bvp && bvp.name === 'Riser view' && bvp.pz === 3 && bvp.section && bvp.section.pos === 1.5 && bvp.clip && bvp.clip.length === 1,
+    'page B got A\'s viewpoint (camera, section, clip planes)', JSON.stringify(bvp));
+  check(bvp && !bvp.snapshot && bvp.linked, 'without the picture, linked to B\'s own copy of the clash');
+  files = await folder(A);
+  const vpFileSizes = Object.keys(files).filter((n) => n.includes('/changes/')).map((n) => files[n]);
+  check(Math.max(...vpFileSizes) < 2048, 'no picture in any change file (largest ' + Math.max(...vpFileSizes) + ' bytes)');
+  await A.evaluate(() => window._ccDispatch({ t: 'DEL_VIEWPOINT', id: 'vp-shared-1' }));
+  await settle(A); await tick(B);
+  check(await B.evaluate(() => !window._ccLatestState.viewpoints.some((x) => x.id === 'vp-shared-1')), 'a viewpoint delete reaches page B');
+
+  // ── gap 2: the issue a Confirm creates in the reducer is published ──
+  const KC = all[3] ? all[3].key : K[0];
+  await setStatus(A, KC, 'confirmed');
+  await settle(A);
+  const aIss = await A.evaluate((k) => { const c = window._ccLatestState.clashes.find((x) => x._identityKey === k); return c.linkedIssueId; }, KC);
+  await tick(B);
+  const bConf = await B.evaluate(([k, iid]) => {
+    const s = window._ccLatestState, c = s.clashes.find((x) => x._identityKey === k);
+    return { status: c.status, issue: !!s.issues.find((i) => i.id === iid), n: s.issues.filter((i) => i.clashId && i.title === (s.issues.find((x) => x.id === iid) || {}).title).length };
+  }, [KC, aIss]);
+  check(!!aIss && bConf.status === 'confirmed' && bConf.issue && bConf.n === 1, 'a confirm on page A: page B gets the status AND the created issue (once)', JSON.stringify(bConf));
+
+  // ── gap 3: delete vs edit is a conflict on both pages, resolved by keep / delete ──
+  await A.evaluate((iid) => window._ccDispatch({ t: 'DEL_ISSUE', id: iid }), aIss);
+  await B.evaluate((iid) => window._ccDispatch({ t: 'UPD_ISSUE', id: iid, u: { status: 'in_progress' } }), aIss);
+  await settle(A); await settle(B);
+  await tick(A); await tick(B);
+  for (const [P, who] of [[A, 'A'], [B, 'B']]) {
+    const it = await P.evaluate((iid) => { const i = window._ccLatestState.issues.find((x) => x.id === iid); return i && { status: i.status, c: i._sharedConflict || null }; }, aIss);
+    check(it && it.c && it.c.length === 1 && it.c[0].deleteConflict && it.status === 'open',
+      'page ' + who + ': delete vs edit → the issue stays with the agreed value and a delete conflict', JSON.stringify(it));
+    check(await P.evaluate(() => window._ccLatestState.sharedProject.conflicts) === 1, 'page ' + who + ': counted as 1 conflict');
+    await P.evaluate((iid) => { window._ccDispatch({ t: 'TAB', v: 'issues' }); window._ccDispatch({ t: 'ACTIVE', id: iid }); }, aIss);
+    await P.waitForSelector(`[data-item-id="${aIss}"] [data-cc-shared-keep]`, { timeout: 10_000 })
+      .then(() => ok('page ' + who + ': resolver offers Keep / Delete'), () => fail('page ' + who + ': no Keep / Delete in the issue detail'));
+  }
+  await B.click(`[data-item-id="${aIss}"] [data-cc-shared-keep]`);
+  await settle(B); await tick(A);
+  for (const [P, who] of [[A, 'A'], [B, 'B']]) {
+    const it = await P.evaluate((iid) => { const i = window._ccLatestState.issues.find((x) => x.id === iid); return i && { status: i.status, c: i._sharedConflict || null }; }, aIss);
+    check(it && !it.c && it.status === 'in_progress', 'page ' + who + ': kept, with the edit; conflict cleared', JSON.stringify(it));
   }
 
   // every change file in the folder was written once (no rewrites)

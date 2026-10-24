@@ -149,7 +149,7 @@ regulations/                — Country packs (JSON only, no code, each requires
 api/health.js               — Health check: AI + DB status
 api/nl.js                   — NL proxy: Groq-only (OpenAI tool-calling). Basic tier; clash-solving nudges to the Connector
 api/training.js             — Training data ingestion (replaces Google Forms)
-api/project.js              — Shared issues sync (project key, no login)
+api/project.js              — Shared project (project key, no login): append-only change log (`shared_changes`), cursor pull, lazy migration of old rows (INTERNALS §21.56)
 api/title.js                — AI clash title generation (batch, Gemma 4)
 api/triage.js               — AI clash triage (cluster context → severity / explanation / resolution)
 api/tile.js                 — Map-tile proxy for the geoplace basemap (MapTiler when keyed, else OSM)
@@ -163,7 +163,8 @@ clash-identity-core.js      — Non-addon core module: stable clash identity acr
 clash-reconciliation-core.js — Non-addon core module: merges new detection results with prior status/assignment
 clash-triage-core.js        — Non-addon core module: clash review smart filtering — storey normalisation across models, facets with live counts, suggested views, search, saved views (review buckets + severity/extent live in clash-classification-core.js)
 storage-core.js             — Non-addon core module: local storage registry, budget and GC (`ClashControl.storage.*`)
-shared-log-core.js          — Non-addon core module: shared-folder change log (`window._ccSharedLogCore`) — change records, heads / conflicts by the change graph (never by time), resolutions, snapshots + safe cleanup, `.ccproject` migration; the folder I/O is `addons/shared-project.js`
+shared-log-core.js          — Non-addon core module: the shared change log (`window._ccSharedLogCore`, also required by `api/project.js`) — change records, heads / conflicts by the change graph (never by time), delete-vs-edit conflicts (`covers`), resolutions, snapshots + safe cleanup, `.ccproject` and old cloud-row migration; the folder I/O is `addons/shared-project.js`
+shared-session-core.js      — Non-addon core module: the sharing engine BOTH modes use (`window._ccSharedSessionCore`) — local actions → change records (clashes, issues incl. confirm-created ones, notes, viewpoints), records → app state + `_sharedConflict` markers, outbox, active-session registry (`noteAll` / `observeAll` / `resolve`); transports: `addons/shared-project.js` (folder) and the cloud block in `index.html` (`/api/project`)
 country-pack-core.js        — Non-addon core module: country-pack contract — section validation (shared with scripts/validate-regulation.js), safeRegex, URL allow-list, the country resolver (`resolveCountry`), CRS registry + generic UTM builder
 project-codec.js            — Non-addon core module: project state encode/decode for persistence
 safety-migrations.js        — Non-addon core module: feature-flag gate + migration/self-check plumbing (`window._ccSafetyMigrations`)
@@ -241,8 +242,8 @@ The app is deployed at `www.clashcontrol.io` on Vercel. The backend consists of 
 - `POST /api/nl` — NL command proxy. Body: `{ command, context, replyContext }`. Returns `{ intent, ...params }`
 - `POST /api/training` — Training data. Requires `X-CC-Consent: true` header. Types: `nl_command`, `clash_feedback`, `detection_run`
 - `POST /api/project` — Create shared project. Returns `{ id, name }`
-- `GET /api/project?id=KEY` — Pull all shared issues for a project
-- `PUT /api/project?id=KEY` — Push issue changes. Body: `{ issues, user }`
+- `GET /api/project?id=KEY&v=2&after=CURSOR[&limit=n]` — Change records after the cursor: `{ v, project, changes, names, cursor, more }` (without `v`: read-only legacy `issues` view for old clients)
+- `PUT /api/project?id=KEY` — Append change records. Body: `{ v:2, user, name, changes:[record] }` → `{ v, accepted, known, invalid }` (idempotent by record id; the old `{ issues }` shape is refused with `error:'client_outdated'`, nothing written)
 - `POST /api/title` — Generate AI titles. Body: `{ clashes: [...] }` (max 20)
 - `POST /api/triage` — AI clash triage for a cluster. Body: cluster context packet. Returns `{ title, severity, explanation, resolution_options[] }`
 - `GET /api/tile?z=&x=&y=` — Map-tile proxy for the geoplace basemap (MapTiler satellite when `MAPTILER_KEY` is set, else OpenStreetMap)
@@ -255,6 +256,6 @@ The app is deployed at `www.clashcontrol.io` on Vercel. The backend consists of 
 
 ### Shared Issues
 - No login required. Uses shareable project keys (e.g., `MEP-abc123`) — anyone with the key or share link has full read **and edit** access; there's no read-only sharing or per-person permissions (the UI now says this explicitly, see the Quick Share panel copy)
-- Shared records are minimal (~250 bytes): identity (GlobalIds) + team decisions (status, priority, assignee, title)
+- Same model as the shared folder (docs/INTERNALS.md §21.55 / §21.56): the project is an append-only log of small change records (`{id, user, ts, target:{kind,key}, field, value, base, resolves?, prev?, resolution?, covers?}`, ~200–400 bytes; team decisions + identity only — clash identity key, issue/note/viewpoint ids). The server stores and numbers them (`seq`, the pull cursor) and never decides who wins; clients compute heads/conflicts with `shared-log-core.js` through `shared-session-core.js`
 - IFC metadata (types, names, storeys, materials) is derived locally from each user's loaded model
-- Conflict resolution: NOT naive last-write-wins — PUT compares each issue's server-authoritative `updated_at` (echoed back by the client as `_updatedAt`) against the current DB value and reports per-issue `conflicts[]` in the response rather than silently overwriting; the client is responsible for merging. DELETE is separately gated by a creator-held `editKey`, stored server-side as a SHA-256 hash (never plaintext, `api/project.js` `hashEditKey`/`editKeyMatches`) — PUT deliberately stays open to anyone with just the project key, that IS the collaboration model. Projects can optionally be created with an expiry (`expiresInDays`, `api/schema.sql` `expires_at`); default is no expiry.
+- Conflicts: two edits of the same field made on the same version (neither author had seen the other's) are a CONFLICT shown to every user — never an automatic winner, never a rejected edit, however far apart in time; the field keeps the last agreed value until someone resolves it (pick a value or enter a new one). A delete made while someone else edited the item is a conflict too (keep / delete). Everything stays in the log. Old per-issue rows (`shared_issues`) are migrated into records on a project's first v2 access. DELETE is separately gated by a creator-held `editKey`, stored server-side as a SHA-256 hash (never plaintext, `api/project.js` `hashEditKey`/`editKeyMatches`) — PUT deliberately stays open to anyone with just the project key, that IS the collaboration model. Projects can optionally be created with an expiry (`expiresInDays`, `api/schema.sql` `expires_at`); default is no expiry.

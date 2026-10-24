@@ -17,6 +17,14 @@
 // were made seconds or days apart; the field keeps the last agreed value (the
 // newest common ancestor) for everyone until someone resolves it. A change
 // made after seeing another is an ordinary update, however soon after.
+//
+// Deleting an item (field `deleted`, value true) lists in `covers` the head
+// of every other field of that item the deleter had applied. A change to the
+// item that the delete does not cover (not in covers, not below them) was
+// made without seeing the delete, or the delete without seeing it: a
+// delete-vs-edit CONFLICT, shown like any other. While it is open the item
+// stays, with the values the deleter saw; a resolution keeps it (`deleted`
+// false: the edits apply) or deletes it (a new delete covering everything).
 (function(/** @type {any} */ root, factory) {
   var api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
@@ -69,8 +77,14 @@
     }
     if (out.base == null && r.prev !== undefined) out.prev = r.prev;
     if (r.resolution === true) out.resolution = true;
+    if (Array.isArray(r.covers)) {
+      var cv = r.covers.filter(function(x) { return typeof x === 'string' && x && x.length <= 200; });
+      if (cv.length > MAX_COVERS) return null;
+      out.covers = cv;
+    }
     return out;
   }
+  var MAX_COVERS = 2000;
 
   // ── The log (one per shared project, owned by its client) ───────────
   // changes: id → record; groups: (target, field) → ids; targets: target →
@@ -169,6 +183,64 @@
     return agreedBelow(log, max.map(function(r) { return r.id; }), depth + 1);
   }
 
+  // ── Delete vs edit ──────────────────────────────────────────────────
+  // What the agreeing delete heads of an item cover: their `covers` (and
+  // those of every delete below them) plus everything below those. Returns
+  // the heads of the item's other fields that are NOT covered — changes the
+  // deleter had not seen — or null when there are none (or the deletes
+  // predate `covers`).
+  /** @param {any} log @param {string} kind @param {string} key @param {any[]} heads */
+  function deleteInfo(log, kind, key, heads) {
+    if (!heads.some(function(h) { return h.covers; })) return null;
+    var seen = Object.create(null), dels = Object.create(null);
+    heads.forEach(function(h) { dels[h.id] = true; Object.keys(ancestors(log, h.id)).forEach(function(a) { dels[a] = true; }); });
+    Object.keys(dels).forEach(function(id) {
+      var r = log.changes[id];
+      if (!r || !r.covers) return;
+      r.covers.forEach(function(c) {
+        if (seen[c]) return;
+        seen[c] = true;
+        Object.keys(ancestors(log, c)).forEach(function(a) { seen[a] = true; });
+      });
+    });
+    var fields = log.targets[targetKey(kind, key)] || {}, unseen = [];
+    Object.keys(fields).sort().forEach(function(f) {
+      if (f === 'deleted') return;
+      headsOf(log, groupKey(kind, key, f)).forEach(function(h) { if (!seen[h.id]) unseen.push(h); });
+    });
+    if (!unseen.length) return null;
+    return { unseen: unseen.sort(byTsId), seen: seen };
+  }
+  // The value of one field as the deleter saw it (`seen` = what the delete
+  // covers): the newest covered changes, or the pre-share value when the
+  // deleter saw none of them.
+  /** @param {any} log @param {string} gk @param {any} seen @returns {{value:any, known:boolean, rec:any}} */
+  function valueSeen(log, gk, seen) {
+    var ids = log.groups[gk] || [];
+    var cov = ids.filter(function(id) { return seen[id]; });
+    if (cov.length) {
+      var below = Object.create(null);
+      cov.forEach(function(id) { Object.keys(ancestors(log, id)).forEach(function(a) { below[a] = true; }); });
+      var max = cov.filter(function(id) { return !below[id]; }).map(function(id) { return log.changes[id]; }).sort(byTsId);
+      if (max.every(function(r) { return same(r.value, max[0].value); })) return { value: max[max.length - 1].value, known: true, rec: max[max.length - 1] };
+      return agreedBelow(log, max.map(function(r) { return r.id; }));
+    }
+    var roots = ids.map(function(id) { return log.changes[id]; }).filter(function(r) { return !r.base && !r.resolves; }).sort(byTsId);
+    for (var i = 0; i < roots.length; i++) if (roots[i].prev !== undefined) return { value: roots[i].prev, known: true, rec: null };
+    return { value: null, known: false, rec: null };
+  }
+  // The heads of every field of an item except `deleted`: what a delete
+  // made now covers.
+  /** @param {any} log @param {string} kind @param {string} key */
+  function coversOf(log, kind, key) {
+    var fields = log.targets[targetKey(kind, key)] || {}, out = [];
+    Object.keys(fields).sort().forEach(function(f) {
+      if (f === 'deleted') return;
+      headsOf(log, groupKey(kind, key, f)).forEach(function(h) { out.push(h.id); });
+    });
+    return out;
+  }
+
   // State of one (target, field):
   //   {kind, key, field, heads, conflicted, value, known, agreed}
   // value/known: what the field shows (the head's value, or the agreed
@@ -180,6 +252,11 @@
     var g = splitGroupKey(gk);
     var last = heads[heads.length - 1];
     var agreeing = heads.every(function(h) { return same(h.value, last.value); });
+    if (agreeing && g.field === 'deleted' && last.value === true) {
+      var di = deleteInfo(log, g.kind, g.key, heads);
+      // the item stays (the last agreed state) until someone keeps or deletes it
+      if (di) return { kind: g.kind, key: g.key, field: g.field, heads: heads.concat(di.unseen), conflicted: true, deleteConflict: true, value: false, known: true, agreed: null, seen: di.seen };
+    }
     if (agreeing) return { kind: g.kind, key: g.key, field: g.field, heads: heads, conflicted: false, value: last.value, known: true, agreed: null };
     var ag = agreedBelow(log, heads.map(function(h) { return h.id; }));
     return { kind: g.kind, key: g.key, field: g.field, heads: heads, conflicted: true, value: ag.value, known: ag.known, agreed: ag.rec };
@@ -190,9 +267,18 @@
     /** @type {{kind:string, key:string, fields:any, conflicts:any[]}} */
     var out = { kind: kind, key: key, fields: Object.create(null), conflicts: [] };
     if (!fields) return out;
+    var del = fields.deleted ? fieldState(log, groupKey(kind, key, 'deleted')) : null;
     Object.keys(fields).sort().forEach(function(f) {
-      var st = fieldState(log, groupKey(kind, key, f));
+      var st = f === 'deleted' ? del : fieldState(log, groupKey(kind, key, f));
       if (!st) return;
+      if (del && del.deleteConflict && f !== 'deleted') {
+        // while the delete is open, every field shows what the deleter saw
+        var gk = groupKey(kind, key, f), ids = log.groups[gk] || [], seen = del.seen;
+        if (ids.some(function(id) { return !seen[id]; })) {
+          var vs = valueSeen(log, gk, seen);
+          st = Object.assign({}, st, { value: vs.value, known: vs.known });
+        }
+      }
       out.fields[f] = st;
       if (st.conflicted) out.conflicts.push(st);
     });
@@ -221,8 +307,15 @@
     var st = fieldState(log, groupKey(o.kind, o.key, o.field));
     /** @type {any} */
     var r = { id: o.id, user: o.user, ts: o.ts, target: { kind: o.kind, key: o.key }, field: o.field, value: o.value === undefined ? null : o.value, base: null };
+    if (o.field === 'deleted' && r.value === true) r.covers = coversOf(log, o.kind, o.key);
     if (!st) {
       if (o.prev !== undefined) r.prev = o.prev;
+    } else if (st.deleteConflict) {
+      // deleting again while a delete is open builds on it (and, covering
+      // everything, settles it as deleted)
+      var dh = st.heads.filter(function(h) { return h.field === 'deleted'; });
+      r.base = dh[dh.length - 1].id;
+      if (dh.length > 1) r.resolves = dh.slice(0, -1).map(function(h) { return h.id; });
     } else if (st.conflicted) {
       r.base = st.agreed ? st.agreed.id : null;
       if (!r.base && st.known) r.prev = st.value;
@@ -240,7 +333,15 @@
     var st = fieldState(log, groupKey(o.kind, o.key, o.field));
     /** @type {any} */
     var r = { id: o.id, user: o.user, ts: o.ts, target: { kind: o.kind, key: o.key }, field: o.field, value: o.value === undefined ? null : o.value, base: null, resolution: true };
+    if (o.field === 'deleted' && r.value === true) r.covers = coversOf(log, o.kind, o.key);
     if (!st) return r;
+    if (st.deleteConflict) {
+      // keep (false: the edits apply) or delete (true: covers them all)
+      var dh = st.heads.filter(function(h) { return h.field === 'deleted'; });
+      r.base = dh[dh.length - 1].id;
+      if (dh.length > 1) r.resolves = dh.slice(0, -1).map(function(h) { return h.id; });
+      return r;
+    }
     r.base = st.agreed ? st.agreed.id : null;
     r.resolves = st.heads.map(function(h) { return h.id; }).filter(function(id) { return id !== r.base; });
     if (!r.resolves.length) delete r.resolves;
@@ -252,8 +353,13 @@
   // read the same changes must agree exactly).
   /** @param {any} log */
   function digest(log) {
+    var states = Object.create(null);
+    targets(log).forEach(function(t) {
+      var ts = targetState(log, t[0], t[1]);
+      Object.keys(ts.fields).forEach(function(f) { states[groupKey(t[0], t[1], f)] = ts.fields[f]; });
+    });
     return Object.keys(log.groups).sort().map(function(gk) {
-      var st = /** @type {any} */ (fieldState(log, gk));
+      var st = states[gk];
       return [gk.split(SEP).join('|'), st.conflicted ? 'C' : '=', JSON.stringify(st.value === undefined ? null : st.value), st.known ? 1 : 0,
         st.heads.map(function(h) { return h.id; }).join(',')].join(' ');
     }).join('\n');
@@ -361,6 +467,22 @@
     return JSON.parse(JSON.stringify(out));
   }
 
+  // A saved viewpoint as shared: camera, section / clip state, name and the
+  // item it belongs to — never its picture (`snapshot`) or export bookkeeping.
+  var VIEWPOINT_DROP = { snapshot: 1, snapshots: 1, image: 1, bcfGuid: 1, markup: 1, markups: 1 };
+  /** @param {any} vp */
+  function viewpointRecord(vp) {
+    var out = {};
+    Object.keys(vp || {}).forEach(function(k) {
+      if (k.charAt(0) === '_' || VIEWPOINT_DROP[k] || k === 'id') return;
+      var v = vp[k];
+      if (v === undefined || typeof v === 'function') return;
+      if (typeof v === 'string' && (v.length > 4000 || /^data:/.test(v))) return;
+      out[k] = v;
+    });
+    return JSON.parse(JSON.stringify(out));
+  }
+
   // ── Migration from a single .ccproject file ─────────────────────────
   // Read once into an initial snapshot; the old file is left untouched. Ids
   // and the snapshot name derive from the file's content, so two clients
@@ -407,6 +529,10 @@
       add('note', nt.id, 'created', JSON.parse(JSON.stringify(Object.assign({}, nt, { replies: undefined }))));
       (nt.replies || []).forEach(function(rp) { if (rp && rp.id) add('note', nt.id, 'reply:' + rp.id, JSON.parse(JSON.stringify(rp))); });
     });
+    (data.viewpoints || []).forEach(function(vp) {
+      if (!vp || !vp.id || !vp.camera) return;
+      add('viewpoint', vp.id, 'created', viewpointRecord(vp));
+    });
     var log = createLog();
     addChanges(log, recs);
     /** @type {Object<string,string>} */
@@ -416,8 +542,53 @@
     return { name: 'snapshot-' + pad(ts, 14) + '-' + user + '.json', snapshot: snap, changes: recs.length };
   }
 
+  // ── Migration of a cloud project's old per-issue rows ───────────────
+  // api/project.js kept one row per clash / issue (shared_issues: the whole
+  // minimal record, last writer's copy). Read once into change records, the
+  // same decisions a .ccproject migration keeps: non-default clash status /
+  // priority / assignee keyed by the clash identity (from the row's
+  // GlobalIds + point), every issue as `created`. Ids derive from project,
+  // row and field, so two servers migrating at once insert the same records.
+  /**
+   * @param {{id:string, data:any, updated_by?:string, updated_at?:any}[]} rows
+   * @param {{projectId:string, identityKey:(c:any)=>string}} opts
+   * @returns {{changes:any[], names:Object<string,string>}}
+   */
+  function migrateLegacyRows(rows, opts) {
+    /** @type {Object<string,string>} */
+    var names = {};
+    var recs = [], pid = String(opts.projectId || '');
+    (rows || []).forEach(function(row) {
+      var d = row && (typeof row.data === 'string' ? JSON.parse(row.data) : row.data);
+      if (!d || typeof d !== 'object' || !row.id) return;
+      var by = String(row.updated_by || 'anonymous').slice(0, 120);
+      var user = 'legacy-' + hash32(by);
+      names[user] = by;
+      var ts = new Date(row.updated_at || 0).getTime() || 0;
+      var rid = String(row.id);
+      function add(kind, key, field, value, prev) {
+        /** @type {any} */
+        var r = { id: 'mig-' + hash32(pid) + '-' + hash32(rid + SEP + field) + '-' + hash32(field + SEP + rid + SEP + pid), user: user, ts: ts,
+          target: { kind: kind, key: String(key) }, field: field, value: value, base: null };
+        if (prev !== undefined) r.prev = prev;
+        recs.push(r);
+      }
+      var isIssue = /^iss[_-]/.test(rid) || !!d.source || !(d.globalIdA && d.globalIdB);
+      if (!isIssue) {
+        var key = opts.identityKey({ globalIdA: d.globalIdA, globalIdB: d.globalIdB, point: d.point });
+        if (!key) return;
+        if (d.status && d.status !== 'open' && d.status !== 'auto_resolved') add('clash', key, 'status', d.status, 'open');
+        if (d.priority && d.priority !== 'normal') add('clash', key, 'priority', d.priority, 'normal');
+        if (d.assignee) add('clash', key, 'assignee', d.assignee, '');
+        return;
+      }
+      add('issue', rid, 'created', issueRecord(d));
+    });
+    return { changes: recs.map(normaliseChange).filter(Boolean), names: names };
+  }
+
   return Object.freeze({
-    contractVersion: 1,
+    contractVersion: 2,
     FORMAT: FORMAT,
     DECISION_FIELDS: DECISION_FIELDS,
     targetKey: targetKey,
@@ -446,7 +617,9 @@
     parseSnapshot: parseSnapshot,
     planCleanup: planCleanup,
     issueRecord: issueRecord,
+    viewpointRecord: viewpointRecord,
     hash32: hash32,
-    migrateProject: migrateProject
+    migrateProject: migrateProject,
+    migrateLegacyRows: migrateLegacyRows
   });
 }));
