@@ -4653,21 +4653,14 @@ function startApp() {
     return out;
   }
 
-  // ── Space boundaries (IfcRelSpaceBoundary + 1st/2nd-level subtypes) ──────
-  // Raw records only: per boundary the relating space, the related element
-  // (0 = none / virtual), flags, and its polygon(s) in the RELATING SPACE'S
-  // object-placement frame, in FILE units, Z up — exactly what IFC specifies
-  // for ConnectionGeometry. Supported surfaces: IfcCurveBoundedPlane
-  // (IfcPolyline / IfcIndexedPolyCurve / IfcCompositeCurve outer boundary),
-  // IfcFaceSurface / IfcFace, and face sets (IfcFacetedBrep, shells,
-  // IfcFaceBasedSurfaceModel, IfcShellBasedSurfaceModel). Placement into
-  // the scene — including detecting the systematic offset some exporters
-  // write — happens on the main thread (_ccPlaceSpaceBoundaries), which
-  // refuses to show anything it cannot verify. Each space's placement chain
-  // is resolved here (16 numbers, column-major, file units). Time-boxed.
-  function extractSpaceBoundaryRecords(api, modelID) {
-    var t0 = Date.now();
-    var out = { b: [], polyB: [], polyOff: [0], pts: [], spaces: {}, spaceRel: {}, truncated: false, ms: 0 };
+  // One reader of IFC placement chains and curves for every extractor that
+  // needs them (space boundaries, the room placement fix, grids) — they used
+  // to carry their own copies. Line lookups, IfcAxis2Placement3D -> 4x4
+  // (column-major, file units), placement chains (memoised per reader = per
+  // model), curve points (open = a polyline such as a grid axis: two points
+  // are enough and the ends are kept). Shared by the worker and the
+  // main-thread fallback (worker source via .toString()).
+  function ifcGeomReader(api, modelID) {
     function rv(x) { return x && typeof x === 'object' && x.value != null ? x.value : x; }
     function num(x) { x = rv(x); return typeof x === 'number' ? x : +x; }
     function line(id) { try { return id == null ? null : api.GetLine(modelID, id); } catch (e) { return null; } }
@@ -4707,7 +4700,7 @@ function startApp() {
       plMemo[plId] = M;
       return M;
     }
-    function curvePoints(cId, depth) {
+    function curvePoints(cId, depth, open) {
       var c = line(rv(cId));
       if (!c || (depth || 0) > 8) return null;
       var pts = [];
@@ -4720,7 +4713,7 @@ function startApp() {
       } else if (c.Segments && Array.isArray(c.Segments)) {
         for (var s = 0; s < c.Segments.length; s++) {
           var sg = line(rv(c.Segments[s]));
-          var sub = sg && sg.ParentCurve ? curvePoints(sg.ParentCurve, (depth || 0) + 1) : null;
+          var sub = sg && sg.ParentCurve ? curvePoints(sg.ParentCurve, (depth || 0) + 1, open) : null;
           if (sub) for (var t = 0; t < sub.length; t++) pts.push(sub[t]);
         }
       } else if (c.BasisCurve && c.Trim1 && c.Trim2) {
@@ -4728,12 +4721,40 @@ function startApp() {
           for (var u = 0; u < tr.length; u++) { var tp = coords(line(rv(tr[u]))); if (tp) { pts.push(tp); break; } }
         });
       }
-      if (pts.length > 1) {
+      var minPts = open ? 2 : 3;
+      if (!open && pts.length > 1) {
         var a = pts[0], b = pts[pts.length - 1];
         if (Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9 && Math.abs(a[2] - b[2]) < 1e-9) pts.pop();
       }
-      return pts.length >= 3 ? pts : null;
+      return pts.length >= minPts ? pts : null;
     }
+    function invRigid(M) { // orthonormal rotation + translation
+      var t = [M[12], M[13], M[14]];
+      return [M[0], M[4], M[8], 0, M[1], M[5], M[9], 0, M[2], M[6], M[10], 0,
+        -(M[0] * t[0] + M[1] * t[1] + M[2] * t[2]), -(M[4] * t[0] + M[5] * t[1] + M[6] * t[2]), -(M[8] * t[0] + M[9] * t[1] + M[10] * t[2]), 1];
+    }
+    function clsName(l) { try { return api.GetNameFromTypeCode(l.type) || ''; } catch (e) { return ''; } }
+    return { rv: rv, num: num, line: line, coords: coords, norm: norm, dirOf: dirOf, axisMatrix: axisMatrix, mul: mul, apply: apply,
+      invRigid: invRigid, placement: placement, curvePoints: curvePoints, clsName: clsName };
+  }
+
+  // ── Space boundaries (IfcRelSpaceBoundary + 1st/2nd-level subtypes) ──────
+  // Raw records only: per boundary the relating space, the related element
+  // (0 = none / virtual), flags, and its polygon(s) in the RELATING SPACE'S
+  // object-placement frame, in FILE units, Z up — exactly what IFC specifies
+  // for ConnectionGeometry. Supported surfaces: IfcCurveBoundedPlane
+  // (IfcPolyline / IfcIndexedPolyCurve / IfcCompositeCurve outer boundary),
+  // IfcFaceSurface / IfcFace, and face sets (IfcFacetedBrep, shells,
+  // IfcFaceBasedSurfaceModel, IfcShellBasedSurfaceModel). Placement into
+  // the scene — including detecting the systematic offset some exporters
+  // write — happens on the main thread (_ccPlaceSpaceBoundaries), which
+  // refuses to show anything it cannot verify. Each space's placement chain
+  // is resolved here (16 numbers, column-major, file units). Time-boxed.
+  function extractSpaceBoundaryRecords(api, modelID) {
+    var t0 = Date.now();
+    var out = { b: [], polyB: [], polyOff: [0], pts: [], spaces: {}, spaceRel: {}, truncated: false, ms: 0 };
+    var R = ifcGeomReader(api, modelID), rv = R.rv, num = R.num, line = R.line, coords = R.coords, axisMatrix = R.axisMatrix,
+      apply = R.apply, placement = R.placement, curvePoints = R.curvePoints, clsName = R.clsName;
     function loopPoints(loopId) {
       var lp = line(rv(loopId));
       if (!lp || !lp.Polygon) return null;
@@ -4754,7 +4775,6 @@ function startApp() {
       }
       if (best) outPolys.push(best);
     }
-    function clsName(l) { try { return api.GetNameFromTypeCode(l.type) || ''; } catch (e) { return ''; } }
     function surfacePolys(sId, outPolys, depth) {
       var sf = line(rv(sId));
       if (!sf || (depth || 0) > 6 || outPolys.length > 64) return;
@@ -4883,47 +4903,9 @@ function startApp() {
   function ccSpacePlacementFix(api, modelID, spaceId, box, tf, memo) {
     if (!api || !box || box.length < 6 || !tf || !(box[3] >= box[0])) return tf;
     memo = memo || {};
-    var plMemo = memo.pl || (memo.pl = {});
-    function rv(x) { return x && typeof x === 'object' && x.value != null ? x.value : x; }
-    function line(id) { try { return id == null ? null : api.GetLine(modelID, id); } catch (e) { return null; } }
-    function num(x) { x = rv(x); return typeof x === 'number' ? x : +x; }
-    function norm(v) { var l = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); return l > 1e-12 ? [v[0] / l, v[1] / l, v[2] / l] : null; }
-    function dirOf(id) { var d = line(rv(id)); var r = d && d.DirectionRatios; return r ? norm([num(r[0]) || 0, num(r[1]) || 0, r.length > 2 ? (num(r[2]) || 0) : 0]) : null; }
-    function axisMatrix(apId) {
-      var a = line(rv(apId));
-      if (!a) return null;
-      var pt = line(rv(a.Location)), c = pt && pt.Coordinates;
-      var o = c ? [num(c[0]) || 0, num(c[1]) || 0, c.length > 2 ? (num(c[2]) || 0) : 0] : [0, 0, 0];
-      var z = (a.Axis ? dirOf(a.Axis) : null) || [0, 0, 1];
-      var x = (a.RefDirection ? dirOf(a.RefDirection) : null) || (Math.abs(z[0]) > 0.9 ? [0, 1, 0] : [1, 0, 0]);
-      var d = x[0] * z[0] + x[1] * z[1] + x[2] * z[2];
-      x = norm([x[0] - d * z[0], x[1] - d * z[1], x[2] - d * z[2]]) || [1, 0, 0];
-      var y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
-      return [x[0], x[1], x[2], 0, y[0], y[1], y[2], 0, z[0], z[1], z[2], 0, o[0], o[1], o[2], 1];
-    }
-    function mul(A, B) {
-      var C = new Array(16);
-      for (var c = 0; c < 4; c++) for (var r = 0; r < 4; r++) {
-        C[c * 4 + r] = A[r] * B[c * 4] + A[4 + r] * B[c * 4 + 1] + A[8 + r] * B[c * 4 + 2] + A[12 + r] * B[c * 4 + 3];
-      }
-      return C;
-    }
-    function invRigid(M) { // orthonormal rotation + translation
-      var t = [M[12], M[13], M[14]];
-      return [M[0], M[4], M[8], 0, M[1], M[5], M[9], 0, M[2], M[6], M[10], 0,
-        -(M[0] * t[0] + M[1] * t[1] + M[2] * t[2]), -(M[4] * t[0] + M[5] * t[1] + M[6] * t[2]), -(M[8] * t[0] + M[9] * t[1] + M[10] * t[2]), 1];
-    }
-    function apply(M, p) { return [M[0] * p[0] + M[4] * p[1] + M[8] * p[2] + M[12], M[1] * p[0] + M[5] * p[1] + M[9] * p[2] + M[13], M[2] * p[0] + M[6] * p[1] + M[10] * p[2] + M[14]]; }
+    var R = memo.reader || (memo.reader = ifcGeomReader(api, modelID));
+    var rv = R.rv, line = R.line, axisMatrix = R.axisMatrix, mul = R.mul, invRigid = R.invRigid, apply = R.apply, placement = R.placement;
     var I = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-    function placement(plId, depth) {
-      if (plId == null || (depth || 0) > 32) return null;
-      if (plMemo[plId]) return plMemo[plId];
-      var pl = line(plId);
-      if (!pl) return null;
-      var local = axisMatrix(pl.RelativePlacement) || I;
-      var parent = pl.PlacementRelTo ? placement(rv(pl.PlacementRelTo), (depth || 0) + 1) : null;
-      return (plMemo[plId] = parent ? mul(parent, local) : local);
-    }
     var sp = line(spaceId), plId = sp ? rv(sp.ObjectPlacement) : null, pl = line(plId);
     var L = pl ? axisMatrix(pl.RelativePlacement) : null;
     if (!L) return tf;
@@ -7057,6 +7039,7 @@ function startApp() {
       + 'var extractProperties=' + extractProperties.toString() + ';\n'
       + 'var extractOpeningRecords=' + extractOpeningRecords.toString() + ';\n'
       + 'var extractSemanticRecords=' + extractSemanticRecords.toString() + ';\n'
+      + 'var ifcGeomReader=' + ifcGeomReader.toString() + ';\n'
       + 'var extractSpaceBoundaryRecords=' + extractSpaceBoundaryRecords.toString() + ';\n'
       + 'var createNotDrawnReport=' + createNotDrawnReport.toString() + ';\n'
       + 'var _ccIfcStreamOrder=' + _ccIfcStreamOrder.toString() + ';\n'

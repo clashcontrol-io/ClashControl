@@ -34,8 +34,9 @@ test('the IFC worker is built from the same extraction functions the fallback ca
 });
 
 test('extraction helpers are self-contained (stringified into the worker)', () => {
-  for (const name of ['extractSemanticRecords', 'extractSpaceBoundaryRecords']) {
+  for (const name of ['extractSemanticRecords', 'extractSpaceBoundaryRecords', 'ifcGeomReader']) {
     const start = src.indexOf('  function ' + name + '(api, modelID) {');
+    assert.ok(name !== 'ifcGeomReader' || /var ifcGeomReader=' \+ ifcGeomReader\.toString\(\)/.test(src), 'the shared reader ships to the worker');
     const end = src.indexOf('\n  }\n', start);
     assert.ok(start > 0 && end > start, name + ' not found');
     const body = src.slice(start, end);
