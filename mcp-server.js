@@ -132,8 +132,8 @@ const TOOLS = [
       'uniqueIdA/uniqueIdB (Revit UniqueId — the most reliable cross-document join key; prefer this), ' +
       'globalIdA/globalIdB (IFC GlobalId), revitIdA/revitIdB (Revit ElementId, doc-local). Plus ' +
       'classificationA/classificationB ({system, code} e.g. Uniclass or a national system — the join key to finance/ERP & ' +
-      'specs) and modelAId/modelBId. Also gridBay — the nearest structural-grid bay (e.g. "A-3") for ' +
-      'the clash point when grids are loaded via the Revit bridge, for "near grid A-3" queries. ' +
+      'specs) and modelAId/modelBId. Also gridBay — the nearest grid crossing (e.g. "A-3") for ' +
+      'the clash point when a model has grids (IfcGrid or the Revit bridge), for "near grid A-3" queries. ' +
       'Filter by status and limit results.',
     inputSchema: {
       type: 'object',
@@ -217,9 +217,9 @@ const TOOLS = [
   {
     name: 'get_grids',
     description:
-      'Structural grid axis names (e.g. "A", "B", "1", "2") brought into ClashControl via the Revit ' +
-      'bridge. Pair with get_clashes.gridBay (each clash\'s nearest grid bay, e.g. "A-3") to locate or ' +
-      'filter clashes by grid position. Empty for plain IFC loads (grids come from the live Revit link).',
+      'Grid axis names (e.g. "A", "B", "1", "2") from the loaded models\' IfcGrid, or from the Revit ' +
+      'bridge. Pair with get_clashes.gridBay (each clash\'s nearest grid crossing, e.g. "A-3") to locate or ' +
+      'filter clashes by grid position. Empty when no model has grids.',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {

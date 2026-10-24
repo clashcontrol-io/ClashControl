@@ -1051,8 +1051,7 @@
     }
 
     d({t:'UPD_REVIT_DIRECT', u:{loading:false, progress:1}});
-    // Rebuild the structural-grid overlay from the freshly-loaded gridLines.
-    try { if (window._ccRefreshGridOverlay) window._ccRefreshGridOverlay(); } catch(_e) {}
+    // (the core redraws the grid overlay when a model's gridLines change)
     // (loading card is cleared at export-end, not here — a federation has several
     // model-ends and we don't want to hide the card between models.)
     _revitBuf = null;

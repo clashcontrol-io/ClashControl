@@ -941,8 +941,8 @@
       (m.gridLines || []).forEach(function(g) { if (g && g.name && !seen[g.name]) { seen[g.name] = 1; names.push(g.name); } });
     });
     return { projectKey: pk, source: 'clashcontrol', total: names.length, grids: names,
-      note: names.length ? 'Structural grids from the Revit bridge. get_clashes.gridBay gives each clash\'s nearest bay (e.g. "A-3").'
-                         : 'No grids loaded. Grids come in via the Revit bridge (Connector) — not from plain IFC loads.' };
+      note: names.length ? 'Grid axes from the loaded models (IfcGrid, or the Revit bridge). get_clashes.gridBay gives each clash\'s nearest grid crossing (e.g. "A-3").'
+                         : 'No grids loaded: none of the models has an IfcGrid (or Revit grids via the Connector).' };
   };
 
   handlers.run_detection = function(p) {
@@ -1788,7 +1788,7 @@
 
   var _TOOL_MANIFEST = [
     { name:'get_status',          description:'Snapshot of the current session: models (with source, version, lastSync and a coarse revision stamp per model — use to check sync with another live tool), clash/issue counts, detection rules, active tab, walk mode, theme. Includes connector:{state(receiving|ready|disconnected),ingesting,percent,elementCount} — when connector.ingesting is true the Revit model is still streaming in, so DO NOT act on model/clash data until state==="ready". Also detecting/detectionProgress and lastDetectionError.' },
-    { name:'get_clashes',         description:'Detected clash pairs: status, priority, severity, storey, types/names, distance (mm), elevation (m), gridBay (nearest structural-grid bay e.g. "A-3" when grids loaded via the Revit bridge), disciplines (arch×structural vs same-discipline), and stable identity per side — uniqueIdA/B (Revit UniqueId, most reliable cross-doc key; prefer it), globalIdA/B (IFC GlobalId), revitIdA/B (ElementId, doc-local) — plus classificationA/B ({system,code} e.g. Uniclass or a national system) and modelAId/B.',
+    { name:'get_clashes',         description:'Detected clash pairs: status, priority, severity, storey, types/names, distance (mm), elevation (m), gridBay (nearest grid crossing e.g. "A-3" when a model has grids), disciplines (arch×structural vs same-discipline), and stable identity per side — uniqueIdA/B (Revit UniqueId, most reliable cross-doc key; prefer it), globalIdA/B (IFC GlobalId), revitIdA/B (ElementId, doc-local) — plus classificationA/B ({system,code} e.g. Uniclass or a national system) and modelAId/B.',
       params:{ status:{type:'string',enum:['all','open','resolved','approved','expected','closed'],opt:1}, category:{type:'string',opt:1}, limit:{type:'number',opt:1}, offset:{type:'number',opt:1} } },
     { name:'get_clash_summary',   description:'Aggregate profile of the WHOLE clash set without paging it: total/open, and counts byStatus, byCategory (AI), byDiscipline (pair), byTypePair (top N), byStorey. Use to find the few root causes behind a large count.',
       params:{ topN:{type:'number',opt:1} } },
@@ -1797,7 +1797,7 @@
     { name:'get_data_quality',    description:'Project-level data-quality summary (the aggregate companion to per-element get_element_quality): overall score (0-100) + grade (A-F), plus per-category sub-scores and raw flagged counts under metrics.{completeness,materials,brokenLinks,naming,classification,geometry} and a flat checks[] ({key,label,sev,cat,bucket,count,rate}). Numeric fields are stable for tracking over time. Computed from the open, auditable rules in the Data Quality engine — no detection round-trip.',
       params:{ modelId:{type:'string',opt:1} } },
     { name:'get_levels',          description:"Per-model level/storey elevations (raw + elevationM when unitScale known) so a consumer can compute floor build-up bands. get_clashes.elevation is scene metres." },
-    { name:'get_grids',           description:'Structural grid axis names (e.g. "A","B","1","2") brought in via the Revit bridge. Pair with get_clashes.gridBay to locate or filter clashes by grid position ("near grid A-3"). Empty for plain IFC loads.' },
+    { name:'get_grids',           description:'Grid axis names (e.g. "A","B","1","2") from the loaded models\' IfcGrid (or the Revit bridge). Pair with get_clashes.gridBay to locate or filter clashes by grid position ("near grid A-3"). Empty when no model has grids.' },
     { name:'get_issues',          description:'Retrieves coordination issues with status, priority, assignee, description, involved element IFC GlobalIds (globalIds[]) and Revit ElementIds (revitIdA/B) for cross-tool joins.',
       params:{ status:{type:'string',enum:['all','open','in_progress','resolved','closed'],opt:1}, limit:{type:'number',opt:1} } },
     { name:'get_element_by_guid',  description:'Resolve loaded element(s) by Revit UniqueId (preferred), IFC GlobalId, or Revit ElementId — the inverse join: turn a key from another tool into the matching CC element with its model, type, storey, material, uniqueId and classification. Accepts single uniqueId/globalId/revitId or arrays uniqueIds[]/globalIds[]/revitIds[].',

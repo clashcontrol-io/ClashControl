@@ -49,6 +49,11 @@ function generateSyntheticIfc(opts) {
   // contained in the storey. Not physical: a loader must never draw them as
   // building parts and they must never produce clashes.
   const nonPhysical = opts.nonPhysical ? Math.max(1, (opts.nonPhysical.perStorey | 0) || 3) : 0;
+  // buildingGrid: {u: ['A','B',...], v: ['1','2',...], spacing} — one
+  // IfcGrid on the first storey, the way authoring tools write a building
+  // grid: U axis i runs along Y at X = i*spacing, V axis j along X at
+  // Y = j*spacing, each 5 m past the outermost crossing. No representation.
+  const buildingGrid = opts.buildingGrid || null;
 
   let id = 0;
   const next = () => ++id;
@@ -220,6 +225,24 @@ function generateSyntheticIfc(opts) {
         npIds.push(elId);
       }
       lines.push(`#${next()}=IFCRELCONTAINEDINSPATIALSTRUCTURE('2SynthRelNP0000000000${id}',$,$,$,(${npIds.map((w) => '#' + w).join(',')}),#${storeyId});`);
+    }
+    if (buildingGrid && s === 0) {
+      const sp = buildingGrid.spacing || 10, uN = buildingGrid.u.length, vN = buildingGrid.v.length;
+      const axes = (tags, along) => tags.map((tag, i) => {
+        const p1 = next(), p2 = next(), pl = next(), ga = next();
+        const lo = -5, hi = ((along === 'Y' ? vN : uN) - 1) * sp + 5;
+        const a = along === 'Y' ? [i * sp, lo] : [lo, i * sp], b = along === 'Y' ? [i * sp, hi] : [hi, i * sp];
+        lines.push(`#${p1}=IFCCARTESIANPOINT((${a[0].toFixed(1)},${a[1].toFixed(1)}));`);
+        lines.push(`#${p2}=IFCCARTESIANPOINT((${b[0].toFixed(1)},${b[1].toFixed(1)}));`);
+        lines.push(`#${pl}=IFCPOLYLINE((#${p1},#${p2}));`);
+        lines.push(`#${ga}=IFCGRIDAXIS('${tag}',#${pl},.T.);`);
+        return ga;
+      });
+      const uAx = axes(buildingGrid.u, 'Y'), vAx = axes(buildingGrid.v, 'X');
+      const gId = next(), gPl = next();
+      lines.push(`#${gPl}=IFCLOCALPLACEMENT(#${storeyPlacementId},#${axisId});`);
+      lines.push(`#${gId}=IFCGRID('${('9SynthBGrid' + gId).padEnd(22, '0').slice(0, 22)}',$,'Building grid',$,$,#${gPl},$,(${uAx.map((a) => '#' + a).join(',')}),(${vAx.map((a) => '#' + a).join(',')}),$,$);`);
+      lines.push(`#${next()}=IFCRELCONTAINEDINSPATIALSTRUCTURE('2SynthRelBG0000000000${id}',$,$,$,(#${gId}),#${storeyId});`);
     }
     if (withSpaces) {
       const spaceId = next(), spPlacementId = next(), spAxisId = next(), spOriginId = next();

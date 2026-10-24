@@ -1588,6 +1588,7 @@ function startApp() {
     aiEnvelope:_ccLoadPref('aiEnvelope',{resolveClashes:'nudge'}),
     // Rooms (IfcSpace volumes) — hidden by default; toggled from the toolbar Style menu.
     showSpaces:_ccLoadPref('showSpaces',false),
+    showGridLines:_ccLoadPref('showGridLines',true),
     preRunDontAsk:_ccLoadPref('preRunDontAsk',false), // pre-run suggestions panel: don't ask again
   };
   // Restore section state persisted from previous session
@@ -1704,7 +1705,7 @@ function startApp() {
   // action's `u` payload. Was an inline array literal recreated on every
   // UPD_PREFS dispatch; named here so it can't silently drift from what it
   // actually does.
-  var PERSISTED_PREF_KEYS = ['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView','zoomSens','navInputMode','showSpaces','preRunDontAsk'];
+  var PERSISTED_PREF_KEYS = ['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView','zoomSens','navInputMode','showSpaces','showGridLines','preRunDontAsk'];
   var A = {
     ADD_MODEL:'ADD_MODEL', DEL_MODEL:'DEL_MODEL', REPLACE_MODEL:'REPLACE_MODEL', UPD_MODEL:'UPD_MODEL',
     PARK_MODEL:'PARK_MODEL', UNPARK_MODEL:'UNPARK_MODEL', SET_AUTOPARK:'SET_AUTOPARK',
@@ -6282,6 +6283,8 @@ function startApp() {
       var _semRecs = null, _sbRecs = null, _tSemF = performance.now();
       try { _semRecs = extractSemanticRecords(api, modelID); } catch (_smE) { console.warn('[IFC] semantic extraction failed:', _smE); }
       try { _sbRecs = extractSpaceBoundaryRecords(api, modelID); } catch (_sbE) { console.warn('[IFC] space boundary extraction failed:', _sbE); }
+      var _gridRecs = null;
+      try { _gridRecs = extractGridAxes(api, modelID); } catch (_grE) { console.warn('[IFC] grid extraction failed:', _grE); }
       _lp.semanticsMs = Math.round(performance.now() - _tSemF);
 
       // Stub elements (no meshes): rooms without geometry, then the
@@ -6351,7 +6354,7 @@ function startApp() {
               console.groupEnd();
             })();
             geoCache = null; // allow GC after load
-            resolve({ meshes:meshes, elements:elements, storeys:Object.keys(allStoreys).sort(), storeyData:storeyData, spatialHierarchy:spatialHierarchy, relatedPairs:relatedPairs, spaceBoundaries:_sbRecs, stats:stats });
+            resolve({ meshes:meshes, elements:elements, storeys:Object.keys(allStoreys).sort(), storeyData:storeyData, spatialHierarchy:spatialHierarchy, relatedPairs:relatedPairs, spaceBoundaries:_sbRecs, gridAxes:_gridRecs, stats:stats });
           }
         }
         processChunk(0);
@@ -6999,10 +7002,11 @@ function startApp() {
         // Discipline/role evidence + space boundaries (applied on the main
         // thread by the same helpers the fallback uses).
         var _tSem = performance.now();
-        var semRecs = null, sbRecs = null;
+        var semRecs = null, sbRecs = null, gridRecs = null;
         if (!_aux) {
           try { semRecs = extractSemanticRecords(api, modelID); } catch (_smE) { semRecs = null; }
           try { sbRecs = extractSpaceBoundaryRecords(api, modelID); } catch (_sbE) { sbRecs = null; }
+          try { gridRecs = extractGridAxes(api, modelID); } catch (_grE) { gridRecs = null; }
         }
         var _semMs = performance.now() - _tSem;
         // below, because that function also calls api.GetLine and needs the
@@ -7059,7 +7063,7 @@ function startApp() {
         // (its buffers are detached here), so the result carries none.
         _emit({type:'result', packedEls:packedEls, geoTable:(_stream ? {} : _geoTable), streamed:_stream ? _bSent : 0,
           openingRecs:openingRecs, notDrawn:_notDrawn.result(), mem:mem,
-          semantics:semRecs, spaceBoundaries:sbRecs,
+          semantics:semRecs, spaceBoundaries:sbRecs, gridAxes:gridRecs,
           loadedScope:(_scopeSet ? _scope.storeys : null), scopedOutCount:_scopedOut,
           geoUnique:_geoUnique, geoReused:_geoReused,
           storeys:Object.keys(allStoreys).sort(), storeyData:storeyData,
@@ -7446,7 +7450,7 @@ function startApp() {
       console.table(rows);
       console.groupEnd();
     })();
-    return {meshes:meshes, elements:elements, storeys:msg.storeys, storeyData:msg.storeyData, spatialHierarchy:msg.spatialHierarchy||{}, relatedPairs:msg.relatedPairs, spaceBoundaries:msg.spaceBoundaries||null, stats:stats};
+    return {meshes:meshes, elements:elements, storeys:msg.storeys, storeyData:msg.storeyData, spatialHierarchy:msg.spatialHierarchy||{}, relatedPairs:msg.relatedPairs, spaceBoundaries:msg.spaceBoundaries||null, gridAxes:msg.gridAxes||null, stats:stats};
     }
   }
 
@@ -20503,15 +20507,21 @@ function startApp() {
       S.gridOverlay = new THREE.Group();
       S.gridOverlay.name = 'gridOverlay';
       scene.add(S.gridOverlay);
+      // all visible models' grid lines, rebuilt only when the models change
+      var _ccGridLinesMemo = { models: null, out: [] };
       function _ccGridLinesAll() {
-        var out = [], st = window._ccLatestState;
-        if (!st || !st.models) return out;
+        var st = window._ccLatestState;
+        if (!st || !st.models) return [];
+        if (_ccGridLinesMemo.models === st.models) return _ccGridLinesMemo.out;
+        var out = [];
         st.models.forEach(function(m){
           if (m.visible === false) return;
           (m.gridLines || []).forEach(function(g){ if (g && g.pts && g.pts.length >= 4) out.push(g); });
         });
+        _ccGridLinesMemo = { models: st.models, out: out };
         return out;
       }
+      window._ccGridLinesAll = _ccGridLinesAll;
       function _ccMakeGridLabel(name) {
         try {
           var c = document.createElement('canvas'); c.width = 128; c.height = 64;
@@ -20538,7 +20548,8 @@ function startApp() {
           var lineMat = new THREE.LineBasicMaterial({ color: 0x60a5fa, transparent: true, opacity: 0.45 });
           grids.forEach(function(gr){
             var pts = gr.pts, v = [];
-            for (var i = 0; i + 1 < pts.length; i += 2) v.push(new THREE.Vector3(pts[i], 0.02, pts[i+1]));
+            var y = isFinite(gr.elev) ? gr.elev + 0.02 : 0.02;
+            for (var i = 0; i + 1 < pts.length; i += 2) v.push(new THREE.Vector3(pts[i], y, pts[i+1]));
             if (v.length < 2) return;
             var line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(v), lineMat);
             line.frustumCulled = false;
@@ -20546,37 +20557,23 @@ function startApp() {
             var tex = _ccMakeGridLabel(gr.name);
             if (tex) {
               var sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
-              sp.position.set(v[0].x, 0.6, v[0].z); sp.scale.set(1.8, 0.9, 1); sp.renderOrder = 999;
+              sp.position.set(v[0].x, y + 0.6, v[0].z); sp.scale.set(1.8, 0.9, 1); sp.renderOrder = 999;
               S.gridOverlay.add(sp);
             }
           });
         }
         var prefs = window._ccLatestState && window._ccLatestState.prefs;
-        S.gridOverlay.visible = !(prefs && prefs.showGrids === false);
+        S.gridOverlay.visible = !(prefs && prefs.showGridLines === false);
         invalidate(2);
       };
-      // Nearest-grid lookup for a scene point. Returns a bay label like "A-3"
-      // (one axis from each grid family) or null when no grids are loaded.
+      // Nearest-grid lookup for a scene point: "C-4" (one axis of each
+      // family), or null when no grids are loaded. _ccGridRef has the detail.
       window._ccGridBayForPoint = function(p) {
         if (!p) return null;
-        var grids = _ccGridLinesAll();
-        if (!grids.length) return null;
         var px = p.x != null ? p.x : p[0];
         var pz = p.z != null ? p.z : (p[2] != null ? p[2] : p[1]);
-        if (px == null || pz == null) return null;
-        var bestX = null, bestXd = Infinity, bestZ = null, bestZd = Infinity;
-        grids.forEach(function(gr){
-          var pts = gr.pts; if (!pts || pts.length < 4) return;
-          var x1 = pts[0], z1 = pts[1], x2 = pts[pts.length-2], z2 = pts[pts.length-1];
-          var dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz) || 1;
-          var dist = Math.abs((dz*(px - x1) - dx*(pz - z1)) / len);
-          if (Math.abs(dx) >= Math.abs(dz)) { if (dist < bestZd) { bestZd = dist; bestZ = gr.name; } }
-          else { if (dist < bestXd) { bestXd = dist; bestX = gr.name; } }
-        });
-        var parts = [];
-        if (bestX) parts.push(bestX);
-        if (bestZ) parts.push(bestZ);
-        return parts.length ? parts.join('-') : null;
+        var r = _ccGridRef(_ccGridLinesAll(), px, pz);
+        return r ? r.label : null;
       };
 
       var mg = new THREE.Group(); scene.add(mg); S.mg = mg;
@@ -22086,6 +22083,16 @@ function startApp() {
         S.camera.lookAt(S.orbit.target);
         S.orbit.sync(); S.orbit.apply();
       }
+      // Grid overlay: redrawn only when the set of visible grid lines changes
+      // (a model with grids added / removed / shown / hidden), not on every
+      // model update.
+      // grid overlay: rebuilt only when a visible model's grid lines change
+      var _grids = s.models.map(function(m){ return m.visible !== false && m.gridLines && m.gridLines.length ? m.gridLines : null; }).filter(Boolean);
+      var _gridsWas = S._gridsDrawn || [];
+      if (_grids.length !== _gridsWas.length || _grids.some(function(g, i){ return g !== _gridsWas[i]; })) {
+        S._gridsDrawn = _grids;
+        if (window._ccRefreshGridOverlay) window._ccRefreshGridOverlay();
+      }
       invalidate();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on s.models; s.prefs.renderStyle is only sampled to size the ground plane at that moment, render-style changes have their own effect below
     }, [s.models]);
@@ -22678,6 +22685,15 @@ function startApp() {
       S._spacesShown = !!s.prefs.showSpaces;
       invalidate();
     }, [s.prefs.showSpaces]);
+
+    // Grid lines overlay on / off (the overlay itself is rebuilt by the
+    // models effect when the set of grids changes).
+    useEffect(function(){
+      var S = state3d.current;
+      if (!S || !S.gridOverlay) return;
+      S.gridOverlay.visible = s.prefs.showGridLines !== false;
+      invalidate();
+    }, [s.prefs.showGridLines]);
 
     useEffect(function(){
       var S = state3d.current;
@@ -25436,10 +25452,95 @@ function startApp() {
     if (result.stats) result.stats.classifyMs = Math.round(performance.now() - _t0); // main-thread share (worker share: stats.semanticsMs)
     return info ? info.discipline : detectDiscipline(result.elements || [], name);
   }
+  // IfcGrid axes (extractGridAxes: IFC world, file units) -> model.gridLines
+  // [{name: axis tag, fam: 'U'|'V'|'W', grid, elev, pts: [x1,z1,x2,z2,...]}]
+  // in scene metres (x = X, z = -Y; IFC Z is the elevation) — the format the
+  // grid overlay and the bay lookup read (the Revit link writes it too).
+  // An axis repeated on every storey is kept once. Placement needs the
+  // model's declared length unit (unitScale = file units per metre); without
+  // one the grids are not placed (logged) rather than guessed.
+  function _ccGridLinesFromAxes(gridAxes, unitScale) {
+    if (!gridAxes || !gridAxes.length) return null;
+    if (!(unitScale > 0)) { console.warn('[IFC] grid lines not placed: the model declares no SI length unit'); return null; }
+    var out = [], seen = {};
+    gridAxes.forEach(function(g) {
+      (g.axes || []).forEach(function(a) {
+        var p = a.pts || [], xz = [], elev = 0;
+        for (var i = 0; i + 2 < p.length; i += 3) { xz.push(p[i] / unitScale, -p[i + 1] / unitScale); elev = p[i + 2] / unitScale; }
+        if (xz.length < 4) return;
+        var key = a.fam + '|' + a.tag + '|' + xz.map(function(v) { return Math.round(v * 1000); }).join(',');
+        if (seen[key]) return;
+        seen[key] = 1;
+        out.push({ name: a.tag, fam: a.fam, grid: g.name || '', elev: elev, pts: xz });
+      });
+    });
+    return out.length ? out : null;
+  }
+  // Nearest grid axis of each family to plan point (x, z), scene metres.
+  // lines: model.gridLines. Families come from the IFC grid (U / V / W);
+  // lines without one (the Revit link) are grouped by plan direction as
+  // before. Each pick carries the signed offset from its axis (metres, + on
+  // the left of the axis direction). label "C-4": the U axis first, then V
+  // (then W). Returns null without grid lines.
+  function _ccGridRef(lines, x, z) {
+    if (!lines || !lines.length || !isFinite(x) || !isFinite(z)) return null;
+    var best = {};
+    for (var i = 0; i < lines.length; i++) {
+      var g = lines[i], p = g.pts;
+      if (!p || p.length < 4) continue;
+      var x1 = p[0], z1 = p[1], x2 = p[p.length - 2], z2 = p[p.length - 1];
+      var dx = x2 - x1, dz = z2 - z1, len = Math.sqrt(dx * dx + dz * dz);
+      if (!(len > 0)) continue;
+      var fam = g.fam || (Math.abs(dx) >= Math.abs(dz) ? 'V' : 'U');
+      var off = (dx * (z - z1) - dz * (x - x1)) / len;
+      var cur = best[fam];
+      if (!cur || Math.abs(off) < Math.abs(cur.offset)) best[fam] = { name: String(g.name), offset: off };
+    }
+    var parts = [];
+    ['U', 'V', 'W'].forEach(function(f) { if (best[f]) parts.push(best[f].name); });
+    return parts.length ? { u: best.U || null, v: best.V || null, w: best.W || null, label: parts.join('-') } : null;
+  }
+  // Rooms with geometry and grid lines over all models, for the View menu;
+  // counted once per models array, not on every menu render.
+  var _ccRoomGridMemo = { models: null, out: null };
+  function _ccRoomGridCounts(models) {
+    if (_ccRoomGridMemo.models === models && _ccRoomGridMemo.out) return _ccRoomGridMemo.out;
+    var out = { spaces: 0, grids: 0 };
+    (models || []).forEach(function(m){
+      (m.elements || []).forEach(function(el){ if (_ccIsSpaceEl(el) && el.meshes && el.meshes.length) out.spaces++; });
+      out.grids += (m.gridLines || []).length;
+    });
+    _ccRoomGridMemo = { models: models, out: out };
+    return out;
+  }
+  // Grid position of a clash ("C-4"), or null without grid lines. One
+  // _ccGridRef per clash, memoised on the clash object until the set of
+  // grid lines changes (a model added / removed / hidden).
+  var _ccClashGridMemo = new WeakMap(), _ccClashGridLines = null;
+  function _ccClashGrid(c) {
+    var p = c && c.point;
+    if (!p || typeof window._ccGridLinesAll !== 'function') return null;
+    var lines = window._ccGridLinesAll();
+    if (!lines.length) return null;
+    if (lines !== _ccClashGridLines) { _ccClashGridMemo = new WeakMap(); _ccClashGridLines = lines; }
+    if (_ccClashGridMemo.has(c)) return _ccClashGridMemo.get(c);
+    var r = _ccGridRef(lines, p.x != null ? p.x : p[0], p.z != null ? p.z : p[2]);
+    var g = r ? r.label : null;
+    _ccClashGridMemo.set(c, g);
+    return g;
+  }
+  // "Grid C-4 · Level 6": the clash's grid position and storey, either
+  // part left out when unknown; '' when both are.
+  function _ccClashLocation(c, storey) {
+    var g = _ccClashGrid(c);
+    return [g ? _cc_t('clash.gridAt', 'Grid {g}', { g: g }) : '', storey || ''].filter(Boolean).join(' \u00b7 ');
+  }
   // Model fields produced by _ccClassifyLoadedResult (spread into ADD/REPLACE_MODEL).
   function _ccSemanticModelFields(result) {
     return { disciplineInfo: result.disciplineInfo || null, spaceBoundaries: result.spaceBoundaries || null,
-      _ccBoundaries: result._ccBoundaries || null, loaderWarnings: result.loaderWarnings || [] };
+      _ccBoundaries: result._ccBoundaries || null, loaderWarnings: result.loaderWarnings || [],
+      // converted once per load result, whichever creation path asks first
+      gridLines: result.gridLines !== undefined ? result.gridLines : (result.gridLines = _ccGridLinesFromAxes(result.gridAxes, result.stats && result.stats.unitScale)) };
   }
   // Matrix / toast key of a whole model: 'mep.ventilation' when the model is
   // dominantly one MEP trade, else its (possibly user-chosen) discipline.
@@ -30358,7 +30459,7 @@ function startApp() {
   function _ccSearchHay(it, isClashTab, trow) {
     var hit = _ccSearchHayCache.get(it);
     if (hit && hit.clash === isClashTab && hit.row === trow) return hit.hay;
-    var hay = isClashTab ? [it.title,it.description,it.type,it.elemAStorey,it.elemBStorey,it.elemAType,it.elemBType,it.elemAMaterial,it.elemBMaterial,it.status,it.elemAName,it.elemBName,it.globalIdA,it.globalIdB,trow&&trow.v.storey,trow&&trow.v.typePair,trow&&trow.v.modelPair,it.assignee].filter(Boolean).join(' ').toLowerCase()
+    var hay = isClashTab ? [it.title,it.description,it.type,_ccClashGrid(it),it.elemAStorey,it.elemBStorey,it.elemAType,it.elemBType,it.elemAMaterial,it.elemBMaterial,it.status,it.elemAName,it.elemBName,it.globalIdA,it.globalIdB,trow&&trow.v.storey,trow&&trow.v.typePair,trow&&trow.v.modelPair,it.assignee].filter(Boolean).join(' ').toLowerCase()
       : (it.title||'').toLowerCase()+' '+(it.description||'').toLowerCase();
     _ccSearchHayCache.set(it, { clash: isClashTab, row: trow, hay: hay });
     return hay;
@@ -31423,7 +31524,7 @@ function startApp() {
       return {
         label: _rowLabel,
         count: items.length, open: open, sev: sev,
-        storey: _rowStorey,
+        storey: _ccClashLocation(first, _rowStorey),
         assignees: Object.keys(assignees).join(', '),
       };
     }).sort(function(a,b){ return b.open - a.open || b.count - a.count; });
@@ -31475,7 +31576,7 @@ function startApp() {
       review = { counts: _tmR.counts, items: _rmR.items.slice(0, 24).map(function(it){
         var sv = it.summary ? it.summary.severity : (it.lead.aiSeverity || _ccDeterministicSeverity(it.lead));
         return { title: it.title, n: it.items.length, sev: sv, img: _snapSvc ? _snapSvc.get(it.lead) : null,
-          ext: it.summary ? it.summary.extentSummary : '', storey: it.summary ? it.summary.storey : (it.lead.elemAStorey || it.lead.elemBStorey || '') };
+          ext: it.summary ? it.summary.extentSummary : '', storey: _ccClashLocation(it.lead, it.summary ? it.summary.storey : (it.lead.elemAStorey || it.lead.elemBStorey || '')) };
       }), total: _rmR.items.length };
     } catch (_) { review = null; }
     function _reviewSection() {
@@ -31525,7 +31626,7 @@ function startApp() {
         : '')
       + _reviewSection()
       + '<h2>Clash clusters'+(truncated?' (top '+ROW_CAP+' by open count)':'')+'</h2>'
-      + '<table><tr><th>#</th><th>Cluster</th><th>Clashes</th><th>Open</th><th>Severity</th><th>Storey</th><th>Assignee</th></tr>'
+      + '<table><tr><th>#</th><th>Cluster</th><th>Clashes</th><th>Open</th><th>Severity</th><th>Location</th><th>Assignee</th></tr>'
       +   rows.map(function(r, i){
             return '<tr><td>'+(i+1)+'</td><td>'+esc(r.label)+'</td><td>'+r.count+'</td>'
               + '<td>'+(r.open ? '<b style="color:#dc2626">'+r.open+'</b>' : '0')+'</td>'
@@ -35405,7 +35506,7 @@ function startApp() {
               ${it.distance!=null && it.distance>=0 && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-secondary)',fontFamily:'var(--font-mono)',padding:'2px 0',fontWeight:'var(--weight-regular)',letterSpacing:'.01em'}}>
                 ${it.distance===0?_cc_t('issueRow.touching','touching'):it.distance+' mm'}
               </span>`}
-              ${storeyLabel && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-muted)',padding:'.1rem var(--space-2)',borderLeft:'1px solid var(--hairline-strong)'}}>${storeyLabel}</span>`}
+              ${function(){ var loc = _ccClashLocation(it, storeyLabel); return loc && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--ink-muted)',padding:'.1rem var(--space-2)',borderLeft:'1px solid var(--hairline-strong)'}}>${loc}</span>`; }()}
               ${it.selfClash && html`<span class="cc-status-pill" style=${{color:'var(--accent)',background:'var(--accent-bg)'}}>${_cc_t('issueRow.self','self')}</span>`}
               ${it.expectedClash && html`<span class="cc-status-pill" style=${{color:'var(--color-warning-fg)',background:'var(--color-warning-bg)'}}>${_cc_t('issueRow.expected','expected')}</span>`}
               ${it.opening==='partial' && html`<span class="cc-status-pill" title=${_cc_t('opening.tooSmallTitle','The element overlaps an IFC opening in the host but is larger than it')} style=${{color:'var(--color-warning-fg)',background:'var(--color-warning-bg)'}}>${_cc_t('opening.tooSmall','Opening too small')}</span>`}
@@ -48134,28 +48235,36 @@ function startApp() {
                 </button>`;
               })}
               ${function(){
-                // Rooms (IfcSpace volumes) — hidden by default, one persisted toggle.
-                var spOn = !!s.prefs.showSpaces;
-                var spN = 0;
-                (s.models||[]).forEach(function(m){ (m.elements||[]).forEach(function(el){ if (_ccIsSpaceEl(el) && el.meshes && el.meshes.length) spN++; }); });
-                return html`<div style=${{borderTop:'1px solid var(--hairline)',marginTop:'var(--space-1)',paddingTop:'var(--space-1)'}}>
-                  <button role="menuitemcheckbox" aria-checked=${spOn ? 'true' : 'false'} id="cc-show-spaces"
-                    title=${_cc_t('toolbar.showSpacesHint','Rooms (IfcSpace) as translucent volumes. Never part of clash detection.')}
-                    onClick=${function(){ d({t:A.UPD_PREFS,u:{showSpaces:!spOn}}); }}
+                // Reference layers, each one persisted toggle: rooms (IfcSpace
+                // volumes, hidden by default) and grid lines (IfcGrid axes /
+                // the Revit link's grids, shown by default, only listed when a
+                // model has some). Neither is ever part of clash detection.
+                function check(id, on, label, hint, count, toggle) {
+                  return html`<button role="menuitemcheckbox" aria-checked=${on ? 'true' : 'false'} id=${id} title=${hint} onClick=${toggle}
                     style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'var(--space-2)',width:'100%',
                       padding:'var(--space-2) var(--space-3)',background:'none',border:'none',cursor:'pointer',textAlign:'left',
                       fontFamily:'var(--font-body)',fontSize:'var(--text-sm)',
-                      color:spOn?'var(--ink-primary)':'var(--ink-secondary)',fontWeight:spOn?500:400}}
+                      color:on?'var(--ink-primary)':'var(--ink-secondary)',fontWeight:on?500:400}}
                     onMouseEnter=${function(e){e.currentTarget.style.background='var(--surface-warm)';}}
                     onMouseLeave=${function(e){e.currentTarget.style.background='none';}}>
                     <span style=${{display:'inline-flex',alignItems:'center',gap:'var(--space-2)'}}>
                       <span aria-hidden="true" style=${{width:14,height:14,flex:'0 0 14px',display:'inline-flex',alignItems:'center',justifyContent:'center',
-                        border:'1px solid '+(spOn?'var(--accent)':'var(--hairline-strong)'),borderRadius:'var(--radius-xs)',
-                        background:spOn?'var(--accent)':'none',color:'var(--accent-contrast)',fontSize:'var(--text-2xs)',lineHeight:1}}>${spOn ? '✓' : ''}</span>
-                      ${_cc_t('toolbar.showSpaces','Show spaces')}
+                        border:'1px solid '+(on?'var(--accent)':'var(--hairline-strong)'),borderRadius:'var(--radius-xs)',
+                        background:on?'var(--accent)':'none',color:'var(--accent-contrast)',fontSize:'var(--text-2xs)',lineHeight:1}}>${on ? '✓' : ''}</span>
+                      ${label}
                     </span>
-                    <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-faint)'}}>${spN || ''}</span>
-                  </button>
+                    <span style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)',color:'var(--ink-faint)'}}>${count || ''}</span>
+                  </button>`;
+                }
+                var spOn = !!s.prefs.showSpaces, grOn = s.prefs.showGridLines !== false;
+                var cnt = _ccRoomGridCounts(s.models), spN = cnt.spaces, grN = cnt.grids;
+                return html`<div style=${{borderTop:'1px solid var(--hairline)',marginTop:'var(--space-1)',paddingTop:'var(--space-1)'}}>
+                  ${check('cc-show-spaces', spOn, _cc_t('toolbar.showSpaces','Show spaces'),
+                    _cc_t('toolbar.showSpacesHint','Rooms (IfcSpace) as translucent volumes. Never part of clash detection.'), spN,
+                    function(){ d({t:A.UPD_PREFS,u:{showSpaces:!spOn}}); })}
+                  ${grN > 0 && check('cc-show-grid-lines', grOn, _cc_t('toolbar.showGridLines','Show grids'),
+                    _cc_t('toolbar.showGridLinesHint','Grid lines with their tags. Never part of clash detection; clashes are located by them.'), grN,
+                    function(){ d({t:A.UPD_PREFS,u:{showGridLines:!grOn}}); })}
                 </div>`;
               }()}
               ${curStyle==='rendered' && function(){

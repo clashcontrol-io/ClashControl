@@ -316,6 +316,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- ~~2026-10-24: IFC grids as data — `extractGridAxes` on both loaders → `model.gridLines` (same shape as the Revit link), overlay + View menu "Show grids" (`prefs.showGridLines`), clash location "Grid C-4 · Level 6" (`_ccClashLocation`, memoised per clash) in rows, report and search; INTERNALS §21.51, `tests/browser/grid-lines.mjs`. Geo-cache persistence of grids follows the shared-geometry cache merge.~~ (2026-10-24)
 - ~~2026-10-24: first-load main-thread cost (branch `loadmain`): normals/bounds in the IFC worker, lazy preview chunks paced on the real frame cost (render start → next task), sliced decode — identical scene; INTERNALS §21.50.~~ (2026-10-24)
 - ~~2026-10-24: geo cache written once after the lazy props (`pp:1`, restores no longer silently re-parse; reopen of a 2-model federation −38 %), desktop native pool searches each pair within its own clearance seed (one call per distinct seed).~~ (2026-10-24)
 - ~~2026-10-23: non-physical elements (branch `nonphys`): worker == fallback for IfcVirtualElement / IfcAnnotation / IfcGrid (not tessellated, stub elements, `nonRenderable`), never clash on any path, geo cache `np:1`, worker `typeId` Int32 overflow fixed; INTERNALS §21.49.~~ (2026-10-23)

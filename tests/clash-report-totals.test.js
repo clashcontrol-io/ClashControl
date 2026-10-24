@@ -67,6 +67,7 @@ test('a cluster row\'s Open column counts only status===open, not in_progress', 
     + "var clusters = { k: clashes }, order = ['k'];\n"
     + 'var window = {};\n'
     + 'function _ccDeterministicSeverity(){ return "minor"; }\n'
+    + 'function _ccClashLocation(c, storey){ return storey; }\n'
     + extractRowsLogic()
     + '\nreturn rows;';
   const rows = new Function(src)();
@@ -81,6 +82,7 @@ test('a cluster row\'s Storey reads elemAStorey/elemBStorey (clash fields), not 
     + "var clusters = { k: clashes }, order = ['k'];\n"
     + 'var window = {};\n'
     + 'function _ccDeterministicSeverity(){ return "minor"; }\n'
+    + 'function _ccClashLocation(c, storey){ return storey; }\n'
     + extractRowsLogic()
     + '\nreturn rows;';
   const rows = new Function(src)();
@@ -93,6 +95,7 @@ test('a generic fallback label (no title, no _ccClusterLabelFor) still gets the 
     + "var clusters = { k: clashes }, order = ['k'];\n"
     + 'var window = {};\n'
     + 'function _ccDeterministicSeverity(){ return "minor"; }\n'
+    + 'function _ccClashLocation(c, storey){ return storey; }\n'
     + extractRowsLogic()
     + '\nreturn rows;';
   const rows = new Function(src)();
@@ -105,6 +108,7 @@ test('a real title is used as-is, with no number suffix appended', () => {
     + "var clusters = { k: clashes }, order = ['k'];\n"
     + 'var window = {};\n'
     + 'function _ccDeterministicSeverity(){ return "minor"; }\n'
+    + 'function _ccClashLocation(c, storey){ return storey; }\n'
     + extractRowsLogic()
     + '\nreturn rows;';
   const rows = new Function(src)();
