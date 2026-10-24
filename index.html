@@ -1683,6 +1683,7 @@ function startApp() {
           var scan = window._ccStorageCore.scanLocalStorage(entries);
           var plan = window._ccStorageCore.planLocalPrune(scan.items, str.length * 2 + 1024);
           plan.keys.forEach(function(pk) { try { localStorage.removeItem(pk); } catch (_) {} });
+          _ccLsRemoved(plan.keys);
           localStorage.setItem(key, str);
           console.log('[storage] localStorage quota hit — pruned ' + plan.keys.length + ' derived/decay keys to save ' + key);
           return true;
@@ -1697,6 +1698,12 @@ function startApp() {
     }
   }
   window._ccLsSet = _ccLsSet;
+  // Tells in-memory copies of localStorage values (training-data addon) that
+  // the core removed these keys behind their back.
+  function _ccLsRemoved(keys) {
+    if (!keys || !keys.length) return;
+    try { window.dispatchEvent(new CustomEvent('cc-ls-removed', {detail:{keys:keys.slice()}})); } catch (e) {}
+  }
   // Persist spatial-tree category visibility so the filter survives a refresh
   // (models rehydrate from IndexedDB; hiddenClasses keys are model-independent).
   function _persistHiddenClasses(hc){ _ccPersistUI('hiddenClasses', hc||{}); }
@@ -2463,6 +2470,7 @@ function startApp() {
       case A.CLEAR_TRAINING_DATA:
         try{localStorage.removeItem('cc_clash_training_data');}catch(e){}
         try{localStorage.removeItem('cc_trainingFeedback');}catch(e){}
+        _ccLsRemoved(['cc_clash_training_data','cc_trainingFeedback']);
         return Object.assign({},s,{
         clashes:s.clashes.filter(function(c){return c.status!=='denied';}).map(function(c){
           return Object.assign({},c,{aiFeedback:null,aiReasons:[],aiResolution:[],aiNote:'',aiSignals:[],clashTypeConfirmed:null});
@@ -2651,7 +2659,10 @@ function startApp() {
           var lc=byId[rc.id];
           if(!lc||((rc.ts||0)>(lc.ts||0))) byId[rc.id]=rc;
         });
-        return Object.assign({},s,{comments:Object.keys(byId).map(function(k){return byId[k];})});
+        var _mergedC=Object.keys(byId).map(function(k){return byId[k];}), _curC=s.comments||[];
+        // nothing new: keep the state (shared-project sync skips unchanged slices by identity)
+        if(_mergedC.length===_curC.length&&_mergedC.every(function(c,i){return c===_curC[i];})) return s;
+        return Object.assign({},s,{comments:_mergedC});
       }
       case A.TRAINING_MODE: var tm=a.v!=null?!!a.v:!s.trainingMode;try{localStorage.setItem('cc_trainingMode',tm?'1':'0');}catch(e){}return Object.assign({},s,{trainingMode:tm});
       case A.UPD_PREFS:
@@ -2874,6 +2885,7 @@ function startApp() {
             else if (prev.meta) record.meta = prev.meta;
             record.bytes = _ccEstimateBytes(record);
             store.put(record);
+            _ccNoteFileSidecar(id, record);
           };
           tx.oncomplete = function() { resolve(); };
           tx.onerror = function(e) { reject(e.target.error); };
@@ -2898,6 +2910,7 @@ function startApp() {
   }
 
   function idbDeleteFile(id) {
+    delete _ccFileSidecar[id];
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
         var tx = db.transaction(IDB_STORE, 'readwrite');
@@ -2924,13 +2937,36 @@ function startApp() {
     }).catch(function(e) { console.warn('Failed to read IndexedDB:', e); return []; });
   }
 
+  // One stored file of the project (null when absent or another project's):
+  // a single get by id — never the project's other IFC buffers.
+  function idbGetProjectFile(projectId, id) {
+    return _openIDB().then(function(db) {
+      return new Promise(function(resolve, reject) {
+        var req = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).get(id);
+        req.onsuccess = function() {
+          var f = req.result || null;
+          if (f) _ccNoteFileSidecar(f.id, f);
+          resolve(f && f.projectId === (projectId||'default') ? f : null);
+        };
+        req.onerror = function(e) { reject(e.target.error); };
+      });
+    }).catch(function(e) { console.warn('Failed to read IndexedDB:', e); return null; });
+  }
+
+  // Whether a stored file record carries Revit sidecar data (id -> bool),
+  // noted wherever this session reads or writes a file record. A parked
+  // model's restore re-applies that sidecar; when the geometry cache alone
+  // can rebuild the model and the record is known to have no sidecar, the
+  // record (and its IFC buffer) is not read at all. Unknown ids read it.
+  var _ccFileSidecar = {};
+  function _ccNoteFileSidecar(id, rec) { if (id != null) _ccFileSidecar[id] = !!(rec && rec.sidecar); }
+
   // Reload a partially-loaded (storey-scoped) model in full: fetch the
   // stored file bytes and re-feed the normal pipeline with no scope. The
   // loader's same-name path replaces the existing model in place.
   window._ccReloadModelFull = function(modelId) {
     var s = window._ccLatestState || {};
-    idbGetProjectFiles(s.activeProject || 'default').then(function(files) {
-      var f = files.find(function(x) { return x.id === modelId; });
+    idbGetProjectFile(s.activeProject || 'default', modelId).then(function(f) {
       if (!f || !f.buffer) { if (window._ccToast) window._ccToast(_cc_t('toast.originalFileNotFoundIn','Original file not found in browser storage — re-add it via + Add.')); return; }
       window._ccNextLoadScope = null;
       // _ccLoadFiles routes through maybeScopeThenProcess like any other
@@ -2954,23 +2990,32 @@ function startApp() {
   //
   // Module-level twin of the project-loader's nested `_restoreCacheOrColdParse`
   // (kept in sync by hand — both must apply the same cache-vs-cold-parse policy).
-  function _ccRestoreModelGeometry(entry, cached) {
-    if (_ccGeoCacheLacksSpaces(cached, entry)) return _ccColdParseParkedEntry(entry);
-    if (!_ccGeoCacheV8Enabled()) {
-      if (cached && cached.v >= 7 && (cached.hasPsets || cached.pp)) return Promise.resolve(_geoDeserialize(cached));
-      return _ccColdParseParkedEntry(entry);
-    }
-    if (!(cached && cached.v === 8 && (cached.hasPsets || cached.pp))) return _ccColdParseParkedEntry(entry);
-    try {
-      var restored = _geoDeserialize(cached);
-      if (!_ccRestoredGeoMatchesCache(cached, restored)) throw new Error('restored geometry failed semantic validation');
-      return Promise.resolve(restored);
-    } catch (error) {
-      try { window._ccSafetyMigrations.record({migration:'geoCacheV8', outcome:'cold-parse-fallback',
-        fileId:String(entry.id), error:String(error && error.message || error)}); } catch(e) {}
-      _idbDeleteGeoCacheKey(_ccGeoCacheKey(entry.id, true));
-      return _ccColdParseParkedEntry(entry);
-    }
+  // getEntry() resolves the stored file entry ({id, name, buffer, sidecar});
+  // it is called only where the policy needs the IFC: no usable cache, a
+  // cache whose flags need the source checked (_ccGeoCacheLacksSpaces), or a
+  // cold-parse fallback — a current cache restores without reading the file.
+  function _ccRestoreModelGeometry(id, cached, getEntry) {
+    function cold() { return getEntry().then(_ccColdParseParkedEntry); }
+    var check = cached && (cached.sp !== 2 || cached.sem !== 1 || cached.xp !== 1 || cached.np !== 1 || cached.gr !== 1);
+    var pre = check ? getEntry().then(function(entry) { return _ccGeoCacheLacksSpaces(cached, entry); }) : Promise.resolve(false);
+    return pre.then(function(lacks) {
+      if (lacks) return cold();
+      if (!_ccGeoCacheV8Enabled()) {
+        if (cached && cached.v >= 7 && (cached.hasPsets || cached.pp)) return _geoDeserialize(cached);
+        return cold();
+      }
+      if (!(cached && cached.v === 8 && (cached.hasPsets || cached.pp))) return cold();
+      try {
+        var restored = _geoDeserialize(cached);
+        if (!_ccRestoredGeoMatchesCache(cached, restored)) throw new Error('restored geometry failed semantic validation');
+        return restored;
+      } catch (error) {
+        try { window._ccSafetyMigrations.record({migration:'geoCacheV8', outcome:'cold-parse-fallback',
+          fileId:String(id), error:String(error && error.message || error)}); } catch(e) {}
+        _idbDeleteGeoCacheKey(_ccGeoCacheKey(id, true));
+        return cold();
+      }
+    });
   }
   function _ccColdParseParkedEntry(entry) {
     if (!entry || !entry.buffer) return Promise.resolve(null); // no cache AND no source → cannot restore
@@ -2989,8 +3034,8 @@ function startApp() {
     var s = window._ccLatestState || {};
     return idbGetGeoCache(model.id).then(function(cached) {
       if (cached) return true;
-      return idbGetProjectFiles(s.activeProject || 'default').then(function(files) {
-        return !!(files || []).find(function(f){ return f.id === model.id && f.buffer; });
+      return idbGetProjectFile(s.activeProject || 'default', model.id).then(function(f) {
+        return !!(f && f.buffer);
       });
     }).catch(function(){ return false; });
   }
@@ -3204,17 +3249,23 @@ function startApp() {
     if (!stub) return Promise.resolve(false);
     if (typeof _ccAutoParkNoteAction === 'function') _ccAutoParkNoteAction(); // don't auto-re-park a just-restored model
     if (typeof _setGlobalLoading === 'function') _setGlobalLoading(true);
-    var p = Promise.all([
-      idbGetProjectFiles(s.activeProject || 'default'),
-      idbGetGeoCache(id)
-    ]).then(function(res) {
-      var files = res[0] || [], cached = res[1];
-      var entry = files.find(function(f){ return f.id === id; }) ||
-        { id: id, name: (stub.name || 'model') + '.ifc' };
-      return _ccRestoreModelGeometry(entry, cached).then(function(result) {
+    var pid = s.activeProject || 'default';
+    // The stored file (IFC buffer + sidecar) is read once, and only when the
+    // restore needs it: see _ccRestoreModelGeometry and _ccFileSidecar.
+    var entryP = null;
+    function getEntry() {
+      return entryP || (entryP = idbGetProjectFile(pid, id).then(function(f) {
+        return f || { id: id, name: (stub.name || 'model') + '.ifc' };
+      }));
+    }
+    var p = idbGetGeoCache(id).then(function(cached) {
+      return _ccRestoreModelGeometry(id, cached, getEntry).then(function(result) {
         if (!result) throw new Error('no geometry could be rebuilt');
+        return (entryP || _ccFileSidecar[id] !== false ? getEntry() : Promise.resolve(null)).then(function(entry) { return { result: result, entry: entry }; });
+      }).then(function(r) {
+        var result = r.result, entry = r.entry;
         // Re-apply persisted sidecar props exactly like the project loader does.
-        if (entry.sidecar) {
+        if (entry && entry.sidecar) {
           var sc = (entry.sidecar.ifcmeta && entry.sidecar.ifcmeta.elements) || null;
           if (sc) result.elements.forEach(function(el) {
             var gid = el.props && el.props.globalId;
@@ -3295,29 +3346,82 @@ function startApp() {
   window._ccDeleteProjectStorage = _ccDeleteProjectStorage;
 
   // ── Project session data (clashes, issues, rules, etc.) ───────
+  // Stored as a header record (key = project id: rules, filters, model meta,
+  // … and the page counts) plus fixed-size pages of clashes and issues
+  // (key [projectId, 'c'|'i', n]; storage-core planProjectPages). A save puts
+  // the header and only the pages whose clone references changed since the
+  // last save — one status edit writes one page, not the whole project. All
+  // puts/deletes of a save are one transaction, so header and pages always
+  // match. A project written before pages existed (one record holding
+  // everything) is read as it is and rewritten as pages on its first save.
+  // docs/INTERNALS.md §21.53
   var _ccProjBytesCache = new WeakMap();
+  // What the last scheduled save left on disk (planProjectPages memo). Set
+  // when the transaction is created — transactions on one store commit in
+  // creation order, so the next save diffs against what this one writes —
+  // and cleared on any failure: the next save then rewrites every page.
+  var _ccProjPageMemo = null;
   function idbSaveProjectData(projectId, data) {
+    var pid = projectId||'default';
+    var core = window._ccStorageCore;
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
         var tx = db.transaction(IDB_PROJSTORE, 'readwrite');
-        var record = Object.assign({id:projectId||'default'}, data);
-        // the clash/issue clones are reused across saves (_ccCloneListCached),
-        // so the size walk only visits what changed since the last save
-        record.bytes = _ccEstimateBytes(record, _ccProjBytesCache);
-        tx.objectStore(IDB_PROJSTORE).put(record);
+        var st = tx.objectStore(IDB_PROJSTORE);
+        var record = {id:pid};
+        if (!core || !core.planProjectPages) {
+          // storage-core missing: one record, as before pages existed
+          _ccProjPageMemo = null;
+          Object.assign(record, data);
+          record.bytes = _ccEstimateBytes(record, _ccProjBytesCache);
+          st.put(record);
+        } else {
+          var plan = core.planProjectPages(pid, {clashes:data.clashes, issues:data.issues}, _ccProjPageMemo);
+          Object.keys(data).forEach(function(k){ if (k !== 'clashes' && k !== 'issues') record[k] = data[k]; });
+          record._ccPages = plan.header;
+          // the clash/issue clones are reused across saves (_ccCloneListCached),
+          // so each page's size walk only visits what changed since the last save
+          record.bytes = _ccEstimateBytes(record, _ccProjBytesCache);
+          plan.deletes.forEach(function(r){ st.delete(IDBKeyRange.bound(r.lower, r.upper)); });
+          plan.puts.forEach(function(pg){
+            var rec = {id:pg.key, items:pg.items};
+            rec.bytes = _ccEstimateBytes(rec, _ccProjBytesCache);
+            st.put(rec);
+          });
+          st.put(record);
+          _ccProjPageMemo = plan.memo;
+        }
+        // all requests are queued: commit now instead of when control returns
+        // to the event loop — a pagehide flush must not wait for a later task
+        if (tx.commit) tx.commit();
         tx.oncomplete = function() { resolve(); };
-        tx.onerror = function(e) { reject(e.target.error); };
+        tx.onerror = function(e) { _ccProjPageMemo = null; reject(e.target.error); };
+        tx.onabort = function(e) { _ccProjPageMemo = null; reject(tx.error || (e && e.target && e.target.error)); };
       });
-    }).catch(function(e) { console.warn('Failed to save project data:', e); });
+    }).catch(function(e) { _ccProjPageMemo = null; console.warn('Failed to save project data:', e); return 'failed'; });
   }
 
+  // The project's data as one object (header + pages reassembled, or the
+  // single record of a project saved before pages existed).
   function idbGetProjectData(projectId) {
+    var pid = projectId||'default';
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
         var tx = db.transaction(IDB_PROJSTORE, 'readonly');
-        var req = tx.objectStore(IDB_PROJSTORE).get(projectId||'default');
-        req.onsuccess = function() { resolve(req.result||null); };
-        req.onerror = function(e) { reject(e.target.error); };
+        var st = tx.objectStore(IDB_PROJSTORE);
+        var header = null, pages = [];
+        var req = st.get(pid);
+        req.onsuccess = function() {
+          header = req.result||null;
+          if (!header || !header._ccPages) return;
+          var rng = window._ccStorageCore.projectPagesRange(pid);
+          var pr = st.getAll(IDBKeyRange.bound(rng.lower, rng.upper));
+          pr.onsuccess = function() { pages = pr.result||[]; };
+        };
+        tx.oncomplete = function() {
+          resolve(header && header._ccPages ? window._ccStorageCore.assembleProjectRecord(header, pages) : header);
+        };
+        tx.onerror = function(e) { reject(e.target.error); };
       });
     }).catch(function(e) { console.warn('Failed to load project data:', e); return null; });
   }
@@ -3579,6 +3683,9 @@ function startApp() {
         try {
           var tx = db.transaction(storeName, 'readonly');
           var st = tx.objectStore(storeName);
+          // project pages have array keys ([projectId, list, n]) — keyed so
+          // they never collide with a string key in this lookup
+          var ks = function(k) { return Array.isArray(k) ? '\u0001' + JSON.stringify(k) : String(k); };
           var meta = {}, keys = null, legacy = [];
           var kr = st.getAllKeys();
           kr.onsuccess = function() { keys = kr.result || []; };
@@ -3587,14 +3694,14 @@ function startApp() {
             cr.onsuccess = function() {
               var c = cr.result;
               if (!c) return;
-              meta[c.primaryKey] = c.key;
+              meta[ks(c.primaryKey)] = c.key;
               c.continue();
             };
           }
           tx.oncomplete = function() {
             var out = [];
             (keys || []).forEach(function(k) {
-              var m = meta[k];
+              var m = meta[ks(k)];
               if (m) out.push({ id: k, bytes: m[0], savedAt: m[1], projectId: m[2], name: m[3] });
               else legacy.push(k);
             });
@@ -3626,9 +3733,10 @@ function startApp() {
           var sid = g.sourceId != null ? g.sourceId : (typeof g.id === 'string' && g.id.indexOf('v8:') === 0 ? g.id.slice(3) : g.id);
           return { id: g.id, sourceId: sid, savedAt: g.savedAt || 0, bytes: g.bytes || 0 };
         }),
-        projects: stores[2].map(function(p) {
+        // header + page rows folded into one row per project
+        projects: window._ccStorageCore.foldProjectRows(stores[2].map(function(p) {
           return { id: p.id, bytes: p.bytes || 0 };
-        })
+        }))
       };
     });
   }
@@ -4230,8 +4338,13 @@ function startApp() {
   function idbDeleteProjectData(projectId) {
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
+        var pid = projectId||'default';
         var tx = db.transaction(IDB_PROJSTORE, 'readwrite');
-        tx.objectStore(IDB_PROJSTORE).delete(projectId||'default');
+        var st = tx.objectStore(IDB_PROJSTORE);
+        st.delete(pid);
+        // and its clash/issue pages ([pid, …] keys; storage-core)
+        st.delete(IDBKeyRange.bound([pid], [pid, []]));
+        if (_ccProjPageMemo && _ccProjPageMemo.pid === pid) _ccProjPageMemo = null;
         tx.oncomplete = function() { resolve(); };
         tx.onerror = function(e) { reject(e.target.error); };
       });
@@ -24383,24 +24496,38 @@ function startApp() {
   // the pagehide/switch flush paths pass force to bypass the gate — a
   // false skip there would silently lose session data.
   var _ccAutosaveMemo = null;
+  // Models are persisted only as their metadata (modelMeta), so the gate and
+  // the autosave effect key on that metadata's signature, not on s.models'
+  // identity (a storey hide or a load-progress update makes a new models
+  // array without changing anything that is saved).
   var _AUTOSAVE_SLICES = ['clashes','issues','rules','floors','viewpoints','measurements','filters',
     'lastDeltaSummary','runHistory','sheets','activeSheetId','sheetPins','markups',
-    'selectionSets','searchSets','assignmentRules','models','triage'];
+    'selectionSets','searchSets','assignmentRules','modelMeta','triage'];
+  function _ccModelMeta(models) {
+    return (models||[]).map(function(m){return {id:m.id,name:m.name,discipline:m.discipline,color:m.color,visible:m.visible,tag:m.tag||'',georef:m.georef||null};});
+  }
+  var _ccModelMetaSigCache = new WeakMap();
+  function _ccModelMetaSig(models) {
+    if (!models) return '[]';
+    var sig = _ccModelMetaSigCache.get(models);
+    if (sig === undefined) { sig = JSON.stringify(_ccModelMeta(models)); _ccModelMetaSigCache.set(models, sig); }
+    return sig;
+  }
 
   function _saveCurrentProjectData(s, opts) {
     var pid = s.activeProject||'default';
     var force = !!(opts && opts.force);
     var gateOn = (typeof window !== 'undefined') &&
       !!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('storageAutosaveGate'));
+    var cur = {};
+    _AUTOSAVE_SLICES.forEach(function(k){ cur[k] = k === 'modelMeta' ? _ccModelMetaSig(s.models) : s[k]; });
     if (!force && gateOn && _ccAutosaveMemo && _ccAutosaveMemo.pid === pid) {
       var dirty = false;
       for (var si = 0; si < _AUTOSAVE_SLICES.length; si++) {
-        if (s[_AUTOSAVE_SLICES[si]] !== _ccAutosaveMemo.slices[_AUTOSAVE_SLICES[si]]) { dirty = true; break; }
+        if (cur[_AUTOSAVE_SLICES[si]] !== _ccAutosaveMemo.slices[_AUTOSAVE_SLICES[si]]) { dirty = true; break; }
       }
       if (!dirty) return Promise.resolve('unchanged');
     }
-    var snap = {};
-    _AUTOSAVE_SLICES.forEach(function(k){ snap[k] = s[k]; });
     var data = _cloneSafe({
       rules:s.rules, floors:s.floors,
       viewpoints:(s.viewpoints||[]).map(function(v){return Object.assign({},v,{snapshot:undefined})}),
@@ -24419,12 +24546,13 @@ function startApp() {
       selectionSets:s.selectionSets||[], searchSets:s.searchSets||[], assignmentRules:s.assignmentRules||[],
       // clash review facets / saved views / overview choice (autoOpen is per run)
       triage:s.triage ? Object.assign({}, s.triage, {autoOpen:false}) : undefined,
-      modelMeta:s.models.map(function(m){return {id:m.id,name:m.name,discipline:m.discipline,color:m.color,visible:m.visible,tag:m.tag||'',georef:m.georef||null};})
+      modelMeta:_ccModelMeta(s.models)
     }, 0);
     data.clashes = _ccCloneListCached(s.clashes);
     data.issues = _ccCloneListCached(s.issues);
     return idbSaveProjectData(pid, data).then(function(r){
-      _ccAutosaveMemo = { pid: pid, slices: snap };
+      // a failed write leaves the memo alone, so the next save is not skipped
+      if (r !== 'failed') _ccAutosaveMemo = { pid: pid, slices: cur };
       return r;
     });
   }
@@ -24471,6 +24599,7 @@ function startApp() {
       if(!stored.length) { d({t:A.SWITCHING_PROJECT, v:false}); return; }
       var chain = Promise.resolve();
       stored.forEach(function(entry){
+        _ccNoteFileSidecar(entry.id, entry);
         chain = chain.then(function(){
           _setGlobalLoading(true);
           return idbGetGeoCache(entry.id).then(function(cached) {
@@ -26910,6 +27039,7 @@ function startApp() {
                       if (!rec.sidecar) rec.sidecar = {};
                       rec.sidecar[ext] = parsed;
                       store.put(rec);
+                      _ccNoteFileSidecar(rec.id, rec);
                     }
                   };
                   tx.oncomplete = function() { res(); };
@@ -49196,8 +49326,10 @@ function startApp() {
         if (ric) idle = ric(run, {timeout: 3000}); else run();
       }, 2000);
       return function(){ clearTimeout(timer); if (idle && cic) cic(idle); };
+    // models persist only as modelMeta: keyed on its signature (a string), so
+    // a storey hide or any other non-persisted model change saves nothing
     // eslint-disable-next-line react-hooks/exhaustive-deps -- persist keyed on the data fields that matter; depending on the whole state would save on every hover/selection change
-    }, [s.clashes, s.issues, s.viewpoints, s.measurements, s.rules, s.models, s.triage && s.triage.savedViews, s.triage && s.triage.facets]);
+    }, [s.clashes, s.issues, s.viewpoints, s.measurements, s.rules, _ccModelMetaSig(s.models), s.triage && s.triage.savedViews, s.triage && s.triage.facets]);
     // on pagehide and on visibilitychange→hidden because beforeunload is
     useEffect(function(){
       function flush() {

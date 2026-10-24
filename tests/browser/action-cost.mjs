@@ -67,11 +67,16 @@ async function newPage() {
     try { localStorage.setItem('cc_consent_banner_seen', '1'); localStorage.setItem('cc_data_consent', 'denied'); localStorage.setItem('cc_data_consent_explicit', '1'); } catch (e) {}
     // count IndexedDB writes per object store
     window.__idbWrites = {};
+    window.__projPuts = []; // project store puts: key + structured size (§21.53)
     window.__longTasks = [];
     try { new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__longTasks.push({ t: e.startTime, ms: e.duration }); }).observe({ entryTypes: ['longtask'] }); } catch (e) {}
     const wrap = (name) => {
       const orig = IDBObjectStore.prototype[name];
-      IDBObjectStore.prototype[name] = function () { window.__idbWrites[this.name] = (window.__idbWrites[this.name] || 0) + 1; return orig.apply(this, arguments); };
+      IDBObjectStore.prototype[name] = function (v) {
+        window.__idbWrites[this.name] = (window.__idbWrites[this.name] || 0) + 1;
+        if (this.name === 'projects' && v) window.__projPuts.push({ page: Array.isArray(v.id), items: v.items ? v.items.length : null, hasClashes: !!v.clashes, bytes: JSON.stringify(v).length });
+        return orig.apply(this, arguments);
+      };
     };
     wrap('put'); wrap('add');
     // settle: run MessageChannel ticks until the main thread has been quiet
@@ -195,9 +200,11 @@ try {
   if (noop.ms > LIMITS.noopMs) fail(`no-op UPD_PREFS settles in ${noop.ms.toFixed(1)} ms (limit ${LIMITS.noopMs})`);
 
   // ── one clash's status (a row on screen, a different one each time) ──
+  await page.evaluate(() => { window.__projPuts = []; window.__editedIdx = new Set(); });
   const status = await measure(page, 'UPD_CLASH status', `
     const ids = window.__onScreenIds();
     const id = ids[(i * 3 + 1) % ids.length];
+    window.__editedIdx.add(window._ccLatestState.clashes.findIndex((c) => c.id === id));
     return () => window._ccDispatch({ t: 'UPD_CLASH', id, u: { status: i % 2 ? 'open' : 'in_progress' } });`);
   if (!(status.rows <= LIMITS.statusRows)) fail(`one status change rendered ${status.rows} rows (limit ${LIMITS.statusRows})`);
   else ok(`one status change renders ${status.rows} row(s), ${status.headers} group header(s)`);
@@ -211,6 +218,13 @@ try {
   if (save.writes < 1) fail('status edits were not saved to the project store');
   if (save.maxTask > LIMITS.saveTaskMs) fail(`autosave blocked the main thread for ${save.maxTask.toFixed(0)} ms (limit ${LIMITS.saveTaskMs})`);
   else ok('autosave of a status edit stays a short task');
+  // proportional: the header + only the pages holding the edited clashes,
+  // each a bounded page — never the whole clash list (§21.53)
+  const puts = await page.evaluate(() => ({ puts: window.__projPuts, pages: new Set([...window.__editedIdx].map((i) => Math.floor(i / window._ccStorageCore.PROJECT_PAGE_SIZE))).size, size: window._ccStorageCore.PROJECT_PAGE_SIZE }));
+  const pagePuts = puts.puts.filter((p) => p.page), whole = puts.puts.filter((p) => p.hasClashes);
+  console.log(`  project puts for the status edits: ${pagePuts.length} page(s) (max ${Math.max(0, ...pagePuts.map((p) => p.bytes))} B), ${puts.puts.length - pagePuts.length} header(s); edited clashes span ${puts.pages} page(s)`);
+  if (whole.length || !pagePuts.length || pagePuts.length > puts.pages * (puts.puts.length - pagePuts.length) || pagePuts.some((p) => p.items > puts.size)) fail('status edits did not write only the changed pages: ' + JSON.stringify({ pages: pagePuts.length, editedPages: puts.pages, whole: whole.length }));
+  else ok(`autosave puts only the ${pagePuts.length} page(s) holding the edited clashes (≤ ${puts.size} clashes each) + the header`);
 
   // ── select a clash ──
   const select = await measure(page, 'ACTIVE (select)', `

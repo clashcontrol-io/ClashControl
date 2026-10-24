@@ -108,7 +108,9 @@ test('pre-spaces cache (no sp marker) cold-parses once when the source IFC is st
 
 test('the serializer stamps sp:2 and both restore policies check it first', () => {
   assert.match(source, /return \{v:_ccGeoCacheV8Enabled\(\)\?8:7, sp:2, sem:1, xp:1, np:1, hasPsets:hasPsets/);
-  assert.match(source, /if \(_ccGeoCacheLacksSpaces\(cached, entry\)\) return _ccColdParseParkedEntry\(entry\);/);
+  // parked-model restore: the stored file is fetched only for this check (see park-restore-io.test.js)
+  assert.match(source, /getEntry\(\)\.then\(function\(entry\) \{ return _ccGeoCacheLacksSpaces\(cached, entry\); \}\)/);
+  assert.match(source, /if \(lacks\) return cold\(\);/);
   assert.match(source, /if \(_ccGeoCacheLacksSpaces\(cached, entry\)\) return _coldParseAndCache\(entry\);/);
 });
 
