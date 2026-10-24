@@ -9,10 +9,16 @@ const path = require('node:path');
 const THREE = require('three');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-const start = src.indexOf('  function _ccGeoBounds(geo) {');
-const end = src.indexOf('\n  }\n', start) + 4;
-assert.ok(start > 0 && end > start, '_ccGeoBounds not found');
-const _ccGeoBounds = new Function('THREE', src.slice(start, end) + '; return _ccGeoBounds;')(THREE);
+function fnSrc(sig) {
+  const start = src.indexOf(sig);
+  const end = src.indexOf('\n  }\n', start) + 4;
+  assert.ok(start > 0 && end > start, sig + ' not found');
+  return src.slice(start, end);
+}
+// _ccPosBounds is its arithmetic (shared with the IFC worker, which sends it as `pre`)
+const boundsSrc = fnSrc('  function _ccGeoBounds(geo, pre) {') + fnSrc('  function _ccPosBounds(a, n) {');
+const _ccGeoBounds = new Function('THREE', boundsSrc + '; return _ccGeoBounds;')(THREE);
+const _ccPosBounds = new Function(fnSrc('  function _ccPosBounds(a, n) {') + '; return _ccPosBounds;')();
 
 function geoOf(arr) { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(Float32Array.from(arr), 3)); return g; }
 function same(a, b, what) { assert.ok(Object.is(a, b), what + ': ' + a + ' vs ' + b); }
@@ -26,6 +32,16 @@ function check(arr, label) {
     same(g.boundingSphere.center[k], ref.boundingSphere.center[k], label + ' centre.' + k);
   }
   same(g.boundingSphere.radius, ref.boundingSphere.radius, label + ' radius');
+  // the worker's precomputed bounds (structured-cloned Float64Array) give the same values
+  const fa = Float32Array.from(arr), pre = structuredClone(_ccPosBounds(fa, fa.length));
+  const gp = geoOf(arr);
+  assert.equal(_ccGeoBounds(gp, pre), true, label + ' (pre)');
+  for (const k of ['x', 'y', 'z']) {
+    same(gp.boundingBox.min[k], ref.boundingBox.min[k], label + ' pre min.' + k);
+    same(gp.boundingBox.max[k], ref.boundingBox.max[k], label + ' pre max.' + k);
+    same(gp.boundingSphere.center[k], ref.boundingSphere.center[k], label + ' pre centre.' + k);
+  }
+  same(gp.boundingSphere.radius, ref.boundingSphere.radius, label + ' pre radius');
 }
 
 test('bit-identical to three on random, signed-zero, empty and single-vertex geometries', () => {

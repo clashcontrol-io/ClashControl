@@ -3819,11 +3819,18 @@ function startApp() {
     var na = geo.getAttribute && geo.getAttribute('normal');
     if (!na || na.itemSize !== 3) return;
     if (na.array instanceof Int8Array) { geo.userData._nrmQuantized = true; return; }
-    var src = na.array, n = src.length;
-    var i8 = new Int8Array(n);
-    for (var i = 0; i < n; i++) { var v = src[i]; i8[i] = Math.round((v > 1 ? 1 : v < -1 ? -1 : v) * 127); }
-    geo.setAttribute('normal', new THREE.Int8BufferAttribute(i8, 3, true));
+    // A plain BufferAttribute over the Int8Array (Int8BufferAttribute would
+    // copy the fresh array once more); same array type, itemSize, normalized.
+    geo.setAttribute('normal', new THREE.BufferAttribute(_ccQuantizeNormalsI8(na.array), 3, true));
     geo.userData._nrmQuantized = true;
+  }
+  // The array part, pure (no THREE / window): also runs inside the IFC
+  // worker (injected by _getIFCWorkerUrl), so worker loads arrive with their
+  // normals already quantized — the same values, off the main thread.
+  function _ccQuantizeNormalsI8(src) {
+    var n = src.length, i8 = new Int8Array(n);
+    for (var i = 0; i < n; i++) { var v = src[i]; i8[i] = Math.round((v > 1 ? 1 : v < -1 ? -1 : v) * 127); }
+    return i8;
   }
   // Exposed for addons (Revit live-link stream) so their geometry gets the same
   // normal-memory reduction as the IFC path.
@@ -3919,20 +3926,29 @@ function startApp() {
   // computeBoundingBox / computeBoundingSphere (tests/geo-bounds.test.js)
   // without their per-vertex accessor calls — they ran for every unique
   // geometry of every load (expandByObject, then frustum culling).
-  function _ccGeoBounds(geo) {
+  function _ccGeoBounds(geo, pre) {
     var pos = geo && geo.attributes.position;
     if (!pos || pos.isInterleavedBufferAttribute || pos.isGLBufferAttribute || pos.normalized || pos.itemSize !== 3 ||
         !(pos.array instanceof Float32Array) || geo.morphAttributes.position) return false;
-    var a = pos.array, n = pos.count * 3, i, x, y, z;
+    // pre: _ccPosBounds of these very positions, computed in the IFC worker
+    var b = pre && pre.length === 10 ? pre : _ccPosBounds(pos.array, pos.count * 3);
+    var box = geo.boundingBox || (geo.boundingBox = new THREE.Box3());
+    box.min.set(b[0], b[1], b[2]); box.max.set(b[3], b[4], b[5]);
+    var sph = geo.boundingSphere || (geo.boundingSphere = new THREE.Sphere());
+    sph.center.set(b[6], b[7], b[8]); sph.radius = b[9];
+    return true;
+  }
+  // The arithmetic of _ccGeoBounds, pure (no THREE / window) so the IFC
+  // worker runs the very same code: [min xyz, max xyz, centre xyz, radius]
+  // as float64 (-0 and all), from the first n values of a Float32 xyz array.
+  function _ccPosBounds(a, n) {
+    var i, x, y, z;
     var mnx = Infinity, mny = Infinity, mnz = Infinity, mxx = -Infinity, mxy = -Infinity, mxz = -Infinity;
     for (i = 0; i < n; i += 3) {
       x = a[i]; y = a[i + 1]; z = a[i + 2];
       mnx = Math.min(mnx, x); mny = Math.min(mny, y); mnz = Math.min(mnz, z);
       mxx = Math.max(mxx, x); mxy = Math.max(mxy, y); mxz = Math.max(mxz, z);
     }
-    var box = geo.boundingBox || (geo.boundingBox = new THREE.Box3());
-    box.min.set(mnx, mny, mnz); box.max.set(mxx, mxy, mxz);
-    var sph = geo.boundingSphere || (geo.boundingSphere = new THREE.Sphere());
     var cx = 0, cy = 0, cz = 0;
     if (!(mxx < mnx || mxy < mny || mxz < mnz)) { cx = (mnx + mxx) * 0.5; cy = (mny + mxy) * 0.5; cz = (mnz + mxz) * 0.5; }
     var r2 = 0, dx, dy, dz;
@@ -3940,9 +3956,12 @@ function startApp() {
       dx = cx - a[i]; dy = cy - a[i + 1]; dz = cz - a[i + 2];
       r2 = Math.max(r2, dx * dx + dy * dy + dz * dz);
     }
-    sph.center.set(cx, cy, cz); sph.radius = Math.sqrt(r2);
-    return true;
+    var out = new Float64Array(10);
+    out[0] = mnx; out[1] = mny; out[2] = mnz; out[3] = mxx; out[4] = mxy; out[5] = mxz;
+    out[6] = cx; out[7] = cy; out[8] = cz; out[9] = Math.sqrt(r2);
+    return out;
   }
+
   function _geoDeserialize(cached) {
     var isV3 = cached.v >= 3; // v3+ uses quantized positions + oct-encoded normals
     var meshByEid = {};
@@ -6578,6 +6597,10 @@ function startApp() {
       // the main thread decodes from the very same typed arrays, so the
       // committed model is identical by construction.
       var _stream = !!e.data.stream;
+      // Normals quantized + geometry bounds computed here, off the main
+      // thread, with the main thread's own functions (_ccQuantizeNormalsI8,
+      // _ccPosBounds): the decode builds the identical geometry from them.
+      var _qn = e.data.qn !== false;
       var phases = {};
       // Per-phase memory (MB): web-ifc's WASM heap (grows, never shrinks —
       // so it is the running peak) and this worker's JS heap where exposed.
@@ -6838,15 +6861,15 @@ function startApp() {
                   nrm[d]=verts[s+3]; nrm[d+1]=verts[s+4]; nrm[d+2]=verts[s+5];
                 }
                 _tDeinterleave += performance.now() - _tDI;
-                _geoTable[geoExpId] = {pos:pos, nrm:nrm, idx:new Uint32Array(indices)};
-                _geoNV[geoExpId] = _geoTable[geoExpId].idx.length;
+                var _ge = _geoTable[geoExpId] = {pos:pos, nrm:_qn ? _ccQuantizeNormalsI8(nrm) : nrm, idx:new Uint32Array(indices), bb:_ccPosBounds(pos, pos.length)};
+                _geoNV[geoExpId] = _ge.idx.length;
                 if (_stream) {
                   // Ownership moves with the next batch; the final result
                   // only carries entries that were never batched.
-                  _bGeo[geoExpId] = _geoTable[geoExpId]; _sentGeo[geoExpId] = 1;
-                  _bXfer.push(pos.buffer, nrm.buffer, _geoTable[geoExpId].idx.buffer);
+                  _bGeo[geoExpId] = _ge; _sentGeo[geoExpId] = 1;
+                  _bXfer.push(pos.buffer, _ge.nrm.buffer, _ge.idx.buffer, _ge.bb.buffer);
                 } else {
-                  xfer.push(pos.buffer, nrm.buffer, _geoTable[geoExpId].idx.buffer);
+                  xfer.push(pos.buffer, _ge.nrm.buffer, _ge.idx.buffer, _ge.bb.buffer);
                 }
               } else { _geoReused++; }
               _nTris += _geoNV[geoExpId] || 0;
@@ -7079,6 +7102,8 @@ function startApp() {
       + 'var _SPATIAL_CONTAINERS=' + JSON.stringify(_SPATIAL_CONTAINERS) + ';\n'
       + 'var safeStr=' + safeStr.toString() + ';\n'
       + 'var _extractAxis=' + _extractAxis.toString() + ';\n'
+      + 'var _ccQuantizeNormalsI8=' + _ccQuantizeNormalsI8.toString() + ';\n'
+      + 'var _ccPosBounds=' + _ccPosBounds.toString() + ';\n'
       + 'var extractProperties=' + extractProperties.toString() + ';\n'
       + 'var extractOpeningRecords=' + extractOpeningRecords.toString() + ';\n'
       + 'var extractSemanticRecords=' + extractSemanticRecords.toString() + ';\n'
@@ -7217,7 +7242,13 @@ function startApp() {
   // the loader result. Shared by the single-worker load and the sharded load
   // (which first merges its shards into one message of the same shape), so
   // both build the model through the very same code.
-  function _ccDecodeIfcWorkerResult(msg, gt, fallbackColor, loadStart) {
+  // slice (optional): {ms, cancelled()} — decode the elements in time slices
+  // of ~ms, yielding a task in between (_ccYieldTask), and return a Promise
+  // (null when cancelled() turns true between slices). Same code, same order,
+  // same result as the one-pass decode; only the main thread gets breathing
+  // room (input, frames, other workers' messages) on large models.
+  var _CC_DECODE_SLICE_MS = 50;
+  function _ccDecodeIfcWorkerResult(msg, gt, fallbackColor, loadStart, slice) {
     // Protocol v2 decode — see the packedEls comment block in
     // _ifcWorkerMain (worker side) for the full encoding rationale.
     // Reconstructs the exact same elements/meshes shape the v1
@@ -7234,9 +7265,14 @@ function startApp() {
     var _tGeoBuild = 0, _tMesh = 0, _tBBox = 0;
     var _sbStart = performance.now();
     var _tmpMtx4 = new THREE.Matrix4(); // reused per placement to avoid 5k-50k allocations per load
+    var _matKeyOf = new Map(); // shared material → its instancing-key part
 
     var _placementOffset = 0; // running index into placement-flat arrays
-    for (var i = 0; i < pk.expressIds.length; i++) {
+    var i = 0, _nEls = pk.expressIds.length;
+    // Elements from i on until the deadline passes (0 = no deadline); true when done.
+    function _decodeElements(deadline) {
+    for (; i < _nEls; i++) {
+      if (deadline && (i & 31) === 0 && performance.now() > deadline) return false;
       var eid = pk.expressIds[i];
       var gc = pk.geoCounts[i];
       var _isSp = _pkStr(pk.ifcTypeIdx[i]) === 'IfcSpace';
@@ -7252,10 +7288,12 @@ function startApp() {
             var _tGB = performance.now();
             geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.BufferAttribute(gEntry.pos, 3));
-            geo.setAttribute('normal', new THREE.BufferAttribute(gEntry.nrm, 3));
+            // Normals arrive quantized (worker, same _ccQuantizeNormalsI8):
+            // the attribute _ccQuantizeNormalAttr would have created.
+            geo.setAttribute('normal', gEntry.nrm instanceof Int8Array ? new THREE.BufferAttribute(gEntry.nrm, 3, true) : new THREE.BufferAttribute(gEntry.nrm, 3));
             geo.setIndex(new THREE.BufferAttribute(gEntry.idx, 1));
             _ccQuantizeNormalAttr(geo);
-            _ccGeoBounds(geo);
+            _ccGeoBounds(geo, gEntry.bb);
             _tGeoBuild += performance.now() - _tGB;
             geoCache[geoId] = geo;
           } else { continue; }
@@ -7269,7 +7307,10 @@ function startApp() {
         if (hasColor) col = { r:pk.placementColors[cOff], g:pk.placementColors[cOff+1], b:pk.placementColors[cOff+2] };
         else { var _fb2 = new THREE.Color(fallbackColor); col = { r:_fb2.r, g:_fb2.g, b:_fb2.b }; }
         var mat = _ccGetSharedPhongMat(col.r, col.g, col.b, ca);
-        var matKey = mat ? mat.color.r.toFixed(3)+','+mat.color.g.toFixed(3)+','+mat.color.b.toFixed(3)+','+ca.toFixed(3) : 'na';
+        // A function of the shared material alone (its cache key holds the
+        // same alpha bucket as ca.toFixed(3)): built once per material.
+        var matKey = mat ? _matKeyOf.get(mat) : 'na';
+        if (matKey === undefined) { matKey = mat.color.r.toFixed(3)+','+mat.color.g.toFixed(3)+','+mat.color.b.toFixed(3)+','+ca.toFixed(3); _matKeyOf.set(mat, matKey); }
         var mesh = new THREE.Mesh(geo, mat);
         mesh.applyMatrix4(_tmpMtx4.fromArray(pk.placementTransforms, pOff * 16));
         mesh.userData.expressId = eid;
@@ -7311,7 +7352,24 @@ function startApp() {
         elements.push({expressId:eid, meshes:elMeshes, box:elBox, props:props});
       }
     }
+    return true;
+    }
 
+    if (slice) {
+      return new Promise(function(resolve, reject) {
+        (function step() {
+          try {
+            if (slice.cancelled && slice.cancelled()) { resolve(null); return; }
+            if (_decodeElements(performance.now() + (slice.ms || 50))) resolve(_finishDecode());
+            else _ccYieldTask(step);
+          } catch (e) { reject(e); }
+        })();
+      });
+    }
+    _decodeElements(0);
+    return _finishDecode();
+
+    function _finishDecode() {
     var _loopEnd = performance.now();
     var _tStrip = performance.now();
     var _sm = _ccStripSurveyMarkers(elements, meshes); elements = _sm.elements; meshes = _sm.meshes;
@@ -7389,6 +7447,7 @@ function startApp() {
       console.groupEnd();
     })();
     return {meshes:meshes, elements:elements, storeys:msg.storeys, storeyData:msg.storeyData, spatialHierarchy:msg.spatialHierarchy||{}, relatedPairs:msg.relatedPairs, spaceBoundaries:msg.spaceBoundaries||null, stats:stats};
+    }
   }
 
   // opts.stream: ask the worker for ordered 'geo' batches while it streams
@@ -7432,6 +7491,8 @@ function startApp() {
       }
       _armWatchdog(20000, _watchdogFire);
       var _propsGuard = null; // caps the post-result lazy-props phase (see 'result' branch)
+      var _resultIn = false;  // the 'result' message arrived
+      var _propsSeen = false; // 'props' / 'props-error' arrived (possibly while the result was still decoding)
 
       worker.onmessage = function(e) {
         var msg = e.data;
@@ -7462,6 +7523,7 @@ function startApp() {
           return;
         }
         if (msg.type === 'props') {
+          _propsSeen = true;
           if (_propsGuard) { clearTimeout(_propsGuard); _propsGuard = null; }
           try { if (onProps) onProps(msg.propMap || {}, null); }
           catch(propMergeErr) { console.warn('[IFC] onProps callback failed:', propMergeErr); }
@@ -7469,6 +7531,7 @@ function startApp() {
           return;
         }
         if (msg.type === 'props-error') {
+          _propsSeen = true;
           if (_propsGuard) { clearTimeout(_propsGuard); _propsGuard = null; }
           console.warn('[IFC] Lazy property extraction failed (model loaded without psets):', msg.msg);
           try { if (onProps) onProps({}, msg.msg || 'props-error'); }
@@ -7483,23 +7546,35 @@ function startApp() {
             worker.terminate(); resolve(null); return;
           }
           if (onProgress) onProgress('Placing elements in the scene 85%');
+          _resultIn = true;
           var gt = msg.geoTable || {};
           if (_streamGt) { for (var _rk in gt) _streamGt[_rk] = gt[_rk]; gt = _streamGt; _streamGt = null; }
-          var _decoded = _ccDecodeIfcWorkerResult(msg, gt, fallbackColor, loadStart);
-
-          _unreg();
-          // Worker stays alive for lazy buildPropertyMap; if it hangs there
-          // the onProps gate (loading strip) would never release — cap it.
-          _propsGuard = setTimeout(function() {
-            _propsGuard = null;
-            try { if (onProps) onProps({}, 'props-timeout'); } catch(_) {}
+          // Decoded in time slices (the load stays registered, so Cancel
+          // still settles it; the lazy props may arrive meanwhile — the
+          // caller holds them until the commit).
+          _ccDecodeIfcWorkerResult(msg, gt, fallbackColor, loadStart, { ms: _CC_DECODE_SLICE_MS, cancelled: function() { return _myGen !== _ccLoadGeneration; } }).then(function(_decoded) {
+            if (_ccActiveLoads.indexOf(_loadReg) === -1) return; // cancelled: _ccAbortLoading settled it
+            _unreg();
+            if (!_decoded) { try { worker.terminate(); } catch(_) {} resolve(null); return; }
+            // Worker stays alive for lazy buildPropertyMap; if it hangs there
+            // the onProps gate (loading strip) would never release — cap it.
+            if (!_propsSeen) _propsGuard = setTimeout(function() {
+              _propsGuard = null;
+              try { if (onProps) onProps({}, 'props-timeout'); } catch(_) {}
+              try { worker.terminate(); } catch(_) {}
+            }, 120000);
+            resolve(_decoded);
+          }, function(decErr) {
+            if (_ccActiveLoads.indexOf(_loadReg) === -1) return;
+            _unreg();
             try { worker.terminate(); } catch(_) {}
-          }, 120000);
-          resolve(_decoded);
+            reject(decErr);
+          });
         }
       };
       worker.onerror = function(err) {
         _clearWatchdog();
+        if (_resultIn) { try { worker.terminate(); } catch(_) {} return; } // the result is decoding/decoded: only the lazy-props phase failed (its guard releases the gate)
         _unreg();
         worker.terminate();
         reject(new Error('IFC Worker failed: ' + (err.message || err)));
@@ -7512,7 +7587,7 @@ function startApp() {
         // must reacquire fresh bytes from its own File/source for anything
         // it still needs done with the bytes afterward (fallback re-parse,
         // IndexedDB persistence) — see the loadIFCWorker call site.
-        worker.postMessage({buffer:buffer, scope:scope||null, stream:!!opts.stream, v:IFC_WORKER_PROTOCOL_VERSION}, [buffer]);
+        worker.postMessage({buffer:buffer, scope:scope||null, stream:!!opts.stream, qn:window._ccQuantizeNormals !== false, v:IFC_WORKER_PROTOCOL_VERSION}, [buffer]);
       } catch(postErr) {
         _clearWatchdog();
         _unreg();
@@ -7747,7 +7822,7 @@ function startApp() {
           }
         };
         w.onerror = function(err) { fail(new Error('IFC shard ' + k + ' failed: ' + (err.message || err))); };
-        var base = { scope: null, stream: !!opts.stream, shard: { k: k, n: n }, v: IFC_WORKER_PROTOCOL_VERSION };
+        var base = { scope: null, stream: !!opts.stream, shard: { k: k, n: n }, qn: window._ccQuantizeNormals !== false, v: IFC_WORKER_PROTOCOL_VERSION };
         if (k === 0) w.postMessage(Object.assign({ buffer: buffer }, base), [buffer]);
         else w.postMessage(Object.assign({ file: file }, base));
       }
@@ -7825,13 +7900,24 @@ function startApp() {
     // and never more than ~25 % of the time spent drawing (a software
     // rasteriser can need hundreds of ms for a big preview; frames queued
     // behind it would delay the commit and steal CPU from the workers).
+    // The frame time is the frame's whole main-thread cost (S._lastFrameMs:
+    // render start → the next task, so GPU / compositor waits after
+    // render() returns count too), not just the render() call.
     // The first preview frames include shader compilation, so the frame
     // time only counts from the third preview frame on.
+    // Batches are drawn lazily: they queue on their preview and are merged
+    // into ONE chunk right before the frame that shows them (_inv), so a
+    // batch that arrives after the last preview frame before its commit is
+    // never built at all.
     var _lastInv = 0, _invTimer = null, _nInv = 0;
-    function _frameMs() { var S = _S(); return _nInv >= 3 && S ? (S._lastRenderMs || 0) : 0; }
-    function _inv() { _lastInv = performance.now(); _nInv++; invalidate(1); }
+    function _frameMs() { var S = _S(); return _nInv >= 3 && S ? Math.max(S._lastRenderMs || 0, S._lastFrameMs || 0) : 0; }
+    function _inv() {
+      _lastInv = performance.now(); _nInv++;
+      live.forEach(function(h) { if (h.flush) h.flush(); });
+      invalidate(1);
+    }
     function _invalidateSoon() {
-      var now = performance.now(), gap = Math.min(2000, Math.max(250, _frameMs() * 4));
+      var now = performance.now(), gap = Math.min(10000, Math.max(250, _frameMs() * 4));
       if (now - _lastInv >= gap) { _inv(); return; }
       if (_invTimer) return;
       _invTimer = setTimeout(function() { _invTimer = null; _inv(); }, gap - (now - _lastInv));
@@ -7845,39 +7931,53 @@ function startApp() {
       h.mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide });
       h.mat.emissive.setRGB(0.45, 0.45, 0.45);
       h.mat.userData._ccLoadPreview = true;
+      h.pending = []; // batches received but not drawn yet (built by flush)
       h.addBatch = function(msg) {
         if (h.done) return;
         var bg = msg.geoTable || {};
         for (var k in bg) h.geo[k] = bg[k]; // references only — the decode owns these arrays
-        var plGeo = msg.plGeo, plTf = msg.plTf, plCol = msg.plCol;
-        var n = plGeo ? plGeo.length : 0;
+        var n = msg.plGeo ? msg.plGeo.length : 0;
         var wash = 0.45 * (1 - Math.min(1, (msg.done || 0) / Math.max(1, msg.est || 1)));
         h.mat.emissive.setRGB(wash, wash, wash);
         if (!n) return;
+        h.pending.push(msg);
+        _invalidateSoon();
+      };
+      // Draw every queued batch as one merged chunk (called by _inv, right
+      // before the preview frame).
+      h.flush = function() {
+        if (h.done || !h.pending.length) return;
+        var batches = h.pending; h.pending = [];
         // Budget: a triangle cap by device memory, and no growth once a
         // frame already costs > 400 ms — what is shown is enough of a
         // picture; more would only slow the load down.
         if (stats.tris >= _maxTris() || _frameMs() > 400) { stats.capped = true; return; }
-        var nV = 0, nI = 0, i;
-        for (i = 0; i < n; i++) { var e = h.geo[plGeo[i]]; if (e && e.pos && e.idx) { nV += e.pos.length / 3; nI += e.idx.length; } }
+        var nV = 0, nI = 0, i, q, n, plGeo, plTf, plCol;
+        for (q = 0; q < batches.length; q++) {
+          plGeo = batches[q].plGeo; n = plGeo.length;
+          for (i = 0; i < n; i++) { var e = h.geo[plGeo[i]]; if (e && e.pos && e.idx) { nV += e.pos.length / 3; nI += e.idx.length; } }
+        }
         if (!nV || !nI) return;
         var P = new Float32Array(nV * 3), C = new Uint8Array(nV * 3), I = new Uint32Array(nI);
         var vo = 0, io = 0;
-        for (i = 0; i < n; i++) {
-          var ge = h.geo[plGeo[i]]; if (!ge || !ge.pos || !ge.idx) continue;
-          var m = plTf.subarray(i * 16, i * 16 + 16), pos = ge.pos, idx = ge.idx, cnt = pos.length / 3;
-          var r = plCol[i * 4], g = plCol[i * 4 + 1], b = plCol[i * 4 + 2];
-          if (r < 0) { r = 0.72; g = 0.72; b = 0.72; }
-          var cr = Math.round(Math.min(1, r) * 255), cg = Math.round(Math.min(1, g) * 255), cb = Math.round(Math.min(1, b) * 255);
-          for (var v = 0, s3 = 0, d3 = vo * 3; v < cnt; v++, s3 += 3, d3 += 3) {
-            var x = pos[s3], y = pos[s3 + 1], z = pos[s3 + 2];
-            P[d3]     = m[0] * x + m[4] * y + m[8]  * z + m[12];
-            P[d3 + 1] = m[1] * x + m[5] * y + m[9]  * z + m[13];
-            P[d3 + 2] = m[2] * x + m[6] * y + m[10] * z + m[14];
-            C[d3] = cr; C[d3 + 1] = cg; C[d3 + 2] = cb;
+        for (q = 0; q < batches.length; q++) {
+          plGeo = batches[q].plGeo; plTf = batches[q].plTf; plCol = batches[q].plCol; n = plGeo.length;
+          for (i = 0; i < n; i++) {
+            var ge = h.geo[plGeo[i]]; if (!ge || !ge.pos || !ge.idx) continue;
+            var m = plTf.subarray(i * 16, i * 16 + 16), pos = ge.pos, idx = ge.idx, cnt = pos.length / 3;
+            var r = plCol[i * 4], g = plCol[i * 4 + 1], b = plCol[i * 4 + 2];
+            if (r < 0) { r = 0.72; g = 0.72; b = 0.72; }
+            var cr = Math.round(Math.min(1, r) * 255), cg = Math.round(Math.min(1, g) * 255), cb = Math.round(Math.min(1, b) * 255);
+            for (var v = 0, s3 = 0, d3 = vo * 3; v < cnt; v++, s3 += 3, d3 += 3) {
+              var x = pos[s3], y = pos[s3 + 1], z = pos[s3 + 2];
+              P[d3]     = m[0] * x + m[4] * y + m[8]  * z + m[12];
+              P[d3 + 1] = m[1] * x + m[5] * y + m[9]  * z + m[13];
+              P[d3 + 2] = m[2] * x + m[6] * y + m[10] * z + m[14];
+              C[d3] = cr; C[d3 + 1] = cg; C[d3 + 2] = cb;
+            }
+            for (var t = 0; t < idx.length; t++) I[io + t] = idx[t] + vo;
+            vo += cnt; io += idx.length;
           }
-          for (var t = 0; t < idx.length; t++) I[io + t] = idx[t] + vo;
-          vo += cnt; io += idx.length;
         }
         var gg = new THREE.BufferGeometry();
         var pa = new THREE.BufferAttribute(P, 3), ca = new THREE.BufferAttribute(C, 3, true), ia = new THREE.BufferAttribute(I, 1);
@@ -7891,27 +7991,27 @@ function startApp() {
         mesh.userData._ccLoadPreview = true;
         var G = _group(); if (!G) { gg.dispose(); return; }
         G.add(mesh); h.meshes.push(mesh);
-        h.tris += nI / 3; stats.tris += nI / 3; stats.batches++;
+        h.tris += nI / 3; stats.tris += nI / 3; stats.batches += batches.length;
         if (!stats.firstAt) stats.firstAt = performance.now();
         if (!_box) _box = new THREE.Box3();
         _box.union(gg.boundingBox);
         _maybeFit();
-        _invalidateSoon();
       };
       h.progress = function() {};
       // The stream ended (the parse result arrived): no batch can reference
       // an earlier geometry any more, so drop the table — it held the
       // worker's original arrays (Float32 normals, positions the batch has
       // since copied) alive until the teardown. The drawn chunks are
-      // unaffected (built at batch time).
-      h.streamEnded = function() { if (!h.done) h.geo = {}; };
+      // unaffected (built before their frame).
+      // Batches still queued then are dropped with it: the model commits next.
+      h.streamEnded = function() { if (!h.done) { h.geo = {}; h.pending = []; } };
       // Tear down now (cancel, failure, fallback, or once the committed
       // model is in the scene).
       h.dispose = function() {
         if (h.done) return;
         h.done = true;
         h.meshes.forEach(function(m) { if (m.parent) m.parent.remove(m); m.geometry.dispose(); });
-        h.meshes = []; h.geo = null;
+        h.meshes = []; h.geo = null; h.pending = [];
         try { h.mat.dispose(); } catch (_) {}
         var ix = live.indexOf(h); if (ix !== -1) live.splice(ix, 1);
         stats.tris = 0; live.forEach(function(o) { stats.tris += o.tris; });
@@ -21599,6 +21699,16 @@ function startApp() {
         hb.length = 0; hi.length = 0;
       }
 
+      // While a load runs, S._lastFrameMs = the whole main-thread cost of the
+      // last rendered frame: from render() to the first task after the frame
+      // task (a message posted from inside it), so GPU / compositor waits
+      // after render() returns are included. The load preview paces on it.
+      var _fcCh = null, _fcT0 = 0;
+      function _frameCostPing(t0) {
+        if (_fcT0 || typeof MessageChannel !== 'function') return;
+        if (!_fcCh) { _fcCh = new MessageChannel(); _fcCh.port1.onmessage = function() { if (_fcT0) { S._lastFrameMs = performance.now() - _fcT0; _fcT0 = 0; } }; }
+        _fcT0 = t0; _fcCh.port2.postMessage(0);
+      }
       function tick(){
         S.raf=requestAnimationFrame(tick);
         var now = performance.now();
@@ -21718,6 +21828,7 @@ function startApp() {
               renderer.render(scene,S.camera);
             }
             _occl.lastRenderMs = S._lastRenderMs = performance.now() - _rt0; // S._lastRenderMs: the load preview paces itself on it
+            if (window._ccModelLoading) _frameCostPing(_rt0);
           } finally {
             if (_occlRan) _occlEnd();
           }
@@ -25256,7 +25367,7 @@ function startApp() {
     var newSize = newBox.getSize(new THREE.Vector3());
     var newVol = newSize.x * newSize.y * newSize.z;
     if (newVol < 0.001) return null;
-    var newDisc = detectDiscipline(newElements);
+    var newDisc; // classified only when a near-total overlap needs it (a full pass over the elements)
     var newCount = newElements.length;
     for (var mi = 0; mi < existingModels.length; mi++) {
       var em = existingModels[mi];
@@ -25273,6 +25384,7 @@ function startApp() {
         // the same spatial extent by design and are not duplicates.
         var exCount = (em.elements||[]).length;
         var countRatio = exCount > 0 ? Math.min(newCount, exCount) / Math.max(newCount, exCount) : 0;
+        if (newDisc === undefined) newDisc = detectDiscipline(newElements);
         var exDisc = detectDiscipline(em.elements||[]);
         if (newDisc === exDisc && countRatio > 0.6) {
           var msg = 'This model covers the same area as "' + em.name + '". If these are the same building loaded twice, the second copy duplicates every IFC element — at scale this can OOM the browser (>4 GB heap is common). Clash detection between them will also produce an extreme number of false positives.\n\nLoad anyway?';
