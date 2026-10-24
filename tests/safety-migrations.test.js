@@ -218,3 +218,16 @@ test('v8 cache validator rejects old schemas, invalid bounds, buffers and orphan
   const orphan = validCachePayload(); orphan.meshData[0].eid = 99;
   assert.equal(safety.validateGeoCachePayload(orphan).valid, false);
 });
+
+test('v8 cache validator accepts exact (xp:1) buffers and stub elements with an empty box', () => {
+  const exact = validCachePayload();
+  delete exact.meshData[0].qpos; delete exact.meshData[0].qnrm;
+  exact.meshData[0].pos = new ArrayBuffer(12); exact.meshData[0].n8 = new ArrayBuffer(3);
+  assert.deepEqual(safety.validateGeoCachePayload(exact), { valid:true, reason:null });
+  const stub = validCachePayload();
+  stub.elData.push({ eid: 8, box: [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], props: {} });
+  assert.deepEqual(safety.validateGeoCachePayload(stub), { valid:true, reason:null });
+  const noNormals = validCachePayload();
+  delete noNormals.meshData[0].qpos; delete noNormals.meshData[0].qnrm; noNormals.meshData[0].pos = new ArrayBuffer(12);
+  assert.equal(safety.validateGeoCachePayload(noNormals).valid, false);
+});

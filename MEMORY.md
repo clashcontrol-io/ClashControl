@@ -246,6 +246,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ---
 
 ## Recently completed (details in git history)
+- **2026-10-24 — geo cache `gs:1` (branch `geoshare`):** each shared BufferGeometry stored once (`geoData`, meshes reference `md.g`), restore shares geometry like the fresh load; `pqs` placement + identity instancing key + `_ifcMaterial` make a restore equal to the fresh load (digest, sharing/instancing/batching, pixels, clashes — `tests/browser/cache-restore-exact.mjs`, which used to pass without ever restoring from the cache). v8 validator accepted no exact cache before; fixed. Synthetic federation: cache geometry −23 %, `_geoDeserialize` −46 %, heap after restore −16 % (`tests/browser/geo-cache-cost.mjs`; restore wall time is GPU-process-bound and noisy). INTERNALS §6.
 - **2026-10-24 — storey units (branch `units`):** storey elevations become metres per model with that model's own unit (override > declared > its own spacing heuristic) and merge across models in metres; plan cut, labels, sheets/title blocks, walk entry/picker, NL levels, smart-bridge storey tools all work in metres; mm display only when formatting. Fixed on the way: sheet clash pins double-scaled, walk entry used raw mm, `get_levels.elevationM` multiplied, smart-bridge never saw `_ccCollectStoreys` (INTERNALS §21.52).
 - **2026-10-24 — BCF clipping planes:** viewpoints capture the live model clipping planes (`vp.clip`, scene `[nx,ny,nz,c]`) and keep a section plane and box together; export writes `<ClippingPlanes>` (Direction into the clipped side, IFC Z-up; validated against the official 2.1 / 3.0 visinfo XSDs); import rebuilds a section box from 6 planes (+ one section plane), warns about planes it cannot show (`_ccBcfClipFromPlanes` / `_ccBcfSectionFromClip`, `tests/bcf-clipping-planes.test.js`, `tests/browser/bcf-clipping.mjs`).
 - **2026-10-24 — Confirm / Deny → next:** UPD_CLASH no longer picks a "next" clash or flies the camera (it chose from every non-denied clash, hidden ones included, 100 ms after the list's own advance — and on statuses arriving from sync / the AI bridge); the list's `_ccAdvanceToNext` advances in the order on screen and steps back from the last row.
@@ -278,6 +279,12 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ---
 
 ## Open / deferred items
+
+**Found 2026-10-24 (geoshare), not fixed:**
+- `tests/browser/memory-federation.mjs` fails on the base commit too: the 14k-element `fed-shared` model never gets `_propsVersion` (lazy props never merge), the load wait runs into its 25-min timeout (its 15-s "props never merged" guard sets `idleAt` on the interval id, a number, so it never fires).
+- Render styles look up `ifcType` by expressId across ALL models (`_eidToType`): ids collide between models, so glass/opaque decisions depend on model order (changes after park/restore).
+- Restored models lack `visible: true`; a cull pass is skipped while the camera is unchanged, so new meshes keep the default `visible` until the camera moves (sub-pixel LOD only).
+- Restore wall time is dominated by native/GPU-process work (frames, shader setup), not `_geoDeserialize`.
 
 **Local engine / `ClashControlEngine` repo:**
 - CW-1b `manifold3d` exact-volume tier. Server-side application of the ignored rule fields (`excludeTypes`, `excludeTypePairs`, `toleranceByTypePair`, `duplicates`, `excludeSelf`, `minOverlapVolM3`); semantic-filter payload parity.
@@ -317,6 +324,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- ~~2026-10-24: geo cache stores each shared geometry once (`gs:1`, branch `geoshare`): meshes reference a geometry index, restore shares BufferGeometry like a fresh load; old caches still restore as before.~~ (2026-10-24)
 - ~~2026-10-24: IFC grids as data — `extractGridAxes` on both loaders → `model.gridLines` (same shape as the Revit link), overlay + View menu "Show grids" (`prefs.showGridLines`), clash location "Grid C-4 · Level 6" (`_ccClashLocation`, memoised per clash) in rows, report and search; INTERNALS §21.51, `tests/browser/grid-lines.mjs`. Geo-cache persistence of grids follows the shared-geometry cache merge.~~ (2026-10-24)
 - ~~2026-10-24: storey elevations in METRES per model (branch `units`): each model's own unit (override > declared > its own spacing heuristic), storeys merged across models in metres within 1 m, plan cut / labels / sheets / DXF / walk / smart-bridge in metres; INTERNALS §21.52, `tests/browser/storey-units.mjs`.~~ (2026-10-24)
 - ~~2026-10-24: first-load main-thread cost (branch `loadmain`): normals/bounds in the IFC worker, lazy preview chunks paced on the real frame cost (render start → next task), sliced decode — identical scene; INTERNALS §21.50.~~ (2026-10-24)
