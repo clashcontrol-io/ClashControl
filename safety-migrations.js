@@ -340,9 +340,25 @@
     });
   }
 
+  // A stub element (no geometry: rooms without a body, non-physical
+  // elements, np:1) keeps three's empty box: min +Infinity, max -Infinity.
+  function _emptyBox(box) {
+    return Array.isArray(box) && box.length === 6 &&
+      box[0] === Infinity && box[1] === Infinity && box[2] === Infinity &&
+      box[3] === -Infinity && box[4] === -Infinity && box[5] === -Infinity;
+  }
+
   function _buffer(value) {
     return typeof ArrayBuffer !== 'undefined' &&
       (value instanceof ArrayBuffer || (ArrayBuffer.isView && ArrayBuffer.isView(value)));
+  }
+
+  // A stored geometry: exact (xp:1: Float32 positions + Int8 or Float32
+  // normals + index) or the older quantised form (qpos + qnrm + index).
+  function _geometryBuffers(rec) {
+    if (!rec || !_buffer(rec.idx)) return false;
+    if (_buffer(rec.pos)) return _buffer(rec.n8) || _buffer(rec.nrm);
+    return _buffer(rec.qpos) && _buffer(rec.qnrm);
   }
 
   function validateGeoCachePayload(payload) {
@@ -354,10 +370,20 @@
     var elementIds = {};
     for (var ei = 0; ei < payload.elData.length; ei++) {
       var element = payload.elData[ei];
-      if (!element || element.eid == null || !_finiteTuple(element.box, 6)) {
+      if (!element || element.eid == null || !(_finiteTuple(element.box, 6) || _emptyBox(element.box))) {
         return { valid:false, reason:'invalid-element-' + ei };
       }
       elementIds[String(element.eid)] = true;
+    }
+    // gs:1 — geometry buffers live once per shared geometry in geoData and
+    // every mesh references one by index (md.g); older payloads carry the
+    // buffers on each mesh record.
+    var shared = payload.gs === 1;
+    if (shared) {
+      if (!Array.isArray(payload.geoData)) return { valid:false, reason:'missing-geometries' };
+      for (var gi = 0; gi < payload.geoData.length; gi++) {
+        if (!_geometryBuffers(payload.geoData[gi])) return { valid:false, reason:'invalid-geometry-buffer-' + gi };
+      }
     }
     for (var mi = 0; mi < payload.meshData.length; mi++) {
       var mesh = payload.meshData[mi];
@@ -367,7 +393,8 @@
       if (!_finiteTuple(mesh.bbox, 6) || !_finiteTuple(mesh.mtx, 16) || !_finiteTuple(mesh.col, 4)) {
         return { valid:false, reason:'invalid-mesh-metadata-' + mi };
       }
-      if (!_buffer(mesh.qpos) || !_buffer(mesh.qnrm) || !_buffer(mesh.idx)) {
+      if (shared ? !(typeof mesh.g === 'number' && mesh.g >= 0 && mesh.g < payload.geoData.length && Math.floor(mesh.g) === mesh.g)
+        : !_geometryBuffers(mesh)) {
         return { valid:false, reason:'invalid-mesh-buffer-' + mi };
       }
     }

@@ -16,7 +16,10 @@ test('fresh geometry-cache payloads are saved off the main thread, in idle-time 
   const start = source.indexOf('function idbSaveGeoCacheFresh(');
   const fn = source.slice(start, source.indexOf('\n  function idbSaveGeoCache(', start));
   // chunked protocol, buffers transferred, idle-scheduled, DB opened on main first, main-thread fallback
-  assert.match(fn, /t: 'begin'/); assert.match(fn, /t: 'mesh', items: mc \}, tl\)/); assert.match(fn, /t: 'el'/); assert.match(fn, /t: 'end'/);
+  assert.match(fn, /t: 'begin'/); assert.match(fn, /t: 'mesh', items: mc \}, bufList\(mc\)\)/);
+  // gs:1: shared geometries go first in their own chunks, buffers transferred once
+  assert.match(fn, /t: 'geo', items: gc \}, bufList\(gc\)\)/);
+  assert.match(fn, /t: 'end', geo: !!data\.geoData/); assert.match(fn, /t: 'el'/); assert.match(fn, /t: 'end'/);
   assert.match(fn, /_ccIdle\(function\(\) \{ _openIDB\(\)\.then\(start, fallback\); \}, 5000\)/);
   assert.match(fn, /resolve\(idbSaveGeoCache\(fileId, m\.record \? m\.record\.data : data\)\)/);
 });

@@ -3387,22 +3387,25 @@ function startApp() {
   // The worker lives only while saves are pending: it is terminated when the
   // last one settles and started again (same cached source URL) by the next.
   var _ccGeoSaveWorker = null, _ccGeoSaveSeq = 0, _ccGeoSavePending = {}, _ccGeoSaveUrl = null;
-  // Worker protocol (one save = seq): 'begin' {record without meshData /
-  // elData}, then 'mesh' / 'el' chunks (structured clone, geometry buffers
-  // transferred), then 'end' → assemble + put. Chunked so no single message
-  // clones the whole object graph on the main thread.
+  // Worker protocol (one save = seq): 'begin' {record without geoData /
+  // meshData / elData}, then 'geo' / 'mesh' / 'el' chunks (structured clone,
+  // geometry buffers transferred — gs:1 payloads keep them in geoData, each
+  // geometry once; the mesh records then carry none), then 'end' → assemble
+  // + put. Chunked so no single message clones the whole object graph on
+  // the main thread.
   function _ccGeoSaveWorkerGet() {
     if (_ccGeoSaveWorker !== null) return _ccGeoSaveWorker;
     try {
       var STORE = JSON.stringify(IDB_GEOCACHE);
       var src = 'var conn=null,jobs={};function db(){if(conn)return conn;conn=new Promise(function(res,rej){var r=indexedDB.open(' + JSON.stringify(IDB_NAME) + ');' +
         'r.onsuccess=function(){var d=r.result;d.onversionchange=function(){d.close();conn=null;};res(d);};r.onerror=function(){conn=null;rej(r.error);};});return conn;}' +
-        'function bufs(rec){var b=[];((rec.data&&rec.data.meshData)||[]).forEach(function(md){["pos","n8","nrm","idx"].forEach(function(k){if(md[k]instanceof ArrayBuffer)b.push(md[k]);});});return b;}' +
+        'function bufs(rec){var b=new Set(),d=rec.data||{};[d.geoData||[],d.meshData||[]].forEach(function(l){l.forEach(function(md){["pos","n8","nrm","idx"].forEach(function(k){if(md&&md[k]instanceof ArrayBuffer)b.add(md[k]);});});});return Array.from(b);}' +
         'onmessage=function(e){var m=e.data,j=jobs[m.seq];' +
-        'if(m.t==="begin"){jobs[m.seq]={rec:m.rec,mesh:[],el:[]};return;}if(!j)return;' +
+        'if(m.t==="begin"){jobs[m.seq]={rec:m.rec,geo:[],mesh:[],el:[]};return;}if(!j)return;' +
+        'if(m.t==="geo"){for(var g=0;g<m.items.length;g++)j.geo.push(m.items[g]);return;}' +
         'if(m.t==="mesh"){for(var i=0;i<m.items.length;i++)j.mesh.push(m.items[i]);return;}' +
         'if(m.t==="el"){for(var k=0;k<m.items.length;k++)j.el.push(m.items[k]);return;}' +
-        'if(m.t==="end"){delete jobs[m.seq];var rec=j.rec;rec.data.meshData=j.mesh;rec.data.elData=j.el;' +
+        'if(m.t==="end"){delete jobs[m.seq];var rec=j.rec;if(m.geo)rec.data.geoData=j.geo;rec.data.meshData=j.mesh;rec.data.elData=j.el;' +
         'db().then(function(d){return new Promise(function(res,rej){var tx=d.transaction(' + STORE + ',"readwrite");tx.objectStore(' + STORE + ').put(rec);' +
         'tx.oncomplete=function(){res();};tx.onerror=function(){rej(tx.error);};tx.onabort=function(){rej(tx.error);};});})' +
         '.then(function(){postMessage({seq:m.seq,ok:true});},function(err){postMessage({seq:m.seq,ok:false,error:String(err&&err.message||err),record:rec},bufs(rec));});}};';
@@ -3441,10 +3444,10 @@ function startApp() {
         var candidate = _ccGeoCacheV8Enabled();
         var cacheKey = _ccGeoCacheKey(fileId, candidate);
         var head = {};
-        Object.keys(data).forEach(function(k) { if (k !== 'meshData' && k !== 'elData') head[k] = data[k]; });
+        Object.keys(data).forEach(function(k) { if (k !== 'geoData' && k !== 'meshData' && k !== 'elData') head[k] = data[k]; });
         var rec = candidate ? {id:cacheKey, sourceId:fileId, schema:8, data:head, savedAt:Date.now()} : {id:fileId, data:head, savedAt:Date.now()};
         rec.bytes = _ccEstimateBytesFast(data) + 64;
-        var seq = ++_ccGeoSaveSeq, meshData = data.meshData || [], elData = data.elData || [];
+        var seq = ++_ccGeoSaveSeq, geoData = data.geoData || [], meshData = data.meshData || [], elData = data.elData || [];
         _ccGeoSavePending[seq] = function(m) {
           if (m.ok) { if (!m.lost) _ccScheduleBudgetCheck(); resolve(); return; }
           // Buffers came back with the failure: retry on the main thread
@@ -3453,20 +3456,31 @@ function startApp() {
         };
         try { w.postMessage({ seq: seq, t: 'begin', rec: rec }); }
         catch (e) { delete _ccGeoSavePending[seq]; _ccGeoSaveWorkerIdle(); fallback(); return; }
-        var mi = 0, ei = 0;
+        var gi = 0, mi = 0, ei = 0;
+        // Every geometry buffer is transferred exactly once: gs:1 buffers
+        // live only in geoData (fresh copies, one per geometry); older
+        // per-mesh payloads carry their own on each mesh record.
+        var bufList = function(items) {
+          var tl = [];
+          items.forEach(function(md) { ['pos', 'n8', 'nrm', 'idx'].forEach(function(k) { if (md[k] instanceof ArrayBuffer && md[k].byteLength) tl.push(md[k]); }); });
+          return tl;
+        };
         var step = function() {
           try {
-            if (mi < meshData.length) {
-              var mc = meshData.slice(mi, mi + _CC_GEO_SAVE_MESH_CHUNK), tl = [];
-              mc.forEach(function(md) { ['pos', 'n8', 'nrm', 'idx'].forEach(function(k) { if (md[k] instanceof ArrayBuffer && md[k].byteLength) tl.push(md[k]); }); });
-              w.postMessage({ seq: seq, t: 'mesh', items: mc }, tl);
+            if (gi < geoData.length) {
+              var gc = geoData.slice(gi, gi + _CC_GEO_SAVE_MESH_CHUNK);
+              w.postMessage({ seq: seq, t: 'geo', items: gc }, bufList(gc));
+              gi += gc.length;
+            } else if (mi < meshData.length) {
+              var mc = meshData.slice(mi, mi + _CC_GEO_SAVE_MESH_CHUNK);
+              w.postMessage({ seq: seq, t: 'mesh', items: mc }, bufList(mc));
               mi += mc.length;
             } else if (ei < elData.length) {
               var ec = elData.slice(ei, ei + _CC_GEO_SAVE_EL_CHUNK);
               w.postMessage({ seq: seq, t: 'el', items: ec });
               ei += ec.length;
             } else {
-              w.postMessage({ seq: seq, t: 'end' });
+              w.postMessage({ seq: seq, t: 'end', geo: !!data.geoData });
               return;
             }
           } catch (e) {
@@ -3867,6 +3881,15 @@ function startApp() {
   // thread parse, or the worker's lazy props already merged) — stamped pp:1,
   // so a model with no psets at all still restores from its cache.
   function _geoSerialize(result, propsComplete) {
+    var _t0 = performance.now();
+    try { return _geoSerializeCore(result, propsComplete); }
+    finally {
+      // Main-thread cost at commit, readable as a User Timing entry
+      // ('cc:geoSerialize') by tests and perf probes.
+      try { performance.measure('cc:geoSerialize', { start: _t0 }); } catch (_) {}
+    }
+  }
+  function _geoSerializeCore(result, propsComplete) {
     // Collect individual meshes from elements rather than result.meshes, because
     // result.meshes may contain InstancedMesh objects after GPU instancing runs —
     // those have identity matrices and no expressId, which would corrupt the cache.
@@ -3879,20 +3902,45 @@ function startApp() {
     });
     // Fall back to result.meshes if elements carry no meshes (e.g. deserialized result).
     var meshList = individualMeshes.length ? individualMeshes : result.meshes;
+    // gs:1 — every distinct BufferGeometry OBJECT is written once (geoData)
+    // and its meshes reference it by index (md.g), like the loaders share one
+    // geometry per IFC geometry id across its placements. Keyed by object
+    // identity, never by content: two geometries with equal bytes stay two
+    // (that is what a fresh load holds). The values are the same bytes as
+    // before (xp:1); only the duplicate copies are gone.
+    var geoIndex = new Map(), geoData = [];
     var meshData = meshList.map(function(m) {
       var g = m.geometry, mat = m.material;
-      var posArr = g.attributes.position.array;
-      var nrmArr = g.attributes.normal.array;
-      var idxArr = g.index.array;
-      var minX=Infinity,minY=Infinity,minZ=Infinity,maxX=-Infinity,maxY=-Infinity,maxZ=-Infinity;
-      for(var i=0;i<posArr.length;i+=3){
-        var x=posArr[i],y=posArr[i+1],z=posArr[i+2];
-        if(x<minX)minX=x;if(y<minY)minY=y;if(z<minZ)minZ=z;
-        if(x>maxX)maxX=x;if(y>maxY)maxY=y;if(z>maxZ)maxZ=z;
+      var gi = geoIndex.get(g);
+      if (gi === undefined) {
+        var posArr = g.attributes.position.array;
+        var nrmArr = g.attributes.normal.array;
+        var idxArr = g.index.array;
+        var minX=Infinity,minY=Infinity,minZ=Infinity,maxX=-Infinity,maxY=-Infinity,maxZ=-Infinity;
+        for(var i=0;i<posArr.length;i+=3){
+          var x=posArr[i],y=posArr[i+1],z=posArr[i+2];
+          if(x<minX)minX=x;if(y<minY)minY=y;if(z<minZ)minZ=z;
+          if(x>maxX)maxX=x;if(y>maxY)maxY=y;if(z>maxZ)maxZ=z;
+        }
+        var nVerts = posArr.length/3;
+        var useU16Idx = nVerts <= 65535;
+        gi = geoData.length;
+        geoIndex.set(g, gi);
+        geoData.push({
+          // Exact geometry (xp:1): the loader's Float32 positions and the
+          // normal array the live view uses (Int8 normalised after
+          // _ccQuantizeNormalAttr), copied byte for byte — a restore must
+          // give the same clash/measure geometry as a fresh load. (Before
+          // xp:1, positions were 16-bit per mesh bbox: up to range/131070
+          // off, i.e. ~0.8 mm on a 100 m run.)
+          pos: new Float32Array(posArr).buffer,
+          n8: nrmArr instanceof Int8Array ? new Int8Array(nrmArr).buffer : undefined,
+          nrm: nrmArr instanceof Int8Array ? undefined : new Float32Array(nrmArr).buffer,
+          idx: (useU16Idx ? new Uint16Array(idxArr) : new Uint32Array(idxArr)).buffer,
+          idx16: useU16Idx ? 1 : 0,
+          bbox: [minX,minY,minZ,maxX,maxY,maxZ]
+        });
       }
-      var bbox=[minX,minY,minZ,maxX,maxY,maxZ];
-      var nVerts = posArr.length/3;
-      var useU16Idx = nVerts <= 65535;
       return {
         eid: m.userData.expressId,
         // Source IFC geometryExpressID — the same key the live IFC loader
@@ -3900,19 +3948,15 @@ function startApp() {
         // making hash collisions impossible. Falls back to the hash path
         // for older caches where this field doesn't exist.
         gid: m.userData._geoExpId != null ? m.userData._geoExpId : null,
-        // Exact geometry (xp:1): the loader's Float32 positions and the
-        // normal array the live view uses (Int8 normalised after
-        // _ccQuantizeNormalAttr), copied byte for byte — a restore must
-        // give the same clash/measure geometry as a fresh load. (Before
-        // xp:1, positions were 16-bit per mesh bbox: up to range/131070
-        // off, i.e. ~0.8 mm on a 100 m run.)
-        pos: new Float32Array(posArr).buffer,
-        n8: nrmArr instanceof Int8Array ? new Int8Array(nrmArr).buffer : undefined,
-        nrm: nrmArr instanceof Int8Array ? undefined : new Float32Array(nrmArr).buffer,
-        idx: (useU16Idx ? new Uint16Array(idxArr) : new Uint32Array(idxArr)).buffer,
-        idx16: useU16Idx ? 1 : 0,
-        bbox: bbox,
+        g: gi,
+        bbox: geoData[gi].bbox.slice(),
         mtx: Array.from(m.matrix.elements),
+        // The placement as the loader left it (position, quaternion, scale):
+        // a baked mesh's matrix is compose(decompose(T)), and applying that
+        // matrix again on restore decomposes + recomposes once more, which
+        // is not bit-stable for rotations (world positions 1 ulp off). The
+        // restore sets these and composes once, exactly like the load.
+        pqs: m.position.toArray().concat(m.quaternion.toArray(), m.scale.toArray()),
         col: [mat.color.r, mat.color.g, mat.color.b, mat.opacity],
         tr:  mat.transparent ? 1 : 0
       };
@@ -3940,7 +3984,9 @@ function startApp() {
     // IfcGrid) and rooms without geometry are stub elements on BOTH loader
     // paths (older worker-written caches drew them and lacked the stubs);
     // refreshed once the same way (docs/INTERNALS.md §21.49).
-    return {v:_ccGeoCacheV8Enabled()?8:7, sp:2, sem:1, xp:1, np:1, hasPsets:hasPsets, pp:propsComplete ? 1 : 0, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, spaceBoundaries:result.spaceBoundaries||null, stats:result.stats};
+    // gs:1 — shared geometries stored once (geoData + md.g, see above);
+    // caches without it hold pos/n8/nrm/idx on every mesh and still restore.
+    return {v:_ccGeoCacheV8Enabled()?8:7, sp:2, sem:1, xp:1, np:1, hasPsets:hasPsets, pp:propsComplete ? 1 : 0, gs:1, geoData:geoData, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, spaceBoundaries:result.spaceBoundaries||null, stats:result.stats};
   }
 
 
@@ -3981,7 +4027,9 @@ function startApp() {
     var isV3 = cached.v >= 3; // v3+ uses quantized positions + oct-encoded normals
     var meshByEid = {};
     var _tmpMtx4 = new THREE.Matrix4(); // reused across all meshes in this batch
-    var meshes = cached.meshData.map(function(md) {
+    // One BufferGeometry from a stored buffer record: a gs:1 geoData entry
+    // or (older caches) the mesh record itself.
+    function _buildGeo(md) {
       var geo = new THREE.BufferGeometry();
       if (md.pos && (md.n8 || md.nrm)) {
         // xp:1 — exact positions + the live normal array, byte for byte.
@@ -4008,27 +4056,52 @@ function startApp() {
       // reloaded session matches the memory profile of a fresh load.
       _ccQuantizeNormalAttr(geo);
       _ccGeoBounds(geo);
+      return geo;
+    }
+    // gs:1 — one geometry per stored geometry, shared by all its meshes
+    // exactly like the fresh load (normal shrink + bounds once per geometry).
+    var _gsData = cached.gs === 1 && Array.isArray(cached.geoData) ? cached.geoData : null;
+    var _gsGeos = _gsData ? new Array(_gsData.length) : null;
+    var meshes = cached.meshData.map(function(md) {
+      var src = md, geo;
+      if (_gsData) {
+        src = _gsData[md.g];
+        if (!src) throw new Error('geo cache mesh references missing geometry ' + md.g);
+        geo = _gsGeos[md.g] || (_gsGeos[md.g] = _buildGeo(src));
+      } else geo = _buildGeo(md);
       var c = md.col;
       // Share materials across the whole session (same RGBA → one material),
       // same as the live load path. Before this, restore minted a fresh
       // MeshPhongMaterial per mesh → 146k distinct materials on reload (#572).
       var mat = _ccGetSharedPhongMat(c[0], c[1], c[2], c[3]);
       var mesh = new THREE.Mesh(geo, mat);
-      mesh.applyMatrix4(_tmpMtx4.fromArray(md.mtx));
+      if (_gsData && md.pqs && md.pqs.length === 10) {
+        // gs:1 — the loader's own position / quaternion / scale; the bake
+        // composes them once, so mesh.matrix is the fresh load's, bit for bit.
+        mesh.position.fromArray(md.pqs, 0); mesh.quaternion.fromArray(md.pqs, 3); mesh.scale.fromArray(md.pqs, 7);
+      } else mesh.applyMatrix4(_tmpMtx4.fromArray(md.mtx));
       mesh.userData.expressId = md.eid;
       _ccBakeMesh(mesh);
       // _instKey: the live IFC loader uses geometryExpressID (md.gid in
       // v:7+ caches) which is per-source-geometry unique by construction —
       // no possible collisions. Earlier caches don't have gid, so we fall
       // back to a position+index byte-hash fingerprint with size guards.
-      if (md.gid != null) {
+      if (_gsData) {
+        // gs:1 — instanced exactly like the fresh load: both loaders key
+        // instancing by their shared geometry (one per IFC geometry id) and
+        // the shared material, and md.g IS that geometry. (Worker-path
+        // meshes carry no gid; the content-hash key below grouped equal-byte
+        // geometries of different ids, which the fresh load never does.)
+        mesh.userData._instKey = 'g:' + md.g + ':' + (mat.uuid || 'na');
+        if (md.gid != null) mesh.userData._geoExpId = md.gid;
+      } else if (md.gid != null) {
         mesh.userData._instKey = 'gid:' + md.gid + ':' + (mat.uuid || 'na');
         // Keep the canonical key on the mesh so any later re-serialize of a
         // restored result preserves gid instead of degrading to the hash path.
         mesh.userData._geoExpId = md.gid;
       } else {
-        var _qbytes = md.qpos ? new Uint8Array(md.qpos) : (md.pos ? new Uint8Array(new Float32Array(md.pos).buffer) : null);
-        var _ibytes = md.idx ? new Uint8Array(md.idx) : null;
+        var _qbytes = src.qpos ? new Uint8Array(src.qpos) : (src.pos ? new Uint8Array(new Float32Array(src.pos).buffer) : null);
+        var _ibytes = src.idx ? new Uint8Array(src.idx) : null;
         var _vc = _qbytes ? (_qbytes.byteLength / 2 / 3) : 0;
         function _fnv1a(arr){
           var h = 2166136261;
@@ -4060,6 +4133,12 @@ function startApp() {
     });
     var elements = cached.elData.map(function(ed) {
       var b = ed.box;
+      // Both IFC loaders stamp every mesh with the element's material name
+      // (the same string as props.material); render styles read it (glass /
+      // opaque / PBR). The cache never held it, so restored meshes rendered
+      // as if unnamed — taken from the props, as the loaders do.
+      var _im = (ed.props && ed.props.material) || '';
+      (meshByEid[ed.eid] || []).forEach(function(m) { m.userData._ifcMaterial = _im; });
       return {
         expressId: ed.eid,
         meshes: meshByEid[ed.eid] || [],
@@ -4125,6 +4204,14 @@ function startApp() {
         if (got[j] === box[j]) continue; // incl. the +/-Infinity of a stub element's empty box
         if (!isFinite(got[j]) || Math.abs(got[j] - box[j]) > 0.000001) return false;
       }
+    }
+    // gs:1 — the restore shares one geometry per stored geometry: never more
+    // distinct geometries than were stored.
+    if (cached.gs === 1) {
+      if (!Array.isArray(cached.geoData)) return false;
+      var geos = new Set();
+      result.elements.forEach(function(el){ (el.meshes || []).forEach(function(m){ if (m && m.geometry) geos.add(m.geometry); }); });
+      if (geos.size > cached.geoData.length) return false;
     }
     return true;
   }
