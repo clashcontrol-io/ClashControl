@@ -352,3 +352,137 @@ test('file names and ids', () => {
   assert.ok(L.safeId('u1abcdef') && !L.safeId('../x') && !L.safeId('A'));
   assert.strictEqual(L.parseChangeFile({ _cc: 'nope' }), null);
 });
+
+// ── Delete vs edit (both sharing modes) ─────────────────────────────
+
+const I = ['issue', 'iss_1'];
+function withIssue() {
+  const a = client('alice'), b = client('bob');
+  const c0 = a.edit(...I, 'created', { title: 'Duct', status: 'open' }, 1, null);
+  const s0 = a.edit(...I, 'status', 'in_progress', 2, 'open');
+  b.read([c0, s0]);
+  return { a, b };
+}
+
+test('an edit made without seeing a delete (and vice versa) is a conflict on both sides; the item stays with what the deleter saw', () => {
+  const { a, b } = withIssue();
+  const del = a.edit(...I, 'deleted', true, 10, null);
+  assert.deepStrictEqual(del.covers.sort(), b.log.groups[L.groupKey(...I, 'created')].concat(b.log.groups[L.groupKey(...I, 'status')]).sort(), 'covers every field head the deleter had');
+  const ed = b.edit(...I, 'status', 'resolved', 10_000_000); // far later: still concurrent
+  const cm = b.edit(...I, 'comment:c1', { id: 'c1', text: 'on it' }, 10_000_001, null);
+  a.read([ed, cm]); b.read([del]);
+  for (const c of [a, b]) {
+    const ts = L.targetState(c.log, ...I);
+    const d = ts.fields.deleted;
+    assert.strictEqual(d.conflicted, true, c.user);
+    assert.strictEqual(d.deleteConflict, true);
+    assert.strictEqual(d.value, false, 'not deleted while the conflict is open');
+    assert.deepStrictEqual(d.heads.map((h) => h.field).sort(), ['comment:c1', 'deleted', 'status']);
+    assert.strictEqual(ts.fields.status.value, 'in_progress', 'the value the deleter saw, not the unseen edit');
+    assert.strictEqual(ts.fields['comment:c1'].value, null, 'an unseen new comment is not shown yet');
+    assert.strictEqual(ts.conflicts.length, 1);
+    assert.strictEqual(L.conflictCount(c.log), 1);
+  }
+  assert.strictEqual(L.digest(a.log), L.digest(b.log));
+  // keep: the edits apply
+  const keep = a.resolve(...I, 'deleted', false, 20);
+  b.read([keep]);
+  for (const c of [a, b]) {
+    const ts = L.targetState(c.log, ...I);
+    assert.strictEqual(ts.conflicts.length, 0);
+    assert.strictEqual(ts.fields.deleted.value, false);
+    assert.strictEqual(ts.fields.status.value, 'resolved');
+    assert.strictEqual(ts.fields['comment:c1'].value.text, 'on it');
+  }
+});
+
+test('resolving a delete-vs-edit conflict as delete covers the edits; deleting again does too', () => {
+  for (const how of ['resolve', 'edit']) {
+    const { a, b } = withIssue();
+    const del = a.edit(...I, 'deleted', true, 10, null);
+    const ed = b.edit(...I, 'priority', 'high', 11, 'normal');
+    a.read([ed]); b.read([del]);
+    const r = how === 'resolve' ? b.resolve(...I, 'deleted', true, 12) : b.edit(...I, 'deleted', true, 12, null);
+    assert.strictEqual(r.base, del.id);
+    assert.ok(r.covers.includes(ed.id));
+    a.read([r]);
+    for (const c of [a, b]) {
+      const ts = L.targetState(c.log, ...I);
+      assert.strictEqual(ts.conflicts.length, 0, how);
+      assert.strictEqual(ts.fields.deleted.value, true);
+    }
+    // an edit made later by someone who had not seen the second delete conflicts again
+    const c = client('carol');
+    c.read([...Object.values(a.log.changes)].filter((x) => x.id !== r.id));
+    const late = c.edit(...I, 'assignee', 'Cas', 13, '');
+    a.read([late]);
+    assert.strictEqual(L.targetState(a.log, ...I).fields.deleted.deleteConflict, true);
+  }
+});
+
+test('a delete that saw every change is an ordinary delete; concurrent deletes agree; deletes without covers keep the old meaning', () => {
+  const { a, b } = withIssue();
+  const d1 = a.edit(...I, 'deleted', true, 10, null), d2 = b.edit(...I, 'deleted', true, 11, null);
+  a.read([d2]); b.read([d1]);
+  assert.strictEqual(L.targetState(a.log, ...I).conflicts.length, 0);
+  assert.strictEqual(L.targetState(a.log, ...I).fields.deleted.value, true);
+  const log = L.createLog();
+  L.addChanges(log, [{ id: 'x1', user: 'u', ts: 1, target: { kind: 'note', key: 'n' }, field: 'deleted', value: true, base: null },
+    { id: 'x2', user: 'v', ts: 2, target: { kind: 'note', key: 'n' }, field: 'text', value: 'hi', base: null, prev: '' }]);
+  assert.strictEqual(L.targetState(log, 'note', 'n').fields.deleted.value, true, 'legacy delete (no covers): no conflict');
+});
+
+test('random delete / edit / keep histories: every client that read the same records agrees', () => {
+  for (let seed = 1; seed <= 30; seed++) {
+    let x = seed * 104729 >>> 0;
+    const rnd = () => ((x = (Math.imul(x, 1664525) + 1013904223) >>> 0) / 4294967296);
+    const users = ['ann', 'ben', 'cas'].map(client);
+    const all = [users[0].edit(...I, 'created', { title: 't' }, 0, null)];
+    users.forEach((u) => u.read(all));
+    for (let t = 1; t < 80; t++) {
+      const u = users[Math.floor(rnd() * 3)], op = rnd();
+      if (op < 0.35) { u.read(all.filter(() => rnd() < 0.6)); continue; }
+      const st = L.targetState(u.log, ...I);
+      let r;
+      if (st.fields.deleted && st.fields.deleted.conflicted && rnd() < 0.5) r = u.resolve(...I, 'deleted', rnd() < 0.5, t);
+      else if (op < 0.5) r = u.edit(...I, 'deleted', true, t, null);
+      else r = u.edit(...I, rnd() < 0.5 ? 'status' : 'comment:c' + Math.floor(rnd() * 3), 'v' + Math.floor(rnd() * 3), t, 'open');
+      all.push(r);
+    }
+    const full = L.createLog(); L.addChanges(full, all);
+    users.forEach((u) => { u.read(all); assert.strictEqual(L.digest(u.log), L.digest(full), 'seed ' + seed); });
+    const rev = L.createLog(); L.addChanges(rev, all.slice().reverse());
+    assert.strictEqual(L.digest(rev), L.digest(full), 'order-independent, seed ' + seed);
+    // snapshots carry covers
+    const snap = L.parseSnapshot(JSON.parse(JSON.stringify(L.buildSnapshot(full, { by: 'ann', ts: 1 }))));
+    const again = L.createLog(); L.addChanges(again, snap.changes);
+    assert.strictEqual(L.digest(again), L.digest(full));
+  }
+});
+
+// ── Viewpoints + cloud migration ─────────────────────────────────────
+
+test('viewpoint records keep camera / section / clip / name and never the picture; .ccproject viewpoints migrate', () => {
+  const vp = { id: 'vp1', name: 'Shaft', linkedId: 'iss_1', createdAt: '2026-10-01', snapshot: 'data:image/png;base64,AAAA', bcfGuid: 'g',
+    camera: { px: 1, py: 2, pz: 3, dx: 0, dy: 0, dz: -1, ux: 0, uy: 1, uz: 0, isOrtho: false, fov: 50 }, section: { kind: 'axis', axis: 'y', pos: 3 }, clip: [[0, 1, 0, -3]], _sharedConflict: [1] };
+  const r = L.viewpointRecord(vp);
+  assert.deepStrictEqual(Object.keys(r).sort(), ['camera', 'clip', 'createdAt', 'linkedId', 'name', 'section']);
+  const data = { _cc: 'ClashControl', savedAt: '2026-10-01T10:00:00.000Z', clashes: [], issues: [], comments: [], viewpoints: [vp, { id: 'nocam' }] };
+  const m = L.migrateProject(data, JSON.stringify(data), { identityKey: () => null });
+  const log = L.createLog(); L.addChanges(log, L.parseSnapshot(JSON.parse(JSON.stringify(m.snapshot))).changes);
+  assert.strictEqual(L.fieldState(log, L.groupKey('viewpoint', 'vp1', 'created')).value.camera.pz, 3);
+  assert.strictEqual(L.fieldState(log, L.groupKey('viewpoint', 'nocam', 'created')), null);
+});
+
+test('migrateLegacyRows: decisions of the old per-issue rows, deterministic ids', () => {
+  const rows = [
+    { id: 'c1', data: { id: 'c1', globalIdA: 'A', globalIdB: 'B', point: [0, 0, 0], status: 'resolved', priority: 'normal', assignee: '' }, updated_by: 'Ann', updated_at: '2026-10-01T00:00:00Z' },
+    { id: 'iss_2', data: { id: 'iss_2', title: 'Leak', status: 'open', _updatedAt: 'x' }, updated_by: 'Ben', updated_at: '2026-10-02T00:00:00Z' },
+  ];
+  const opts = { projectId: 'P-1', identityKey: (c) => c.globalIdA + '|' + c.globalIdB };
+  const m1 = L.migrateLegacyRows(rows, opts), m2 = L.migrateLegacyRows(JSON.parse(JSON.stringify(rows)), opts);
+  assert.deepStrictEqual(m1, m2);
+  assert.deepStrictEqual(m1.changes.map((r) => [r.target.kind, r.target.key, r.field]), [['clash', 'A|B', 'status'], ['issue', 'iss_2', 'created']]);
+  assert.ok(!('_updatedAt' in m1.changes[1].value));
+  assert.notDeepStrictEqual(L.migrateLegacyRows(rows, { projectId: 'P-2', identityKey: opts.identityKey }).changes[0].id, m1.changes[0].id);
+});

@@ -887,6 +887,7 @@
 <script src="project-codec.js" defer></script>
 <script src="storage-core.js" defer></script>
 <script src="shared-log-core.js" defer></script>
+<script src="shared-session-core.js" defer></script>
 <script>
 window.addEventListener('error', function(e) {
   console.error('[ClashControl] Uncaught error:', e.error || e.message);
@@ -2195,6 +2196,18 @@ function startApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setTick is a useState setter (stable identity)
     }, []);
     return window._ccGetRegulationRegion ? window._ccGetRegulationRegion() : null;
+  }
+  // Re-renders on cloud-share status changes (conflict count, last sync);
+  // returns {conflicts, lastSync, pid}.
+  function useCcCloudShare() {
+    var st = useState(0), setTick = st[1];
+    useEffect(function(){
+      function on(){ setTick(function(n){ return n + 1; }); }
+      window.addEventListener('cc-cloud-share', on);
+      return function(){ window.removeEventListener('cc-cloud-share', on); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setTick is a useState setter (stable identity)
+    }, []);
+    return window._ccCloudShare ? window._ccCloudShare.status() : { conflicts: 0, lastSync: null, pid: null };
   }
   // Human-readable "why this country pack" line for Settings / panels.
   function _ccRegionReasonText(res) {
@@ -24439,16 +24452,17 @@ function startApp() {
           ${s.viewpoints.length>0 && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',alignSelf:'center'}}>${_cc_t('viewport.nSaved','{n} saved',{n:s.viewpoints.length})}</span>`}
         </div>
         ${s.viewpoints.length>0 && html`<div class="cc-overlay-chrome" style=${{padding:'var(--space-1)',maxHeight:160,overflowY:'auto',width:220}}>
-          ${s.viewpoints.map(function(vp){return html`<div key=${vp.id} style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',padding:'var(--space-1)',borderBottom:'1px solid var(--border-subtle)',cursor:'pointer'}}
+          ${s.viewpoints.map(function(vp){return html`<div key=${vp.id} data-cc-viewpoint=${vp.id} style=${{borderBottom:'1px solid var(--border-subtle)'}}><div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',padding:'var(--space-1)',cursor:'pointer'}}
             onClick=${function(){if(_restoreViewpoint)_restoreViewpoint(vp);}}>
             ${vp.snapshot && html`\x3Cimg src=${vp.snapshot} style=${{width:40,height:25,borderRadius:'var(--radius-xs)',objectFit:'cover',border:'1px solid var(--border)'}} />`}
             <div style=${{flex:1,minWidth:0}}>
               <div style=${{fontSize:'var(--text-xs)',color:'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${vp.name}</div>
               <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${window._ccDateFmt(vp.createdAt,'time')}</div>
             </div>
+            ${vp._sharedConflict && _ccSharedConflictBadge(vp)}
             <button onClick=${function(e){e.stopPropagation();d({t:A.DEL_VIEWPOINT,id:vp.id});}}
               style=${{...S_BTN,padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}} aria-label=${_cc_t('viewport.deleteViewpointAria','Delete viewpoint')}>✕</button>
-          </div>`})}
+          </div>${vp._sharedConflict && html`<${SharedConflictResolver} item=${vp} />`}</div>`})}
         </div>`}
       </div>`}
       ${ctxMenu && html`<div onClick=${function(){setCtxMenu(null)}} style=${{position:'absolute',inset:0,zIndex:'var(--z-dropdown)'}}>
@@ -36233,12 +36247,19 @@ function startApp() {
     </div>`;
   }
 
-  // ── Shared-folder conflicts (addons/shared-project.js, INTERNALS §21.55) ──
+  // ── Shared conflicts (shared folder + cloud project key; INTERNALS §21.55, §21.56) ──
   // A field teammates changed at the same time carries `_sharedConflict` on
-  // the clash / issue / note: [{kind, key, field, agreed, heads:[{id, user,
-  // mine, ts, value}]}]. Nobody wins automatically: the row shows a badge, the
-  // detail shows every competing value with who / when, and "Use this" or a
-  // new value resolves it for everyone (window._ccSharedResolve).
+  // the clash / issue / note / viewpoint: [{src, kind, key, field, agreed,
+  // heads:[{id, field, user, mine, ts, value}], deleteConflict?}]. Nobody wins
+  // automatically: the row shows a badge, the detail shows every competing
+  // value with who / when, and "Use this" or a new value resolves it for
+  // everyone. A delete made while someone else edited the item (deleteConflict)
+  // is resolved by keeping or deleting it. Resolutions go to the session the
+  // marker came from (shared-session-core.js).
+  window._ccSharedResolve = function(o) {
+    var SC = window._ccSharedSessionCore;
+    return !!(SC && o && SC.resolve(o));
+  };
   function _ccSharedFieldLabel(f) {
     if (f.indexOf('comment:') === 0) return _cc_t('sharedConflict.field.comment','Comment');
     if (f.indexOf('reply:') === 0) return _cc_t('sharedConflict.field.reply','Reply');
@@ -36259,21 +36280,41 @@ function startApp() {
     if (!list || !list.length) return null;
     var who = [];
     list.forEach(function(c){ (c.heads || []).forEach(function(h){ var n = h.mine ? _cc_t('sharedConflict.byYou','you') : h.user; if (who.indexOf(n) === -1) who.push(n); }); });
-    var tip = _cc_t('sharedConflict.badgeTip','{fields} changed at the same time by {names}. Open the item to choose the value to keep.',
-      {fields:list.map(function(c){ return _ccSharedFieldLabel(c.field); }).join(', '), names:who.join(', ')});
+    var del = list.some(function(c){ return c.deleteConflict; });
+    var tip = del
+      ? _cc_t('sharedConflict.badgeTipDelete','Deleted and changed at the same time by {names}. Open the item to keep or delete it.', {names:who.join(', ')})
+      : _cc_t('sharedConflict.badgeTip','{fields} changed at the same time by {names}. Open the item to choose the value to keep.',
+        {fields:list.map(function(c){ return _ccSharedFieldLabel(c.field); }).join(', '), names:who.join(', ')});
     return html`<span class="cc-status-pill" data-cc-shared-conflict="1" title=${tip} style=${{background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',flexShrink:0}}>${_cc_t('sharedConflict.badge','Conflict')}</span>`;
   }
   function SharedConflictResolver(props) {
     var it = props.item, list = (it && it._sharedConflict) || [];
     var dr = useState({}), drafts = dr[0], setDrafts = dr[1];
     if (!list.length) return null;
-    function resolve(c, v) { if (typeof window._ccSharedResolve === 'function') window._ccSharedResolve({kind:c.kind, key:c.key, field:c.field, value:v}); }
+    function resolve(c, v) { if (typeof window._ccSharedResolve === 'function') window._ccSharedResolve({src:c.src, kind:c.kind, key:c.key, field:c.field, value:v}); }
     var MUTED = {fontSize:'var(--text-2xs)',color:'var(--text-muted)'};
     var SMALL = {...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',flexShrink:0};
     var stOpts = Object.keys(STAT).filter(function(k){ return k !== 'auto_resolved'; });
     return html`<div data-cc-shared-resolver="1" role="group" aria-label=${_cc_t('sharedConflict.groupAria','Conflicting changes')} onClick=${function(e){ e.stopPropagation(); }}
       style=${{marginTop:'var(--space-2)',padding:'var(--space-2)',border:'1px solid var(--color-warning-border)',borderRadius:'var(--radius-sm)',background:'var(--bg-secondary)',display:'flex',flexDirection:'column',gap:'var(--space-2)'}}>
       ${list.map(function(c){
+        if (c.deleteConflict) {
+          return html`<div key=${c.field} data-cc-shared-field="deleted" data-cc-shared-delete="1" style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
+            <div style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)'}}>${_cc_t('sharedConflict.deleteTitle','Deleted by one person while another changed it')}</div>
+            <div style=${MUTED}>${_cc_t('sharedConflict.deleteKeeping','Until someone chooses, it stays for everyone with the values from before the change.')}</div>
+            ${(c.heads || []).map(function(h){
+              var isDel = h.field === 'deleted';
+              return html`<div key=${h.id} data-cc-shared-head=${h.id} style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexWrap:'wrap'}}>
+                <span data-cc-shared-value="1" style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',overflowWrap:'anywhere'}}>${isDel ? _cc_t('sharedConflict.deletedIt','Deleted') : _ccSharedFieldLabel(h.field) + ': ' + _ccSharedValueLabel(h.field, h.value)}</span>
+                <span style=${MUTED}>${h.mine ? _cc_t('sharedConflict.byYou','you') : h.user} · ${window._ccDateFmt(h.ts, 'datetime')}</span>
+              </div>`;
+            })}
+            <div style=${{display:'flex',gap:'var(--space-2)',flexWrap:'wrap'}}>
+              <button class="cc-btn-press" data-cc-shared-keep="1" onClick=${function(){ resolve(c, false); }} style=${SMALL}>${_cc_t('sharedConflict.keep','Keep, with the changes')}</button>
+              <button class="cc-btn-press" data-cc-shared-delete-btn="1" onClick=${function(){ resolve(c, true); }} style=${SMALL}>${_cc_t('sharedConflict.delete','Delete')}</button>
+            </div>
+          </div>`;
+        }
         var free = c.field.indexOf(':') === -1 && c.field !== 'created' && c.field !== 'deleted' && c.field !== 'resolved';
         var draft = drafts[c.field] != null ? drafts[c.field] : '';
         function setDraft(v){ var n = Object.assign({}, drafts); n[c.field] = v; setDrafts(n); }
@@ -38219,18 +38260,13 @@ function startApp() {
       var m = key.match(/[?&]p=([^&#]+)/);
       if (m) key = decodeURIComponent(m[1]);
       setJoinError('');
-      fetch('/api/project?id=' + encodeURIComponent(key))
-        .then(function(r){ if(!r.ok){ var e=new Error(); e.status=r.status; throw e; } return r.json(); })
+      if (typeof window._ccSharedJoin !== 'function') { setJoinError(_cc_t('dlg.sharingServiceUnavailable','Sharing service unavailable.')); return; }
+      window._ccSharedJoin(key)
         .then(function(data){
-          try {
-            localStorage.setItem('cc_sharedProjectId', key);
-            localStorage.setItem('cc_sharedProjectName', data.project.name);
-          } catch(e){}
           setPKey(key);
           setPKeyName(data.project.name);
           setJoinOpen(false);
           setJoinKeyVal('');
-          if (window._ccSharedStart) window._ccSharedStart();
         })
         .catch(function(err){
           // A real 404 (bad/unknown key) vs. offline/network failure (fetch
@@ -38249,8 +38285,10 @@ function startApp() {
     }
     function leaveKey(){
       try { localStorage.removeItem('cc_sharedProjectId'); localStorage.removeItem('cc_sharedProjectName'); } catch(e){}
+      if (typeof window._ccSharedStop === 'function') window._ccSharedStop(true);
       setPKey(''); setPKeyName('');
     }
+    var cloudSt = useCcCloudShare();
 
     var TabBtn = function(id, label, badge){
       var active = tab===id;
@@ -38290,6 +38328,9 @@ function startApp() {
             ${pKey ? html`<div style=${{padding:'var(--space-3) var(--space-4)',background:'var(--accent-bg)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-md)'}}>
               <div style=${{fontSize:'var(--text-xs)',color:'var(--accent)',fontWeight:'var(--weight-bold)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:'var(--space-2)'}}>${pKeyName ? pKeyName : _cc_t('share.sharedProject','Shared project')}</div>
               <div style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-lg)',fontWeight:600,color:'var(--text-primary)',letterSpacing:'.02em',marginBottom:'var(--space-2)',userSelect:'all'}}>${pKey}</div>
+              ${cloudSt.conflicts > 0 && html`<div data-cc-cloud-conflict-count="1" class="cc-status-pill" style=${{display:'inline-block',marginBottom:'var(--space-2)',textTransform:'none',letterSpacing:0,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)'}}>
+                ${cloudSt.conflicts === 1 ? _cc_t('sharedConflict.countOne', '1 conflict to resolve') : _cc_t('sharedConflict.countMany', '{n} conflicts to resolve', {n: cloudSt.conflicts})}
+              </div>`}
               <div style=${{display:'flex',gap:'var(--space-2)',flexWrap:'wrap'}}>
                 <button onClick=${function(){copy(shareUrl,'url');}} style=${{...btnPrimary,padding:'var(--space-2) var(--space-3)',fontSize:'var(--text-xs)'}}>${copiedKind==='url'?_cc_t('share.copied','Copied!'):_cc_t('share.copyLink','Copy share link')}</button>
                 <button onClick=${function(){copy(pKey,'key');}} style=${{...btnSecondary,padding:'var(--space-2) var(--space-3)',fontSize:'var(--text-xs)'}}>${copiedKind==='key'?_cc_t('share.copied','Copied!'):_cc_t('share.copyKey','Copy key')}</button>
@@ -39675,7 +39716,7 @@ function startApp() {
                   style=${{...S_BTN,padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'var(--text-xs)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)'}}>${_cc_t('settings.shared.copy','Copy')}</button>
                 <button onClick=${function(){if(window._ccSharedPull)window._ccSharedPull();}}
                   style=${{...S_BTN,padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'var(--text-xs)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)'}}>${_cc_t('share.syncNow','Sync now')}</button>
-                <button onClick=${function(){if(window._ccSharedStop)window._ccSharedStop();try{localStorage.removeItem('cc_sharedProjectId');localStorage.removeItem('cc_sharedProjectName');}catch(e){}d({t:A.UPD_PREFS,u:{_sharedRefresh:Date.now()}});}}
+                <button onClick=${function(){try{localStorage.removeItem('cc_sharedProjectId');localStorage.removeItem('cc_sharedProjectName');}catch(e){}if(window._ccSharedStop)window._ccSharedStop(true);d({t:A.UPD_PREFS,u:{_sharedRefresh:Date.now()}});}}
                   style=${{...S_BTN,padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--color-danger-fg)',fontSize:'var(--text-xs)',border:'1px solid var(--color-danger-border)',borderRadius:'var(--radius-sm)'}}>${_cc_t('share.leave','Leave')}</button>
                 ${function(){
                   // Only the creator's browser holds the editKey (set once,
@@ -39709,11 +39750,9 @@ function startApp() {
                 <button onClick=${function(){
                   var key = document.getElementById('cc-join-key').value.trim();
                   if (!key) return;
-                  fetch('/api/project?id='+encodeURIComponent(key))
-                    .then(function(r){if(!r.ok){var e=new Error();e.status=r.status;throw e;}return r.json();})
-                    .then(function(data){
-                      try{localStorage.setItem('cc_sharedProjectId',key);localStorage.setItem('cc_sharedProjectName',data.project.name);}catch(e){}
-                      if(window._ccSharedStart)window._ccSharedStart();
+                  if (typeof window._ccSharedJoin !== 'function') return;
+                  window._ccSharedJoin(key)
+                    .then(function(){
                       d({t:A.UPD_PREFS,u:{_sharedRefresh:Date.now()}});
                     })
                     .catch(function(err){
@@ -42456,198 +42495,222 @@ function startApp() {
       });
   }
 
-  // ── Shared Project sync (Phase 6F) ───────────────────────────────
+  // ── Shared project via project key (cloud; docs/INTERNALS.md §21.56) ──
+  // The project is an append-only change log on the server (api/project.js
+  // v2), the same records and the same conflict rule as the shared folder:
+  // shared-session-core.js turns local actions into records, applies
+  // teammates' records and puts conflict markers on the items — this block
+  // only moves records. A push appends this user's new records (never
+  // rejected for being concurrent: two edits of one field made on the same
+  // version are a conflict every user sees until someone resolves it); a pull
+  // fetches the records after the cursor, so it costs what is new. The log
+  // and cursor are cached in IndexedDB, so a reload pulls only what is new.
 
-  var _sharedPushQueue = {};   // id -> item (debounced batch)
-  var _sharedPushTimer = null;
-  var _sharedPullTimer = null;
-  var _sharedLastPullAt = 0;
-  var SHARED_PUSH_DEBOUNCE = 3000;
-  var SHARED_PULL_INTERVAL = 30000;
-
-  // Per-record last-seen SERVER updated_at (from a pull, or a push response's
-  // `updatedAt` map). The server's optimistic-concurrency check on PUT
-  // compares its own `updated_at` column against whatever `_updatedAt` the
-  // client sends back as `expected` — that only works if the client is
-  // echoing a timestamp the server itself produced. Stamping the client's
-  // own edit-time clock there (the old behaviour) meant a slow/skewed local
-  // clock could look "older" than the true server row and get silently
-  // rejected, or "newer" and silently steamroll a teammate's edit that
-  // landed in between. Never persisted — rebuilt from the next pull if lost
-  // (tab reload, etc.), which just means one extra conflict round-trip.
-  var _sharedLastSeen = {}; // id -> ISO string
+  var CLOUD_PULL_MS = 30000, CLOUD_PUSH_DELAY = 1500, CLOUD_BATCH = 200;
+  var _cloud = { pid: null, sess: null, cursor: '0', loaded: null, pullTimer: null, pushTimer: null, pulling: null, pushing: null,
+    synced: false, seeded: false, conflicts: 0, lastSync: null,
+    stats: { pulls: 0, pushes: 0, changesIn: 0, changesOut: 0 } };
 
   function _sharedProjectId() {
     try { return localStorage.getItem('cc_sharedProjectId') || null; } catch(e) { return null; }
   }
-
-  function _sharedStrip(item) {
-    return {
-      id: item.id,
-      globalIdA: item.globalIdA || null,
-      globalIdB: item.globalIdB || null,
-      point: item.point || null,
-      type: item.type || null,
-      distance: item.distance != null ? item.distance : null,
-      status: item.status || 'open',
-      priority: item.priority || 'normal',
-      // `!= null` (not `||`): an explicit '' (cleared by the user) must
-      // round-trip as '' so a teammate's hydrate can tell "cleared" from
-      // "never set" apart — see _sharedHydrate.
-      assignee: item.assignee != null ? item.assignee : null,
-      title: item.title || '',
-      description: item.description != null ? item.description : null,
-      category: item.category != null ? item.category : null,
-      dueDate: item.dueDate != null ? item.dueDate : null,
-      source: item.source || null,
-      createdAt: item.createdAt || null,
-      // The server is authoritative for `_updatedAt` — send back the last
-      // value WE SAW FROM THE SERVER for this id (pull or prior push), never
-      // our own edit-time clock. `undefined` (never synced) becomes `null`,
-      // which the server treats as "no baseline, insert fresh" — correct for
-      // a record it has never seen from us before.
-      _updatedAt: _sharedLastSeen[item.id] || null,
-    };
+  // The same per-browser id the shared folder uses (random, never personal).
+  function _cloudUserId() {
+    if (typeof window.__ccSharedTestUser === 'string' && window.__ccSharedTestUser) return window.__ccSharedTestUser;
+    var rnd = function(n){ var s = ''; while (s.length < n) s += Math.random().toString(36).slice(2); return s.slice(0, n); };
+    try {
+      var u = localStorage.getItem('cc_shared_uid');
+      if (u && /^[a-z0-9][a-z0-9-]{2,63}$/.test(u)) return u;
+      u = 'u' + rnd(11);
+      localStorage.setItem('cc_shared_uid', u);
+      return u;
+    } catch(e) { return 'u' + rnd(11); }
+  }
+  function _cloudEmit() {
+    try { window.dispatchEvent(new CustomEvent('cc-cloud-share', { detail: { conflicts: _cloud.conflicts, lastSync: _cloud.lastSync } })); } catch(e) {}
   }
 
-  function _sharedEnqueue(item) {
-    if (!_sharedProjectId()) return;
-    if (!item || !item.id) return;
-    _sharedPushQueue[item.id] = _sharedStrip(item);
-    if (_sharedPushTimer) return;
-    _sharedPushTimer = setTimeout(_sharedFlushPush, SHARED_PUSH_DEBOUNCE);
+  // IndexedDB cache of one project's records + cursor (`cc_cloud_shared`).
+  function _cloudDb(cb) {
+    try {
+      var req = indexedDB.open('cc_cloud_shared', 1);
+      req.onupgradeneeded = function(e) { var db = e.target.result; if (!db.objectStoreNames.contains('log')) db.createObjectStore('log'); };
+      req.onsuccess = function(e) { cb(e.target.result); };
+      req.onerror = function() { cb(null); };
+    } catch(e) { cb(null); }
   }
-
-  // Non-blocking toast for sync conflicts — falls back to console when the
-  // app's toast system isn't available (e.g. under test) rather than an
-  // `alert()`, which would block the tab on every conflicted sync.
-  function _sharedToast(msg) {
-    if (typeof window._ccToast === 'function') { window._ccToast(msg, 'warn'); return; }
-    console.warn('[shared-project]', msg);
-  }
-
-  function _sharedFlushPush() {
-    _sharedPushTimer = null;
-    var key = _sharedProjectId();
-    if (!key) { _sharedPushQueue = {}; return; }
-    var items = Object.keys(_sharedPushQueue).map(function(k){ return _sharedPushQueue[k]; });
-    if (!items.length) return;
-    _sharedPushQueue = {};
-    var user = (typeof _ccChangelogUser !== 'undefined' && _ccChangelogUser) || 'anonymous';
-    fetch('/api/project?id=' + encodeURIComponent(key), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ issues: items, user: user }),
-    })
-      .then(function(r){ return r.ok ? r.json() : null; })
-      .then(function(data){
-        if (!data) return;
-        if (data.updatedAt) {
-          Object.keys(data.updatedAt).forEach(function(id){ _sharedLastSeen[id] = data.updatedAt[id]; });
-        }
-        // Rejected edits used to just vanish — the client never looked at
-        // `conflicts[]`. Re-pull so the local copy reflects whatever won on
-        // the server, then surface which items were dropped so the user can
-        // decide to re-apply their edit instead of silently losing it.
-        if (data.conflicts && data.conflicts.length) {
-          _sharedPull();
-          var names = data.conflicts.map(function(id){
-            var it = (window._ccLatestState && ((window._ccLatestState.clashes||[]).concat(window._ccLatestState.issues||[])).find(function(x){return x.id===id;}));
-            return (it && it.title) || id;
-          });
-          _sharedToast(data.conflicts.length===1
-            ? _cc_t('toast.syncConflictOne','Sync conflict on {n} item ({names}) — a teammate changed it first. Your edit was not applied; re-check and re-apply if needed.',{n:data.conflicts.length,names:names.slice(0,3).join(', ') + (names.length>3?'…':'')})
-            : _cc_t('toast.syncConflictMany','Sync conflict on {n} items ({names}) — a teammate changed it first. Your edit was not applied; re-check and re-apply if needed.',{n:data.conflicts.length,names:names.slice(0,3).join(', ') + (names.length>3?'…':'')}));
-        }
-      })
-      .catch(function(){ /* offline — silent, next push will retry these if re-edited */ });
-  }
-
-  function _sharedHydrate(records) {
-    var d = window._ccDispatch;
-    var s = window._ccLatestState;
-    if (!d || !s || !records || !records.length) return;
-    var clashById = {};
-    (s.clashes || []).forEach(function(c){ clashById[c.id] = c; });
-    var issueById = {};
-    (s.issues || []).forEach(function(i){ issueById[i.id] = i; });
-    // Identity fallback for records whose `id` (a per-user uid()) never
-    // matched anything locally: a teammate's own random id for the SAME
-    // element pair otherwise means their decisions never apply locally and
-    // their issues never appear. Match by the same globalId-pair identity
-    // the clash pipeline itself uses (clash-identity-core.js computeClashPair)
-    // when the ids differ but the underlying elements are the same.
-    function pairKey(a, b) { return a && b ? (a < b ? a + '|' + b : b + '|' + a) : null; }
-    var byPair = {};
-    (s.clashes || []).forEach(function(c){ var k = pairKey(c.globalIdA, c.globalIdB); if (k && !byPair[k]) byPair[k] = c; });
-    (s.issues || []).forEach(function(i){ var k = pairKey(i.globalIdA, i.globalIdB); if (k && !byPair[k]) byPair[k] = i; });
-
-    var SHARED_FIELDS = ['status','priority','assignee','title','description','category','dueDate'];
-    records.forEach(function(rec) {
-      if (!rec || !rec.id) return;
-      if (rec._updatedAt) _sharedLastSeen[rec.id] = rec._updatedAt;
-      var target = clashById[rec.id] || issueById[rec.id];
-      var targetKind = clashById[rec.id] ? 'clash' : (issueById[rec.id] ? 'issue' : null);
-      if (!target) {
-        var byPairMatch = byPair[pairKey(rec.globalIdA, rec.globalIdB)];
-        if (byPairMatch) { target = byPairMatch; targetKind = clashById[byPairMatch.id] ? 'clash' : 'issue'; }
-      }
-      var localUpdatedAt = target && target._updatedAt;
-      if (localUpdatedAt && rec._updatedAt && new Date(localUpdatedAt) > new Date(rec._updatedAt)) return;
-      var u = {};
-      // `!== undefined` (not `!= null`): a field the server round-tripped as
-      // an explicit '' (the user cleared it) must still be applied locally —
-      // `!= null` used to skip both null AND '' alike, so a cleared field
-      // never synced to teammates. See api/project.js stripToShared for the
-      // matching '' vs null fix on the write side.
-      SHARED_FIELDS.forEach(function(f){ if (rec[f] !== undefined) u[f] = rec[f]; });
-      u._updatedAt = rec._updatedAt;
-      u._updatedBy = rec._updatedBy;
-      if (target && targetKind === 'clash') {
-        d({ t: A.UPD_CLASH, id: target.id, u: u, _fromSync: true });
-      } else if (target && targetKind === 'issue') {
-        d({ t: A.UPD_ISSUE, id: target.id, u: u, _fromSync: true });
-      } else {
-        // Genuinely new to this client — a teammate created it. Add it
-        // locally as an issue (we have no model geometry to reconstruct a
-        // clash from a bare shared record).
-        d({ t: A.ADD_ISSUE, v: Object.assign({}, rec, { id: rec.id }) });
-      }
+  function _cloudCacheLoad(pid) {
+    return new Promise(function(resolve) {
+      var empty = { recs: [], names: {}, cursor: '0' };
+      _cloudDb(function(db) {
+        if (!db) { resolve(empty); return; }
+        try {
+          var out = { recs: [], names: {}, cursor: '0' };
+          var tx = db.transaction('log', 'readonly'), g = tx.objectStore('log').getAll(IDBKeyRange.bound([pid], [pid, []]));
+          g.onsuccess = function() { (g.result || []).forEach(function(v) { if (v && v._meta) { out.cursor = v.cursor || '0'; out.names = v.names || {}; } else if (v) out.recs.push(v); }); };
+          tx.oncomplete = function() { resolve(out); };
+          tx.onerror = tx.onabort = function() { resolve(empty); };
+        } catch(e) { resolve(empty); }
+      });
     });
   }
+  // Puts only the new records (+ cursor / names when given), one transaction.
+  function _cloudCachePut(pid, recs, meta) {
+    if (!recs.length && !meta) return;
+    _cloudDb(function(db) {
+      if (!db) return;
+      try {
+        var tx = db.transaction('log', 'readwrite'), st = tx.objectStore('log');
+        recs.forEach(function(r) { st.put(r, [pid, r.id]); });
+        if (meta) st.put({ _meta: true, cursor: meta.cursor, names: meta.names }, [pid, '~meta']);
+        if (tx.commit) tx.commit();
+      } catch(e) { /* a cache only — the server stays the source */ }
+    });
+  }
+  function _cloudCacheDrop(pid) {
+    _cloudDb(function(db) { if (db) try { db.transaction('log', 'readwrite').objectStore('log').delete(IDBKeyRange.bound([pid], [pid, []])); } catch(e) {} });
+  }
 
-  function _sharedPull() {
-    var key = _sharedProjectId();
-    if (!key) return Promise.resolve();
-    return fetch('/api/project?id=' + encodeURIComponent(key))
-      .then(function(r){
-        if (!r.ok) { var e = new Error('pull failed'); e.status = r.status; throw e; }
-        return r.json();
+  // The session for the current project key (a new one when the key changed).
+  function _cloudEnsure() {
+    var pid = _sharedProjectId();
+    var SC = window._ccSharedSessionCore;
+    if (!pid || !SC || !window._ccSharedLogCore) return null;
+    if (_cloud.sess && _cloud.pid === pid) return _cloud.sess;
+    _cloudLeave(false);
+    var ident = window._ccClashIdentityCore, ls = null;
+    try { ls = window.localStorage; } catch(e) {}
+    _cloud.pid = pid; _cloud.cursor = '0'; _cloud.synced = false; _cloud.seeded = false; _cloud.conflicts = 0;
+    var sess = _cloud.sess = SC.register(SC.createSession({
+      src: 'cloud', userId: _cloudUserId(), writer: 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), projectKey: 'cloud:' + pid,
+      dispatch: function(a) { if (typeof window._ccDispatch === 'function') window._ccDispatch(a); },
+      getState: function() { return window._ccLatestState || null; },
+      i18n: _cc_t, storage: ls, outboxPrefix: 'cc_cloud_outbox',
+      identityKey: function(c) { return ident ? ident.computeClashIdentityKey(c) : null; },
+      onRecorded: function(why) { _cloudSchedulePush(why === 'edit' ? CLOUD_PUSH_DELAY : 0); },
+      onConflicts: function(n) { if (n !== _cloud.conflicts) { _cloud.conflicts = n; _cloudEmit(); } }
+    }));
+    _cloud.loaded = _cloudCacheLoad(pid).then(function(c) {
+      if (_cloud.sess !== sess) return;
+      sess.ingest(c.recs, c.names);
+      _cloud.cursor = c.cursor || '0';
+      if (sess.adoptOutboxes()) _cloudSchedulePush(0);
+    });
+    return sess;
+  }
+  // Stops syncing; `leave` also takes this project's markers off the items.
+  function _cloudLeave(leave) {
+    if (_cloud.pullTimer) { clearInterval(_cloud.pullTimer); _cloud.pullTimer = null; }
+    if (_cloud.pushTimer) { clearTimeout(_cloud.pushTimer); _cloud.pushTimer = null; }
+    if (leave && _cloud.sess) {
+      _cloud.sess.clearMarkers();
+      if (window._ccSharedSessionCore) window._ccSharedSessionCore.unregister(_cloud.sess);
+      _cloud.sess = null; _cloud.pid = null; _cloud.conflicts = 0; _cloudEmit();
+    } else if (!leave && _cloud.sess && _cloud.pid !== _sharedProjectId()) {
+      _cloud.sess.clearMarkers();
+      if (window._ccSharedSessionCore) window._ccSharedSessionCore.unregister(_cloud.sess);
+      _cloud.sess = null;
+    }
+  }
+
+  function _cloudSchedulePush(ms) {
+    if (_cloud.pushTimer) clearTimeout(_cloud.pushTimer);
+    _cloud.pushTimer = setTimeout(function() { _cloud.pushTimer = null; _cloudPush(); }, ms || 0);
+  }
+  // Appends this user's pending records (a batch at a time), then pulls what
+  // teammates added. A failed push keeps them pending (localStorage outbox).
+  function _cloudPush() {
+    var sess = _cloud.sess, pid = _cloud.pid;
+    if (!sess || !pid) return Promise.resolve();
+    if (_cloud.pushing) return _cloud.pushing;
+    var batch = sess.takeBatch(CLOUD_BATCH);
+    if (!batch.length) return Promise.resolve();
+    _cloud.pushing = fetch('/api/project?id=' + encodeURIComponent(pid), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ v: 2, user: sess.userId, name: (typeof _ccChangelogUser === 'string' ? _ccChangelogUser.trim() : '').slice(0, 120), changes: batch }),
+    })
+      .then(function(r) { if (!r.ok) { var e = new Error('push failed'); e.status = r.status; throw e; } return r.json(); })
+      .then(function(data) {
+        sess.done(batch);
+        _cloud.stats.pushes++; _cloud.stats.changesOut += batch.length;
+        _cloudCachePut(pid, batch, null);
+        // malformed / oversized records (a bug, not a conflict): kept locally, not retried
+        if (data && data.invalid && data.invalid.length) console.warn('[cloud-share] the server refused malformed records:', data.invalid);
+        return true;
+      }, function(err) {
+        sess.release(batch);
+        _cloudSchedulePush(CLOUD_PULL_MS);
+        return false;
       })
-      .then(function(data){
-        _sharedLastPullAt = Date.now();
-        if (data && data.issues) _sharedHydrate(data.issues);
-        return data;
+      .then(function(ok) {
+        _cloud.pushing = null;
+        if (ok && sess.pending()) return _cloudPush();
+        if (ok) return _cloudPull().catch(function(){ /* next poll retries */ });
       });
-      // Deliberately no .catch() here — callers (poll timer vs. explicit
-      // Join-flow pull) need to tell "offline/network error" apart from
-      // "404 project not found" differently; see _sharedCreateProject /
-      // the Join panel and _sharedStartPolling's own catch below.
+    return _cloud.pushing;
+  }
+  // Records after the cursor (paged), applied through the session. An idle
+  // pull (nothing new) dispatches nothing.
+  function _cloudPull() {
+    var sess = _cloudEnsure();
+    if (!sess) return Promise.resolve(null);
+    if (_cloud.pulling) return _cloud.pulling;
+    var pid = _cloud.pid;
+    _cloud.pulling = _cloud.loaded.then(function() {
+      var touched = new Set(), remote = [], fresh = [], pages = 0, last = null, before = _cloud.cursor;
+      function page() {
+        return fetch('/api/project?id=' + encodeURIComponent(pid) + '&v=2&after=' + encodeURIComponent(_cloud.cursor))
+          .then(function(r) { if (!r.ok) { var e = new Error('pull failed'); e.status = r.status; throw e; } return r.json(); })
+          .then(function(data) {
+            if (_cloud.sess !== sess) return null;
+            _cloud.stats.pulls++;
+            last = data;
+            var add = sess.ingest(data.changes || [], data.names || {});
+            add.touched.forEach(function(t) { touched.add(t); });
+            add.added.forEach(function(r) { remote.push(r); fresh.push(r); });
+            _cloud.stats.changesIn += add.added.length;
+            if (data.cursor != null) _cloud.cursor = String(data.cursor);
+            if (data.more && ++pages < 50) return page();
+            return data;
+          });
+      }
+      return page().then(function(data) {
+        if (!data || _cloud.sess !== sess) return null;
+        if (fresh.length || _cloud.cursor !== before) _cloudCachePut(pid, fresh, { cursor: _cloud.cursor, names: sess.log.names });
+        sess.sync({ touched: touched, remote: remote, full: !_cloud.synced });
+        _cloud.synced = true;
+        _cloud.lastSync = Date.now();
+        _cloud.conflicts = sess.conflictCount();
+        _cloudEmit();
+        // once per browser and project: publish this user's own decisions
+        if (!_cloud.seeded) { _cloud.seeded = true; sess.seed('cc_cloud_seeded'); }
+        return last;
+      });
+    });
+    var p = _cloud.pulling;
+    p.then(function() { _cloud.pulling = null; }, function() { _cloud.pulling = null; });
+    return p;
+  }
+  // Sync now: pending records first, then what is new.
+  function _sharedPull() {
+    if (!_cloudEnsure()) return Promise.resolve(null);
+    return _cloud.loaded.then(function() { return _cloudPush(); }).then(function() { return _cloudPull(); });
   }
 
   function _sharedStartPolling() {
-    if (_sharedPullTimer) return;
-    if (!_sharedProjectId()) return;
-    _sharedPull().catch(function(){ /* silent — background poll, next tick retries */ }); // initial pull
-    _sharedPullTimer = setInterval(function(){
-      if (!_sharedProjectId()) { _sharedStopPolling(); return; }
-      _sharedPull().catch(function(){ /* silent — background poll, next tick retries */ });
-    }, SHARED_PULL_INTERVAL);
+    if (!_cloudEnsure()) return;
+    if (_cloud.pullTimer) return;
+    _cloudPull().catch(function(){ /* silent — background poll, next tick retries */ });
+    _cloud.pullTimer = setInterval(function() {
+      if (!_sharedProjectId()) { _sharedStopPolling(true); return; }
+      _cloudPull().catch(function(){ /* silent — background poll, next tick retries */ });
+    }, CLOUD_PULL_MS);
   }
+  // `leave` (Leave / Delete project): also drop this project's markers.
+  function _sharedStopPolling(leave) { _cloudLeave(!!leave); }
 
-  function _sharedStopPolling() {
-    if (_sharedPullTimer) { clearInterval(_sharedPullTimer); _sharedPullTimer = null; }
-  }
+  window.addEventListener('pagehide', function() { if (_cloud.sess && _cloud.sess.pending()) { _cloud.sess.saveOutbox(); _cloudPush(); } });
 
   function _sharedCreateProject(name) {
     return fetch('/api/project', {
@@ -42667,12 +42730,23 @@ function startApp() {
         return data;
       });
   }
+  // Checks a key before joining (one small v2 page) and starts syncing.
+  function _sharedJoinProject(key) {
+    return fetch('/api/project?id=' + encodeURIComponent(key) + '&v=2&limit=1')
+      .then(function(r){ if (!r.ok) { var e = new Error(); e.status = r.status; throw e; } return r.json(); })
+      .then(function(data){
+        try {
+          localStorage.setItem('cc_sharedProjectId', key);
+          localStorage.setItem('cc_sharedProjectName', data.project.name);
+        } catch(e) {}
+        _sharedStartPolling();
+        return data;
+      });
+  }
 
-  // Deletes the whole shared project (every synced issue + the project row
-  // itself) — gated server-side by the creator-held editKey, which was
-  // stored on creation but never actually used by the client until now.
-  // Resolves false (never rejects) so the caller can show one message
-  // without a try/catch.
+  // Deletes the whole shared project (its change log and the project row) —
+  // gated server-side by the creator-held editKey. Resolves false (never
+  // rejects) so the caller can show one message without a try/catch.
   function _sharedDeleteProject() {
     var key = _sharedProjectId();
     if (!key) return Promise.resolve(false);
@@ -42686,7 +42760,8 @@ function startApp() {
       .then(function(r){ return r.ok; })
       .then(function(ok){
         if (ok) {
-          _sharedStopPolling();
+          _sharedStopPolling(true);
+          _cloudCacheDrop(key);
           try {
             localStorage.removeItem('cc_sharedProjectId');
             localStorage.removeItem('cc_sharedProjectName');
@@ -42698,33 +42773,20 @@ function startApp() {
       .catch(function(){ return false; });
   }
 
-  // Deletes a single synced issue from the shared project (api/project.js
-  // DELETE ?issue=<id>, same editKey gate as _sharedDeleteProject). Used by
-  // the Issues panel's Delete Issue flow (see A.DEL_ISSUE) to keep teammates'
-  // shared copies in sync instead of only removing the issue locally.
-  // Resolves false (never rejects) when there's no shared project, no
-  // editKey (not the creator), or the request fails — the caller treats that
-  // as "not synced" and the local delete still goes through.
-  function _sharedDeleteIssue(issueId) {
-    var key = _sharedProjectId();
-    if (!key || !issueId) return Promise.resolve(false);
-    var editKey = null;
-    try { editKey = localStorage.getItem('cc_sharedProjectEditKey'); } catch(e) {}
-    if (!editKey) return Promise.resolve(false);
-    return fetch('/api/project?id=' + encodeURIComponent(key) + '&issue=' + encodeURIComponent(issueId), {
-      method: 'DELETE',
-      headers: { 'X-CC-Edit-Key': editKey },
-    })
-      .then(function(r){ return r.ok; })
-      .catch(function(){ return false; });
-  }
-
   window._ccSharedCreate = _sharedCreateProject;
+  window._ccSharedJoin = _sharedJoinProject;
   window._ccSharedPull = _sharedPull;
   window._ccSharedStart = _sharedStartPolling;
   window._ccSharedStop = _sharedStopPolling;
   window._ccSharedDeleteProject = _sharedDeleteProject;
-  window._ccSharedDeleteIssue = _sharedDeleteIssue;
+  // status for the share panels; internal plumbing for the browser test
+  window._ccCloudShare = {
+    status: function() { return { pid: _cloud.pid, conflicts: _cloud.conflicts, lastSync: _cloud.lastSync, pending: _cloud.sess ? _cloud.sess.pending() : 0 }; },
+    stats: _cloud.stats,
+    pull: _cloudPull, push: _cloudPush,
+    session: function() { return _cloud.sess; },
+    config: function(o) { if (o && o.pullMs) CLOUD_PULL_MS = o.pullMs; if (o && o.pushDelay != null) CLOUD_PUSH_DELAY = o.pushDelay; }
+  };
 
   // ── AI clash titles (Phase 5) ────────────────────────────────────
   var _aiTitlesBusy = false;
@@ -49869,42 +49931,14 @@ function startApp() {
           var _clEntry = _buildChangelogEntry(a, _clashesRef.current, _stateRef.current);
           if (_clEntry) _rawD({t:A.APPEND_CHANGELOG, v:_clEntry});
         } catch(e2) {}
-        // ── Shared project sync push (Phase 6F) ──
+        // ── Team sharing (shared folder and / or cloud project key): every
+        // local edit becomes change records in each active shared session
+        // (shared-session-core.js, INTERNALS §21.55 / §21.56) ──
         try {
-          if (typeof _sharedEnqueue === 'function' && _sharedProjectId()) {
-            var _now = new Date().toISOString();
-            if (a.t === A.UPD_CLASH && a.u) {
-              var _c = _clashesRef.current.find(function(c){return c.id===a.id;});
-              if (_c) _sharedEnqueue(Object.assign({}, _c, a.u, {_updatedAt:_now}));
-            } else if (a.t === A.UPD_ISSUE && a.u) {
-              var _i = (_stateRef.current.issues||[]).find(function(i){return i.id===a.id;});
-              if (_i) _sharedEnqueue(Object.assign({}, _i, a.u, {_updatedAt:_now}));
-            } else if (a.t === A.ADD_ISSUE && a.v) {
-              _sharedEnqueue(Object.assign({}, a.v, {_updatedAt:_now}));
-            } else if (a.t === A.BATCH_UPD_CLASH && a.u) {
-              var _bShared = Array.isArray(a.ids) ? _ccBatchIdSet(a, null) : _selectedRef.current;
-              _clashesRef.current.forEach(function(c){
-                if (_bShared[c.id]) _sharedEnqueue(Object.assign({}, c, a.u, {_updatedAt:_now}));
-              });
-            } else if (a.t === A.BATCH_UPD_ISSUE && a.u) {
-              (_stateRef.current.issues||[]).forEach(function(i){
-                if (_selectedRef.current[i.id]) _sharedEnqueue(Object.assign({}, i, a.u, {_updatedAt:_now}));
-              });
-            } else if (a.t === A.DEL_ISSUE && a.id) {
-              // The sync layer does support per-issue deletion (api/project.js
-              // DELETE ?issue=<id>) but it's gated by the creator-held
-              // editKey — _sharedDeleteIssue itself resolves false (no-op)
-              // when this browser isn't the project creator, which is the
-              // expected "can't sync this deletion" case, not an error.
-              if (typeof _sharedDeleteIssue === 'function') _sharedDeleteIssue(a.id);
-            }
-          }
-        } catch(e3) {}
-        // ── Shared folder change log (addons/shared-project.js, INTERNALS §21.55) ──
-        try {
-          if (typeof window._ccSharedLogNote === 'function') {
+          var _SSC = window._ccSharedSessionCore;
+          if (_SSC && _SSC.sessions().length) {
             var _slIds = (a.t === A.BATCH_UPD_CLASH || a.t === A.BATCH_UPD_ISSUE) ? (Array.isArray(a.ids) ? _ccBatchIdSet(a, null) : _selectedRef.current) : null;
-            window._ccSharedLogNote(a, _stateRef.current, _slIds);
+            _SSC.noteAll(a, _stateRef.current, _slIds);
           }
         } catch(e4) {}
       }
@@ -49938,6 +49972,13 @@ function startApp() {
     window._ccMeasurementsRef = s.measurements;  // exposed for render loop label projection
     if ((s.measurements||[]).length !== _prevMeasN && typeof invalidate === 'function') invalidate(2);
     try { if (typeof _sharedStartPolling === 'function') _sharedStartPolling(); } catch(e){}
+    // A confirm creates its issue inside the reducer: the shared sessions
+    // publish such issues once the new issues array is committed.
+    useEffect(function(){
+      var SSC = window._ccSharedSessionCore;
+      if (SSC && SSC.sessions().length) SSC.observeAll(s);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only the issues array matters
+    }, [s.issues]);
     // Country pack follows the loaded models (address / CRS / site location);
     // activated without being saved — see window._ccAutoRegion.
     useEffect(function(){

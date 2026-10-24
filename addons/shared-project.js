@@ -17,8 +17,10 @@
 // (shared-log-core.js decides them from the change graph, never by time);
 // nobody wins automatically — a user resolves them.
 //
-// Pure log logic: shared-log-core.js (window._ccSharedLogCore). This file
-// only does the folder I/O and maps the log onto the app state.
+// Pure log logic: shared-log-core.js (window._ccSharedLogCore); turning app
+// actions into records and records into app state: shared-session-core.js
+// (window._ccSharedSessionCore, the same engine the cloud project key uses).
+// This file only does the folder I/O.
 
 (function() {
   'use strict';
@@ -30,6 +32,7 @@
     return vars ? String(en).replace(/\{(\w+)\}/g, function(m, k) { return Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : m; }) : en;
   }
   function core() { return window._ccSharedLogCore || null; }
+  function sessCore() { return window._ccSharedSessionCore || null; }
 
   var A_UPD = 'UPD_SHARED_PROJECT';
   var LS_UID = 'cc_shared_uid';
@@ -44,23 +47,19 @@
     snapshotAt: 200,        // uncovered change files before someone compacts
     graceMs: 6 * 3600000    // a snapshot's covered files are removed this long after it
   };
-  var NOTE_FIELDS = ['text', 'resolved'];
 
   // ── Session state ───────────────────────────────────────────────
   var _root = null;         // the folder the user picked
   var _proj = null;         // the <name>.ccshared folder in it
   var _projKey = null;      // project-<id>.json name (local cache key)
-  var _log = null;          // shared-log-core log
+  var _sess = null;         // shared-session-core session (owns the log + outbox)
+  var _log = null;          // its shared-log-core log
   var _applied = new Set(); // change files ('changes/<u>/<f>') + snapshots already in the log
   var _broken = new Map();  // file → {size, lastModified} of a copy that did not parse (half-synced)
   var _snapMeta = new Map();// snapshot name → {name, by, ts, files, snapshots}
-  var _outbox = [];         // own changes not yet written (the log's record objects)
-  var _flushTimer = null, _tickTimer = null, _busy = false, _again = false, _recorded = false;
-  var _writer = null, _seq = 0, _n = 0;
+  var _flushTimer = null, _tickTimer = null, _busy = false, _again = false;
+  var _writer = null, _seq = 0;
   var _cachePending = { recs: [], seen: [] };
-  var _written = new Set(); // ids of changes known to be in a file (this session)
-  var _lastClashes = null, _lastIssues = null, _lastNotes = null;
-  var _clashIndex = { clashes: null, map: null };
   var _userId = null;
   var _stats = { ticks: 0, idleTicks: 0, listings: 0, filesRead: 0, bytesRead: 0, filesWritten: 0, bytesWritten: 0, deleted: 0, dispatches: 0, snapshotsWritten: 0 };
 
@@ -264,7 +263,7 @@
     _stop();
     _userId = _uid();
     _writer = 'w' + Date.now().toString(36) + _rand(4);
-    _seq = 0; _n = 0;
+    _seq = 0;
     var entries = await _entries(dirHandle);
     var proj = null, legacy = null;
     if (/\.ccshared$/i.test(dirHandle.name || '')) proj = dirHandle;
@@ -285,44 +284,38 @@
       ids = [idName];
     }
     _root = dirHandle; _proj = proj; _projKey = ids[0];
-    _log = C.createLog();
-    _applied = new Set(); _broken = new Map(); _snapMeta = new Map(); _outbox = []; _written = new Set();
+    _applied = new Set(); _broken = new Map(); _snapMeta = new Map();
     _cachePending = {recs:[], seen:[]};
-    _lastClashes = _lastIssues = _lastNotes = null;
+    _sess = _newSession();
+    _log = _sess.log;
     var cache = await _cacheLoad(_projKey);
-    C.addChanges(_log, cache.recs);
-    C.addNames(_log, cache.names);
+    _sess.ingest(cache.recs, cache.names);
     cache.seen.forEach(function(n) { _applied.add(n); });
-    _adoptOutboxes();
+    if (_sess.adoptOutboxes()) _scheduleFlush();
     if (legacy) { try { await _migrate(legacy); } catch (e) { console.warn('[shared-project] migration of the old project file failed:', e); } }
     _saveSharedHandle(dirHandle, proj.name);
     d({t:A_UPD, u:{enabled:true, folderName:dirHandle.name || '', fileName:proj.name, lastSync:null, syncing:false, conflicts:C.conflictCount(_log)}});
     await _tick({force:true, full:true});
-    _seed();
+    _sess.seed(LS_SEEDED);
     _schedule();
     return true;
   }
 
-  // Edits an earlier session (a closed tab) never got into the folder. Each
-  // session keeps its own localStorage key; one touched less than a minute
-  // ago may belong to a tab that is still open (it writes them itself), so
-  // it is looked at again on a later check.
-  function _adoptOutboxes() {
-    var C = core();
-    if (!_log || !_projKey) return;
-    try {
-      var now = Date.now(), mineKey = LS_OUTBOX + ':' + _writer, got = false;
-      for (var k = localStorage.length - 1; k >= 0; k--) {
-        var lk = localStorage.key(k);
-        if (!lk || lk === mineKey || lk.indexOf(LS_OUTBOX + ':') !== 0) continue;
-        var ob = JSON.parse(localStorage.getItem(lk) || 'null');
-        if (!ob || ob.pk !== _projKey || !Array.isArray(ob.recs) || now - (ob.ts || 0) < 60000) continue;
-        C.addChanges(_log, ob.recs);
-        ob.recs.forEach(function(r) { var rec = _log.changes[r.id]; if (rec && _outbox.indexOf(rec) === -1 && !_written.has(r.id)) { _outbox.push(rec); got = true; } });
-        localStorage.removeItem(lk);
-      }
-      if (got) { _saveOutbox(); _scheduleFlush(); }
-    } catch (e) {}
+  // The engine shared with the cloud project key (shared-session-core.js):
+  // records from local actions, the log → app state, conflict markers.
+  function _newSession() {
+    var SC = sessCore();
+    if (!SC) throw new Error('shared-session-core.js not loaded');
+    if (_sess) SC.unregister(_sess);
+    var ident = window._ccClashIdentityCore;
+    var ls = null; try { ls = window.localStorage; } catch (e) {}
+    return SC.register(SC.createSession({
+      src: 'folder', userId: _userId, writer: _writer, projectKey: _projKey,
+      dispatch: _d, getState: _state, i18n: _i18n, storage: ls, outboxPrefix: LS_OUTBOX,
+      identityKey: function(c) { return ident ? ident.computeClashIdentityKey(c) : null; },
+      onRecorded: function(why) { if (why === 'edit') _scheduleFlush(); else _flush(); },
+      onConflicts: function(n) { _d({t:A_UPD, u:{conflicts:n}}); }
+    }));
   }
 
   // Reads an old single-file project ONCE into an initial snapshot (the old
@@ -353,10 +346,9 @@
   function _disconnectShared(d) {
     var done = function() {
       _stop();
-      var st = _state();
-      _clearMarkers(st, d);
-      _root = _proj = _projKey = _log = null;
-      _applied = new Set(); _outbox = [];
+      if (_sess) { _sess.clearMarkers(); if (sessCore()) sessCore().unregister(_sess); }
+      _root = _proj = _projKey = _log = _sess = null;
+      _applied = new Set();
       _clearSharedHandle();
       d({t:A_UPD, u:{enabled:false, folderName:'', fileName:'', lastSync:null, syncing:false, conflicts:0}});
     };
@@ -380,8 +372,8 @@
     var C = core(), changed = false, touched = new Set(), remote = [];
     _stats.ticks++;
     try {
-      _adoptOutboxes();
-      if (_outbox.length && (opts.force || !_flushTimer)) await _flush();
+      if (_sess.adoptOutboxes()) _scheduleFlush();
+      if (_sess.pending() && (opts.force || !_flushTimer)) await _flush();
       var listing = await _list();
       // snapshots first (newest first): what they cover need not be read
       var snaps = listing.snapshots.filter(function(s) { return !_applied.has(s.name); }).sort(function(a, b) { return a.name < b.name ? 1 : -1; });
@@ -390,11 +382,10 @@
         if (_applied.has(s.name)) continue;
         var parsed = await _readParsed(s, 'snapshot');
         if (!parsed) continue;
-        var add = C.addChanges(_log, parsed.changes);
-        C.addNames(_log, parsed.names);
-        _cacheRecs(add.added.map(function(id) { return _log.changes[id]; }));
+        var add = _sess.ingest(parsed.changes, parsed.names);
+        _cacheRecs(add.added);
         add.touched.forEach(function(t) { touched.add(t); });
-        add.added.forEach(function(id) { remote.push(_log.changes[id]); });
+        add.added.forEach(function(r) { remote.push(r); });
         var nm = C.parseSnapshotName(s.name);
         _snapMeta.set(s.name, {name:s.name, by:nm ? nm.by : parsed.by, ts:nm ? nm.ts : parsed.ts, files:parsed.files, snapshots:parsed.snapshots});
         _noteApplied(s.name);
@@ -406,24 +397,16 @@
       for (var j = 0; j < files.length; j++) {
         var parsedF = await _readParsed(files[j], 'changes');
         if (!parsedF) continue;
-        var addF = C.addChanges(_log, parsedF.changes);
-        C.addNames(_log, parsedF.names);
-        _cacheRecs(addF.added.map(function(id) { return _log.changes[id]; }));
+        var addF = _sess.ingest(parsedF.changes, parsedF.names);
+        _cacheRecs(addF.added);
         addF.touched.forEach(function(t) { touched.add(t); });
-        addF.added.forEach(function(id) { remote.push(_log.changes[id]); });
-        parsedF.changes.forEach(function(r) { _written.add(r.id); });
+        addF.added.forEach(function(r) { remote.push(r); });
         _noteApplied(files[j].name);
         changed = true;
       }
-      var st = _state();
-      if (opts.full) C.targets(_log).forEach(function(t) { touched.add(C.targetKey(t[0], t[1])); });
-      // new local clash / issue / note objects (a detection run, a project
-      // load): put the shared decisions on them
-      if (st && st.clashes !== _lastClashes) { _allOf('clash').forEach(function(t) { touched.add(t); }); _lastClashes = st.clashes; }
-      if (st && st.issues !== _lastIssues) { _allOf('issue').forEach(function(t) { touched.add(t); }); _lastIssues = st.issues; }
-      if (st && st.comments !== _lastNotes) { _allOf('note').forEach(function(t) { touched.add(t); }); _lastNotes = st.comments; }
-      var projected = touched.size ? _project(touched, st) : 0;
-      if (remote.length) _history(remote, st);
+      // what changed in the log, plus every target of a kind whose local
+      // array was replaced (a detection run, a project load)
+      var projected = _sess.sync({touched: touched, remote: remote, full: !!opts.full});
       if (changed) {
         _cacheFlush();
         _d({t:A_UPD, u:{lastSync:Date.now(), conflicts:C.conflictCount(_log)}});
@@ -442,12 +425,6 @@
       _busy = false;
       if (_again) { _again = false; setTimeout(function() { _tick({}); }, 0); }
     }
-  }
-  function _allOf(kind) {
-    var C = core(), out = [];
-    if (!_log) return out;
-    C.targets(_log).forEach(function(t) { if (t[0] === kind) out.push(C.targetKey(t[0], t[1])); });
-    return out;
   }
 
   // Names only (+ the handles to read the new ones with).
@@ -492,13 +469,6 @@
   }
 
   // ── Writing ─────────────────────────────────────────────────────
-  function _saveOutbox() {
-    try {
-      var key = LS_OUTBOX + ':' + _writer;
-      if (_outbox.length) localStorage.setItem(key, JSON.stringify({pk:_projKey, ts:Date.now(), recs:_outbox}));
-      else localStorage.removeItem(key);
-    } catch (e) {}
-  }
   function _scheduleFlush(ms) {
     if (_flushTimer) clearTimeout(_flushTimer);
     _flushTimer = setTimeout(function() { _flushTimer = null; _flush(); }, ms == null ? CFG.flushDelayMs : ms);
@@ -507,9 +477,10 @@
   // keeps them pending (and in localStorage) for the next attempt.
   var _flushing = null;
   function _flush() {
-    if (_flushing) return _flushing.then(function() { return _outbox.length ? _flush() : null; });
-    if (!_proj || !_outbox.length) return Promise.resolve();
-    var C = core(), recs = _outbox.slice();
+    if (_flushing) return _flushing.then(function() { return _sess && _sess.pending() ? _flush() : null; });
+    if (!_proj || !_sess || !_sess.pending()) return Promise.resolve();
+    var C = core(), sess = _sess, recs = sess.takeBatch();
+    if (!recs.length) return Promise.resolve();
     if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null; }
     _flushing = (async function() {
       var changes = await _proj.getDirectoryHandle('changes', {create:true});
@@ -517,14 +488,13 @@
       var seq = ++_seq;
       var name = C.changeFileName(_writer, seq);
       await _writeNew(mine, name, C.changeFile({user:_userId, name:_userName(), writer:_writer, seq:seq, ts:Date.now()}, recs));
-      _outbox = _outbox.slice(recs.length);
-      recs.forEach(function(r) { _written.add(r.id); });
-      _saveOutbox();
+      sess.done(recs);
       _noteApplied('changes/' + _userId + '/' + name);
-      var nm = {}; nm[_userId] = _userName(); C.addNames(_log, nm);
+      var nm = {}; nm[_userId] = _userName(); C.addNames(sess.log, nm);
       _cacheRecs(recs);
       _cacheFlush();
     })().catch(function(e) {
+      sess.release(recs);
       console.warn('[shared-project] write failed, will retry:', e);
       if (window._ccToast && e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
         window._ccToast(_i18n('sharedProject.sharedFolderAccessLostOpen','Shared folder access lost — open Integrations and re-link the folder.'), 'error');
@@ -542,7 +512,7 @@
     var covered = new Set();
     _snapMeta.forEach(function(m) { (m.files || []).forEach(function(f) { covered.add(f); }); });
     var loose = listing.files.filter(function(f) { return !covered.has(f.name); });
-    if (loose.length < CFG.snapshotAt || _outbox.length || Math.random() < 0.5) return;
+    if (loose.length < CFG.snapshotAt || _sess.pending() || Math.random() < 0.5) return;
     var files = listing.files.filter(function(f) { return _applied.has(f.name); }).map(function(f) { return f.name; });
     var snaps = listing.snapshots.filter(function(s) { return _applied.has(s.name); }).map(function(s) { return s.name; });
     var ts = Date.now(), name = C.snapshotName(_userId, ts);
@@ -572,280 +542,6 @@
     }
   }
 
-  // ── Local edits → change records ────────────────────────────────
-  function _clashKey(c) {
-    if (!c) return null;
-    if (c._identityKey) return c._identityKey;
-    var ic = window._ccClashIdentityCore;
-    return ic ? ic.computeClashIdentityKey(c) : null;
-  }
-  function _newId() { return _writer + '.' + (++_n); }
-  // One field edit. Skips no-ops; while the change is still unwritten, a
-  // further edit of the same field (typing an assignee) amends it instead of
-  // adding a record per keystroke.
-  function _record(kind, key, field, value, prevLocal) {
-    var C = core();
-    if (!key || !_log) return null;
-    if (value === undefined) value = null;
-    var gk = C.groupKey(kind, key, field);
-    var st = C.fieldState(_log, gk);
-    if (!st && C.same(value, prevLocal)) return null;
-    if (st && !st.conflicted && C.same(st.value, value)) return null;
-    var last = _outbox.length ? _outbox[_outbox.length - 1] : null;
-    if (last && !last.resolution && last.target.kind === kind && last.target.key === key && last.field === field &&
-        st && !st.conflicted && st.heads.length === 1 && st.heads[0] === last) {
-      last.value = value;
-      _saveOutbox();
-      _recorded = true;
-      return last;
-    }
-    var r = C.makeChange(_log, {id:_newId(), user:_userId, ts:Date.now(), kind:kind, key:key, field:field, value:value, prev:prevLocal === undefined ? null : prevLocal});
-    C.addChanges(_log, [r]);
-    var rec = _log.changes[r.id];
-    _outbox.push(rec);
-    _saveOutbox();
-    _recorded = true;
-    return rec;
-  }
-  function _diffList(kind, key, prefix, before, after) {
-    var b = {}, a = {};
-    (before || []).forEach(function(x) { if (x && x.id) b[x.id] = x; });
-    (after || []).forEach(function(x) { if (x && x.id) a[x.id] = x; });
-    Object.keys(a).forEach(function(id) { if (!b[id] || !core().same(b[id], a[id])) _record(kind, key, prefix + id, JSON.parse(JSON.stringify(a[id])), b[id] ? JSON.parse(JSON.stringify(b[id])) : null); });
-    Object.keys(b).forEach(function(id) { if (!a[id]) _record(kind, key, prefix + id, null, JSON.parse(JSON.stringify(b[id]))); });
-  }
-  function _noteRecord(n) { var o = Object.assign({}, n); delete o.replies; return core().issueRecord(o); }
-
-  // Called by the core's dispatch wrapper for every local (non-sync) action,
-  // with the state the action was dispatched on and, for batch actions, the
-  // id set it applies to.
-  function _note(a, prev, batchIds) {
-    var C = core();
-    if (!_proj || !_log || !C || !a || !prev) return;
-    var F = C.DECISION_FIELDS, conflictedTargets = [];
-    _recorded = false;
-    function clashEdit(c, u) {
-      var key = _clashKey(c);
-      F.forEach(function(f) { if (u && Object.prototype.hasOwnProperty.call(u, f)) { _record('clash', key, f, u[f], c[f]); if ((c._sharedConflict || []).length) conflictedTargets.push(C.targetKey('clash', key)); } });
-    }
-    function issueEdit(it, u) {
-      F.forEach(function(f) { if (u && Object.prototype.hasOwnProperty.call(u, f)) _record('issue', it.id, f, u[f], it[f]); });
-      if (u && u.comments) _diffList('issue', it.id, 'comment:', it.comments, u.comments);
-      if ((it._sharedConflict || []).length) conflictedTargets.push(C.targetKey('issue', it.id));
-    }
-    var t = a.t;
-    if (t === 'UPD_CLASH' && a.u) {
-      var c = (prev.clashes || []).find(function(x) { return x.id === a.id; });
-      if (c) clashEdit(c, a.u);
-    } else if (t === 'BATCH_UPD_CLASH' && a.u && batchIds) {
-      (prev.clashes || []).forEach(function(x) { if (batchIds[x.id]) clashEdit(x, a.u); });
-    } else if (t === 'CLASH_BATCH_RESTORE' && a.prev) {
-      (prev.clashes || []).forEach(function(x) { if (a.prev[x.id]) clashEdit(x, a.prev[x.id]); });
-    } else if (t === 'UPD_ISSUE' && a.u) {
-      var it = (prev.issues || []).find(function(x) { return x.id === a.id; });
-      if (it) issueEdit(it, a.u);
-    } else if (t === 'BATCH_UPD_ISSUE' && a.u && batchIds) {
-      (prev.issues || []).forEach(function(x) { if (batchIds[x.id]) issueEdit(x, a.u); });
-    } else if (t === 'ADD_ISSUE' && a.v && a.v.id) {
-      if ((prev.issues || []).some(function(x) { return x.id === a.v.id; })) return;
-      _record('issue', a.v.id, 'created', C.issueRecord(a.v), null);
-      if (a.v.comments) _diffList('issue', a.v.id, 'comment:', [], a.v.comments);
-    } else if (t === 'DEL_ISSUE' && a.id) {
-      if ((prev.issues || []).some(function(x) { return x.id === a.id; })) _record('issue', a.id, 'deleted', true, null);
-    } else if (t === 'ADD_COMMENT' && a.v && a.v.id) {
-      _record('note', a.v.id, 'created', _noteRecord(a.v), null);
-      if (a.v.replies) _diffList('note', a.v.id, 'reply:', [], a.v.replies);
-    } else if (t === 'UPD_COMMENT' && a.u) {
-      var n = (prev.comments || []).find(function(x) { return x.id === a.id; });
-      if (n) {
-        NOTE_FIELDS.forEach(function(f) { if (Object.prototype.hasOwnProperty.call(a.u, f)) _record('note', n.id, f, a.u[f], n[f]); });
-        if (a.u.replies) _diffList('note', n.id, 'reply:', n.replies, a.u.replies);
-      }
-    } else if (t === 'DEL_COMMENT' && a.id) {
-      if ((prev.comments || []).some(function(x) { return x.id === a.id; })) _record('note', a.id, 'deleted', true, null);
-    }
-    if (_recorded) _scheduleFlush();
-    // an edit of a conflicted field joins the conflict: show the agreed
-    // value again once the reducer has applied the edit
-    if (conflictedTargets.length) setTimeout(function() { _project(new Set(conflictedTargets), _state()); }, 0);
-  }
-
-  // A user's resolution of one conflicted field: one of the competing values
-  // or a new one. Written at once, so teammates see it on their next check.
-  function _resolve(o) {
-    var C = core();
-    if (!_proj || !_log || !o || !o.kind || !o.key || !o.field) return false;
-    var r = C.makeResolution(_log, {id:_newId(), user:_userId, ts:Date.now(), kind:o.kind, key:o.key, field:o.field, value:o.value});
-    C.addChanges(_log, [r]);
-    _outbox.push(_log.changes[r.id]);
-    _saveOutbox();
-    _project(new Set([C.targetKey(o.kind, o.key)]), _state());
-    _d({t:A_UPD, u:{conflicts:C.conflictCount(_log)}});
-    _flush();
-    return true;
-  }
-
-  // Publishes, once per browser and shared project, this user's own
-  // decisions that are not in the folder yet (non-default clash values,
-  // issues, notes). A value that differs from a shared one is published as a
-  // concurrent change — a conflict for everyone to see, never silently lost.
-  function _seed() {
-    var C = core(), st = _state();
-    if (!_log || !st) return;
-    var mark = _projKey + ':' + _userId;
-    try { if (localStorage.getItem(LS_SEEDED) === mark) return; } catch (e) {}
-    var DEF = {status:['open', 'auto_resolved'], priority:['normal'], assignee:[''], title:null, description:null, category:null, dueDate:null};
-    function seedOne(kind, key, f, v, def) {
-      var fs = C.fieldState(_log, C.groupKey(kind, key, f));
-      if (fs && (C.same(fs.value, v) || fs.conflicted)) return;
-      var r = {id:_newId(), user:_userId, ts:Date.now(), target:{kind:kind, key:key}, field:f, value:v, base:null, prev:def};
-      C.addChanges(_log, [r]);
-      _outbox.push(_log.changes[r.id]);
-    }
-    (st.clashes || []).forEach(function(c) {
-      var key = _clashKey(c);
-      if (!key) return;
-      ['status', 'priority', 'assignee'].forEach(function(f) {
-        var v = c[f];
-        if (v == null || DEF[f].indexOf(v) !== -1) return;
-        seedOne('clash', key, f, v, DEF[f][0]);
-      });
-    });
-    (st.issues || []).forEach(function(it) {
-      if (!it || !it.id || C.fieldState(_log, C.groupKey('issue', it.id, 'created'))) return;
-      seedOne('issue', it.id, 'created', C.issueRecord(it), null);
-      (it.comments || []).forEach(function(cm) { if (cm && cm.id) seedOne('issue', it.id, 'comment:' + cm.id, JSON.parse(JSON.stringify(cm)), null); });
-    });
-    (st.comments || []).forEach(function(n) {
-      if (!n || !n.id || C.fieldState(_log, C.groupKey('note', n.id, 'created'))) return;
-      seedOne('note', n.id, 'created', _noteRecord(n), null);
-      (n.replies || []).forEach(function(rp) { if (rp && rp.id) seedOne('note', n.id, 'reply:' + rp.id, JSON.parse(JSON.stringify(rp)), null); });
-    });
-    try { localStorage.setItem(LS_SEEDED, mark); } catch (e) {}
-    if (_outbox.length) {
-      _saveOutbox();
-      _project(new Set(C.targets(_log).map(function(t) { return C.targetKey(t[0], t[1]); })), st);
-      _d({t:A_UPD, u:{conflicts:C.conflictCount(_log)}});
-      _flush();
-    }
-  }
-
-  // ── The log → app state ─────────────────────────────────────────
-  function _who(r) { var n = _log && _log.names[r.user]; return n || _i18n('sharedConflict.someone', 'a teammate'); }
-  function _markers(ts) {
-    if (!ts.conflicts.length) return undefined;
-    return ts.conflicts.map(function(st) {
-      return {kind:st.kind, key:st.key, field:st.field,
-        agreed: st.known ? {value: st.value === undefined ? null : st.value, user: st.agreed ? _who(st.agreed) : null, ts: st.agreed ? st.agreed.ts : null} : null,
-        heads: st.heads.map(function(h) { return {id:h.id, user:_who(h), mine:h.user === _userId, ts:h.ts, value:h.value}; })};
-    });
-  }
-  function _markerSig(m) { return m && m.length ? JSON.stringify(m.map(function(x) { return [x.field, x.agreed && x.agreed.value, x.heads.map(function(h) { return h.id + '@' + h.user; })]; })) : ''; }
-  function _clashesByKey(st) {
-    if (_clashIndex.clashes === st.clashes) return _clashIndex.map;
-    var map = new Map();
-    (st.clashes || []).forEach(function(c) {
-      var k = _clashKey(c);
-      if (!k) return;
-      var arr = map.get(k); if (arr) arr.push(c); else map.set(k, [c]);
-    });
-    _clashIndex = {clashes: st.clashes, map: map};
-    return map;
-  }
-  function _mergeList(local, ts, prefix) {
-    var byId = new Map(), changed = false;
-    (local || []).forEach(function(x) { if (x && x.id) byId.set(x.id, x); });
-    Object.keys(ts.fields).forEach(function(f) {
-      if (f.indexOf(prefix) !== 0) return;
-      var fs = ts.fields[f], id = f.slice(prefix.length);
-      if (!fs.known) return;
-      if (fs.value == null) { if (byId.has(id)) { byId.delete(id); changed = true; } return; }
-      var cur = byId.get(id);
-      if (!cur || !core().same(cur, fs.value)) { byId.set(id, fs.value); changed = true; }
-    });
-    if (!changed) return null;
-    return Array.from(byId.values()).sort(function(a, b) { return (a.ts || 0) - (b.ts || 0); });
-  }
-  // Puts the shared value of every field of the given targets (and their
-  // conflict markers) on the local clashes / issues / notes. Dispatches only
-  // what differs. Returns the number of dispatches.
-  function _project(tks, st) {
-    var C = core();
-    if (!_log || !st || !tks || !tks.size) return 0;
-    var F = C.DECISION_FIELDS, restore = {}, nRestore = 0, n = 0;
-    var issues = new Map(); (st.issues || []).forEach(function(i) { issues.set(i.id, i); });
-    var notes = new Map(); (st.comments || []).forEach(function(c) { notes.set(c.id, c); });
-    var byKey = _clashesByKey(st);
-    tks.forEach(function(tk) {
-      var i = tk.indexOf('\u0001'), kind = tk.slice(0, i), key = tk.slice(i + 1);
-      var ts = C.targetState(_log, kind, key), mk = _markers(ts), sig = _markerSig(mk);
-      if (kind === 'clash') {
-        (byKey.get(key) || []).forEach(function(c) {
-          var patch = {}, any = false;
-          F.forEach(function(f) {
-            var fs = ts.fields[f];
-            if (!fs || !fs.known) return;
-            if (f === 'status' && c.status === 'auto_resolved') return; // the geometry says it is gone
-            if (!C.same(c[f], fs.value)) { patch[f] = fs.value; any = true; }
-          });
-          if (_markerSig(c._sharedConflict) !== sig) { patch._sharedConflict = mk; any = true; }
-          if (any) { restore[c.id] = patch; nRestore++; }
-        });
-      } else if (kind === 'issue') {
-        var del = ts.fields.deleted, cr = ts.fields.created, loc = issues.get(key);
-        if (del && del.known && del.value === true) { if (loc) { _d({t:'DEL_ISSUE', id:key, _fromSync:true}); n++; } return; }
-        var patchI = {}, anyI = false;
-        F.forEach(function(f) { var fs = ts.fields[f]; if (fs && fs.known && (!loc || !C.same(loc[f], fs.value))) { patchI[f] = fs.value; anyI = true; } });
-        var cms = _mergeList(loc ? loc.comments : [], ts, 'comment:');
-        if (cms) { patchI.comments = cms; anyI = true; }
-        if (!loc) {
-          if (!cr || !cr.known || !cr.value) return;
-          _d({t:'ADD_ISSUE', v:Object.assign({}, cr.value, patchI, {id:key, _sharedConflict:mk}), _fromSync:true}); n++;
-          return;
-        }
-        if (_markerSig(loc._sharedConflict) !== sig) { patchI._sharedConflict = mk; anyI = true; }
-        if (anyI) { _d({t:'UPD_ISSUE', id:key, u:patchI, _fromSync:true}); n++; }
-      } else if (kind === 'note') {
-        var delN = ts.fields.deleted, crN = ts.fields.created, ln = notes.get(key);
-        if (delN && delN.known && delN.value === true) { if (ln) { _d({t:'DEL_COMMENT', id:key, _fromSync:true}); n++; } return; }
-        var patchN = {}, anyN = false;
-        NOTE_FIELDS.forEach(function(f) { var fs = ts.fields[f]; if (fs && fs.known && (!ln || !C.same(ln[f], fs.value))) { patchN[f] = fs.value; anyN = true; } });
-        var reps = _mergeList(ln ? ln.replies : [], ts, 'reply:');
-        if (reps) { patchN.replies = reps; anyN = true; }
-        if (!ln) {
-          if (!crN || !crN.known || !crN.value) return;
-          _d({t:'ADD_COMMENT', v:Object.assign({replies:[]}, crN.value, patchN, {id:key, _sharedConflict:mk}), _fromSync:true}); n++;
-          return;
-        }
-        if (_markerSig(ln._sharedConflict) !== sig) { patchN._sharedConflict = mk; anyN = true; }
-        if (anyN) { _d({t:'UPD_COMMENT', id:key, u:patchN, _fromSync:true}); n++; }
-      }
-    });
-    if (nRestore) { _d({t:'CLASH_BATCH_RESTORE', prev:restore, keepIssueIds:null, _fromSync:true}); n++; }
-    return n;
-  }
-  // Teammates' changes in the History of each clash / issue.
-  function _history(recs, st) {
-    if (!st) return;
-    var byKey = _clashesByKey(st), out = [];
-    recs.forEach(function(r) {
-      if (r.user === _userId) return;
-      var targetId = r.target.kind === 'clash' ? ((byKey.get(r.target.key) || [])[0] || {}).id : r.target.key;
-      if (!targetId) return;
-      out.push({id:r.id, ts:r.ts, user:_who(r), type:r.target.kind === 'clash' ? 'clash_update' : (r.field === 'created' ? 'issue_created' : r.field === 'deleted' ? 'issue_deleted' : 'issue_update'),
-        targetId:targetId, field:r.field, value:(r.value && typeof r.value === 'object') ? (r.value.title || r.value.text || '') : r.value});
-    });
-    if (out.length) _d({t:'MERGE_CHANGELOG', v:out});
-  }
-  function _clearMarkers(st, d) {
-    if (!st) return;
-    var restore = {}, any = false;
-    (st.clashes || []).forEach(function(c) { if (c._sharedConflict) { restore[c.id] = {_sharedConflict: undefined}; any = true; } });
-    if (any) d({t:'CLASH_BATCH_RESTORE', prev:restore, keepIssueIds:null, _fromSync:true});
-    (st.issues || []).forEach(function(i) { if (i._sharedConflict) d({t:'UPD_ISSUE', id:i.id, u:{_sharedConflict:undefined}, _fromSync:true}); });
-    (st.comments || []).forEach(function(c) { if (c._sharedConflict) d({t:'UPD_COMMENT', id:c.id, u:{_sharedConflict:undefined}, _fromSync:true}); });
-  }
-
   // Sync Now: write what is pending, then read what is new.
   function _syncSharedProject(d) {
     if (!_proj) return Promise.resolve();
@@ -858,8 +554,8 @@
 
   // Last-moment write when the tab goes away (best effort; whatever does not
   // make it stays in localStorage and is written on the next link).
-  window.addEventListener('pagehide', function() { if (_outbox.length) { _saveOutbox(); _flush(); } });
-  document.addEventListener('visibilitychange', function() { if (document.visibilityState === 'hidden' && _outbox.length) _flush(); });
+  window.addEventListener('pagehide', function() { if (_sess && _sess.pending()) { _sess.saveOutbox(); _flush(); } });
+  document.addEventListener('visibilitychange', function() { if (document.visibilityState === 'hidden' && _sess && _sess.pending()) _flush(); });
 
   // Expose for the core (Share modal, welcome, dispatch wrapper, row UI)
   window._pickSharedFolder = _pickSharedFolder;
@@ -867,15 +563,14 @@
   window._syncSharedProject = _syncSharedProject;
   window._startSharedSync = _startSharedSync;
   window._loadSharedHandle = _loadSharedHandle;
-  window._ccSharedLogNote = _note;
-  window._ccSharedResolve = _resolve;
   // internal plumbing for the browser test (OPFS stands in for a picked folder)
   window._ccSharedLog = {
     config: CFG, stats: _stats,
     link: function(dirHandle) { return _link(dirHandle, window._ccDispatch, {}); },
     tick: function() { return _tick({}); },
     flush: function() { return _flush(); },
-    pending: function() { return _outbox.length; },
-    log: function() { return _log; }
+    pending: function() { return _sess ? _sess.pending() : 0; },
+    log: function() { return _log; },
+    session: function() { return _sess; }
   };
 })();
