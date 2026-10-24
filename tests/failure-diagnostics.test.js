@@ -23,9 +23,11 @@ test('WASM failure explicitly announces the JavaScript fallback', () => {
 
 test('shared-project read/write failures remain visible and cannot look synced', () => {
   const shared = read('addons/shared-project.js');
-  assert.match(shared, /return \{__readError: true\}/);
+  // a file that does not parse (half-synced) is not marked read; a failed
+  // write keeps the changes pending instead of looking synced
+  assert.match(shared, /_broken\.set\(ent\.name/);
   assert.match(shared, /Shared folder access lost/);
-  assert.match(shared, /throw e; \/\/ let the sync loop record the failure instead of stamping lastSync/);
+  assert.match(shared, /write failed, will retry/);
 });
 
 test('Smart Bridge status exposes detection failure and staleness signals', () => {

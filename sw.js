@@ -31,6 +31,7 @@ var PRECACHE = [
   'country-pack-core.js',
   'project-codec.js',
   'storage-core.js',
+  'shared-log-core.js',
   // Addons that load eagerly at boot — precached so a first-ever offline
   // session still has them (same-origin /addons/ responses ARE now runtime-
   // cached too, see the fetch handler's sameOriginAddon check below, but

@@ -136,7 +136,7 @@ addons/geoplace.js          — Real-world basemap placement (IfcSite lat/lon + 
 addons/pointcloud.js        — Load LAS/PLY/PCD/XYZ/PTS/PTX point clouds as reference layers
 addons/pwa.js               — Service worker registration, install prompt, update check
 addons/revit-bridge.js      — Revit Connector WebSocket live link + clash push-back
-addons/shared-project.js    — File System Access folder-sync collaboration
+addons/shared-project.js    — File System Access folder-sync collaboration: per-user append-only change files, conflicts shown to every user (INTERNALS §21.55)
 addons/smart-bridge.js      — LLM bridge (MCP / ChatGPT / REST) — executes tool calls from AI assistants
 addons/splat.js             — Gaussian Splat as-built captures as a first-class scene layer (.splat/.ply/.ksplat/.spz)
 addons/tiles.js              — Streams photorealistic 3D Tiles (Google/Cesium/any tileset) as real-world context around a georeferenced model
@@ -163,6 +163,7 @@ clash-identity-core.js      — Non-addon core module: stable clash identity acr
 clash-reconciliation-core.js — Non-addon core module: merges new detection results with prior status/assignment
 clash-triage-core.js        — Non-addon core module: clash review smart filtering — storey normalisation across models, facets with live counts, suggested views, search, saved views (review buckets + severity/extent live in clash-classification-core.js)
 storage-core.js             — Non-addon core module: local storage registry, budget and GC (`ClashControl.storage.*`)
+shared-log-core.js          — Non-addon core module: shared-folder change log (`window._ccSharedLogCore`) — change records, heads / conflicts by the change graph (never by time), resolutions, snapshots + safe cleanup, `.ccproject` migration; the folder I/O is `addons/shared-project.js`
 country-pack-core.js        — Non-addon core module: country-pack contract — section validation (shared with scripts/validate-regulation.js), safeRegex, URL allow-list, the country resolver (`resolveCountry`), CRS registry + generic UTM builder
 project-codec.js            — Non-addon core module: project state encode/decode for persistence
 safety-migrations.js        — Non-addon core module: feature-flag gate + migration/self-check plumbing (`window._ccSafetyMigrations`)
@@ -206,7 +207,7 @@ Each addon is a plain IIFE loaded at runtime by the core via `addons/<name>.js` 
 - `pointcloud.js` — Loads LAS/PLY/PCD/XYZ point clouds as reference layers (e.g. survey scans), recentred near origin for precision. Display-only; not fed to the clash engine.
 - `pwa.js` — Service-worker registration, update polling, and the "install as app" prompt. Everything else in the app works without it.
 - `revit-bridge.js` — WebSocket live link to the ClashControl Connector Revit plugin. Ingests geometry + properties, converts to Three.js meshes, supports `REPLACE_MODEL` on re-sync and linked models. Also handles one-way push of clashes back to Revit.
-- `shared-project.js` — File System Access API collaboration. Users pick a shared folder (OneDrive/Dropbox/NAS), and a `.ccproject` file is synced every 60s. No backend.
+- `shared-project.js` — File System Access API collaboration. Users pick a shared folder (OneDrive/Dropbox/NAS); each user writes only new small files of their own (`<name>.ccshared/changes/<userId>/…`) with decision change records, read back incrementally (an idle check reads no file contents). Concurrent edits of one field are conflicts shown to every user until someone resolves them (`shared-log-core.js`, docs/INTERNALS.md §21.55). An old `.ccproject` is migrated once into a snapshot. No backend.
 - `smart-bridge.js` — LLM bridge connecting ClashControl to AI assistants over WebSocket: Claude Desktop/Code via the bundled MCP server, ChatGPT via a REST bridge + OpenAPI Actions, or any function-calling LLM via REST. Receives tool calls from the bridge server (localhost:19802) and executes them through `window._ccDispatch` and friends.
 - `splat.js` — Loads 3D Gaussian Splat as-built captures (.splat/.ply/.ksplat/.spz) as a first-class scene layer alongside IFC and point clouds, via Spark.js on its own r180 ESM canvas synced to the core camera.
 - `tiles.js` — Streams photorealistic 3D Tiles (Google Photorealistic, Cesium ion, or any tileset URL) as real-world context around a georeferenced model via NASA-AMMOS 3DTilesRendererJS. The model never moves; the tileset is placed in ENU/ECEF space around the anchor. Keyless national layers (e.g. PDOK) are the active country pack's `geo.tiles3d` presets.

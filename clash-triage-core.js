@@ -141,6 +141,9 @@
     if (sev === 'critical' && !c.assignee) tags.push('unassigned-critical');
     if (c.opening === 'partial' || c.provision === 'partial') tags.push('opening-too-small');
     if (c._delta === 'new') tags.push('new');
+    // a decision teammates changed at the same time in a shared folder
+    // (addons/shared-project.js puts the conflict on the clash)
+    if (c._sharedConflict && c._sharedConflict.length) tags.push('shared-conflict');
     // near miss: a clearance finding whose gap is <= 30 % of the clearance
     // the rule asked for (same ratio as the severity model's soft tier)
     if (c.type === 'soft') {
@@ -243,7 +246,9 @@
     { id: 'unassigned-critical', label: 'Unassigned critical', facets: { tag: ['unassigned-critical'] } },
     { id: 'opening-too-small', label: 'Openings too small', facets: { tag: ['opening-too-small'] } },
     { id: 'near-miss', label: 'Near misses', facets: { extent: ['clearance'], tag: ['near-miss'] } },
-    { id: 'new', label: 'New since last run', facets: { tag: ['new'] } }
+    { id: 'new', label: 'New since last run', facets: { tag: ['new'] } },
+    // offered whenever there are any, even when every item is in conflict
+    { id: 'shared-conflict', label: 'Conflicts', facets: { tag: ['shared-conflict'] }, always: true }
   ];
   // Returns [{id, label, facets, count}] — fixed views first, then up to
   // maxStoreys "per storey" views (most clashes first), all non-empty.
@@ -259,7 +264,7 @@
       var n = tags[s.facets.tag[0]] || 0;
       // non-empty, and narrower than "everything" (a first run makes every
       // clash 'new' — offering that view would filter nothing)
-      if (n > 0 && n < index.length) out.push({ id: s.id, label: s.label, facets: s.facets, count: n });
+      if (n > 0 && (n < index.length || s.always)) out.push({ id: s.id, label: s.label, facets: s.facets, count: n });
     });
     var st = Object.keys(storeys);
     if (st.length > 1) {

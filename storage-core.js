@@ -28,6 +28,11 @@
     { store: 'pending',  db: 'cc-handoff', retention: 'decay', scope: 'global' },
     // shared-project's persisted FileSystem directory handle.
     { store: 'handles',  db: 'cc_shared', retention: 'source', scope: 'global' },
+    // shared-project's local copy of the shared folder's change log (records
+    // and the file names already read, per shared project): the folder stays
+    // the source, so a lost cache only means one full read.
+    { store: 'log',      db: 'cc_shared', retention: 'derived', scope: 'per-project' },
+    { store: 'seen',     db: 'cc_shared', retention: 'derived', scope: 'per-project' },
     // Clash viewpoint snapshots (overview cards, BCF snapshot.png, PDF
     // report): re-rendered from the loaded geometry on demand, keyed by clash
     // identity + element geometry hashes, budgeted by planSnapshotGC.
