@@ -2415,6 +2415,10 @@ function startApp() {
     }
   }
 
+  // The App's reducer: every action, then the migrations that depend on
+  // state other actions bring in (name-valued model-pair facets → model ids
+  // once the models are there, §21.54).
+  function _ccAppReducer(s, a) { return _ccMigrateTriageModelPairs(reducer(s, a)); }
   function reducer(s,a) {
     // Track section-plane/box changes onto the unified undo stack generically
     // (see _ccBuildUndoEntry near invalidate()) — this is the one place that
@@ -9215,36 +9219,42 @@ function startApp() {
     var live = !!(window._ccLatestState && window._ccLatestState.clashes === next);
     var bucketOf = live ? o.bucketOf : new Map(o.bucketOf), counts = Object.assign({}, o.counts), zoneGroups = Object.assign({}, o.zoneGroups);
     var visible = live ? o.visible : o.visible.slice(), index = live ? o.index : o.index.slice(), rowById = live ? o.rowById : new Map(o.rowById);
+    var rowAt = live ? o._rowAt : o._rowAt.slice();
     var fctx = Object.assign({}, o.fctx, { bucket: function(c) { return bucketOf.get(c.id) || 'review'; } });
     changed.forEach(function(ci) {
       var c0 = prev[ci], c = next[ci];
       var b0 = o.bucketOf.get(c0.id), b = _ccReviewBucket(c, s.rules, ctx);
       bucketOf.set(c.id, b);
+      // every clash has a facet row, on a hidden model too (§21.54)
+      var row = tcore ? tcore.indexItems([c], fctx)[0] : null;
+      if (row) { rowAt[ci] = row; rowById.set(c.id, row); }
       var vi = o._visPos.get(c.id);
       if (vi == null) return;                     // on a hidden model: not counted
       counts[b0] = (counts[b0] || 0) - 1; counts[b] = (counts[b] || 0) + 1;
       if (b0 === 'zone' && c0.roleGroup) zoneGroups[c0.roleGroup] = (zoneGroups[c0.roleGroup] || 0) - 1;
       if (b === 'zone' && c.roleGroup) zoneGroups[c.roleGroup] = (zoneGroups[c.roleGroup] || 0) + 1;
       visible[vi] = c;
-      if (tcore && index[vi]) { var row = tcore.indexItems([c], fctx)[0]; index[vi] = row; rowById.set(c.id, row); }
+      if (row) index[vi] = row;
     });
     return { bucketOf: bucketOf, counts: counts, total: o.total, visible: visible, ctx: ctx, fctx: fctx,
-      storeyNorm: o.storeyNorm, index: index, rowById: rowById, visibleModels: o.visibleModels, zoneGroups: zoneGroups, _visPos: o._visPos, _visKey: o._visKey };
+      storeyNorm: o.storeyNorm, index: index, rowById: rowById, visibleModels: o.visibleModels, zoneGroups: zoneGroups, _visPos: o._visPos, _visKey: o._visKey, _rowAt: rowAt };
   }
-  // Exactly what the triage model reads from the models (visibility, name,
-  // storeys, storey unit) — a model edit that changes none of it (colour,
-  // discipline, storey hide, lazy props …) keeps the model (§21.54).
+  // Exactly what the triage model reads from the models (visibility,
+  // storeys, storey unit) — a model edit that changes none of it (rename,
+  // colour, discipline, storey hide, lazy props …) keeps the model (§21.54).
+  // The names are not read: the model-pair facet is keyed by model ids and
+  // labelled from the current names when drawn (_ccModelPairLabel).
   function _ccTriageModelsSig(s) {
     return (s.models || []).map(function(m) {
-      return [m.id, m.visible !== false, m.name || m.id, m.storeyData, m.storeyData && m.storeyData.length ? _ccStoreyUnitScale(m, s.prefs) : 0];
+      return [m.id, m.visible !== false, m.storeyData, m.storeyData && m.storeyData.length ? _ccStoreyUnitScale(m, s.prefs) : 0];
     });
   }
   function _ccTriageSigSame(a, b) {
     if (!a || !b || a.length !== b.length) return false;
-    for (var i = 0; i < a.length; i++) for (var j = 0; j < 5; j++) if (a[i][j] !== b[i][j]) return false;
+    for (var i = 0; i < a.length; i++) for (var j = 0; j < 4; j++) if (a[i][j] !== b[i][j]) return false;
     return true;
   }
-  var _ccTriageRowCache = new WeakMap(); // clash → { row, bucketOf, norm, nA, nB }
+  var _ccTriageRowCache = new WeakMap(); // clash → { row, bucketOf, norm }
   function _ccTriageModel(s) {
     var L = _ccTriageLast;
     if (L && L.models === s.models && L.clashes === s.clashes && L.rules === s.rules && L.prefs === s.prefs) return L.out;
@@ -9256,63 +9266,118 @@ function startApp() {
     }
     var inc = (sameModels && L.rules === s.rules) ? _ccTriageIncremental(L, s) : null;
     if (inc) { _ccTriageLast = { clashes: s.clashes, rules: s.rules, models: s.models, prefs: s.prefs, msig: msig, out: inc }; window._ccListPerfCounters.triageInc++; return inc; }
-    window._ccListPerfCounters.triageFull++;
     var tcore = window._ccClashTriageCore, ccore = window._ccClashClassificationCore;
     var ctx = _ccTriageCtx(s.clashes || []);
     // Only the models changed (§21.54): the buckets (clash + rules), the
-    // storey normaliser (ids, storeys, units) and every row whose inputs are
-    // unchanged are reused — a visibility toggle refiles nothing.
+    // storey normaliser (ids, storeys, units) and the facet rows (every
+    // clash, hidden models included: a row depends on the clash, its bucket
+    // and the normaliser only) are reused — a visibility toggle refiles
+    // nothing and only re-selects the visible clashes.
     var P = (L && L.clashes === s.clashes && L.rules === s.rules) ? L.out : null;
-    var sameStoreys = !!(L && L.msig && L.msig.length === msig.length && msig.every(function(e, i) { var o = L.msig[i]; return o[0] === e[0] && o[3] === e[3] && o[4] === e[4]; }));
-    var vis = {}, names = {}, stE = [], visKey = '';
+    var sameStoreys = !!(L && L.msig && L.msig.length === msig.length && msig.every(function(e, i) { var o = L.msig[i]; return o[0] === e[0] && o[2] === e[2] && o[3] === e[3]; }));
+    var vis = {}, stE = [], visKey = '';
     (s.models || []).forEach(function(m) {
       if (m.visible !== false) { vis[m.id] = true; visKey += m.id + '\u0001'; }
-      names[m.id] = m.name || m.id;
       if (sameStoreys && P) return;
       var _us = _ccStoreyUnitScale(m, s.prefs);
       (m.storeyData || []).forEach(function(st) { if (st && st.name) stE.push({ modelId: m.id, name: st.name, elevation: st.elevation, unitScale: _us }); });
     });
     if (P && P._visKey === visKey) vis = P.visibleModels;    // same visible set: same object (pass caches hit)
-    var bucketOf = P ? P.bucketOf : new Map(), counts = {}, visible = [], zoneGroups = {};
-    ((ccore && ccore.REVIEW_BUCKETS) || ['review']).forEach(function(b) { counts[b] = 0; });
-    (s.clashes || []).forEach(function(c) {
-      var b;
-      if (P) b = bucketOf.get(c.id); else { b = _ccReviewBucket(c, s.rules, ctx); bucketOf.set(c.id, b); }
-      if ((c.modelAId && !vis[c.modelAId]) || (c.modelBId && !vis[c.modelBId])) return;
-      counts[b] = (counts[b] || 0) + 1;
-      if (b === 'zone' && c.roleGroup) zoneGroups[c.roleGroup] = (zoneGroups[c.roleGroup] || 0) + 1;
-      visible.push(c);
-    });
+    var all = s.clashes || [], n = all.length;
+    var bucketOf = P ? P.bucketOf : new Map();
+    if (!P) for (var bi = 0; bi < n; bi++) bucketOf.set(all[bi].id, _ccReviewBucket(all[bi], s.rules, ctx));
     var norm = (sameStoreys && P) ? P.storeyNorm : (tcore ? tcore.buildStoreyNormaliser(stE) : { label: function(m, n) { return n || ''; }, labels: [] });
-    var fctx = {
+    var fctx = (P && P.storeyNorm === norm) ? P.fctx : {
       severity: function(c) { return _ccDeterministicSeverity(c); },
       bucket: function(c) { return bucketOf.get(c.id) || 'review'; },
       storey: norm.label,
-      modelName: function(id) { return names[id] || id || '?'; },
       trade: function(c, side) { var i = side === 'A' ? 0 : 1; return (c.trades && c.trades[i]) || (c.disciplines && c.disciplines[i]) || 'other'; }
     };
-    // a clash's facet row depends on the clash, its bucket (bucketOf), the
-    // storey normaliser and the names of its two models — nothing else
-    var index = [];
-    if (tcore) for (var vi = 0; vi < visible.length; vi++) {
-      var c = visible[vi], nA = fctx.modelName(c.modelAId), nB = fctx.modelName(c.modelBId || c.modelAId);
-      var h = _ccTriageRowCache.get(c);
-      if (h && h.bucketOf === bucketOf && h.norm === norm && (h.nA !== nA || h.nB !== nB) && tcore.modelPairValue) {
-        // a model renamed: only the model-pair value differs
-        h = { row: { c: c, v: Object.assign({}, h.row.v, { modelPair: tcore.modelPairValue(c, fctx.modelName) }) }, bucketOf: bucketOf, norm: norm, nA: nA, nB: nB };
-        _ccTriageRowCache.set(c, h);
-      } else if (!(h && h.bucketOf === bucketOf && h.norm === norm)) {
-        h = { row: tcore.indexItems([c], fctx)[0], bucketOf: bucketOf, norm: norm, nA: nA, nB: nB };
-        _ccTriageRowCache.set(c, h);
+    // facet rows of every clash, aligned with s.clashes (_rowAt) and by id
+    var rowAt, rowById;
+    if (P && P.storeyNorm === norm && P._rowAt) { rowAt = P._rowAt; rowById = P.rowById; }
+    else {
+      window._ccListPerfCounters.triageRows++;
+      rowAt = new Array(n); rowById = new Map();
+      if (tcore) for (var ri = 0; ri < n; ri++) {
+        var c = all[ri], h = _ccTriageRowCache.get(c);
+        if (!(h && h.bucketOf === bucketOf && h.norm === norm)) {
+          h = { row: tcore.indexItems([c], fctx)[0], bucketOf: bucketOf, norm: norm };
+          _ccTriageRowCache.set(c, h);
+        }
+        rowAt[ri] = h.row; rowById.set(c.id, h.row);
       }
-      index.push(h.row);
     }
-    var rowById = new Map();
-    index.forEach(function(r) { rowById.set(r.c.id, r); });
+    if (P) window._ccListPerfCounters.triageVis++; else window._ccListPerfCounters.triageFull++;
+    // the visible clashes (in s.clashes order), their rows and the counts
+    var counts = {}, visible = [], index = [], zoneGroups = {};
+    ((ccore && ccore.REVIEW_BUCKETS) || ['review']).forEach(function(b) { counts[b] = 0; });
+    for (var vi = 0; vi < n; vi++) {
+      var cv = all[vi];
+      if ((cv.modelAId && !vis[cv.modelAId]) || (cv.modelBId && !vis[cv.modelBId])) continue;
+      var rv = rowAt[vi], b = rv ? rv.v.bucket : bucketOf.get(cv.id);
+      counts[b] = (counts[b] || 0) + 1;
+      if (b === 'zone' && cv.roleGroup) zoneGroups[cv.roleGroup] = (zoneGroups[cv.roleGroup] || 0) + 1;
+      visible.push(cv);
+      if (rv) index.push(rv);
+    }
     var out = { bucketOf: bucketOf, counts: counts, total: visible.length, visible: visible, ctx: ctx, fctx: fctx,
-      storeyNorm: norm, index: index, rowById: rowById, visibleModels: vis, zoneGroups: zoneGroups, _visKey: visKey };
+      storeyNorm: norm, index: index, rowById: rowById, visibleModels: vis, zoneGroups: zoneGroups, _visKey: visKey, _rowAt: rowAt };
     _ccTriageLast = { clashes: s.clashes, rules: s.rules, models: s.models, prefs: s.prefs, msig: msig, out: out };
     return out;
+  }
+  // The current model names (id → name, the id when unnamed): the same
+  // object while no model is added, removed or renamed — what reads names
+  // (facet labels, search text, card meta) keys on it, the triage model
+  // does not (§21.54).
+  var _ccModelNamesLast = { models: null, map: null, fn: null };
+  function _ccModelNameMap(models) {
+    var L = _ccModelNamesLast;
+    if (L.map && L.models === models) return L.map;
+    var map = {}, same = !!L.map, n = 0;
+    (models || []).forEach(function(m) { var v = m.name || m.id; map[m.id] = v; n++; if (same && L.map[m.id] !== v) same = false; });
+    if (same && Object.keys(L.map).length !== n) same = false;
+    if (!same) { L.map = map; L.fn = null; }
+    L.models = models;
+    return L.map;
+  }
+  // name lookup with the old fctx.modelName contract (name, else id, else '?')
+  function _ccModelNameFn(models) {
+    var map = _ccModelNameMap(models), L = _ccModelNamesLast;
+    if (!L.fn) L.fn = function(id) { return map[id] || id || '?'; };
+    return L.fn;
+  }
+  function _ccModelPairLabel(v, names) {
+    var tcore = window._ccClashTriageCore;
+    if (!names) names = _ccModelNameMap((window._ccLatestState && window._ccLatestState.models) || []);
+    if (!tcore || !tcore.modelPairLabel) return String(v == null ? '' : v);
+    return tcore.modelPairLabel(v, function(id) { return names[id]; });
+  }
+  // Saved views / the active facets written before the model pair was keyed
+  // by ids carry the old label: move them to the id keys while the names
+  // still resolve (clash-triage-core migrateModelPairValues). Runs after every
+  // action (models can arrive through many of them); a cheap no-op unless a
+  // name-valued model pair is present. The same state object when nothing
+  // changed.
+  function _ccMigrateTriageModelPairs(s) {
+    var tr = s && s.triage, tcore = window._ccClashTriageCore;
+    if (!tr || !tcore || !tcore.migrateModelPairValues || !s.models || !s.models.length) return s;
+    var fx = tr.facets && tr.facets.modelPair;
+    var views = Array.isArray(tr.savedViews) ? tr.savedViews : [];
+    var legacy = function(vals) { return Array.isArray(vals) && vals.some(function(v) { return !tcore.isModelPairKey(v); }); };
+    if (!legacy(fx) && !views.some(function(v) { return v && v.facets && legacy(v.facets.modelPair); })) return s;
+    var u = {}, any = false;
+    var nfx = tcore.migrateModelPairValues(fx, s.models);
+    if (nfx !== fx) { u.facets = Object.assign({}, tr.facets, { modelPair: nfx }); any = true; }
+    var nviews = views.map(function(v) {
+      var mp = v && v.facets && v.facets.modelPair, nmp = tcore.migrateModelPairValues(mp, s.models);
+      if (nmp === mp) return v;
+      any = true;
+      return Object.assign({}, v, { facets: Object.assign({}, v.facets, { modelPair: nmp }) });
+    });
+    if (nviews.some(function(v, i) { return v !== views[i]; })) u.savedViews = nviews;
+    if (!any) return s;
+    return Object.assign({}, s, { triage: Object.assign({}, tr, u) });
   }
   // Legacy per-bucket "show" switches still count as showing that bucket.
   var _CC_BUCKET_LEGACY_SHOW = { provided:'showProvided', provision:'showProvisions', zone:'showRoleGroups', contact:'showContacts', handled:'showHandled' };
@@ -30766,7 +30831,8 @@ function startApp() {
     };
     return _CC_FACET_TITLES[k] || k;
   }
-  function _ccFacetValueLabel(k, v) {
+  function _ccFacetValueLabel(k, v, names) {
+    if (k === 'modelPair') return _ccModelPairLabel(v, names);
     if (k === 'severity') return ({critical:_cc_t('sev.critical','Critical'),major:_cc_t('sev.major','Major'),minor:_cc_t('sev.minor','Minor'),info:_cc_t('sev.info','Info')})[v] || v;
     if (k === 'extent') return ({through:_cc_t('extent.through','Through'),'through-thin':_cc_t('extent.throughThin','Through (thin)'),partial:_cc_t('extent.partial','Partial'),graze:_cc_t('extent.graze','Graze'),unknown:_cc_t('extent.unknown','Depth unknown'),clearance:_cc_t('extent.clearance','Clearance'),contact:_cc_t('extent.contact','Contact'),duplicate:_cc_t('extent.duplicate','Duplicate')})[v] || v;
     if (k === 'storey') return v || _cc_t('facet.noStorey','No storey');
@@ -30824,9 +30890,10 @@ function startApp() {
       return function(){ document.removeEventListener('mousedown', out); document.removeEventListener('keydown', esc); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setOpen is a useState setter (stable identity)
     }, [open]);
-    var nShown = shown.filter(function(c){ return !c._idsValidation; }).length;
+    var nShown = useMemo(function(){ return (props.shown || []).filter(function(c){ return !c._idsValidation; }).length; }, [props.shown]);
     var ITEM = {...S_BTN, display:'block', width:'100%', textAlign:'left', padding:'var(--space-2) var(--space-3)', fontSize:'var(--text-xs)', background:'none', color:'var(--text-primary)', borderRadius:0};
-    function go(scope, v){ setOpen(false); _ccExportClashesBCF(s, scope, v, shown); }
+    // the export reads the state at the click (memoised below on what the menu shows)
+    function go(scope, v){ setOpen(false); _ccExportClashesBCF(window._ccLatestState || s, scope, v, shown); }
     return html`<span ref=${ref} style=${{position:'relative',display:'inline-flex'}}>
       <button data-cc-bcf-scope="1" aria-haspopup="menu" aria-expanded=${open?'true':'false'} onClick=${function(){ setOpen(!open); }}
         style=${{...S_BTN,padding:'0 var(--space-1)',fontSize:'var(--text-xs)',background:'none',color:'var(--text-secondary)',textDecoration:'underline',textUnderlineOffset:2}}>${_cc_t('triage.bcf','Export BCF…')}</button>
@@ -30836,6 +30903,12 @@ function startApp() {
       </div>`}
     </span>`;
   }
+  // It shows two counts (the shown clashes, every clash): a rename, a
+  // visibility toggle that leaves the shown set alone or any other state
+  // change re-renders nothing here (§21.54).
+  ClashBcfScopeMenu = React.memo(ClashBcfScopeMenu, function(a, b){
+    return a.shown === b.shown && ((a.s && a.s.clashes) || []).length === ((b.s && b.s.clashes) || []).length;
+  });
 
   // Smart filters: suggested views (only non-empty ones), active-filter
   // pills + reset, saved views (named facet sets + search, stored in the
@@ -30852,6 +30925,7 @@ function startApp() {
     var compact = !!props.compact;
     var tcore = window._ccClashTriageCore;
     var tr = s.triage || {}, facets = tr.facets || {}, search = (s.filters && s.filters.search) || '';
+    var names = _ccModelNameMap(s.models); // model-pair labels from the current names
     var sv = useState(null), saveName = sv[0], setSaveName = sv[1];
     var ex = useState({}), expanded = ex[0], setExpanded = ex[1];
     var po = useState(false), popOpen = po[0], setPopOpen = po[1];
@@ -30924,9 +30998,9 @@ function startApp() {
     });
     var statusEl = html`<span data-cc-shown-total="1" role="status" aria-live="polite" style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',color:shown<total?'var(--text-primary)':'var(--text-muted)',whiteSpace:'nowrap'}}>${_cc_t('triage.shownOfTotal','{shown} shown / {total} total',{shown:shown,total:total})}</span>`;
     var pillEls = activePills.map(function(p){
-      return html`<button key=${p.k + ':' + p.v} class=${TAP} data-cc-pill=${p.k} aria-label=${_cc_t('triage.removeFilter','Remove filter {name}',{name:_ccFacetTitle(p.k) + ': ' + _ccFacetValueLabel(p.k, p.v)})}
+      return html`<button key=${p.k + ':' + p.v} class=${TAP} data-cc-pill=${p.k} aria-label=${_cc_t('triage.removeFilter','Remove filter {name}',{name:_ccFacetTitle(p.k) + ': ' + _ccFacetValueLabel(p.k, p.v, names)})}
         onClick=${function(){ setFacets(_ccToggleFacet(facets, p.k, p.v), null); }} style=${CHIP(true)}>
-        ${_ccFacetTitle(p.k)}: ${_ccFacetValueLabel(p.k, p.v)} <span aria-hidden="true">×</span>
+        ${_ccFacetTitle(p.k)}: ${_ccFacetValueLabel(p.k, p.v, names)} <span aria-hidden="true">×</span>
       </button>`;
     });
     var actionEls = html`
@@ -30943,7 +31017,7 @@ function startApp() {
     var facetGroups = html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-2)',paddingBottom:compact ? 0 : 'var(--space-2)'}}>
       ${tcore.FACETS.map(function(k){
         var counts = fc[k] || {};
-        var vals = tcore.orderedValues(k, counts, triage && triage.storeyNorm ? triage.storeyNorm.labels : []);
+        var vals = tcore.orderedValues(k, counts, triage && triage.storeyNorm ? triage.storeyNorm.labels : [], k === 'modelPair' ? function(v){ return _ccModelPairLabel(v, names); } : null);
         (facets[k] || []).forEach(function(v){ if (vals.indexOf(v) === -1) vals.push(v); });
         if (!vals.length) return null;
         var limit = expanded[k] ? vals.length : 8;
@@ -30952,7 +31026,7 @@ function startApp() {
           ${vals.slice(0, limit).map(function(v){
             var on = (facets[k] || []).indexOf(v) !== -1;
             return html`<button key=${v} class=${TAP} data-cc-chip=${k + '=' + v} aria-pressed=${on?'true':'false'} onClick=${function(){ setFacets(_ccToggleFacet(facets, k, v), null); }} style=${CHIP(on)}>
-              ${_ccFacetValueLabel(k, v)} <span style=${CNT}>${counts[v] || 0}</span>
+              ${_ccFacetValueLabel(k, v, names)} <span style=${CNT}>${counts[v] || 0}</span>
             </button>`;
           })}
           ${vals.length > limit && html`<button class=${TAP} onClick=${function(){ var n = Object.assign({}, expanded); n[k] = true; setExpanded(n); }} style=${LINK}>${_cc_t('triage.more','+{n} more',{n:vals.length - limit})}</button>`}
@@ -31293,7 +31367,7 @@ function startApp() {
       <div ref=${gridRef} data-cc-overview-grid="1" class="cc-overview-grid" role="list" aria-describedby="cc-overview-keys" style=${{flex:1,overflowY:'auto',padding:'var(--space-3) var(--space-4) var(--space-4)',display:'grid',gap:'var(--space-3)',alignContent:'start'}}>
         ${empty}
         ${cards.slice(0, limit).map(function(it, i){
-          return html`<${ClashOverviewCard} key=${it.key} it=${it} i=${i} row=${tm.rowById.get(it.lead.id)} modelName=${tm.fctx.modelName} manyModels=${manyModels} focused=${i === focusIdx}
+          return html`<${ClashOverviewCard} key=${it.key} it=${it} i=${i} row=${tm.rowById.get(it.lead.id)} modelName=${_ccModelNameFn(s.models)} manyModels=${manyModels} focused=${i === focusIdx}
             cardRefs=${cardRefs} onFocusIdx=${setFocusIdx} onOpenItem=${openItem} locale=${(window._ccGetLocale && window._ccGetLocale()) || ''} />`;
         })}
         ${cards.length > limit && html`<div role="listitem" style=${{gridColumn:'1 / -1',display:'flex',justifyContent:'center'}}>
@@ -31310,32 +31384,50 @@ function startApp() {
   // both always show the same set.
   // The lower-cased text a list search matches against, built once per clash
   // object (+ its facet row), not on every keystroke for every clash.
+  // The model pair is the row's id key; the text carries its label from the
+  // current names (cached with the label, so a rename rebuilds only the
+  // texts of the clashes on the renamed model).
   var _ccSearchHayCache = new WeakMap();
-  function _ccSearchHay(it, isClashTab, trow) {
+  function _ccSearchHay(it, isClashTab, trow, names) {
     var hit = _ccSearchHayCache.get(it);
-    if (hit && hit.clash === isClashTab && hit.row === trow) return hit.hay;
-    var hay = isClashTab ? [it.title,it.description,it.type,_ccClashGrid(it),it.elemAStorey,it.elemBStorey,it.elemAType,it.elemBType,it.elemAMaterial,it.elemBMaterial,it.status,it.elemAName,it.elemBName,it.globalIdA,it.globalIdB,trow&&trow.v.storey,trow&&trow.v.typePair,trow&&trow.v.modelPair,it.assignee].filter(Boolean).join(' ').toLowerCase()
+    var mp = isClashTab && trow ? _ccModelPairLabel(trow.v.modelPair, names) : '';
+    if (hit && hit.clash === isClashTab && hit.row === trow && hit.mp === mp) return hit.hay;
+    var hay = isClashTab ? [it.title,it.description,it.type,_ccClashGrid(it),it.elemAStorey,it.elemBStorey,it.elemAType,it.elemBType,it.elemAMaterial,it.elemBMaterial,it.status,it.elemAName,it.elemBName,it.globalIdA,it.globalIdB,trow&&trow.v.storey,trow&&trow.v.typePair,mp,it.assignee].filter(Boolean).join(' ').toLowerCase()
       : (it.title||'').toLowerCase()+' '+(it.description||'').toLowerCase();
-    _ccSearchHayCache.set(it, { clash: isClashTab, row: trow, hay: hay });
+    _ccSearchHayCache.set(it, { clash: isClashTab, row: trow, mp: mp, hay: hay });
     return hay;
   }
   // The list and the review model ask the same question for the same clash
   // with the same filters in one render, and every unchanged clash again
   // after an unrelated edit — the answer is remembered per clash object.
+  // The visibility test is outside the remembered part (two property reads):
+  // hiding / showing a model re-asks nothing for the clashes that stay (§21.54).
   var _ccPassCache = new WeakMap();
-  function _ccListItemPasses(it, f, isClashTab, visibleModelIds, triage, rules) {
-    var hit = it && typeof it === 'object' ? _ccPassCache.get(it) : null;
-    var row = isClashTab && triage && f.search ? triage.rowById.get(it.id) : null; // the only triage input (search text)
-    if (hit && hit.f === f && hit.vis === visibleModelIds && hit.clash === isClashTab && hit.row === row && hit.rules === rules) return hit.pass;
-    var pass = _ccListItemPasses1(it, f, isClashTab, visibleModelIds, triage, rules);
-    if (it && typeof it === 'object') _ccPassCache.set(it, { f: f, vis: visibleModelIds, clash: isClashTab, row: row, rules: rules, pass: pass });
-    return pass;
+  function _ccListItemPasses(it, f, isClashTab, visibleModelIds, triage, rules, names) {
+    if (!_ccListItemVisible(it, isClashTab, visibleModelIds)) return false;
+    return _ccListItemPassesRest(it, f, isClashTab, triage, rules, names);
   }
-  function _ccListItemPasses1(it, f, isClashTab, visibleModelIds, triage, rules) {
+  function _ccListItemVisible(it, isClashTab, visibleModelIds) {
     if(isClashTab && (it.modelAId || it.modelBId)) {
       if(it.modelAId && !visibleModelIds[it.modelAId]) return false;
       if(it.modelBId && !visibleModelIds[it.modelBId]) return false;
     }
+    return true;
+  }
+  // Everything but the model visibility, remembered per clash object. The
+  // search text reads the facet row (storey, types) and the names of the
+  // clash's two models (names: _ccModelNameMap, a new object only when a
+  // name changes) — they are inputs only while a search is active.
+  function _ccListItemPassesRest(it, f, isClashTab, triage, rules, names) {
+    var hit = it && typeof it === 'object' ? _ccPassCache.get(it) : null;
+    var row = isClashTab && triage && f.search ? triage.rowById.get(it.id) : null; // the only triage input (search text)
+    if (!row) names = null;
+    if (hit && hit.f === f && hit.clash === isClashTab && hit.row === row && hit.names === names && hit.rules === rules) return hit.pass;
+    var pass = _ccListItemPasses1(it, f, isClashTab, triage, rules, names);
+    if (it && typeof it === 'object') _ccPassCache.set(it, { f: f, clash: isClashTab, row: row, names: names, rules: rules, pass: pass });
+    return pass;
+  }
+  function _ccListItemPasses1(it, f, isClashTab, triage, rules, names) {
     if(f.status!=='all' && it.status!==f.status) return false;
     // "Show resolved/denied" toggle (default off): with no specific
     // status pill selected, resolved/closed clashes stay hidden too
@@ -31343,7 +31435,7 @@ function startApp() {
     // f.showHandled/f.status==='denied') so the list opens on what
     // still needs attention, not a mix of open + already-handled work.
     if(isClashTab && f.status==='all' && !_ccBucketShown('handled', rules, f) && (it.status==='resolved'||it.status==='closed')) return false;
-    if(f.search){var _trow=isClashTab&&triage?triage.rowById.get(it.id):null;var hay=_ccSearchHay(it,isClashTab,_trow);if(!_ccFilterTextMatches(f.search,hay,it.number))return false;}
+    if(f.search){var _trow=isClashTab&&triage?triage.rowById.get(it.id):null;var hay=_ccSearchHay(it,isClashTab,_trow,names);if(!_ccFilterTextMatches(f.search,hay,it.number))return false;}
     if(isClashTab) {
       if(f.modelPair) {
         var _mpA=it.modelAId, _mpB=it.modelBId||it.modelAId, _mp=f.modelPair;
@@ -31439,8 +31531,8 @@ function startApp() {
         };
       });
       return base.concat(idsItems);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- the models reach the list only through the triage model (tmAll)
-    }, [isClashTab, s.clashes, s.issues, tmAll, s.idsValidation, f.status, f.showHandled, f.showProvided, f.showProvisions, f.showRoleGroups, f.showContacts, f.showBuckets, f.hideBuckets, s.rules]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the models reach the list only through the triage model's buckets (tmAll.bucketOf: the same Map while only the visible models change; refiled in place only with a new s.clashes)
+    }, [isClashTab, s.clashes, s.issues, tmAll.bucketOf, s.idsValidation, f.status, f.showHandled, f.showProvided, f.showProvisions, f.showRoleGroups, f.showContacts, f.showBuckets, f.hideBuckets, s.rules]);
 
 
     // keyed on the visible ids, not on s.models identity: a rename / colour
@@ -31548,20 +31640,33 @@ function startApp() {
     var _tcore = window._ccClashTriageCore;
     var facetsOn = !!(isClashTab && _tcore && _tcore.hasFacets(facets));
 
-    // A keystroke that only narrows the search filters the previous result
-    // (a subset of it, same order) instead of every clash (§21.54).
-    var itemsPreRef = useRef(null);
-    var itemsPre = useMemo(function(){
-      var vis = isClashTab && triage ? triage.visibleModels : visibleModelIds;
-      var P = itemsPreRef.current;
-      var from = (P && P.rawItems === rawItems && P.isClashTab === isClashTab && P.vis === vis && P.triage === triage && P.rules === s.rules && _ccSearchNarrows(P.f, f)) ? P.out : rawItems;
+    // Every list filter but the model visibility (status, search, dropdowns),
+    // kept while only the visible models change; the visibility is applied
+    // on top (two property reads per item) — hiding / showing a model asks
+    // nothing again (§21.54). A keystroke that only narrows the search
+    // filters the previous result (a subset of it, same order) instead of
+    // every clash. The search reads the facet rows (triage.rowById: every
+    // clash's row, the same Map while only the visible models change) and the
+    // model names (only while a search is active).
+    var searchNames = f.search ? _ccModelNameMap(s.models) : null;
+    var rowIndex = isClashTab && triage ? triage.rowById : null;
+    var itemsRestRef = useRef(null);
+    var itemsRest = useMemo(function(){
+      var P = itemsRestRef.current;
+      var from = (P && P.rawItems === rawItems && P.isClashTab === isClashTab && P.rowIndex === rowIndex && P.names === searchNames && P.rules === s.rules && _ccSearchNarrows(P.f, f)) ? P.out : rawItems;
       var out = from.filter(function(it){
-        return _ccListItemPasses(it, f, isClashTab, vis, triage, s.rules);
+        return _ccListItemPassesRest(it, f, isClashTab, triage, s.rules, searchNames);
       });
-      itemsPreRef.current = { rawItems: rawItems, isClashTab: isClashTab, vis: vis, triage: triage, rules: s.rules, f: f, out: out };
+      itemsRestRef.current = { rawItems: rawItems, isClashTab: isClashTab, rowIndex: rowIndex, names: searchNames, rules: s.rules, f: f, out: out };
       return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- triage changes together with rawItems (same clashes/rules/models); s.rules only feeds the handled-bucket test
-    }, [rawItems, f, isClashTab, visibleModelIds]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- triage is read only through its rows (rowIndex); s.rules changes rawItems too (it only feeds the handled-bucket test)
+    }, [rawItems, f, isClashTab, rowIndex, searchNames]);
+    var itemsPre = useMemo(function(){
+      if (!isClashTab) return itemsRest;
+      var vis = triage ? triage.visibleModels : visibleModelIds;
+      return itemsRest.filter(function(it){ return _ccListItemVisible(it, true, vis); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- triage.visibleModels is the visible set visibleModelIds is keyed on
+    }, [itemsRest, isClashTab, visibleModelIds]);
     // Facet filters (s.triage.facets, persisted per project) on top of the
     // list filters; facet counts are computed over itemsPre (live counts).
     var items = useMemo(function(){
@@ -31581,8 +31686,8 @@ function startApp() {
         oC: s.clashes.filter(function(c){return c.status==='open' && _tmC.bucketOf.get(c.id)==='review';}).length,
         oI: s.issues.filter(function(i){return i.status!=='resolved'&&i.status!=='closed';}).length
       };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- the models reach the counts only through the triage model (tmAll)
-    }, [s.clashes, s.issues, s.rules, tmAll]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the counts read the triage model's buckets only (the same Map while only the visible models change)
+    }, [s.clashes, s.issues, s.rules, tmAll.bucketOf]);
     var oC=counts.oC, oI=counts.oI;
     var FL={fontSize:'var(--text-2xs)',color:'var(--text-muted)',marginBottom:'var(--space-1)',display:'block'};
     var PILL=function(active){return Object.assign({},S_BTN,{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-1)',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'var(--accent-contrast)':'var(--text-faint)'});};
@@ -34900,7 +35005,15 @@ function startApp() {
   window._ccListPerfCounters = { groupAndSort: 0, buildConflictRows: 0, computeRowOffsets: 0,
     // scene / review rebuilds (docs/INTERNALS.md §21.54) — tests assert an
     // unrelated action leaves them flat
-    clashMarkers: 0, triageFull: 0, triageInc: 0, reviewBuild: 0 };
+    clashMarkers: 0, triageFull: 0, triageInc: 0, reviewBuild: 0,
+    // row-offset segments (re)summed from the height cache
+    rowSegOffsets: 0,
+    // triage model rebuilt for a visible-model change only (buckets + facet
+    // rows reused) / facet rows recomputed
+    triageVis: 0, triageRows: 0,
+    // incremental root-cause regroups (_ccElementGroupsDelta) — a model
+    // hidden / shown updates the groups instead of regrouping
+    groupDelta: 0 };
   var _CC_SEV_RANK = { critical: 4, major: 3, minor: 2, info: 1 };
   function groupAndSort(items, groupBy, sortBy, opts) {
     window._ccListPerfCounters.groupAndSort++;
@@ -34928,6 +35041,7 @@ function startApp() {
     // (which element touches the most others), computed once for the same
     // reason as spatialMap above.
     var elementDegreeMap = groupByArr.indexOf('element') !== -1 ? _ccBuildElementDegreeMap(items) : null;
+    if (opts.degOut && elementDegreeMap) opts.degOut.deg = elementDegreeMap; // the incremental path continues from it
     var groupMap = {};
     items.forEach(function(it) {
       var parts = groupByArr.map(function(g){ return _groupKeyFor(it, g, modelsById, spatialMap, elementDegreeMap); });
@@ -34939,14 +35053,13 @@ function startApp() {
     // the bigger group, so the list opens on what matters most; inside a
     // group (no explicit sort) the same rule \u2014 severity, then depth/gap.
     if (groupByArr.length === 1 && groupByArr[0] === 'element') {
-      var _sevOf = function(it){ return _CC_SEV_RANK[it.aiSeverity || _ccDeterministicSeverity(it)] || 0; };
-      var _inGroup = sortFn || function(a, b){ return (_sevOf(b) - _sevOf(a)) || (Math.abs(b.distance || 0) - Math.abs(a.distance || 0)) || String(a.id).localeCompare(String(b.id)); };
+      var _inGroup = sortFn || _ccElemInGroupCmp;
       var _gs = Object.keys(groupMap).map(function(k){
         var its = groupMap[k].slice().sort(_inGroup), w = 0;
-        its.forEach(function(it){ var r = _sevOf(it); if (r > w) w = r; });
+        its.forEach(function(it){ var r = _ccElemSevRank(it); if (r > w) w = r; });
         return { label: k, items: its, _w: w };
       });
-      _gs.sort(function(a, b){ return (b._w - a._w) || (b.items.length - a.items.length) || a.label.localeCompare(b.label); });
+      _gs.sort(function(a, b){ return (b._w - a._w) || _ccElemGroupTieCmp(a, b); });
       return _gs.map(function(g){ return { label: g.label, items: g.items }; });
     }
     var keys = Object.keys(groupMap).sort(function(a,b){
@@ -34961,6 +35074,163 @@ function startApp() {
     return keys.map(function(k) {
       return { label: k, items: sortFn ? groupMap[k].slice().sort(sortFn) : groupMap[k] };
     });
+  }
+
+  // The root-cause ('element') grouping's order, shared by the full path
+  // (groupAndSort) and the incremental one below so they cannot drift:
+  // inside a group worst severity, then depth / gap, then id; groups by their
+  // worst severity, then size, then label.
+  function _ccElemSevRank(it) { return _CC_SEV_RANK[it.aiSeverity || _ccDeterministicSeverity(it)] || 0; }
+  function _ccElemInGroupCmp(a, b) { return (_ccElemSevRank(b) - _ccElemSevRank(a)) || (Math.abs(b.distance || 0) - Math.abs(a.distance || 0)) || String(a.id).localeCompare(String(b.id)); }
+  function _ccElemGroupTieCmp(a, b) { return (b.items.length - a.items.length) || a.label.localeCompare(b.label); }
+  // a group's items are sorted worst severity first: its weight is the first one's
+  function _ccElemGroupCmp(a, b) { return (_ccElemSevRank(b.items[0]) - _ccElemSevRank(a.items[0])) || _ccElemGroupTieCmp(a, b); }
+
+  // ── Incremental root-cause grouping (§21.54) ────────────────────────
+  // When only SOME items come or go (a model hidden / shown, a search that
+  // narrows, a few clashes edited), the groups are updated instead of
+  // regrouped: the degree map changes only on the element keys of the items
+  // that came or went, so only the items touching those keys can change
+  // their root-cause element; only the groups that lose or gain an item are
+  // rebuilt (and re-sorted), every other group keeps its object (memoised
+  // header / summary / rows reused) and its place, and the changed groups
+  // are merged into the order. The result is exactly groupAndSort(items,
+  // ['element']) followed by _ccStabilizeGroups(previous groups, …): same
+  // groups, same order, same members, and every group whose label and
+  // members are unchanged is the previous object. More than a third of the
+  // items changed: null (the full regroup is cheaper). Whenever the order could
+  // depend on the input order (two items or two groups that compare equal)
+  // it returns null and the caller regroups in full (the reference path).
+  // State: { items, groups, deg, set?, byKey?, byLabel? } — deg is
+  // groupAndSort's degree map (opts.degOut), the rest is built lazily and
+  // updated in place (a state is used once: the caller keeps the result).
+  function _ccElementGroupState(items, groups, deg) {
+    return groups && deg ? { items: items, groups: groups, deg: deg } : null;
+  }
+  // Element key → the items on it (arrays; an entry whose item left is
+  // skipped and dropped when the array is next read, so a removal costs
+  // nothing here). The array is compacted when it outgrows its live count.
+  function _ccEgKeyPush(byKey, deg, k, it, live) {
+    var arr = byKey.get(k);
+    if (!arr) { byKey.set(k, [it]); return; }
+    arr.push(it);
+    if (live && arr.length > 2 * (deg[k] || 0) + 8) byKey.set(k, _ccEgLive(arr, live));
+  }
+  function _ccEgLive(arr, live) {
+    var out = [], seen = new Set();
+    for (var i = 0; i < arr.length; i++) { var x = arr[i]; if (live.has(x) && !seen.has(x)) { seen.add(x); out.push(x); } }
+    return out;
+  }
+  // A patched grouping (_ccPatchElementGroups: edited copies of a few items,
+  // same keys / severity / depth): same degrees and roots, items swapped in
+  // the indexes.
+  function _ccElementGroupsAdopt(st, items, groups) {
+    if (!st || !groups) return null;
+    var prev = st.items;
+    if (!prev || prev.length !== items.length) return null;
+    if (st.set || st.byKey || st.rootOf) {
+      for (var i = 0; i < items.length; i++) {
+        var a = prev[i], b = items[i];
+        if (a === b) continue;
+        if (st.set) { st.set.delete(a); st.set.add(b); }
+        if (st.rootOf) st.rootOf.set(b, st.rootOf.get(a));
+        if (st.byKey) { var kb = _ccElemKeysOf(b); _ccEgKeyPush(st.byKey, st.deg, kb[0], b, st.set); _ccEgKeyPush(st.byKey, st.deg, kb[1], b, st.set); }
+      }
+    }
+    return { items: items, groups: groups, deg: st.deg, set: st.set, byKey: st.byKey, rootOf: st.rootOf };
+  }
+  function _ccElementGroupsDelta(st, items) {
+    if (!st || !st.groups || !st.deg || !st.items || !items) return null;
+    if (items === st.items) return st;
+    var prevItems = st.items;
+    // more than a third of the list comes or goes (a model in most of the
+    // clashes hidden): most groups change anyway and the full regroup is the
+    // cheaper path (measured: 4.3k items, 1.6k groups — 5 % changed: 5.9 →
+    // 2.3 ms, 20 %: 6.4 → 3.8 ms, 53 %: 5.0 vs 6.7 ms)
+    if (3 * Math.abs(prevItems.length - items.length) > Math.max(prevItems.length, items.length)) return null;
+    var prevSet = st.set || new Set(prevItems);
+    if (prevSet.size !== prevItems.length) return null;           // the same object twice
+    var nextSet = new Set(items);
+    if (nextSet.size !== items.length) return null;
+    var added = [], removed = [], i, j;
+    for (i = 0; i < items.length; i++) if (!prevSet.has(items[i])) added.push(items[i]);
+    if (prevItems.length - (items.length - added.length) > 0)
+      for (i = 0; i < prevItems.length; i++) if (!nextSet.has(prevItems[i])) removed.push(prevItems[i]);
+    if (3 * (added.length + removed.length) > Math.max(prevItems.length, items.length)) return null;
+    window._ccListPerfCounters.groupDelta++;
+    var deg = st.deg, byKey = st.byKey, byLabel = st.byLabel, rootOf = st.rootOf;
+    if (!rootOf) { rootOf = new Map(); st.groups.forEach(function(g){ for (var q = 0; q < g.items.length; q++) rootOf.set(g.items[q], g.label); }); }
+    if (!byLabel) { byLabel = new Map(); st.groups.forEach(function(g){ byLabel.set(g.label, g); }); }
+    if (!byKey) {
+      byKey = new Map();
+      for (i = 0; i < prevItems.length; i++) {
+        var kk = _ccElemKeysOf(prevItems[i]);
+        for (j = 0; j < 2; j++) { var a0 = byKey.get(kk[j]); if (a0) a0.push(prevItems[i]); else byKey.set(kk[j], [prevItems[i]]); }
+      }
+    }
+    if (!added.length && !removed.length)
+      return { items: items, groups: st.groups, deg: deg, set: nextSet, byKey: byKey, byLabel: byLabel, rootOf: rootOf };
+    // net degree change per element key (each item's keys read once)
+    var dd = new Map(), addKeys = new Array(added.length);
+    for (i = 0; i < removed.length; i++) { var kr = _ccElemKeysOf(removed[i]); dd.set(kr[0], (dd.get(kr[0]) || 0) - 1); dd.set(kr[1], (dd.get(kr[1]) || 0) - 1); }
+    for (i = 0; i < added.length; i++) { var ka = addKeys[i] = _ccElemKeysOf(added[i]); dd.set(ka[0], (dd.get(ka[0]) || 0) + 1); dd.set(ka[1], (dd.get(ka[1]) || 0) + 1); }
+    // the kept items on a key whose degree changes: only they can change root
+    var kept = { has: function(x) { return prevSet.has(x) && nextSet.has(x); } };
+    var affected = [], seenA = new Set();
+    dd.forEach(function(v, k){
+      if (!v) return;
+      var arr = byKey.get(k);
+      if (!arr) return;
+      var live = _ccEgLive(arr, kept);
+      byKey.set(k, live);
+      for (var q = 0; q < live.length; q++) if (!seenA.has(live[q])) { seenA.add(live[q]); affected.push(live[q]); }
+    });
+    // apply: degrees, then the key index for the added items
+    dd.forEach(function(v, k){ if (!v) return; var n = (deg[k] || 0) + v; if (n) deg[k] = n; else delete deg[k]; });
+    for (i = 0; i < added.length; i++) { _ccEgKeyPush(byKey, deg, addKeys[i][0], added[i], nextSet); _ccEgKeyPush(byKey, deg, addKeys[i][1], added[i], nextSet); }
+    // which group loses / gains which item
+    var moves = new Map(), bad = false;
+    function touch(l) { var t = moves.get(l); if (!t) { t = { rm: new Set(), add: [] }; moves.set(l, t); } return t; }
+    for (i = 0; i < removed.length; i++) { var lr = rootOf.get(removed[i]); if (lr == null) { bad = true; break; } touch(lr).rm.add(removed[i]); }
+    if (bad) return null;
+    for (i = 0; i < affected.length; i++) {
+      var it = affected[i], or = rootOf.get(it), nr = _ccRootCauseKeyFor(it, deg);
+      if (or == null) return null;
+      if (nr !== or) { touch(or).rm.add(it); touch(nr).add.push(it); rootOf.set(it, nr); }
+    }
+    for (i = 0; i < added.length; i++) { var na = _ccRootCauseKeyFor(added[i], deg); touch(na).add.push(added[i]); rootOf.set(added[i], na); }
+    var changed = [], gone = new Set(), tie = false;
+    moves.forEach(function(t, label){
+      if (tie) return;
+      var old = byLabel.get(label);
+      var its = old ? (t.rm.size ? old.items.filter(function(x){ return !t.rm.has(x); }) : old.items.slice()) : [];
+      if (t.add.length) its = its.concat(t.add).sort(_ccElemInGroupCmp);
+      for (var q = 1; q < its.length; q++) if (_ccElemInGroupCmp(its[q - 1], its[q]) === 0) { tie = true; return; }
+      if (!its.length) { if (old) { gone.add(label); byLabel.delete(label); } return; }
+      var same = !!old && old.items.length === its.length;
+      for (var w = 0; same && w < its.length; w++) if (its[w] !== old.items[w]) same = false;
+      if (same) return;
+      var g = { label: label, items: its };
+      byLabel.set(label, g); changed.push(g);
+      if (old) gone.add(label);
+    });
+    if (tie) return null;
+    var groups = st.groups;
+    if (changed.length || gone.size) {
+      changed.sort(_ccElemGroupCmp);
+      for (i = 1; i < changed.length; i++) if (_ccElemGroupCmp(changed[i - 1], changed[i]) === 0) return null;
+      var keep = gone.size ? st.groups.filter(function(g){ return !gone.has(g.label); }) : st.groups;
+      groups = new Array(keep.length + changed.length);
+      var x = 0, y = 0, o = 0;
+      while (x < keep.length && y < changed.length) {
+        var c = _ccElemGroupCmp(keep[x], changed[y]);
+        if (c === 0) return null;
+        groups[o++] = c < 0 ? keep[x++] : changed[y++];
+      }
+      while (x < keep.length) groups[o++] = keep[x++];
+      while (y < changed.length) groups[o++] = changed[y++];
+    }
+    return { items: items, groups: groups, deg: deg, set: nextSet, byKey: byKey, byLabel: byLabel, rootOf: rootOf };
   }
 
   // ── Review items (overview cards, BCF "shown", report) ──────────────
@@ -34983,22 +35253,43 @@ function startApp() {
     var L = _ccReviewLast;
     // the models reach the review set only through the triage model
     var tm = _ccTriageModel(s), tcore = window._ccClashTriageCore, f = s.filters || INIT_FILTERS;
-    if (L && L.clashes === s.clashes && L.rules === s.rules && L.tm === tm && L.filters === s.filters && L.facets === facets) return L.out;
+    // the model names are read only by a search (the model pair's label)
+    var names = f.search ? _ccModelNameMap(s.models) : null;
+    if (L && L.clashes === s.clashes && L.rules === s.rules && L.tm === tm && L.filters === s.filters && L.facets === facets && L.names === names) return L.out;
     window._ccListPerfCounters.reviewBuild++;
     var facetsOn = !!(tcore && tcore.hasFacets(facets));
-    // A search that only narrows the previous one (§21.54) filters the
-    // previous review set: same clashes, same order, a subset of it.
-    var narrow = !!(L && L.clashes === s.clashes && L.rules === s.rules && L.tm === tm && _ccSearchNarrows(L.filters || INIT_FILTERS, f));
-    var pre = (narrow ? L.out.pre : tm.visible).filter(function(c) {
-      return tm.bucketOf.get(c.id) === 'review' && _ccListItemPasses(c, f, true, tm.visibleModels, tm, s.rules);
-    });
+    // The review clashes passing every filter but the model visibility, in
+    // s.clashes order: kept while only the visible models change (same
+    // buckets, same facet rows), the visibility applied on top (§21.54). A
+    // search that only narrows the previous one filters the previous set.
+    var sameRest = !!(L && L.clashes === s.clashes && L.rules === s.rules && L.bucketOf === tm.bucketOf && L.rows === tm.rowById && L.names === names);
+    var preAll;
+    if (sameRest && L.filters === s.filters) preAll = L.preAll;
+    else {
+      var narrow = sameRest && _ccSearchNarrows(L.filters || INIT_FILTERS, f);
+      preAll = (narrow ? L.preAll : (s.clashes || [])).filter(function(c) {
+        return tm.bucketOf.get(c.id) === 'review' && _ccListItemPassesRest(c, f, true, tm, s.rules, names);
+      });
+    }
+    var pre = preAll.filter(function(c) { return _ccListItemVisible(c, true, tm.visibleModels); });
     var clashes = !facetsOn ? pre : pre.filter(function(c) {
       var row = tm.rowById.get(c.id);
       return !!row && tcore.matchesFacets(row.v, facets);
     });
-    // unchanged groups keep their identity, so their summaries are reused
-    var groups = (L && L.groups && _ccPatchElementGroups(L.out.clashes, L.groups, clashes))
-      || _ccStabilizeGroups(L && L.groups, groupAndSort(clashes, ['element'], [], { models: s.models }) || []);
+    // unchanged groups keep their identity, so their summaries are reused;
+    // a few edited clashes are swapped in, clashes that come or go (a model
+    // hidden / shown, a narrowing search) update only their groups (§21.54)
+    var groups = null, eg = null;
+    if (L && L.groups) {
+      groups = _ccPatchElementGroups(L.out.clashes, L.groups, clashes);
+      if (groups) eg = _ccElementGroupsAdopt(L.eg, clashes, groups);
+      else if (L.eg && L.eg.groups === L.groups) { eg = _ccElementGroupsDelta(L.eg, clashes); if (eg) groups = eg.groups; }
+    }
+    if (!groups) {
+      var degOut = {};
+      groups = _ccStabilizeGroups(L && L.groups, groupAndSort(clashes, ['element'], [], { models: s.models, degOut: degOut }) || []);
+      eg = _ccElementGroupState(clashes, groups, degOut.deg);
+    }
     var loc = (window._ccGetLocale && window._ccGetLocale()) || '';
     var items = groups.map(function(g) {
       var hit = _ccReviewItemCache.get(g);
@@ -35013,7 +35304,7 @@ function startApp() {
     var byClash = {};
     items.forEach(function(it) { it.items.forEach(function(c) { byClash[c.id] = it; }); });
     var out = { pre: pre, clashes: clashes, items: items, byClash: byClash };
-    _ccReviewLast = { clashes: s.clashes, rules: s.rules, tm: tm, filters: s.filters, facets: facets, out: out, groups: groups };
+    _ccReviewLast = { clashes: s.clashes, rules: s.rules, tm: tm, filters: s.filters, facets: facets, names: names, bucketOf: tm.bucketOf, rows: tm.rowById, preAll: preAll, out: out, groups: groups, eg: eg };
     return out;
   }
 
@@ -35122,7 +35413,13 @@ function startApp() {
   var CC_WINDOWED_AUTO_MIN = 2000; // results above this always render windowed (VirtualList)
   var CC_WINDOWED_GROUPED_MIN = 50; // grouped results above this render windowed
   var CC_WINDOW_DEFAULT_HEIGHTS = { header: 32, clusterHeader: 62, item: ROW_HEIGHT, more: 34 };
-  function _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup) {
+  // segCache (optional, one per list): { segs: WeakMap group → segment,
+  // keySeg: Map row key → segment, last: rows } — a group whose object,
+  // collapsed state, page limit and header kind are unchanged keeps its
+  // segment (the same row objects and its relative offsets), so hiding a
+  // model rebuilds only the rows of the groups it changed, and a rebuild that
+  // changes nothing returns the previous rows array (§21.54).
+  function _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup, segCache) {
     window._ccListPerfCounters.buildConflictRows++;
     var rows = [];
     if (!groups) {
@@ -35131,30 +35428,84 @@ function startApp() {
       }
       return rows;
     }
-    groups.forEach(function(g) {
-      var cluster = !!(isClusterGroup && isClusterGroup(g));
-      rows.push({ type: cluster ? 'clusterHeader' : 'header', key: 'h:' + g.label, group: g });
-      if (collapsed[g.label]) return;
-      var limit = (groupLimits && groupLimits[g.label]) || GROUP_PAGE_SIZE;
+    function segRows(g, cluster, coll, limit) {
+      var out = [{ type: cluster ? 'clusterHeader' : 'header', key: 'h:' + g.label, group: g }];
+      if (coll) return out;
       var visible = g.items.slice(0, limit);
       for (var j = 0; j < visible.length; j++) {
-        rows.push({ type: 'item', key: 'i:' + visible[j].id, item: visible[j], group: g });
+        out.push({ type: 'item', key: 'i:' + visible[j].id, item: visible[j], group: g });
       }
       if (g.items.length > limit) {
-        rows.push({ type: 'more', key: 'm:' + g.label, group: g, limit: limit });
+        out.push({ type: 'more', key: 'm:' + g.label, group: g, limit: limit });
       }
-    });
+      return out;
+    }
+    if (!segCache) {
+      groups.forEach(function(g) {
+        var r = segRows(g, !!(isClusterGroup && isClusterGroup(g)), !!collapsed[g.label], (groupLimits && groupLimits[g.label]) || GROUP_PAGE_SIZE);
+        for (var k = 0; k < r.length; k++) rows.push(r[k]);
+      });
+      return rows;
+    }
+    var segs = new Array(groups.length), prev = segCache.last, same = !!(prev && prev._segs && prev._segs.length === groups.length);
+    for (var gi = 0; gi < groups.length; gi++) {
+      var g = groups[gi], cluster = !!(isClusterGroup && isClusterGroup(g)), coll = !!collapsed[g.label];
+      var limit = (groupLimits && groupLimits[g.label]) || GROUP_PAGE_SIZE;
+      var sg = segCache.segs.get(g);
+      if (!(sg && sg.cluster === cluster && sg.coll === coll && sg.limit === limit)) {
+        sg = { cluster: cluster, coll: coll, limit: limit, rows: segRows(g, cluster, coll, limit), rel: null };
+        segCache.segs.set(g, sg);
+        for (var q = 0; q < sg.rows.length; q++) segCache.keySeg.set(sg.rows[q].key, sg);
+      }
+      segs[gi] = sg;
+      if (same && prev._segs[gi] !== sg) same = false;
+    }
+    if (same) return prev;
+    for (var si = 0; si < segs.length; si++) { var sr = segs[si].rows; for (var t = 0; t < sr.length; t++) rows.push(sr[t]); }
+    rows._segs = segs;
+    segCache.last = rows;
+    // keep the key index to the rows in use (old results would stay reachable)
+    if (segCache.keySeg.size > 2 * rows.length + 4096) {
+      var km = new Map();
+      segs.forEach(function(sg2){ sg2.rows.forEach(function(r2){ km.set(r2.key, sg2); }); });
+      segCache.keySeg = km;
+    }
     return rows;
+  }
+  // A measured height changed: the segment holding that row recomputes its
+  // relative offsets on the next offsets pass, every other one is reused.
+  function _ccRowHeightChanged(segCache, key) {
+    var sg = segCache && segCache.keySeg.get(key);
+    if (sg) sg.rel = null;
   }
   // Prefix-sum offsets over the row list. heightCache holds real measured
   // pixel heights keyed by row.key (filled in after mount); rows never
   // measured yet fall back to a per-type default estimate — same "measure as
   // you go, estimate until then" approach as react-window's VariableSizeList,
   // hand-rolled here to avoid adding a dependency to a no-build app.
-  function _ccComputeRowOffsets(rows, heightCache) {
+  // Rows built with a segment cache are summed per segment: a segment whose
+  // rows and heights are unchanged contributes its cached relative offsets
+  // (heights are whole pixels, so the sums are exact — the same numbers as
+  // the row-by-row pass, which stays the reference).
+  function _ccComputeRowOffsets(rows, heightCache, segCache) {
     window._ccListPerfCounters.computeRowOffsets++;
     var offsets = new Array(rows.length + 1);
     offsets[0] = 0;
+    if (segCache && rows._segs) {
+      var o = 0, base = 0;
+      for (var si = 0; si < rows._segs.length; si++) {
+        var sg = rows._segs[si], sr = sg.rows, rel = sg.rel;
+        if (!rel) {
+          window._ccListPerfCounters.rowSegOffsets++;
+          rel = new Array(sr.length + 1); rel[0] = 0;
+          for (var j = 0; j < sr.length; j++) rel[j + 1] = rel[j] + ((heightCache && heightCache[sr[j].key]) || CC_WINDOW_DEFAULT_HEIGHTS[sr[j].type] || ROW_HEIGHT);
+          sg.rel = rel;
+        }
+        for (var k = 1; k <= sr.length; k++) offsets[o + k] = base + rel[k];
+        o += sr.length; base += rel[sr.length];
+      }
+      return { offsets: offsets, totalHeight: offsets[rows.length] };
+    }
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i];
       var h = (heightCache && heightCache[r.key]) || CC_WINDOW_DEFAULT_HEIGHTS[r.type] || ROW_HEIGHT;
@@ -35196,6 +35547,23 @@ function startApp() {
   var _CC_RENDER_COUNT = (function(){ try { return /[?&]ccRenderCount=1(&|$)/.test(location.search); } catch(e) { return false; } })();
   if (_CC_RENDER_COUNT) window.__ccRenderCount = { rows: 0, headers: 0, cards: 0 };
   function _ccCountRender(k) { if (_CC_RENDER_COUNT) window.__ccRenderCount[k]++; }
+  // Test-only (same flag): the review summary rebuilt from scratch (no
+  // triage / review model reused — the incremental paths' reference) and the
+  // full regroup of a list (tests/browser/scene-action-cost.mjs, §21.54).
+  if (_CC_RENDER_COUNT) window.__ccReference = {
+    review: function(st) {
+      var sT = _ccTriageLast, sR = _ccReviewLast;
+      _ccTriageLast = null; _ccReviewLast = null;
+      try {
+        var tm = _ccTriageModel(st), rm = _ccReviewModel(st);
+        return { total: tm.total, buckets: Object.assign({}, tm.counts), reviewClashes: rm.clashes.length, reviewItems: rm.items.length,
+          items: rm.items.map(function(it){ return { key: it.key, title: it.title, size: it.items.length, ids: it.items.map(function(c){ return c.id; }) }; }),
+          facets: window._ccClashTriageCore.facetCounts(tm.index, (st.triage && st.triage.facets) || {}) };
+      } finally { _ccTriageLast = sT; _ccReviewLast = sR; }
+    },
+    facets: function(st) { var tm = _ccTriageModel(st); return window._ccClashTriageCore.facetCounts(tm.index, (st.triage && st.triage.facets) || {}); },
+    groups: function(items) { return groupAndSort(items, ['element'], []); }
+  };
   // One group header of the clash/issue list (root-cause "By element" card,
   // AI cluster card or the plain header of any other grouping). Memoised on
   // stable props (the group object is reused by VirtualList while its items
@@ -35468,6 +35836,9 @@ function startApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setModelsLoadingFlag is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
     var heightCacheRef = useRef({});
+    // per-group row segments + their relative offsets (_ccBuildConflictRows)
+    var rowSegRef = useRef(null);
+    if (!rowSegRef.current) rowSegRef.current = { segs: new WeakMap(), keySeg: new Map(), last: null };
     var scrollRafRef = useRef(null);
     var wScrollSt = useState(0), winScrollTop=wScrollSt[0], setWinScrollTop=wScrollSt[1];
     var wViewSt = useState(600), winViewportH=wViewSt[0], setWinViewportH=wViewSt[1];
@@ -35504,6 +35875,7 @@ function startApp() {
         var h = nodes[i].offsetHeight;
         if (h > 0 && Math.abs((heightCacheRef.current[key]||0) - h) > 1) {
           heightCacheRef.current[key] = h;
+          _ccRowHeightChanged(rowSegRef.current, key);
           changed = true;
         }
       }
@@ -35548,13 +35920,25 @@ function startApp() {
     // only its own header/row and the row table below is rebuilt only when
     // the grouping really changed.
     var prevGroupsRef = useRef(null), prevGroupInRef = useRef(null);
+    // A model hidden / shown (or a narrowing search) only removes / adds
+    // items: the root-cause groups are updated in place of a regroup
+    // (_ccElementGroupsDelta, exactly the full result — §21.54).
     var groups = useMemo(function(){
-      var pin = prevGroupInRef.current, next = null;
-      if (pin && pin.groupBy === groupBy && pin.sortBy === sortBy && _ccIsElementGrouping(groupBy, sortBy))
+      var pin = prevGroupInRef.current, next = null, eg = null;
+      var elem = _ccIsElementGrouping(groupBy, sortBy);
+      if (pin && pin.groupBy === groupBy && pin.sortBy === sortBy && elem) {
         next = _ccPatchElementGroups(pin.items, prevGroupsRef.current, items);
-      if (!next) next = _ccStabilizeGroups(prevGroupsRef.current, groupAndSort(items, groupBy, sortBy, {models: models}));
+        if (next) eg = _ccElementGroupsAdopt(pin.eg, items, next);
+        else if (pin.eg && pin.eg.groups === prevGroupsRef.current) { eg = _ccElementGroupsDelta(pin.eg, items); if (eg) next = eg.groups; }
+      }
+      if (!next) {
+        var degOut = elem ? {} : null;
+        next = _ccStabilizeGroups(prevGroupsRef.current, groupAndSort(items, groupBy, sortBy, {models: models, degOut: degOut}));
+        eg = elem ? _ccElementGroupState(items, next, degOut.deg) : null;
+      }
       prevGroupsRef.current = next;
-      prevGroupInRef.current = { items: items, groupBy: groupBy, sortBy: sortBy };
+      prevGroupInRef.current = { items: items, groupBy: groupBy, sortBy: sortBy, eg: eg };
+      if (_CC_RENDER_COUNT && isClash) window.__ccListGroups = { items: items, groups: next };
       return next;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the models only name the groups of a 'model' grouping (groupModels)
     }, [items, groupBy, sortBy, groupModels]);
@@ -35835,7 +36219,7 @@ function startApp() {
     // some renders, which is the same rules-of-hooks violation.
     var wRows = useMemo(function(){
       if (!windowedOn) return null;
-      return _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup);
+      return _ccBuildConflictRows(items, groups, collapsed, groupLimits, isClusterGroup, rowSegRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- isClusterGroup is recreated every render and only reads window._ccClusterDisplay, which changes together with items/groups (both listed)
     }, [windowedOn, items, groups, collapsed, groupLimits]);
     // Prefix-sum offsets over the FULL row list — proportional to total
@@ -35850,7 +36234,7 @@ function startApp() {
     // data or height-measurement change, not on every scroll frame.
     var wOff = useMemo(function(){
       if (!windowedOn) return null;
-      return _ccComputeRowOffsets(wRows, heightCacheRef.current);
+      return _ccComputeRowOffsets(wRows, heightCacheRef.current, rowSegRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- winForceTick is a deliberate invalidation counter bumped after a row's real height is measured
     }, [windowedOn, wRows, winForceTick]);
     if(items.length===0) {
@@ -35955,6 +36339,7 @@ function startApp() {
     }
 
     if (windowedOn) {
+      if (_CC_RENDER_COUNT && isClash) window.__ccListRows = { rows: wRows, off: wOff, heights: heightCacheRef.current, items: items, groups: groups, collapsed: collapsed, limits: groupLimits };
       var wWin = _ccComputeVisibleRowWindow(wRows, wOff.offsets, winScrollTop, winViewportH, 600);
       var wVisibleRows = wRows.slice(wWin.startIdx, wWin.endIdx);
       // Pinned group header: rows are absolutely positioned, so the header's
@@ -49878,7 +50263,7 @@ function startApp() {
   // ── App ────────────────────────────────────────────────────────
 
   function App() {
-    var st = useReducer(reducer, INIT), s=st[0], _rawD=st[1];
+    var st = useReducer(_ccAppReducer, INIT), s=st[0], _rawD=st[1];
     var _clashesRef = useRef(s.clashes);
     var _selectedRef = useRef(s.selected);
     var _trainingRef = useRef(s.trainingMode);

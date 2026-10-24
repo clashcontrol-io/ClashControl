@@ -65,7 +65,7 @@ const ctx = { modelName: (id) => ({ A: 'Arch', S: 'Struct', M: 'MEP' })[id], buc
 
 test('facet values are single-valued; counts of each facet add up to the items matching the other facets', () => {
   const idx = t.indexItems(items(240), ctx);
-  for (const facets of [{}, { severity: ['critical'] }, { severity: ['critical', 'major'], extent: ['through'] }, { storey: ['Level 1'], modelPair: ['Arch ↔ MEP'] }]) {
+  for (const facets of [{}, { severity: ['critical'] }, { severity: ['critical', 'major'], extent: ['through'] }, { storey: ['Level 1'], modelPair: [t.modelPairKey({ modelAId: 'A', modelBId: 'M' })] }]) {
     const counts = t.facetCounts(idx, facets, t.FACETS);
     for (const k of t.FACETS) {
       const others = Object.assign({}, facets); delete others[k];

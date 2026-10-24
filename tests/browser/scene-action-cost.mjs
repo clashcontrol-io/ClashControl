@@ -79,7 +79,7 @@ page.on('dialog', (d) => d.accept());
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 try {
-  await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`http://127.0.0.1:${port}/?ccRenderCount=1`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function' && window._ccState3d && window._ccState3d.mg, null, { timeout: 120_000 });
   await page.evaluate(() => window._ccDispatch({ t: 'UPD_PREFS', u: { preRunDontAsk: true } }));
   const load = async (names, batch, n) => {
@@ -263,11 +263,17 @@ try {
   check(theme.walks === 0 && theme.k.triageFull === 0, 'theme toggle (Shaded): no material walk, no triage rebuild ' + JSON.stringify(theme.k) + (theme.stacks.length ? ' ' + theme.stacks[0] : ''));
   await act('themeBack', `window._ccDispatch({ t: 'UPD_PREFS', u: { theme: 'light' } })`);
   const rename = await act('rename', `window._ccDispatch({ t: 'UPD_MODEL', id: ${JSON.stringify(m0)}, u: { name: 'Renamed model' } })`);
-  check(rename.walks === 0 && rename.k.triageFull <= 1 && rename.k.reviewBuild <= 1, 'rename: no walk, at most one triage / review rebuild ' + JSON.stringify(rename.k));
+  // the model pair is keyed by ids: a rename re-files, regroups and re-sums nothing
+  check(rename.walks === 0 && rename.k.triageFull === 0 && rename.k.triageVis === 0 && rename.k.triageRows === 0 && rename.k.reviewBuild === 0
+    && rename.k.groupAndSort === 0 && rename.k.groupDelta === 0 && rename.k.buildConflictRows === 0 && rename.k.computeRowOffsets === 0,
+    'rename: no walk, no triage / review / list rebuild, no row offsets ' + JSON.stringify(rename.k));
   const renameBack = await act('renameBack', `window._ccDispatch({ t: 'UPD_MODEL', id: ${JSON.stringify(m0)}, u: { name: ${JSON.stringify(name0)} } })`);
   check(renameBack.summary === sum0, 'rename + rename back: review set as before');
   const visOff = await act('visOff', `window._ccDispatch({ t: 'UPD_MODEL', id: ${JSON.stringify(m0)}, u: { visible: false } })`);
-  check(visOff.walks === 0 && visOff.k.triageFull <= 1, 'visibility toggle: no material / clipping walk ' + JSON.stringify(visOff.k) + (visOff.stacks.length ? ' ' + visOff.stacks[0] : ''));
+  // one grouping per consumer (list, review set): an incremental update while
+  // under a third of the items change, else the (cheaper) full regroup
+  check(visOff.walks === 0 && visOff.k.triageFull === 0 && visOff.k.triageRows === 0 && visOff.k.triageVis === 1 && visOff.k.groupAndSort + visOff.k.groupDelta <= 2,
+    'visibility toggle: no material / clipping walk; buckets + facet rows reused, one grouping per consumer ' + JSON.stringify(visOff.k) + (visOff.stacks.length ? ' ' + visOff.stacks[0] : ''));
   const visOn = await act('visOn', `window._ccDispatch({ t: 'UPD_MODEL', id: ${JSON.stringify(m0)}, u: { visible: true } })`);
   check(visOn.summary === sum0, 'visibility off + on: review set as before');
   // incremental (in place) triage after status edits = a from-scratch rebuild
@@ -282,6 +288,74 @@ try {
     return { same: a === b };
   });
   check(inc.same, 'incremental (in place) triage after status edits = full rebuild');
+
+  // ── 4b. hide / show / rename sequences = the from-scratch reference ──
+  // After every step: the review set + bucket counts + facet counts equal a
+  // rebuild with no reused model, the clash list's groups equal a full
+  // regroup of its items (same order, members, and group objects reused only
+  // when unchanged), and the row offsets equal the row-by-row sum.
+  const seqRes = await page.evaluate(async () => {
+    window._ccDispatch({ t: 'TAB', v: 'clashes' });
+    window._ccDispatch({ t: 'TRIAGE_UPD', u: { view: 'list' } });
+    await new Promise((r) => setTimeout(r, 400));
+    const ids = window._ccLatestState.models.map((m) => m.id), names0 = window._ccLatestState.models.map((m) => m.name);
+    let seed = 99; const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    const bad = [], sig = (gs) => (gs || []).map((g) => g.label + '=' + g.items.map((c) => c.id).join(',')).join('|');
+    let steps = 0;
+    for (let step = 0; step < 14; step++) {
+      const i = Math.floor(rnd() * ids.length), st0 = window._ccLatestState, m = st0.models[i];
+      if (rnd() < 0.7) window._ccDispatch({ t: 'UPD_MODEL', id: m.id, u: { visible: !(m.visible !== false) } });
+      else window._ccDispatch({ t: 'UPD_MODEL', id: m.id, u: { name: 'Model ' + step } });
+      await new Promise((r) => setTimeout(r, 250));
+      const st = window._ccLatestState;
+      const got = JSON.stringify(window.ClashControl.review.summary()), facets = JSON.stringify(window.__ccReference.facets(st));
+      const ref = window.__ccReference.review(st), refFacets = JSON.stringify(ref.facets); delete ref.facets;
+      if (got !== JSON.stringify(ref)) bad.push(step + ': review set');
+      if (facets !== refFacets) bad.push(step + ': facet counts');
+      const lg = window.__ccListGroups;
+      if (lg && sig(lg.groups) !== sig(window.__ccReference.groups(lg.items))) bad.push(step + ': list groups');
+      const lr = window.__ccListRows;
+      if (lr && lr.groups === lg.groups) {
+        const refRows = window._ccBuildConflictRows(lr.items, lr.groups, lr.collapsed, lr.limits, () => false);
+        if (refRows.map((x) => x.key).join('|') !== lr.rows.map((x) => x.key).join('|')) bad.push(step + ': rows');
+        const refOff = window._ccComputeRowOffsets(lr.rows, lr.heights).offsets;
+        if (refOff.join(',') !== lr.off.offsets.join(',')) bad.push(step + ': offsets');
+      }
+      steps++;
+    }
+    ids.forEach((id, k) => window._ccDispatch({ t: 'UPD_MODEL', id, u: { visible: true, name: names0[k] } }));
+    await new Promise((r) => setTimeout(r, 400));
+    return { steps, bad: bad.slice(0, 8), rowsSeen: !!window.__ccListRows };
+  });
+  check(seqRes.steps === 14 && !seqRes.bad.length, 'random hide / show / rename sequence: review set, facet counts, list groups, rows and offsets = from-scratch reference ' + JSON.stringify(seqRes));
+  const back = await page.evaluate(() => window.__hash(JSON.stringify(window.ClashControl.review.summary())));
+  check(back === sum0, 'all models shown, names restored: review set as at the start');
+
+  // saved view by model pair survives a rename; an old name-valued one is migrated
+  const sv = await page.evaluate(async () => {
+    const st = window._ccLatestState, tc = window._ccClashTriageCore;
+    const c = st.clashes.find((x) => x.modelAId && x.modelBId && x.modelAId !== x.modelBId) || st.clashes[0];
+    const key = tc.modelPairKey(c), nm = (id) => (window._ccLatestState.models.find((m) => m.id === id) || {}).name;
+    const label = tc.modelPairLabel(key, nm);
+    window._ccDispatch({ t: 'TRIAGE_UPD', u: { facets: {}, savedViews: [{ id: 'old', name: 'Old pair', facets: { modelPair: [label] }, search: '' }] } });
+    await new Promise((r) => setTimeout(r, 200));
+    const migrated = JSON.stringify(window._ccLatestState.triage.savedViews[0].facets.modelPair) === JSON.stringify([key]);
+    window._ccDispatch({ t: 'TRIAGE_UPD', u: { facets: { modelPair: [key] }, activeViewId: 'old' } });
+    await new Promise((r) => setTimeout(r, 300));
+    const n0 = window.ClashControl.review.summary().reviewClashes;
+    const chip0 = (document.querySelector('[data-cc-pill="modelPair"]') || {}).textContent || '';
+    window._ccDispatch({ t: 'UPD_MODEL', id: c.modelAId, u: { name: 'Zz renamed' } });
+    await new Promise((r) => setTimeout(r, 300));
+    const n1 = window.ClashControl.review.summary().reviewClashes;
+    const chip1 = (document.querySelector('[data-cc-pill="modelPair"]') || {}).textContent || '';
+    window._ccDispatch({ t: 'UPD_MODEL', id: c.modelAId, u: { name: nm(c.modelAId) === 'Zz renamed' ? st.models.find((m) => m.id === c.modelAId).name : nm(c.modelAId) } });
+    window._ccDispatch({ t: 'TRIAGE_UPD', u: { facets: {}, savedViews: [], activeViewId: null } });
+    await new Promise((r) => setTimeout(r, 300));
+    return { migrated, n0, n1, chip0: chip0.trim(), chip1: chip1.trim(), label };
+  });
+  check(sv.migrated, 'an old name-valued saved view is migrated to model ids ' + JSON.stringify(sv));
+  check(sv.n0 > 0 && sv.n0 === sv.n1, 'a model-pair filter keeps selecting the same clashes after a rename ' + JSON.stringify(sv));
+  check(!sv.chip0 || (sv.chip0.indexOf(sv.label) !== -1 && sv.chip1.indexOf('Zz renamed') !== -1), 'the model-pair pill shows the current names ' + JSON.stringify(sv));
 
   // ── 5. markers ──
   const mk = await page.evaluate(async () => {
