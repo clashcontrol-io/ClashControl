@@ -8777,7 +8777,7 @@ function startApp() {
     (s.models || []).forEach(function(m) {
       if (m.visible !== false) vis[m.id] = true;
       names[m.id] = m.name || m.id;
-      var _us = _ccModelUnitScale(m, s.prefs);
+      var _us = _ccStoreyUnitScale(m, s.prefs);
       (m.storeyData || []).forEach(function(st) { if (st && st.name) stE.push({ modelId: m.id, name: st.name, elevation: st.elevation, unitScale: _us }); });
     });
     var bucketOf = new Map(), counts = {}, visible = [], zoneGroups = {};
@@ -14591,12 +14591,10 @@ function startApp() {
   window._ccWalkSetFov = _walkSetFov;
   window._ccWalkGetFov = function(){ return _walkFov; };
 
-  // Resolve walk-mode unit scale (1 scene unit per metre × storey/geo factor).
+  // Walk-mode scene units per metre. Geometry and storey elevations
+  // (_ccStoreyElevM) are metres, so this is 1 (it was unit × 1/unit).
   function _walkResolveUnitScale(){
-    var models = (window._ccLatestState || {}).models || [];
-    var _storeyUs = (typeof _ccDetectUnitScale === 'function') ? _ccDetectUnitScale(models) : 1;
-    var _geoF = (typeof _ccStoreyToGeoFactor === 'function') ? _ccStoreyToGeoFactor(models) : 1;
-    return _storeyUs * _geoF;
+    return 1;
   }
 
   // Box-cast around a hit point: 4 corner rays at ±halfFootprint that must all
@@ -14658,11 +14656,11 @@ function startApp() {
       if (!sd || !sd.length) continue;
       for (var si=0; si<sd.length; si++){
         var st = sd[si];
-        var ev = (Number(st.elevation)||0);
-        if (ev >= -0.5 && ev < bestElev){ bestElev = ev; bestStorey = {storey:st, modelId:m.id}; }
+        var ev = _ccStoreyElevM(m, st); // metres, with this model's own unit
+        if (ev >= -0.5 && ev < bestElev){ bestElev = ev; bestStorey = {storey:st, modelId:m.id, elevM:ev}; }
       }
     }
-    var elevScene = bestStorey ? (Number(bestStorey.storey.elevation)||0) * unit : (box ? box.min.y : 0);
+    var elevScene = bestStorey ? bestStorey.elevM * unit : (box ? box.min.y : 0);
     var eyeY = elevScene + (_walkUserHeight * unit);
 
     // Yaw: inherit current camera direction so re-entry faces the same way.
@@ -15452,8 +15450,8 @@ function startApp() {
         e.preventDefault();
         var fp = window._ccCurrentFloorPlan;
         if(fp){
-          // delta is metres in world space; fp.elevation is in storey units.
-          var delta = (e.deltaY > 0 ? -0.15 : 0.15) / (window._ccPlanGeoFactor || 1);
+          // delta and fp.elevation are both metres.
+          var delta = (e.deltaY > 0 ? -0.15 : 0.15);
           var newElev = fp.elevation + delta;
           window._ccDispatch({t:A.FLOOR_PLAN,v:Object.assign({},fp,{elevation:newElev})});
         }
@@ -20150,7 +20148,7 @@ function startApp() {
         if (_fpDrag.didDrag && _fpDrag.lastCutAt != null && window._ccDispatch) {
           var fp = (window._ccLatestState||{}).floorPlan;
           if (fp) {
-            var nextCutHeight = Math.max(0.1, Math.min(50, _fpDrag.lastCutAt - fp.elevation * (window._ccPlanGeoFactor || 1)));
+            var nextCutHeight = Math.max(0.1, Math.min(50, _fpDrag.lastCutAt - (Number(fp.elevation) || 0)));
             window._ccDispatch({t:A.FLOOR_PLAN, v:Object.assign({}, fp, {cutHeight: nextCutHeight})});
           }
         }
@@ -22335,14 +22333,10 @@ function startApp() {
         return;
       }
       var fp = s.floorPlan;
-      // Storey elevations come straight from IFC storeyData and are often in
-      // mm while geometry is metres (this model: "01 bk ruwe vloer" = 3720).
-      // Without the storey→geometry factor the cut plane sits kilometres up
-      // and the plan view shows nothing. Same conversion the 2D sheet applies.
-      var _planGf = 1;
-      try { _planGf = _ccStoreyToGeoFactor(s.models) || 1; } catch(_) {}
-      window._ccPlanGeoFactor = _planGf;
-      var cutElev = (Number(fp.elevation) || 0) * _planGf;
+      // fp.elevation is METRES (every producer converts once, with the
+      // storey's own model unit — _ccCollectStoreys / _ccStoreyElevM,
+      // docs/INTERNALS.md §21.52), like the geometry.
+      var cutElev = Number(fp.elevation) || 0;
       var cutHeight = fp.cutHeight || 1.2;
       var cutAt = cutElev + cutHeight;
       window._ccFloorPlanActive = true;
@@ -23557,7 +23551,7 @@ function startApp() {
       ${html`<${ColorLegend} key="cc-color-legend" s=${s} />`}
       ${s.floorPlan && html`<div style=${{...P,top:'9.75rem',right:'var(--space-2)',background:'var(--accent)',color:'var(--accent-contrast)',pointerEvents:'auto',cursor:'pointer',display:'flex',alignItems:'center',gap:'var(--space-2)'}}
         onClick=${function(){d({t:A.FLOOR_PLAN,v:null})}}>
-        <span>3D Section: ${s.floorPlan.storeyName} · ${_ccFormatElev(s.floorPlan.elevation+(s.floorPlan.cutHeight||1.2)/(window._ccPlanGeoFactor||1))}</span>
+        <span>3D Section: ${s.floorPlan.storeyName} · ${_ccFormatElev((Number(s.floorPlan.elevation)||0)+(s.floorPlan.cutHeight||1.2))}</span>
         <span style=${{fontSize:'var(--text-xs)',opacity:.7}} title=${_cc_t('viewport.exit3dSection','Exit 3D section')} aria-label=${_cc_t('viewport.exitFloorPlanAria','Exit floor plan view')}>✕</span>
       </div>`}
       ${s.floorPlan && html`<${PlanScaleBar} />`}
@@ -27209,8 +27203,7 @@ function startApp() {
               onClick=${function(){
                 d({t:A.SET_UNDERLAY,id:ul.id});
                 // Find storey elevation and switch to plan view for this underlay
-                var elevMap={};
-                s.models.forEach(function(m){(m.storeyData||[]).forEach(function(sd){if(sd.name&&sd.elevation!=null)elevMap[sd.name]=sd.elevation;});});
+                var elevMap=_ccStoreyElevByName(s.models); // metres
                 var st = ul.storeyName;
                 var elev = (st && elevMap[st]!=null) ? elevMap[st] : 0;
                 d({t:A.FLOOR_PLAN, v:{storeyId:st||'_underlay',storeyName:st||ul.name,elevation:elev,cutHeight:1.2}});
@@ -27302,11 +27295,12 @@ function startApp() {
           })}
         </div>`}
         ${function(){
-          var allStoreys={}, elevMap={};
-          s.models.filter(function(m){return m.visible!==false}).forEach(function(m){
+          var allStoreys={};
+          var _visModels=s.models.filter(function(m){return m.visible!==false});
+          _visModels.forEach(function(m){
             (m.storeys||[]).forEach(function(st){if(!allStoreys[st])allStoreys[st]={};});
-            (m.storeyData||[]).forEach(function(sd){if(sd.name&&sd.elevation!=null)elevMap[sd.name]=sd.elevation;});
           });
+          var elevMap=_ccStoreyElevByName(_visModels); // metres, each model with its own unit
           var stKeys=Object.keys(allStoreys).sort(function(a,b){return (elevMap[a]||0)-(elevMap[b]||0);});
           if(!stKeys.length) return null;
           return html`<div style=${{marginTop:'var(--space-1)',borderTop:'1px solid var(--hairline)',paddingTop:'var(--space-1)'}}>
@@ -27953,7 +27947,7 @@ function startApp() {
                         return tvNode({
                           key:stKey, level:4,
                           icon:'▬', iconColor:'var(--color-success-fg)',
-                          label:sd.name, secondary:_ccFormatElev(sd.elevation),
+                          label:sd.name, secondary:_ccFormatElev(_ccStoreyElevM(model, sd)),
                           count:stEls.length,
                           hasChildren:stEls.length>0, expanded:stIsOpen,
                           selected:explorerFocus===stKey,
@@ -30831,7 +30825,7 @@ function startApp() {
           <span style=${FL}>${_cc_t('issues.filter.floor','Floor / Level')}</span>
           <select value=${f.floor} onChange=${function(e){d({t:A.UPD_FILTERS,u:{floor:e.target.value}})}} style=${SELSTYLE}>
             <option value="all">${_cc_t('issues.filter.allLevels','All levels')}</option>
-            ${_realStoreys.map(function(st){return html`<option key=${st.name} value=${st.name}>${st.name}${' ('+st.elevation.toFixed(1)+'m)'}</option>`})}
+            ${_realStoreys.filter(function(st,i){return !_realStoreys.slice(0,i).some(function(o){return o.name===st.name;});}).map(function(st){return html`<option key=${st.name} value=${st.name}>${st.name}${' ('+st.elevation.toFixed(1)+'m)'}</option>`})}
           </select>
         </div>`;
         }()}
@@ -36129,7 +36123,7 @@ function startApp() {
     var storeyList = (function(){
       var arr = [];
       (s.models||[]).forEach(function(m){
-        (m.storeyData||[]).forEach(function(st){ arr.push({modelId:m.id, name:st.name, elevation:Number(st.elevation)||0}); });
+        (m.storeyData||[]).forEach(function(st){ arr.push({modelId:m.id, name:st.name, elevation:_ccStoreyElevM(m, st)}); }); // metres
       });
       arr.sort(function(a,b){ return a.elevation - b.elevation; });
       return arr;
@@ -39217,23 +39211,23 @@ function startApp() {
     });
   }
 
-  // ── Sheet helpers (shared by View2D toolbar and export) ────────
-  function _ccCollectStoreys(models) {
-    var byName = {};
-    (models || []).forEach(function(m) {
-      (m.storeyData || []).forEach(function(st) {
-        if (!st || !st.name) return;
-        if (!byName[st.name]) byName[st.name] = { name: st.name, elevations: [] };
-        byName[st.name].elevations.push(Number(st.elevation) || 0);
-      });
-    });
-    return Object.keys(byName).map(function(name) {
-      var elevs = byName[name].elevations;
-      var avg = elevs.reduce(function(a, b) { return a + b; }, 0) / (elevs.length || 1);
-      return { name: name, elevation: avg };
-    }).sort(function(a, b) { return a.elevation - b.elevation; });
+  // ── Storey units: every storey elevation in METRES ─────────────────
+  // (docs/INTERNALS.md §21.52) model.storeyData[i].elevation is the raw
+  // IFC value in THAT model's length unit (mm, cm, m … declared per file).
+  // Geometry is metres. The one conversion lives here: each model's storeys
+  // are turned into metres with that model's own unit — the unitScaleOverride
+  // pref (one unit for every model), else the declared LENGTHUNIT
+  // (stats.unitScale), else the storey-spacing heuristic on that model's
+  // OWN storeys. Everything downstream (plan cut, sheets, walk, labels)
+  // works in metres; a display unit (mm/cm/m) is applied only when
+  // formatting. Pure helpers (no DOM, no THREE) — tests/storey-units.test.js
+  // extracts this block.
+  var STOREY_MERGE_TOL_M = 1.0; // same-name storeys of different models within this many metres are one level
+  function _ccStoreyPrefs(prefs) {
+    if (prefs !== undefined) return prefs;
+    var st = (typeof window !== 'undefined') && window._ccLatestState;
+    return st ? st.prefs : null;
   }
-
   // One model's storey units per metre: the user's override, else the unit
   // the model declares (IFCSIUNIT, stats.unitScale), else null (unknown).
   function _ccModelUnitScale(m, prefs) {
@@ -39241,58 +39235,152 @@ function startApp() {
     var us = m && m.stats && m.stats.unitScale;
     return us > 0 ? us : null;
   }
-  function _ccDetectUnitScale(models) {
-    var st = window._ccLatestState;
-    if (st && st.prefs && st.prefs.unitScaleOverride && st.prefs.unitScaleOverride !== 'auto') {
-      return Number(st.prefs.unitScaleOverride) || 1;
-    }
-    // Declared IFC unit beats every heuristic (extracted at load from
-    // IFCSIUNIT, persisted in stats via the geo-cache).
-    for (var di = 0; di < (models || []).length; di++) {
-      var dm = models[di];
-      if (dm && dm.stats && dm.stats.unitScale) return dm.stats.unitScale;
-    }
-    var storeys = _ccCollectStoreys(models || []);
-    if (storeys.length < 2) {
-      var m0 = (models || [])[0];
-      if (m0 && m0.elements && m0.elements.length) {
-        var maxY = 0;
-        for (var i = 0; i < Math.min(m0.elements.length, 200); i++) {
-          var b = m0.elements[i].box;
-          if (b && b.max && b.max.y > maxY) maxY = b.max.y;
-        }
-        if (maxY > 500) return 1000;  // mm
-        if (maxY > 50) return 100;    // cm
+  // Spacing heuristic for a model that declares no unit, on ITS storeys
+  // only (typical floors are ~3 m apart: ~3000 → mm, ~300 → cm). Fewer
+  // than two storeys: element-box height (geometry is metres, so this
+  // only fires for absurd heights) — the rule the federation-wide
+  // detector used before, applied per model.
+  var _ccStoreyHeurCache = (typeof WeakMap === 'function') ? new WeakMap() : null;
+  function _ccStoreySpacingUnit(m) {
+    if (!m) return 1;
+    var c = _ccStoreyHeurCache && _ccStoreyHeurCache.get(m);
+    if (c && c.sd === m.storeyData && c.els === m.elements) return c.us;
+    var byName = {}, names = [];
+    (m.storeyData || []).forEach(function(st) {
+      if (!st || !st.name) return;
+      if (!byName[st.name]) { byName[st.name] = []; names.push(st.name); }
+      byName[st.name].push(Number(st.elevation) || 0);
+    });
+    var elevs = names.map(function(n) {
+      var e = byName[n];
+      return e.reduce(function(a, b) { return a + b; }, 0) / (e.length || 1);
+    }).sort(function(a, b) { return a - b; });
+    var us = 1;
+    if (elevs.length < 2) {
+      var maxY = 0, els = m.elements || [];
+      for (var i = 0; i < Math.min(els.length, 200); i++) {
+        var b = els[i] && els[i].box;
+        if (b && b.max && b.max.y > maxY) maxY = b.max.y;
       }
-      return 1; // meters
+      us = maxY > 500 ? 1000 : (maxY > 50 ? 100 : 1);
+    } else {
+      var avgSpacing = Math.abs(elevs[elevs.length - 1] - elevs[0]) / (elevs.length - 1);
+      us = avgSpacing > 500 ? 1000 : (avgSpacing > 50 ? 100 : 1);
     }
-    var span = Math.abs(storeys[storeys.length-1].elevation - storeys[0].elevation);
-    var avgSpacing = span / (storeys.length - 1);
-    if (avgSpacing > 500) return 1000;   // mm (typical floor spacing ~3000mm)
-    if (avgSpacing > 50) return 100;     // cm
-    return 1;                             // meters
+    if (_ccStoreyHeurCache) _ccStoreyHeurCache.set(m, { sd: m.storeyData, els: m.elements, us: us });
+    return us;
   }
-
-  function _ccStoreyToGeoFactor(models) {
-    // Storey elevations are raw IFC project units; geometry is metres.
-    // Convert via the storey-SPACING heuristic in _ccDetectUnitScale
-    // (typical floors are ~3 m apart; honours prefs.unitScaleOverride) —
-    // NOT via total geometry span vs storey span: deep foundations make a
-    // building far taller than its storey range and mis-bucket the ratio
-    // (observed: mm model + 20 m piles → factor 0.01 instead of 0.001,
-    // putting the plan cut at 38 m).
-    return 1 / (_ccDetectUnitScale(models) || 1);
+  // Units per metre of this model's storey elevations (never null).
+  function _ccStoreyUnitScale(m, prefs) {
+    return _ccModelUnitScale(m, _ccStoreyPrefs(prefs)) || _ccStoreySpacingUnit(m);
   }
-
-
+  // One storey's elevation in metres (st = an entry of m.storeyData).
+  function _ccStoreyElevM(m, st, prefs) {
+    return (Number(st && st.elevation) || 0) * (1 / (_ccStoreyUnitScale(m, prefs) || 1));
+  }
+  // Every storey of every model, in metres, merged across models: same
+  // name AND within STOREY_MERGE_TOL_M → one level (elevation = mean);
+  // the same name far apart (e.g. a model whose unit is wrong, or two
+  // buildings) stays two levels. A level whose storeys all share one unit
+  // averages the raw values first and converts once — so a single model or
+  // a same-unit federation gets exactly the metres it always got.
+  // → [{name, elevation (m), modelIds, unitScale (shared unit or null)}] by elevation.
+  function _ccCollectStoreys(models, prefs) {
+    prefs = _ccStoreyPrefs(prefs);
+    var byName = {}, names = [];
+    (models || []).forEach(function(m) {
+      if (!m) return;
+      var us = 0;
+      (m.storeyData || []).forEach(function(st) {
+        if (!st || !st.name) return;
+        if (!us) us = _ccStoreyUnitScale(m, prefs) || 1;
+        var raw = Number(st.elevation) || 0;
+        if (!byName[st.name]) { byName[st.name] = []; names.push(st.name); }
+        byName[st.name].push({ raw: raw, us: us, m: raw * (1 / us), modelId: m.id });
+      });
+    });
+    var out = [];
+    names.forEach(function(name) {
+      var items = byName[name];
+      // single linkage over the sorted metres; members keep load order
+      var sorted = items.map(function(it, i) { return { it: it, i: i }; })
+        .sort(function(a, b) { return a.it.m - b.it.m || a.i - b.i; });
+      var groups = [], cur = null, last = 0;
+      sorted.forEach(function(r) {
+        if (!cur || r.it.m - last > STOREY_MERGE_TOL_M) { cur = []; groups.push(cur); }
+        cur.push(r); last = r.it.m;
+      });
+      groups.forEach(function(g) {
+        g.sort(function(a, b) { return a.i - b.i; });
+        var us0 = g[0].it.us, same = g.every(function(r) { return r.it.us === us0; });
+        var elev;
+        if (same) elev = g.reduce(function(a, r) { return a + r.it.raw; }, 0) / (g.length || 1) * (1 / us0);
+        else elev = g.reduce(function(a, r) { return a + r.it.m; }, 0) / (g.length || 1);
+        var ids = [];
+        g.forEach(function(r) { if (ids.indexOf(r.it.modelId) === -1) ids.push(r.it.modelId); });
+        out.push({ name: name, elevation: elev, modelIds: ids, unitScale: same ? us0 : null });
+      });
+    });
+    return out.sort(function(a, b) { return a.elevation - b.elevation; });
+  }
+  // name → metres for name-keyed lists (sidebar levels, plan floor picker):
+  // the lowest level carrying that name.
+  function _ccStoreyElevByName(models, prefs) {
+    var map = {};
+    _ccCollectStoreys(models, prefs).forEach(function(st) { if (!(st.name in map)) map[st.name] = st.elevation; });
+    return map;
+  }
+  // DISPLAY unit for elevation labels (units per metre: 1000 = mm, 100 =
+  // cm, 1 = m) — presentation only, never a conversion factor: the
+  // override, else the unit most models declare (ties: the first), else
+  // the most common per-model heuristic. One model / one unit → its unit.
+  function _ccDetectUnitScale(models, prefs) {
+    prefs = _ccStoreyPrefs(prefs);
+    if (prefs && prefs.unitScaleOverride && prefs.unitScaleOverride !== 'auto') {
+      return Number(prefs.unitScaleOverride) || 1;
+    }
+    function dominant(list, fn) {
+      var cnt = {}, order = [];
+      list.forEach(function(m) {
+        var us = m ? fn(m) : null;
+        if (!(us > 0)) return;
+        if (!(us in cnt)) { cnt[us] = 0; order.push(us); }
+        cnt[us]++;
+      });
+      var best = null;
+      order.forEach(function(us) { if (best == null || cnt[us] > cnt[best]) best = us; });
+      return best;
+    }
+    var list = (models || []).filter(Boolean);
+    var declared = dominant(list, function(m) { return m.stats && m.stats.unitScale; });
+    if (declared != null) return declared;
+    var withStoreys = list.filter(function(m) { return m.storeyData && m.storeyData.length; });
+    var heur = dominant(withStoreys, _ccStoreySpacingUnit);
+    if (heur != null) return heur;
+    return list.length ? _ccStoreySpacingUnit(list[0]) : 1;
+  }
+  // Storey elevations handed around the app (_ccCollectStoreys, floorPlan,
+  // sheets) are metres already, so the storey→geometry factor is 1. Kept
+  // for addons written against the old raw-unit contract.
+  function _ccStoreyToGeoFactor() { return 1; }
+  function _ccUnitLabel(us) { return us >= 1000 ? 'mm' : (us >= 100 ? 'cm' : 'm'); }
+  // metres → value in display units (snapped, so 3 m shows 3000 mm, not 2999.9999999999995)
+  function _ccElevInUnit(metres, unitScale) {
+    var v = (Number(metres) || 0) * (unitScale || 1);
+    return Math.round(v * 1e6) / 1e6;
+  }
+  // Elevation label: `val` is METRES, shown in `unitScale` (default: the
+  // federation's display unit).
   function _ccFormatElev(val, unitScale, decimals) {
     if (val == null) return '—';
-    var us = unitScale || _ccDetectUnitScale(window._ccLatestState && window._ccLatestState.models);
+    var us = unitScale || _ccDetectUnitScale(typeof window !== 'undefined' && window._ccLatestState ? window._ccLatestState.models : []);
     var d = decimals != null ? decimals : (us >= 1000 ? 0 : (us >= 100 ? 1 : 2));
-    if (us >= 1000) return val.toFixed(d) + ' mm';
-    if (us >= 100)  return val.toFixed(d) + ' cm';
-    return val.toFixed(d) + ' m';
+    return _ccElevInUnit(val, us).toFixed(d) + ' ' + _ccUnitLabel(us);
   }
+  // ── end storey units ──
+  // core ↔ addon contract (smart-bridge storey/sheet tools): levels in metres
+  window._ccCollectStoreys = _ccCollectStoreys;
+  window._ccStoreyElevM = _ccStoreyElevM;
 
   // ── Measurement format helpers ────────────────────────────────────
   // Geometry is internally always metres. These format display labels
@@ -39311,8 +39399,9 @@ function startApp() {
       if (storeys.length >= 2) {
         var span = Math.abs(storeys[storeys.length-1].elevation - storeys[0].elevation);
         var avg  = span / (storeys.length - 1);
-        var gf   = (typeof _ccStoreyToGeoFactor === 'function') ? _ccStoreyToGeoFactor(models) : 1;
-        if (avg > 6 && avg < 20 && gf === 1) return 'imperial';
+        // storeys are metres; only a federation whose display unit is
+        // metres (no mm/cm unit declared or detected) can be feet
+        if (avg > 6 && avg < 20 && _ccDetectUnitScale(models) === 1) return 'imperial';
       }
     } catch(e){}
     return 'metric';
@@ -39475,22 +39564,24 @@ function startApp() {
   }
   window._ccOrderPolygon = _ccOrderPolygon;
 
+  // elevation: METRES (a _ccCollectStoreys level, s.floorPlan.elevation or a
+  // height in metres) — the sheet keeps metres; _unitScale is only the
+  // display unit of its title-block label.
   function _ccMakeSheet(storeyName, elevation) {
     var id = (typeof uid === 'function' ? uid() : 'SH' + Date.now().toString(36).toUpperCase());
     var s = window._ccLatestState || {};
     var unitScale = _ccDetectUnitScale(s.models);
-    var geoFactor = _ccStoreyToGeoFactor(s.models);
-    var geoElev = (Number(elevation) || 0) * geoFactor;
+    var geoElev = Number(elevation) || 0;
     var cutH = 1.2; // 1.2 metres in geometry coords (which are always metres)
     return {
       id: id,
       name: storeyName + ' Plan',
       storeyName: storeyName,
       elevation: geoElev,
-      _storeyElevation: Number(elevation) || 0, // original IFC value for display
+      _storeyElevation: _ccElevInUnit(geoElev, unitScale), // elevation in the display unit
       cutHeight: cutH,
-      _unitScale: unitScale, // storey unit scale: 1=m, 1000=mm, 100=cm
-      _geoFactor: geoFactor, // storey→geometry conversion
+      _unitScale: unitScale, // display unit: 1=m, 1000=mm, 100=cm
+      _geoFactor: 1, // elevation is metres (legacy sheets without it are migrated)
       scale: { pxPerMeter: 100 }, // ~1:100 at natural zoom; geometry is always in metres
       paper: { size: 'A3', orient: 'landscape' },
       titleBlock: { project: '', author: '', date: new Date().toLocaleDateString(), revision: '', notes: '' },
@@ -39532,7 +39623,7 @@ function startApp() {
           <span style=${{fontWeight:700,fontSize:'var(--text-md)',color:'var(--text-primary)'}}>${_cc_t('storeyPicker.selectLevel','Select Level')}</span>
           <button onClick=${onClose} style=${{...S_BTN,background:'none',color:'var(--text-faint)',fontSize:'var(--text-md)',padding:'0 var(--space-1)'}}>✕</button>
         </div>
-        ${unitScale > 1 && html`<div style=${{padding:'var(--space-1) var(--space-4)',fontSize:'var(--text-2xs)',color:'var(--text-faint)',background:'var(--bg-tertiary)'}}>${_cc_t('storeyPicker.modelUnits','Model units: {unit}',{unit:unitScale===1000?'mm':'cm'})}</div>`}
+        ${unitScale > 1 && html`<div style=${{padding:'var(--space-1) var(--space-4)',fontSize:'var(--text-2xs)',color:'var(--text-faint)',background:'var(--bg-tertiary)'}}>${_cc_t('storeyPicker.modelUnits','Model units: {unit}',{unit:_ccUnitLabel(unitScale)})}</div>`}
         <div style=${{maxHeight:'50vh',overflowY:'auto',padding:'var(--space-2) 0'}}>
           ${storeys.map(function(st, i) {
             return html`<button key=${i} onClick=${function(){pick(st);}}
@@ -39562,9 +39653,8 @@ function startApp() {
 
     function plotClashes() {
       if (!activeSheet) return;
-      // Clash points are world metres; sheet elevations are storey units.
-      var _pgf = activeSheet._geoFactor || _ccStoreyToGeoFactor(s.models) || 1;
-      var lo = (Number(activeSheet.elevation) || 0) * _pgf;
+      // Clash points and sheet.elevation are both world metres.
+      var lo = Number(activeSheet.elevation) || 0;
       var hi = lo + (activeSheet.cutHeight || 1.2);
       var pins = [];
       (s.clashes || []).forEach(function(c) {
@@ -40058,8 +40148,7 @@ function startApp() {
           ctx.fillText('Scale 1:' + _scR, tbX + 1.5 * _u, tbY + 13.5 * _u);
           ctx.fillText('Storey: ' + (sheet.storeyName || '—'), tbX + 1.5 * _u, tbY + 17.5 * _u);
           var _us = sheet._unitScale || 1;
-          var _dElev = sheet._storeyElevation != null ? sheet._storeyElevation : sheet.elevation;
-          ctx.fillText('Elev: ' + _ccFormatElev(_dElev, _us), tbX + 1.5 * _u, tbY + 21.5 * _u);
+          ctx.fillText('Elev: ' + _ccFormatElev(Number(sheet.elevation) || 0, _us), tbX + 1.5 * _u, tbY + 21.5 * _u);
           ctx.fillText('Cut: ' + ((sheet.cutHeight || 1.2).toFixed(2)) + ' m', tbX + 1.5 * _u, tbY + 25.5 * _u);
           ctx.fillText((tb.author ? 'By ' + tb.author : ''), tbX + 1.5 * _u, tbY + 29.5 * _u);
           ctx.fillText(tb.date || new Date(sheet.createdAt || Date.now()).toLocaleDateString(), tbX + tbW * 0.55 + 1.5 * _u, tbY + 13.5 * _u);
@@ -40934,7 +41023,7 @@ function startApp() {
       var tb = sheet.titleBlock || {};
       var tbW=65, tbH=32, tbX=pw-tbW, tbY=ph-tbH;
       var scR = Math.round(10000/pxm);
-      var _us=sheet._unitScale||1; var _dE=sheet._storeyElevation!=null?sheet._storeyElevation:sheet.elevation;
+      var _us=sheet._unitScale||1; var _dE=Number(sheet.elevation)||0; // metres
       lines.push('<g id="titleblock" font-family="sans-serif">');
       lines.push('<rect x="'+tbX+'" y="'+tbY+'" width="'+tbW+'" height="'+tbH+'" fill="#f1f5f9" stroke="#475569" stroke-width="0.3"/>');
       lines.push('<line x1="'+tbX+'" y1="'+(tbY+10)+'" x2="'+(tbX+tbW)+'" y2="'+(tbY+10)+'" stroke="#475569" stroke-width="0.2"/>');
@@ -41078,7 +41167,7 @@ function startApp() {
       writeText('TitleBlock', tbX + 0.2, tbY + tbH - lineH,     (tb.project || sheet.name || 'ClashControl Plan'), lineH * 0.4);
       writeText('TitleBlock', tbX + 0.2, tbY + tbH - 2 * lineH, 'Storey: ' + (sheet.storeyName || '—'),             lineH * 0.35);
       var _usDxf = sheet._unitScale || 1;
-      var _dispElevDxf = sheet._storeyElevation != null ? sheet._storeyElevation : sheet.elevation;
+      var _dispElevDxf = Number(sheet.elevation) || 0; // metres
       writeText('TitleBlock', tbX + 0.2, tbY + tbH - 3 * lineH, 'Elev: ' + _ccFormatElev(_dispElevDxf, _usDxf) + '   Cut: ' + ((sheet.cutHeight || 1.2).toFixed(2)) + ' m', lineH * 0.3);
       var _dxfScaleRatio = Math.round(1000 / ((sheet.scale && sheet.scale.pxPerMeter) || 100) * 10);
       writeText('TitleBlock', tbX + 0.2, tbY + tbH - 4 * lineH, 'Scale: 1:' + _dxfScaleRatio, lineH * 0.3);
@@ -41224,7 +41313,7 @@ function startApp() {
     ctx.font = '12px sans-serif';
     ctx.fillText('Storey: ' + (sheet.storeyName || '—'), bx + 10, by + 48);
     var _us2 = sheet._unitScale || 1;
-    var _dispElev2 = sheet._storeyElevation != null ? sheet._storeyElevation : sheet.elevation;
+    var _dispElev2 = Number(sheet.elevation) || 0; // metres
     ctx.fillText('Elev: ' + _ccFormatElev(_dispElev2, _us2), bx + 10, by + 66);
     ctx.fillText('Cut: ' + ((sheet.cutHeight || 1.2).toFixed(2)) + ' m', bx + 10, by + 84);
     var _pngScaleRatio = Math.round(1000 / ((sheet.scale && sheet.scale.pxPerMeter) || 100) * 10);
@@ -42239,7 +42328,8 @@ function startApp() {
     // grid A-3"). Levels come from every model's storeyData; grids from the Revit
     // bridge (model.gridLines). Both are deduped and summarised for the assistant.
     var _levelSeen = {}, _levels = [];
-    (s.models || []).forEach(function(m){ (m.storeyData || []).forEach(function(sd){ if (!sd || !sd.name) return; var k = sd.name + '@' + (sd.elevation||0); if (!_levelSeen[k]) { _levelSeen[k] = 1; _levels.push({ name: sd.name, elevation: sd.elevation }); } }); });
+    // elevation in metres (each model's own unit), like clash elevations
+    (s.models || []).forEach(function(m){ (m.storeyData || []).forEach(function(sd){ if (!sd || !sd.name) return; var _em = _ccStoreyElevM(m, sd, s.prefs); var k = sd.name + '@' + _em; if (!_levelSeen[k]) { _levelSeen[k] = 1; _levels.push({ name: sd.name, elevation: _em }); } }); });
     _levels.sort(function(a,b){ return (a.elevation||0) - (b.elevation||0); });
     var _gridSeen = {}, _gridNames = [];
     (s.models || []).forEach(function(m){ (m.gridLines || []).forEach(function(g){ if (g && g.name && !_gridSeen[g.name]) { _gridSeen[g.name] = 1; _gridNames.push(g.name); } }); });
@@ -45952,6 +46042,7 @@ function startApp() {
       // Resolve latest element data
       var _latestEl = null;
       var latestState = window._ccLatestState || s;
+      var _elModel = null;
       if (el.expressId != null && latestState.models) {
         for (var _mi=0; _mi<latestState.models.length && !_latestEl; _mi++) {
           var _mdl=latestState.models[_mi];
@@ -45959,7 +46050,7 @@ function startApp() {
           // expressIds repeat across IFC files: honour the selection's model.
           if (el.modelId && _mdl.id !== el.modelId) continue;
           for (var _ei=0; _ei<_mdl.elements.length; _ei++) {
-            if (_mdl.elements[_ei].expressId===el.expressId){_latestEl=_mdl.elements[_ei];break;}
+            if (_mdl.elements[_ei].expressId===el.expressId){_latestEl=_mdl.elements[_ei];_elModel=_mdl;break;}
           }
         }
       }
@@ -46030,7 +46121,8 @@ function startApp() {
       </div>` : '';
 
       // Helper: format dimension values — show raw IFC value with correct unit suffix
-      var _qtyUs = (typeof _ccDetectUnitScale === 'function') ? _ccDetectUnitScale(latestState && latestState.models) : 1;
+      // (IFC quantities are in the OWNING model's length unit, not the federation's)
+      var _qtyUs = _elModel ? _ccStoreyUnitScale(_elModel, latestState && latestState.prefs) : _ccDetectUnitScale(latestState && latestState.models);
       var _lenUnit  = _qtyUs >= 1000 ? 'mm' : (_qtyUs >= 100 ? 'cm' : 'm');
       var _areaUnit = _qtyUs >= 1000 ? 'mm²' : (_qtyUs >= 100 ? 'cm²' : 'm²');
       var _volUnit  = _qtyUs >= 1000 ? 'mm³' : (_qtyUs >= 100 ? 'cm³' : 'm³');
@@ -47678,11 +47770,12 @@ function startApp() {
     // (m.storeyData) so the button works the moment models are loaded.
     function _planFloors() {
       if (s.floors && s.floors.length > 0) return s.floors;
-      var elevMap = {}, names = {};
-      (s.models || []).filter(function(m){ return m.visible !== false; }).forEach(function(m){
+      var names = {};
+      var _vis = (s.models || []).filter(function(m){ return m.visible !== false; });
+      _vis.forEach(function(m){
         (m.storeys || []).forEach(function(st){ if (st) names[st] = true; });
-        (m.storeyData || []).forEach(function(sd){ if (sd && sd.name && sd.elevation != null) elevMap[sd.name] = sd.elevation; });
       });
+      var elevMap = _ccStoreyElevByName(_vis); // metres, like s.floors
       return Object.keys(names)
         .sort(function(a,b){ return (elevMap[a]||0) - (elevMap[b]||0); })
         .map(function(n){ return { id: n, name: n, label: n, elevation: elevMap[n] || 0 }; });
@@ -49185,14 +49278,16 @@ function startApp() {
       var sheet = s.activeSheetId && (s.sheets||[]).find(function(sh){return sh.id===s.activeSheetId;});
       if (sheet && s.models.length) {
         if (!sheet._geoFactor && s.models.length) {
-          var gf = _ccStoreyToGeoFactor(s.models);
+          // Legacy sheet (before _geoFactor): elevation was raw storey units
+          // of the federation's unit. Today's sheets store metres.
+          var gf = 1 / (_ccDetectUnitScale(s.models) || 1);
           if (gf !== 1) {
             var newElev = sheet.elevation * gf;
             console.log('[Sheet migrate] old elevation=' + sheet.elevation + ' → geo=' + newElev + ' (factor=' + gf + ')');
             d({t:A.SHEET_UPD, id:sheet.id, u:{
               elevation: newElev,
               _storeyElevation: sheet.elevation,
-              _geoFactor: gf,
+              _geoFactor: 1,
               cutHeight: 1.2,
               scale: {pxPerMeter: 100},
               _unitScale: _ccDetectUnitScale(s.models)
@@ -49215,14 +49310,11 @@ function startApp() {
     // change (not per frame — see _ccDrawPlanOverlay, which only re-projects
     // these cached world-space chains through the live camera every tick).
     // Reuses generate2DOutlines/_ccChainSegmentsWorld (the same polygon-face
-    // section-cut code the 2D sheet uses), with the storey→geometry unit
-    // factor applied the same way the floorPlan camera/clip-plane effect
-    // applies it (see index.html's floorPlanCamRef effect).
+    // section-cut code the 2D sheet uses); s.floorPlan.elevation is metres,
+    // like the floorPlanCamRef effect's cut.
     useEffect(function() {
       if (!s.floorPlan || !s.models.length) { window._ccPlanChainsWorld = null; return; }
-      var gf = 1;
-      try { gf = _ccStoreyToGeoFactor(s.models) || 1; } catch(e) {}
-      var cutElev = (Number(s.floorPlan.elevation) || 0) * gf;
+      var cutElev = Number(s.floorPlan.elevation) || 0;
       var cutHeight = s.floorPlan.cutHeight || 1.2;
       var outlines = generate2DOutlines(s.models, cutElev, cutHeight);
       window._ccPlanChainsWorld = { y: cutElev + cutHeight, chains: _ccChainSegmentsWorld(outlines) };

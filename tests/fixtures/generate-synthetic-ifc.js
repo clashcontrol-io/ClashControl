@@ -22,7 +22,21 @@ function generateSyntheticIfc(opts) {
   // spec-valid record with no value, not invalid SPF syntax that could
   // make the two parse paths crash differently instead of diverge
   // measurably), and IFC4 georeferencing.
-  const lengthUnitPrefix = opts.lengthUnit === 'MILLIMETRE' ? '.MILLI.' : '$';
+  // units: 'mm' writes a real millimetre model — LENGTHUNIT .MILLI. AND
+  // every length (storey elevations, placements, profile, extrusion depth,
+  // quantity lengths) × 1000, so it is the same building as the default
+  // metre output. (lengthUnit: 'MILLIMETRE' only changes the declaration.)
+  // Supported with storeys / walls / withQuantities / offsetX only.
+  const mm = opts.units === 'mm';
+  if (mm && (opts.withSpaces || opts.nonPhysical || opts.geo || opts.mapConversion)) throw new Error("units:'mm' supports storeys, walls, withQuantities and offsetX only");
+  const K = mm ? 1000 : 1;
+  // a length literal: the exact default text when K = 1, else value × K
+  const len = (v, txt) => (K === 1 ? txt : `${v * K}.`);
+  // placeStoreys: each storey's placement is lifted to its elevation, so its
+  // walls really stand at that height (default: every storey's placement is
+  // the origin and Elevation is metadata only — all walls at 0..storeyHeight).
+  const placeStoreys = !!opts.placeStoreys;
+  const lengthUnitPrefix = (mm || opts.lengthUnit === 'MILLIMETRE') ? '.MILLI.' : '$';
   const withQuantities = !!opts.withQuantities;
   const withPsets = !!opts.withPsets;
   const geo = opts.geo || null; // {lat:[d,m,s], lon:[d,m,s], elev}
@@ -131,7 +145,7 @@ function generateSyntheticIfc(opts) {
   // and fall back to a slow recovery path on every single element, which
   // had been silently inflating every large-model timing measurement taken
   // against fixtures from this generator).
-  lines.push(`#${profileId}=IFCRECTANGLEPROFILEDEF(.AREA.,$,#${profilePlacementId},4.,0.3);`);
+  lines.push(`#${profileId}=IFCRECTANGLEPROFILEDEF(.AREA.,$,#${profilePlacementId},${len(4, '4.')},${len(0.3, '0.3')});`);
   lines.push(`#${profilePlacementId}=IFCAXIS2PLACEMENT2D(#${profileOriginId},$);`);
   lines.push(`#${profileOriginId}=IFCCARTESIANPOINT((0.,0.));`);
   const extrudeDirId = next();
@@ -143,8 +157,15 @@ function generateSyntheticIfc(opts) {
     const storeyId = next();
     const storeyPlacementId = next();
     const storeyGuid = ('0SynthStorey' + storeyId).padEnd(22, '0').slice(0, 22);
-    lines.push(`#${storeyId}=IFCBUILDINGSTOREY('${storeyGuid}',$,'Level ${s}',$,$,#${storeyPlacementId},$,$,.ELEMENT.,${elevation}.);`);
-    lines.push(`#${storeyPlacementId}=IFCLOCALPLACEMENT(#${buildingPlacementId},#${axisId});`);
+    lines.push(`#${storeyId}=IFCBUILDINGSTOREY('${storeyGuid}',$,'Level ${s}',$,$,#${storeyPlacementId},$,$,.ELEMENT.,${len(elevation, elevation + '.')});`);
+    if (placeStoreys) {
+      const stAxisId = next(), stOriginId = next();
+      lines.push(`#${stOriginId}=IFCCARTESIANPOINT((0.,0.,${len(elevation, elevation + '.')}));`);
+      lines.push(`#${stAxisId}=IFCAXIS2PLACEMENT3D(#${stOriginId},$,$);`);
+      lines.push(`#${storeyPlacementId}=IFCLOCALPLACEMENT(#${buildingPlacementId},#${stAxisId});`);
+    } else {
+      lines.push(`#${storeyPlacementId}=IFCLOCALPLACEMENT(#${buildingPlacementId},#${axisId});`);
+    }
     lines.push(`#${next()}=IFCRELAGGREGATES('0SynthRelAg000000000${id}',$,$,$,#${buildingId},(#${storeyId}));`);
 
     const wallIds = [];
@@ -158,7 +179,7 @@ function generateSyntheticIfc(opts) {
       const extrudeId = next();
       const wallGuid = ('1SynthWall' + wallId).padEnd(22, '0').slice(0, 22);
       // Offset each wall along X so they don't all perfectly coincide.
-      lines.push(`#${wallOriginId}=IFCCARTESIANPOINT((${(offsetX + w * 5).toFixed(1)},0.,0.));`);
+      lines.push(`#${wallOriginId}=IFCCARTESIANPOINT((${K === 1 ? (offsetX + w * 5).toFixed(1) : len(offsetX + w * 5)},0.,0.));`);
       lines.push(`#${wallAxisId}=IFCAXIS2PLACEMENT3D(#${wallOriginId},$,$);`);
       lines.push(`#${wallPlacementId}=IFCLOCALPLACEMENT(#${storeyPlacementId},#${wallAxisId});`);
       lines.push(`#${shapeId}=IFCPRODUCTDEFINITIONSHAPE($,$,(#${repId}));`);
@@ -166,12 +187,12 @@ function generateSyntheticIfc(opts) {
       // (the extrusion reuses the placement axis, so walls land at 2·w·5 —
       // kept for existing fixtures; with offsetX the solid sits at the
       // placement itself so the walls stay where offsetX puts them)
-      lines.push(`#${extrudeId}=IFCEXTRUDEDAREASOLID(#${profileId},#${offsetX ? axisId : wallAxisId},#${extrudeDirId},${storeyHeight}.);`);
+      lines.push(`#${extrudeId}=IFCEXTRUDEDAREASOLID(#${profileId},#${offsetX ? axisId : wallAxisId},#${extrudeDirId},${len(storeyHeight, storeyHeight + '.')});`);
       lines.push(`#${wallId}=IFCWALL('${wallGuid}',$,'Wall S${s}W${w}',$,$,#${wallPlacementId},#${shapeId},$,$);`);
       wallIds.push(wallId);
       if (withQuantities) {
         const qLenId = next(), qAreaId = next(), qtoId = next(), relId = next();
-        lines.push(`#${qLenId}=IFCQUANTITYLENGTH('Length',$,$,${storeyHeight}.,$);`);
+        lines.push(`#${qLenId}=IFCQUANTITYLENGTH('Length',$,$,${len(storeyHeight, storeyHeight + '.')},$);`);
         lines.push(`#${qAreaId}=IFCQUANTITYAREA('GrossArea',$,$,1.2,$);`);
         lines.push(`#${qtoId}=IFCELEMENTQUANTITY('3SynthQto000000000${qtoId}',$,'BaseQuantities',$,$,(#${qLenId},#${qAreaId}));`);
         lines.push(`#${relId}=IFCRELDEFINESBYPROPERTIES('4SynthRelQ00000000${relId}',$,$,$,(#${wallId}),#${qtoId});`);

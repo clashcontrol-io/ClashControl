@@ -132,7 +132,7 @@ Optional sheet plan attachment: if a 2D sheet is active during export, the canva
 
 WASD movement + pointer lock mouse look. Camera is positioned at eye height (1.7m) above the selected storey elevation.
 
-**Unit scale:** `_walkUnitScale = _ccDetectUnitScale() * _ccStoreyToGeoFactor()` converts between IFC native units and geometry coordinates. Speed, eye height, near/far planes, and collision padding are all scaled by this factor.
+**Unit scale:** `_walkUnitScale` (scene units per metre) is 1: geometry and storey elevations (`_ccStoreyElevM`, §21.52) are metres. Speed, eye height, near/far planes, and collision padding are all scaled by this factor.
 
 **Nav cube sync:** `_walkApplyLook()` updates `S.orbit.sph.theta/phi` so the navigation cube reflects the walk view direction. Formula: `theta = yaw + PI`, `phi = PI/2 + pitch` (derived from orbit-camera-position vs walk-forward-direction geometry).
 
@@ -178,7 +178,7 @@ Cubic ease-in-out interpolation between current and target camera positions. Dur
 
 `generate2DOutlines()` cuts model geometry at a storey elevation, producing line segments. Coordinate mapping: `(-seg[0], seg[1])` — mirror X, use Z directly (matches architectural convention).
 
-**Storey elevation conversion:** `_ccStoreyToGeoFactor()` detects the ratio between raw IFC storey elevations (may be mm) and geometry bounding box coordinates (always metres from web-ifc). Sheet elevation = raw elevation * geoFactor.
+**Storey elevation conversion:** storey elevations arrive in metres (`_ccCollectStoreys`, each model converted with its own unit — §21.52); `sheet.elevation` and `floorPlan.elevation` are metres. `_ccStoreyToGeoFactor()` returns 1 (kept for old addon code).
 
 **Canvas:** HiDPI via `devicePixelRatio`. Zoom-to-cursor adjusts pan to keep the mouse world-position stationary during zoom.
 
@@ -714,3 +714,14 @@ Mitigations in place instead: SRI on all classic CDN scripts (`scripts/generate-
 (`tests/report-escaping-wiring.test.js`), exact-match CORS allow-list on `/api/*`.
 Revisit if a build/hash-injection step ever exists (e.g. CI computing inline-script
 hashes into vercel.json at deploy time).
+
+### 21.52 Storey elevations — metres, per model
+
+**Code reference:** the "Storey units" block in `index.html` (`_ccStoreyUnitScale`, `_ccStoreyElevM`, `_ccCollectStoreys`, `_ccStoreyElevByName`, `_ccDetectUnitScale`, `_ccFormatElev`, `_ccElevInUnit`); tests `tests/storey-units.test.js`, `tests/browser/storey-units.mjs` (generator `units:'mm'`, `placeStoreys`).
+
+`model.storeyData[i].elevation` stays the raw IFC value in that file's own length unit. It is converted to metres in ONE place, with that model's unit: the `unitScaleOverride` pref (one unit for every model) > the declared LENGTHUNIT (`stats.unitScale`) > the storey-spacing heuristic on that model's OWN storeys (fewer than two: its element-box height). Before, one unit (the first model's) was applied to the whole federation and storeys were merged by name on raw values, so a mm model next to a m model averaged 3000 and 3 to 1501.5 and the plan cut, labels and sheets were wrong.
+- `_ccCollectStoreys(models)` returns levels in metres, merged across models by name within `STOREY_MERGE_TOL_M` (1 m; same name further apart stays two levels). A level whose storeys share one unit averages the raw values and converts once, so a single model or a same-unit federation gets bit-for-bit the metres it had (raw × 1/unit).
+- Everything downstream is metres: `floorPlan.elevation` (cut = elevation + cutHeight, no factor; ctrl-wheel and the cut-arrow drag in metres; it already was metres when it came from `s.floors` or the smart-bridge `set_section_at`, which the old factor shrank for mm models), `sheet.elevation` (`_ccMakeSheet` takes metres; `_storeyElevation` is the display value; legacy sheets without `_geoFactor` are still migrated), sheet clash pins (were multiplied by the factor a second time), walk entry / walk storey picker (used raw mm as metres), the clash-filter level list, the NL context levels, the sidebar level list, the plan floor picker, the DXF export of an active floor plan, smart-bridge `list_storeys` / `create_2d_sheet` / `walk_mode` / `get_levels.elevationM` (was multiplied instead of divided) — the addon reaches the core through `window._ccCollectStoreys` / `window._ccStoreyElevM` (the bare names were never visible to it).
+- The triage storey normaliser gets each model's resolved unit; the element quantity panel formats a quantity in its OWN model's unit.
+- Display: `_ccDetectUnitScale` is presentation only — override > the unit most models declare (tie: the first) > the most common per-model heuristic; `_ccFormatElev(metres, unit)` snaps the converted value to 1e-6 so a label reads as it did from the raw value (3 m → "3000 mm"). Title blocks (canvas / SVG / DXF / print) format `sheet.elevation` with `sheet._unitScale`.
+

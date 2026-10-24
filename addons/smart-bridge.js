@@ -922,13 +922,14 @@
     var s = _getState();
     var pk = _projectKey(s);
     return { projectKey: pk, source: 'clashcontrol',
-      note: 'elevation = model stored units; elevationM = metres when unitScale known; get_clashes.elevation is scene metres.',
+      note: 'elevation = model stored units; elevationM = metres (the model\'s declared unit, else its storey-spacing heuristic); get_clashes.elevation is scene metres.',
       models: (s.models || []).map(function(m) {
         var us = (m.stats && m.stats.unitScale) || null;
+        var toM = typeof window._ccStoreyElevM === 'function' ? window._ccStoreyElevM : null;
         return { modelId: m.id, modelName: m.name, discipline: m.discipline || 'Unknown', unitScale: us,
           levels: (m.storeyData || []).map(function(sd) {
             return { name: sd.name, id: sd.id || null, elevation: sd.elevation,
-              elevationM: us != null ? sd.elevation * us : null };
+              elevationM: toM ? toM(m, sd, s.prefs) : (us != null ? sd.elevation / us : null) };
           }) };
       }) };
   };
@@ -1317,17 +1318,23 @@
   handlers.walk_mode = function(p) {
     if (p.enabled) {
       _dispatch({ t: 'WALK_MODE', v: true });
-      if (window._ccWalkEnter) { var s = _getState(); var elev = 0; if (s.floorPlan) elev = s.floorPlan.elevation; else { var storeys = (typeof _ccCollectStoreys === 'function') ? _ccCollectStoreys(s.models || []) : []; if (storeys.length) { var gf = (typeof _ccStoreyToGeoFactor === 'function') ? _ccStoreyToGeoFactor(s.models || []) : 1; elev = storeys[0].elevation * gf; } } window._ccWalkEnter(elev); }
+      if (window._ccWalkEnter) { var s = _getState(); var elev = 0; if (s.floorPlan) elev = s.floorPlan.elevation; else { var storeys = _storeysM(s); if (storeys.length) elev = storeys[0].elevation; } window._ccWalkEnter(elev); }
       return 'Walk mode activated.';
     } else { if (window._ccWalkExit) window._ccWalkExit(); _dispatch({ t: 'WALK_MODE', v: false }); return 'Walk mode deactivated.'; }
   };
 
   // ── 2D sheet / floor plan handlers ──────────────────────────────
 
+  // Levels of every model merged in METRES (core _ccCollectStoreys: each
+  // model's own unit). Elevations here, in sheets and floor plans are metres.
+  function _storeysM(s) {
+    return typeof window._ccCollectStoreys === 'function' ? window._ccCollectStoreys(s.models || [], s.prefs) : [];
+  }
+
   handlers.create_2d_sheet = function(p) {
     var s = _getState();
     if (!s.models || !s.models.length) return 'No models loaded.';
-    var storeys = (typeof _ccCollectStoreys === 'function') ? _ccCollectStoreys(s.models) : [];
+    var storeys = _storeysM(s);
     var elevation = null, storeyName = null;
 
     if (p.floorName) {
@@ -1349,11 +1356,10 @@
     if (window._ccMakeSheet) {
       sheet = window._ccMakeSheet(storeyName, elevation);
     } else {
-      var gf = (typeof _ccStoreyToGeoFactor === 'function') ? _ccStoreyToGeoFactor(s.models) : 1;
       var id = 'SH' + Date.now().toString(36).toUpperCase();
       sheet = {
         id: id, name: storeyName + ' Plan', storeyName: storeyName,
-        elevation: elevation * gf, _storeyElevation: elevation, cutHeight: 1.2,
+        elevation: elevation, cutHeight: 1.2, _geoFactor: 1,
         scale: { pxPerMeter: 100 }, paper: { size: 'A3', orient: 'landscape' },
         titleBlock: { project: '', author: '', date: new Date().toLocaleDateString(), revision: '', notes: '' },
         northDeg: 0, createdAt: Date.now(), updatedAt: Date.now()
@@ -1383,7 +1389,7 @@
 
   handlers.list_storeys = function() {
     var s = _getState();
-    var storeys = (typeof _ccCollectStoreys === 'function') ? _ccCollectStoreys(s.models || []) : [];
+    var storeys = _storeysM(s);
     if (!storeys.length) return { storeys: [], note: 'No storey data found. IFC files need IfcBuildingStorey entities.' };
     return { storeys: storeys.map(function(st) { return { name: st.name, elevation: st.elevation }; }) };
   };
@@ -1400,7 +1406,7 @@
     var markups = s.markups || [];
     return {
       sheets: sheets.map(function(sh) {
-        return { id: sh.id, name: sh.name, storeyName: sh.storeyName, elevation: sh._storeyElevation || sh.elevation, annotationCount: markups.filter(function(m) { return m.sheetId === sh.id; }).length };
+        return { id: sh.id, name: sh.name, storeyName: sh.storeyName, elevation: sh.elevation, annotationCount: markups.filter(function(m) { return m.sheetId === sh.id; }).length };
       }),
       activeSheetId: s.activeSheetId || null
     };
