@@ -93,7 +93,9 @@ configurable `storeyCount` / `wallsPerStorey` (entity-count scaling), plus
 opt-in extensions added alongside this manifest: `withQuantities`
 (IfcElementQuantity), `withPsets` (property sets, including one
 deliberately null-valued "degenerate" property), `lengthUnit: 'MILLIMETRE'`
-(unit-conversion / `geoFactor` exercise), and `geo` / `mapConversion`
+(declaration only), `units: 'mm'` (a real millimetre model: declaration
+AND every length × 1000), `placeStoreys` (storey placements lifted to their
+elevation, so walls stand on their storey), and `geo` / `mapConversion`
 (IFC georeferencing — `IfcSite` RefLatitude/RefLongitude,
 `IfcMapConversion`/`IfcProjectedCRS`). These are consumed directly by
 `tests/browser/ifc-worker-fallback-differential.mjs`'s fixture matrix — see

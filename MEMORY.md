@@ -190,7 +190,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ### IFC loader / worker / memory
 - **Don't remove the web-ifc WASM init 10s timeout.** The loader is "complex but working". Touch it only with the differential harness (`tests/browser/ifc-worker-fallback-differential.mjs`: 6 fixtures + cancellation) green before and after.
-- **IFC unit scale:** storey elevations are often in mm while geometry is in metres, so always apply `geoFactor`. Unit precedence is override > declared LENGTHUNIT > spacing heuristic.
+- **IFC unit scale:** `storeyData[].elevation` is raw, in EACH model's own unit; convert only via `_ccStoreyElevM` / `_ccCollectStoreys` (metres, per model: override > declared LENGTHUNIT > that model's spacing heuristic). `floorPlan.elevation` / `sheet.elevation` are metres; `_ccDetectUnitScale` is the display unit only (INTERNALS §21.51).
 - **The worker Blob is built from `.toString()`** of the shared extraction functions (`_getIFCWorkerUrl`). That guarantees the worker and fallback can't drift.
   - The static-file extraction route is `<script defer>` plus `importScripts()`.
   - It is cross-cutting: `safeStr` alone has 23 call sites.
@@ -246,6 +246,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ---
 
 ## Recently completed (details in git history)
+- **2026-10-24 — storey units (branch `units`):** storey elevations become metres per model with that model's own unit (override > declared > its own spacing heuristic) and merge across models in metres; plan cut, labels, sheets/title blocks, walk entry/picker, NL levels, smart-bridge storey tools all work in metres; mm display only when formatting. Fixed on the way: sheet clash pins double-scaled, walk entry used raw mm, `get_levels.elevationM` multiplied, smart-bridge never saw `_ccCollectStoreys` (INTERNALS §21.51).
 - **2026-10-24 — BCF clipping planes:** viewpoints capture the live model clipping planes (`vp.clip`, scene `[nx,ny,nz,c]`) and keep a section plane and box together; export writes `<ClippingPlanes>` (Direction into the clipped side, IFC Z-up; validated against the official 2.1 / 3.0 visinfo XSDs); import rebuilds a section box from 6 planes (+ one section plane), warns about planes it cannot show (`_ccBcfClipFromPlanes` / `_ccBcfSectionFromClip`, `tests/bcf-clipping-planes.test.js`, `tests/browser/bcf-clipping.mjs`).
 - **2026-10-24 — Confirm / Deny → next:** UPD_CLASH no longer picks a "next" clash or flies the camera (it chose from every non-denied clash, hidden ones included, 100 ms after the list's own advance — and on statuses arriving from sync / the AI bridge); the list's `_ccAdvanceToNext` advances in the order on screen and steps back from the last row.
 - **2026-10-24 — first-load main-thread cost (branch `loadmain`):** IFC worker sends Int8 normals + geometry bounds (same functions as the main thread), worker result decoded in ~50 ms slices, load preview builds queued batches only right before its frame and paces on the frame's whole cost (`S._lastFrameMs`, render → next task — `render()` alone hid 1–3 s software-raster frames), overlap check classifies lazily. Scene / frame / clash list identical to the previous code. Don't pace anything on `S._lastRenderMs` alone. INTERNALS §21.50.
@@ -288,7 +289,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 **Scale:** geo-cache write blocks the main thread right after a big commit (serialize + IDB put, seconds on very large models); COOP/COEP + multithreaded WASM (needs a CDN audit); IFC worker static-file extraction; BVH per unique geometry; re-measure the 145k-element load. The worker pool's real multi-core speed-up hasn't been measured (this sandbox is contended).
 
-**Clash review (2026-10-23):** snapshot of a clash whose element is hidden by the user still shows it (pictures ignore on-screen visibility by design); `rules.hideBuckets` has no settings UI yet (bucket bar is per run); the overview pages 60 cards at a time; facet chips cap at 8 values per facet before "+N more"; storey normalisation reads mm vs m from the largest |elevation| per model (heuristic).
+**Clash review (2026-10-23):** snapshot of a clash whose element is hidden by the user still shows it (pictures ignore on-screen visibility by design); `rules.hideBuckets` has no settings UI yet (bucket bar is per run); the overview pages 60 cards at a time; facet chips cap at 8 values per facet before "+N more"; storey normalisation gets each model's resolved unit (`_ccStoreyUnitScale`).
 
 **Clashes:** opening data is missing from geo caches written before 2026-09-29 (re-import to get it); ~~keyboard deny-next can still land on a hidden provided-opening clash~~ (fixed 2026-10-24: the reducer no longer picks a next clash or flies; the list's `_ccAdvanceToNext` follows the order on screen, `tests/browser/action-cost.mjs`); legacy clashes without `_sevSource` keep their stored severity.
 
@@ -316,6 +317,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- ~~2026-10-24: storey elevations in METRES per model (branch `units`): each model's own unit (override > declared > its own spacing heuristic), storeys merged across models in metres within 1 m, plan cut / labels / sheets / DXF / walk / smart-bridge in metres; INTERNALS §21.51, `tests/browser/storey-units.mjs`.~~ (2026-10-24)
 - ~~2026-10-24: first-load main-thread cost (branch `loadmain`): normals/bounds in the IFC worker, lazy preview chunks paced on the real frame cost (render start → next task), sliced decode — identical scene; INTERNALS §21.50.~~ (2026-10-24)
 - ~~2026-10-24: geo cache written once after the lazy props (`pp:1`, restores no longer silently re-parse; reopen of a 2-model federation −38 %), desktop native pool searches each pair within its own clearance seed (one call per distinct seed).~~ (2026-10-24)
 - ~~2026-10-23: non-physical elements (branch `nonphys`): worker == fallback for IfcVirtualElement / IfcAnnotation / IfcGrid (not tessellated, stub elements, `nonRenderable`), never clash on any path, geo cache `np:1`, worker `typeId` Int32 overflow fixed; INTERNALS §21.49.~~ (2026-10-23)
