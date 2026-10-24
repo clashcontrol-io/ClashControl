@@ -20,7 +20,7 @@ function slice(startNeedle, endNeedle) {
 test('both IFC loaders stream IfcSpace geometry in a separate by-id pass', () => {
   const fallback = slice('function loadIFC(buffer, fallbackColor', 'api.CloseModel(modelID);');
   assert.match(fallback, /api\.StreamMeshes\(modelID, _spaceIds, function\(ifcMesh\) \{ _onIfcMesh\(ifcMesh, true\); \}\)/);
-  assert.match(fallback, /if \(_spaceGeoEids\[_reid\]\) continue;/, 'geometry-less rooms are still re-added, rooms with geometry are not duplicated');
+  assert.match(fallback, /_ccIfcStubIds\(_spaceIds, _spaceGeoEids, _np, storeyMap, _scopeSet\)/, 'geometry-less rooms are still re-added, rooms with geometry are not duplicated');
   const worker = slice('function _ifcWorkerMain() {', "_emit({type:'result'");
   // (the worker also records each room's global stream position for the sharded load)
   assert.match(worker, /api\.StreamMeshes\(modelID, _spaceIds, function\(ifcMesh\) \{ (_curG = _spPos\[ifcMesh\.expressID\]; )?_onIfcMesh\(ifcMesh, true\); \}\)/);
