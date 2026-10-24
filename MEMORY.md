@@ -246,6 +246,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ---
 
 ## Recently completed (details in git history)
+- **2026-10-24 — geo cache `gs:1` (branch `geoshare`):** each shared BufferGeometry stored once (`geoData`, meshes reference `md.g`), restore shares geometry like the fresh load; `pqs` placement + identity instancing key + `_ifcMaterial` make a restore equal to the fresh load (digest, sharing/instancing/batching, pixels, clashes — `tests/browser/cache-restore-exact.mjs`, which used to pass without ever restoring from the cache). v8 validator accepted no exact cache before; fixed. Synthetic federation: cache geometry −23 %, `_geoDeserialize` −46 %, heap after restore −16 % (`tests/browser/geo-cache-cost.mjs`; restore wall time is GPU-process-bound and noisy). INTERNALS §6.
 - **2026-10-24 — geo cache after props + native seeds:** worker-path loads wrote the geo cache without psets and the lazy-props patch missed it when the props won the race → `hasPsets:false` → every reopen re-parsed; now one write after the props merge, `pp:1` marks a props-complete cache (models without psets restore too). `addons/tauri-bridge.js` uses the per-pair seeds (`spec.sd`) like the web worker pool (`tests/tauri-bridge.test.js`).
 - **2026-10-23 — non-physical elements:** both IFC loaders share `_ccIfcNonPhysical`/`_ccIfcStubIds` (stream order without them, stubs incl. rooms without geometry, notes); `_ccIsNonPhysicalEl` in both sweeps + local engine; grids/annotations stay hidden (web-ifc yields no mesh for curve grids/2D annotations). Worker `typeId` was Int32 (codes > 2^31 negative) → Float64. INTERNALS §21.49.
 - **2026-10-24 — narrow phase (branch `exact-predicates`):** WASM built with opt-level 3 + faster BVH build (same tree, old build kept as a test reference), refinement triangle-box prefilter, stamped `_ccMeshTopo` tables, no JS probe pass — every result identical. Rejected with numbers: exact orient3d (kernel vs exact disagreements all < 1 µm, below tau — `tests/kernel-degenerate-bound.test.js`), SAH BVH (30x fewer triangle tests but the build cost made first runs slower), nearest-first min distance (not answer-identical). INTERNALS §21.48.
@@ -274,6 +275,12 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ---
 
 ## Open / deferred items
+
+**Found 2026-10-24 (geoshare), not fixed:**
+- `tests/browser/memory-federation.mjs` fails on the base commit too: the 14k-element `fed-shared` model never gets `_propsVersion` (lazy props never merge), the load wait runs into its 25-min timeout (its 15-s "props never merged" guard sets `idleAt` on the interval id, a number, so it never fires).
+- Render styles look up `ifcType` by expressId across ALL models (`_eidToType`): ids collide between models, so glass/opaque decisions depend on model order (changes after park/restore).
+- Restored models lack `visible: true`; a cull pass is skipped while the camera is unchanged, so new meshes keep the default `visible` until the camera moves (sub-pixel LOD only).
+- Restore wall time is dominated by native/GPU-process work (frames, shader setup), not `_geoDeserialize`.
 
 **Local engine / `ClashControlEngine` repo:**
 - CW-1b `manifold3d` exact-volume tier. Server-side application of the ignored rule fields (`excludeTypes`, `excludeTypePairs`, `toleranceByTypePair`, `duplicates`, `excludeSelf`, `minOverlapVolM3`); semantic-filter payload parity.
@@ -313,6 +320,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- ~~2026-10-24: geo cache stores each shared geometry once (`gs:1`, branch `geoshare`): meshes reference a geometry index, restore shares BufferGeometry like a fresh load; old caches still restore as before.~~ (2026-10-24)
 - ~~2026-10-24: geo cache written once after the lazy props (`pp:1`, restores no longer silently re-parse; reopen of a 2-model federation −38 %), desktop native pool searches each pair within its own clearance seed (one call per distinct seed).~~ (2026-10-24)
 - ~~2026-10-23: non-physical elements (branch `nonphys`): worker == fallback for IfcVirtualElement / IfcAnnotation / IfcGrid (not tessellated, stub elements, `nonRenderable`), never clash on any path, geo cache `np:1`, worker `typeId` Int32 overflow fixed; INTERNALS §21.49.~~ (2026-10-23)
 - ~~2026-10-23: triangle-level narrow phase (branch `exact-predicates`): faster identical BVH build (wasm opt-level 3, same tree), cheaper refinement / topology / JS kernel; exact predicates, SAH and nearest-first evaluated and rejected (INTERNALS §21.48).~~ (2026-10-24)

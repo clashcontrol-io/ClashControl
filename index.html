@@ -4024,6 +4024,14 @@ function startApp() {
     return true;
   }
   function _geoDeserialize(cached) {
+    var _t0 = performance.now();
+    try { return _geoDeserializeCore(cached); }
+    finally {
+      // Main-thread rebuild cost of a restore ('cc:geoDeserialize').
+      try { performance.measure('cc:geoDeserialize', { start: _t0 }); } catch (_) {}
+    }
+  }
+  function _geoDeserializeCore(cached) {
     var isV3 = cached.v >= 3; // v3+ uses quantized positions + oct-encoded normals
     var meshByEid = {};
     var _tmpMtx4 = new THREE.Matrix4(); // reused across all meshes in this batch
