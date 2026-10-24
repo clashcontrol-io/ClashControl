@@ -7,8 +7,12 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8')
 
 test('fresh geometry-cache payloads are saved off the main thread, in idle-time chunks', () => {
   // Every save of a freshly serialised payload goes through the worker path.
-  assert.equal((source.match(/idbSaveGeoCacheFresh\((?:entry\.id|modelId), _geoSerialize\(result\)\)/g) || []).length, 3);
-  assert.doesNotMatch(source, /idbSaveGeoCache\((?:entry\.id|modelId), _geoSerialize\(result\)\)/);
+  // two cold-parse restores (props complete) + the load path, which writes
+  // its payload once the lazy props have merged (job.afterProps)
+  assert.equal((source.match(/idbSaveGeoCacheFresh\(entry\.id, _geoSerialize\(result, true\)\)/g) || []).length, 2);
+  assert.match(source, /var _geoPayload = _geoSerialize\(result\), _geoMid = modelId;/);
+  assert.match(source, /job\.afterProps\(function\(\) \{[\s\S]{0,400}idbSaveGeoCacheFresh\(_geoMid, _geoPayload\);/);
+  assert.doesNotMatch(source, /idbSaveGeoCache\((?:entry\.id|modelId), _geoSerialize\(result/);
   const start = source.indexOf('function idbSaveGeoCacheFresh(');
   const fn = source.slice(start, source.indexOf('\n  function idbSaveGeoCache(', start));
   // chunked protocol, buffers transferred, idle-scheduled, DB opened on main first, main-thread fallback
@@ -18,5 +22,5 @@ test('fresh geometry-cache payloads are saved off the main thread, in idle-time 
 });
 
 test('a payload read back from the cache is re-saved on the main thread (its buffers back the live scene)', () => {
-  assert.match(source, /cached\.hasPsets = true;\s*\n\s*idbSaveGeoCache\(modelId, cached\);/);
+  assert.match(source, /cached\.hasPsets = true; cached\.pp = 1;\s*\n\s*idbSaveGeoCache\(modelId, cached\);/);
 });

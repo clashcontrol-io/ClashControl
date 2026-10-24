@@ -2990,10 +2990,10 @@ function startApp() {
   function _ccRestoreModelGeometry(entry, cached) {
     if (_ccGeoCacheLacksSpaces(cached, entry)) return _ccColdParseParkedEntry(entry);
     if (!_ccGeoCacheV8Enabled()) {
-      if (cached && cached.v >= 7 && cached.hasPsets) return Promise.resolve(_geoDeserialize(cached));
+      if (cached && cached.v >= 7 && (cached.hasPsets || cached.pp)) return Promise.resolve(_geoDeserialize(cached));
       return _ccColdParseParkedEntry(entry);
     }
-    if (!(cached && cached.v === 8 && cached.hasPsets)) return _ccColdParseParkedEntry(entry);
+    if (!(cached && cached.v === 8 && (cached.hasPsets || cached.pp))) return _ccColdParseParkedEntry(entry);
     try {
       var restored = _geoDeserialize(cached);
       if (!_ccRestoredGeoMatchesCache(cached, restored)) throw new Error('restored geometry failed semantic validation');
@@ -3008,7 +3008,7 @@ function startApp() {
   function _ccColdParseParkedEntry(entry) {
     if (!entry || !entry.buffer) return Promise.resolve(null); // no cache AND no source → cannot restore
     return loadIFC(entry.buffer, DISC[0].c, function(){}).then(function(result) {
-      if (result) idbSaveGeoCacheFresh(entry.id, _geoSerialize(result));
+      if (result) idbSaveGeoCacheFresh(entry.id, _geoSerialize(result, true));
       return result;
     });
   }
@@ -3863,7 +3863,10 @@ function startApp() {
   // normal-memory reduction as the IFC path.
   window._ccQuantizeNormalAttr = _ccQuantizeNormalAttr;
 
-  function _geoSerialize(result) {
+  // propsComplete: the elements carry their final psets/quantities (main-
+  // thread parse, or the worker's lazy props already merged) — stamped pp:1,
+  // so a model with no psets at all still restores from its cache.
+  function _geoSerialize(result, propsComplete) {
     // Collect individual meshes from elements rather than result.meshes, because
     // result.meshes may contain InstancedMesh objects after GPU instancing runs —
     // those have identity matrices and no expressId, which would corrupt the cache.
@@ -3937,7 +3940,7 @@ function startApp() {
     // IfcGrid) and rooms without geometry are stub elements on BOTH loader
     // paths (older worker-written caches drew them and lacked the stubs);
     // refreshed once the same way (docs/INTERNALS.md §21.49).
-    return {v:_ccGeoCacheV8Enabled()?8:7, sp:2, sem:1, xp:1, np:1, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, spaceBoundaries:result.spaceBoundaries||null, stats:result.stats};
+    return {v:_ccGeoCacheV8Enabled()?8:7, sp:2, sem:1, xp:1, np:1, hasPsets:hasPsets, pp:propsComplete ? 1 : 0, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, spaceBoundaries:result.spaceBoundaries||null, stats:result.stats};
   }
 
 
@@ -6317,6 +6320,18 @@ function startApp() {
   // model holds). Props can land before that commit is rendered into
   // _ccLatestState — small files, parallel loads, or a REPLACE where the
   // state still shows the old version under the same id.
+  // Model ids whose first geo-cache write waits for their lazy props (see
+  // job.afterProps in the load path): that write carries the props, so
+  // _mergeLazyProps must not patch the record (it would be absent, or a
+  // previous version's on a same-id replace).
+  var _ccGeoWritePending = {};
+  function _ccElDataHasPsets(elData) {
+    for (var i = 0; i < (elData || []).length; i++) {
+      var p = elData[i].props;
+      if (p && p.psets && Object.keys(p.psets).length > 0) return true;
+    }
+    return false;
+  }
   function _mergeLazyProps(modelId, propMap, elementsHint) {
     var s = window._ccLatestState;
     var model = null;
@@ -6364,6 +6379,7 @@ function startApp() {
     // canonicalized props from the loop above -- reuse those verbatim so
     // both branches converge on identical stored data. When it's gone,
     // canonicalize straight from propMap here.
+    if (_ccGeoWritePending[modelId]) return;
     try {
       idbGetGeoCache(modelId).then(function(cached) {
         if (!cached || !cached.elData) return;
@@ -6381,7 +6397,7 @@ function startApp() {
             }
           }
         }
-        cached.hasPsets = true;
+        cached.hasPsets = true; cached.pp = 1;
         idbSaveGeoCache(modelId, cached);
       });
     } catch(e) { console.warn('[IFC] Failed to refresh geo cache with psets:', e); }
@@ -24072,7 +24088,7 @@ function startApp() {
     function _coldParseAndCache(entry) {
       return loadIFC(entry.buffer, DISC[0].c, function(){})
         .then(function(result) {
-          if (result) idbSaveGeoCacheFresh(entry.id, _geoSerialize(result));
+          if (result) idbSaveGeoCacheFresh(entry.id, _geoSerialize(result, true));
           return result;
         });
     }
@@ -24080,10 +24096,10 @@ function startApp() {
       if (_ccGeoCacheLacksSpaces(cached, entry)) return _coldParseAndCache(entry);
       // Flag-off path remains exactly the established v7 behaviour.
       if (!_ccGeoCacheV8Enabled()) {
-        if (cached && cached.v >= 7 && cached.hasPsets) return _geoDeserialize(cached);
+        if (cached && cached.v >= 7 && (cached.hasPsets || cached.pp)) return _geoDeserialize(cached);
         return _coldParseAndCache(entry);
       }
-      if (!(cached && cached.v === 8 && cached.hasPsets)) return _coldParseAndCache(entry);
+      if (!(cached && cached.v === 8 && (cached.hasPsets || cached.pp))) return _coldParseAndCache(entry);
       try {
         var restored = _geoDeserialize(cached);
         if (!_ccRestoredGeoMatchesCache(cached, restored)) throw new Error('restored geometry failed semantic validation');
@@ -26283,10 +26299,21 @@ function startApp() {
         // "props arrived" and "model committed" (or the job ended without a
         // model). In parallel mode the props of a later file can arrive
         // before its in-order commit — they are held and merged then.
-        var lazy = { modelId: null, elements: null, pending: null, closed: false, released: false, release: function() {} };
-        job.releaseGate = function() { if (!lazy.released) { lazy.released = true; lazy.release(); } };
+        var lazy = { modelId: null, elements: null, pending: null, closed: false, released: false, release: function() {}, after: [], propsOk: false };
+        job.releaseGate = function() {
+          if (lazy.released) return;
+          lazy.released = true; lazy.release();
+          var fns = lazy.after; lazy.after = [];
+          fns.forEach(function(fn) { try { fn(); } catch (e) { console.warn('[IFC] after-props step failed:', e); } });
+        };
+        // Runs fn once the lazy psets/quantities are merged (or definitely
+        // not coming): immediately when that already happened.
+        job.afterProps = function(fn) { if (lazy.released) fn(); else lazy.after.push(fn); };
+        // the props reached the elements in full (lazy merge, or a main-thread parse)
+        job.propsComplete = function(v) { if (v) lazy.propsOk = true; return lazy.propsOk; };
         job.onProps = function(propMap, propErr) {
           job.gone();
+          if (!propErr) lazy.propsOk = true;
           // elements hint: the model may not be rendered into _ccLatestState
           // yet (small files' props land within a frame of the commit);
           // without it those psets were silently never merged.
@@ -26543,7 +26570,7 @@ function startApp() {
               return f.arrayBuffer().then(function(freshBuf) {
                 // Release the gate once the sync fallback settles (not before —
                 // the strip should stay up until geometry is actually placed).
-                return loadIFC(freshBuf, col, _onProg, p.workerGen, _loadScope).finally(job.releaseGate);
+                return loadIFC(freshBuf, col, _onProg, p.workerGen, _loadScope).then(function(r) { if (r) job.propsComplete(true); return r; }).finally(job.releaseGate); // the main-thread parse extracts every pset itself
               });
             });
             return _loadP.then(function(result) {
@@ -26598,7 +26625,21 @@ function startApp() {
               // only: a storey-scoped result would restore as a partial
               // model with no record of what's missing.
               if (!(result.stats && result.stats.loadedScope)) {
-                idbSaveGeoCacheFresh(modelId, _geoSerialize(result));
+                // Serialised now (geometry is live), written once the lazy
+                // psets have landed in the same props objects: one write,
+                // marked hasPsets, instead of a write without them plus a
+                // main-thread read-modify-write of the whole record (which
+                // missed the record altogether when the props won the race,
+                // leaving a cache every restore re-parsed).
+                var _geoPayload = _geoSerialize(result), _geoMid = modelId;
+                _ccGeoWritePending[_geoMid] = (_ccGeoWritePending[_geoMid] || 0) + 1;
+                job.afterProps(function() {
+                  _ccGeoWritePending[_geoMid]--;
+                  if (!_ccGeoWritePending[_geoMid]) delete _ccGeoWritePending[_geoMid];
+                  _geoPayload.hasPsets = _ccElDataHasPsets(_geoPayload.elData);
+                  if (job.propsComplete()) _geoPayload.pp = 1; // a failed props phase stays re-parsable
+                  idbSaveGeoCacheFresh(_geoMid, _geoPayload);
+                });
               } else if (window._ccAutoCompleteScopedLoads && window._ccAutoCompleteScopedLoads.has(f.name)) {
                 // "Load selected now, then complete in background" — the
                 // scoped load just settled; auto-trigger the exact same

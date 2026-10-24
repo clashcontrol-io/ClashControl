@@ -29,7 +29,7 @@ function sliceFrom(needle, span) {
 }
 
 test('_mergeLazyProps does not bail out of the whole function when the model is gone from s.models', () => {
-  const body = sliceFrom('function _mergeLazyProps(modelId, propMap, elementsHint) {', 3200);
+  const body = sliceFrom('function _mergeLazyProps(modelId, propMap, elementsHint) {', 3600);
   // The old bug: `if (!model || !model.elements) return;` as the first thing
   // after the model lookup, short-circuiting everything below it, including
   // the geoCache patch. That exact early-return-the-whole-function shape must
@@ -38,7 +38,7 @@ test('_mergeLazyProps does not bail out of the whole function when the model is 
 });
 
 test('the geoCache patch runs unconditionally (not nested inside an if(model) block)', () => {
-  const body = sliceFrom('function _mergeLazyProps(modelId, propMap, elementsHint) {', 3200);
+  const body = sliceFrom('function _mergeLazyProps(modelId, propMap, elementsHint) {', 3600);
   const ifModelIdx = body.indexOf('if (model && model.elements) {');
   const idbCallIdx = body.indexOf('idbGetGeoCache(modelId).then(');
   assert.ok(ifModelIdx !== -1, 'expected the model-found branch to be an if(model && model.elements) block');
@@ -56,21 +56,21 @@ test('the geoCache patch runs unconditionally (not nested inside an if(model) bl
 });
 
 test('when the model is gone, the geoCache patch falls back to canonicalizing straight from propMap by expressId', () => {
-  const body = sliceFrom('function _mergeLazyProps(modelId, propMap, elementsHint) {', 3200);
+  const body = sliceFrom('function _mergeLazyProps(modelId, propMap, elementsHint) {', 3600);
   assert.match(body, /var pm2 = propMap\[_ed\.eid\];/);
   assert.match(body, /_ed\.props\.quantities = _ccCanonQuantities\(pm2\.quantities\)/);
   assert.match(body, /_ed\.props\.psets\s*=\s*_ccCanonPsets\(pm2\.psets\)/);
 });
 
 test('hasPsets is still set unconditionally once the geoCache patch runs (not gated on merged > 0)', () => {
-  const body = sliceFrom('function _mergeLazyProps(modelId, propMap, elementsHint) {', 3200);
+  const body = sliceFrom('function _mergeLazyProps(modelId, propMap, elementsHint) {', 3600);
   assert.doesNotMatch(body, /if \(merged > 0\)/);
   assert.match(body, /cached\.hasPsets = true;/);
   assert.match(body, /idbSaveGeoCache\(modelId, cached\);/);
 });
 
 test('the live-model branch still canonicalizes and dispatches _propsVersion exactly as before, only now scoped inside an if(model) guard', () => {
-  const body = sliceFrom('function _mergeLazyProps(modelId, propMap, elementsHint) {', 3200);
+  const body = sliceFrom('function _mergeLazyProps(modelId, propMap, elementsHint) {', 3600);
   assert.match(body, /if \(model && model\.elements\) \{/);
   assert.match(body, /el\.props\.quantities = _ccCanonQuantities\(pm\.quantities\)/);
   assert.match(body, /el\.props\.psets\s*=\s*_ccCanonPsets\(pm\.psets\)/);

@@ -308,9 +308,10 @@
 
     function processWindow(specs) {
       if (pool.dead) return Promise.resolve();
-      var cidx = [], eA = [], eB = [], fl = [];
+      var cidx = [], eA = [], eB = [], fl = [], sd = [];
       specs.forEach(function(sp) {
-        for (var i = 0; i < sp.cidx.length; i++) { cidx.push(sp.cidx[i]); eA.push(sp.eA[i]); eB.push(sp.eB[i]); fl.push(sp.fl[i]); }
+        var hasSd = sp.sd && sp.sd.length === sp.cidx.length;
+        for (var i = 0; i < sp.cidx.length; i++) { cidx.push(sp.cidx[i]); eA.push(sp.eA[i]); eB.push(sp.eB[i]); fl.push(sp.fl[i]); sd.push(hasSd ? sp.sd[i] : ctx.seedSq); }
       });
       var n = cidx.length;
       if (!n) return Promise.resolve();
@@ -343,11 +344,23 @@
             }
             for (k = 0; k < n; k++) if ((fl[k] & 2) && !hitFlag[k] && ok[k]) softCand.push(k);
             if (!softCand.length) return { ok: ok, soft: [] };
-            var sp = [];
-            softCand.forEach(function(j2) { sp.push(ids[2 * j2], ids[2 * j2 + 1]); });
-            var seeded = _within && ctx.seedSq > 0 && ctx.seedSq !== Infinity;
-            var call = seeded ? _invoke('min_dist_within_batch', _encodeSeededPairs(ctx.seedSq, sp)) : _invoke('min_dist_batch', _encodePairs(sp));
-            return call.then(function(r) { return { ok: ok, soft: _decodeResults(r, softCand.length) }; });
+            // Each pair is searched within its OWN clearance seed (the
+            // per-pair radius the web worker pool and the main thread use:
+            // a smaller type-pair tolerance prunes more): one seeded call
+            // per distinct seed, answers put back in softCand order.
+            var groups = new Map();
+            softCand.forEach(function(j2, pos) {
+              var sq = sd[j2];
+              var key = (_within && sq > 0 && sq !== Infinity) ? sq : 'none';
+              var g = groups.get(key); if (!g) { g = { pos: [], pairs: [] }; groups.set(key, g); }
+              g.pos.push(pos); g.pairs.push(ids[2 * j2], ids[2 * j2 + 1]);
+            });
+            var soft = new Array(softCand.length), calls = [];
+            groups.forEach(function(g, key) {
+              var call = key === 'none' ? _invoke('min_dist_batch', _encodePairs(g.pairs)) : _invoke('min_dist_within_batch', _encodeSeededPairs(key, g.pairs));
+              calls.push(call.then(function(r) { var dec = _decodeResults(r, g.pos.length); for (var q = 0; q < g.pos.length; q++) soft[g.pos[q]] = dec[q]; }));
+            });
+            return Promise.all(calls).then(function() { return { ok: ok, soft: soft }; });
           }).then(function(res) {
             if (!res || pool.dead) return;
             for (var s = 0; s < softCand.length; s++) {
@@ -367,7 +380,7 @@
       });
     }
 
-    // specs: [{cidx:[], eA:[], eB:[], fl:[]}] -> window {done, promise}
+    // specs: [{cidx:[], eA:[], eB:[], fl:[], sd:[] (per-pair clearance seed, optional)}] -> window {done, promise}
     pool.addWindow = function(specs) {
       var win = { done: false, resolve: null };
       win.promise = new Promise(function(res) { win.resolve = res; });

@@ -240,6 +240,29 @@ test('seeded pool (ctx.seedSq): min_dist_within_batch, records equal the seeded 
   }
 });
 
+test('per-pair seeds (spec.sd): each pair searched within its own radius, records equal the JS reference at that radius', async () => {
+  const wasm = await loadWasm(), js = loadJsReference();
+  const m = makeMock(wasm, { within: true });
+  const { win } = await boot(m.invoke, js.ref);
+  const els = [[0, 1, 0, 1, 0, 1], [1.03, 2, 0, 1, 0, 1], [1.2, 2, 0, 1, 0, 1], [0.2, 0.8, 0.2, 0.8, 1.0005, 2], [1.08, 2, 0, 1, 0, 1]].map((b) => el(box(...b), b));
+  const runSeed = js.ref.seedSq(0.25);
+  const pool = win._ccNativeNarrow.createPool(Object.assign(ctxFor(js), { seedSq: runSeed }));
+  // gaps 30, 200, 0.5, 80 mm against per-pair tolerances 50, 250, 50, 50 mm
+  const sdOf = [js.ref.seedSq(0.05), js.ref.seedSq(0.25), js.ref.seedSq(0.05), js.ref.seedSq(0.05)];
+  const cidx = [], eA = [], eB = [], fl = [], sd = [];
+  for (let i = 1; i < els.length; i++) { cidx.push(i); eA.push(els[0]); eB.push(els[i]); fl.push(2); sd.push(sdOf[i - 1]); }
+  const before = m.calls.length;
+  await pool.addWindow([{ cidx, eA, eB, fl, sd }]).promise;
+  cidx.forEach((ci, k) => {
+    const rec = pool.results.get(ci), want = js.ref.minDist(eA[k].tris, eB[k].tris, sd[k]);
+    assert.strictEqual(rec[5], want[0], 'pair ' + k + ' distance at its own seed');
+    if (want[0] !== Infinity) assert.deepStrictEqual(Array.from(rec.subarray(6, 12)), want.slice(1, 7));
+  });
+  assert.strictEqual(pool.results.get(4)[5], Infinity, 'the 80 mm pair is beyond its own 50 mm seed (the run seed would have searched 250 mm)');
+  assert.strictEqual(m.calls.slice(before).filter((c) => c === 'min_dist_within_batch').length, 2, 'one call per distinct seed');
+  pool.terminate('finished');
+});
+
 test('no JS reference available: cannot verify => NOT published', async () => {
   const wasm = await loadWasm();
   const m = makeMock(wasm);

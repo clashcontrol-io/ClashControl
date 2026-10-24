@@ -124,3 +124,18 @@ test('candidate never reads or overwrites the legacy cache key', () => {
 test('candidate serialization is schema 8 while flag-off serialization stays schema 7', () => {
   assert.match(source, /return \{v:_ccGeoCacheV8Enabled\(\)\?8:7,/);
 });
+
+// pp:1 — the cache was written with the elements' final psets/quantities (the
+// worker's lazy props merged first, or a main-thread parse). A model with no
+// psets at all restores from it; a cache written before the props landed
+// (no pp, no psets) still re-parses.
+test('a props-complete cache (pp:1) restores even when the model has no psets', async () => {
+  const markers = { v: 7, sp: 2, sem: 1, xp: 1, np: 1 };
+  const h = restoreDecisionHarness({ _ccGeoCacheV8Enabled: () => false, _ccGeoCacheLacksSpaces: realLacksSpaces(), _geoDeserialize: () => 'legacy' });
+  assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, Object.assign({ hasPsets: false, pp: 1 }, markers)), 'legacy');
+  assert.equal(h.coldParses, 0);
+  assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, Object.assign({ hasPsets: false, pp: 0 }, markers)), 'cold');
+  assert.equal(h.coldParses, 1);
+  const h8 = restoreDecisionHarness({ _ccGeoCacheLacksSpaces: realLacksSpaces(), _geoDeserialize: () => 'v8' });
+  assert.equal(await h8.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, Object.assign({}, markers, { v: 8, hasPsets: false, pp: 1 })), 'v8');
+});
