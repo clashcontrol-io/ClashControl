@@ -95,14 +95,18 @@ test('pre-spaces cache (no sp marker) cold-parses once when the source IFC is st
   // sp:2 + sem:1 without xp:1 (16-bit positions, not the exact geometry) too.
   assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, { v: 7, sp: 2, sem: 1, hasPsets: true }), 'cold');
   assert.equal(h.coldParses, 4);
-  assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, { v: 7, sp: 2, sem: 1, xp: 1, hasPsets: true }), 'legacy');
+  // sp:2 + sem:1 + xp:1 without np:1 (worker-written: non-physical elements
+  // drawn, stub elements missing) too.
+  assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, { v: 7, sp: 2, sem: 1, xp: 1, hasPsets: true }), 'cold');
+  assert.equal(h.coldParses, 5);
+  assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, { v: 7, sp: 2, sem: 1, xp: 1, np: 1, hasPsets: true }), 'legacy');
   // No source bytes: the old cache is still the only geometry there is.
   assert.equal(await h.context.restore({ id: 'm' }, { v: 7, hasPsets: true }), 'legacy');
-  assert.equal(h.coldParses, 4);
+  assert.equal(h.coldParses, 5);
 });
 
 test('the serializer stamps sp:2 and both restore policies check it first', () => {
-  assert.match(source, /return \{v:_ccGeoCacheV8Enabled\(\)\?8:7, sp:2, sem:1, xp:1, hasPsets:hasPsets/);
+  assert.match(source, /return \{v:_ccGeoCacheV8Enabled\(\)\?8:7, sp:2, sem:1, xp:1, np:1, hasPsets:hasPsets/);
   assert.match(source, /if \(_ccGeoCacheLacksSpaces\(cached, entry\)\) return _ccColdParseParkedEntry\(entry\);/);
   assert.match(source, /if \(_ccGeoCacheLacksSpaces\(cached, entry\)\) return _coldParseAndCache\(entry\);/);
 });

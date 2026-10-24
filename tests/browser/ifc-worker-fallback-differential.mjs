@@ -95,6 +95,16 @@ const CASES = [
   // classifications and boundary placement.
   { name: 'semantics (IFC2X3 MEP: types, systems, classification)', generateSemantic: { kind: 'vent' }, expectSemantics: true },
   { name: 'space boundaries (offset frame)', generateSemantic: { kind: 'arch', boundaryOffset: [-13374.845, -13743.122, 0] }, expectBoundaries: 12 },
+  // Non-physical elements (docs/INTERNALS.md §21.49): IfcVirtualElement /
+  // IfcAnnotation / IfcGrid with box bodies OVERLAPPING the walls. Both paths
+  // must keep them as identical stub elements (no meshes, same order, props,
+  // not-drawn report) and detection must never pair them — also when a
+  // source hands them geometry (checked by grafting a wall's meshes on).
+  {
+    name: 'non-physical (IfcVirtualElement / IfcAnnotation / IfcGrid)',
+    generate: { storeyCount: 2, wallsPerStorey: 2, withSpaces: true, nonPhysical: { perStorey: 6 } },
+    expectNonPhysical: 12, clashCheck: true,
+  },
 ];
 
 const server = createServer(async (req, res) => {
@@ -123,7 +133,8 @@ const port = server.address().port;
 const browser = await chromium.launch({ executablePath: process.env.CC_CHROMIUM_EXECUTABLE });
 const errors = [];
 
-async function loadAndFingerprint(forceFallback, fixtureUrl) {
+const NP_TYPES = ['IfcVirtualElement', 'IfcAnnotation', 'IfcGrid'];
+async function loadAndFingerprint(forceFallback, fixtureUrl, clashCheck) {
   const page = await browser.newPage();
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
@@ -150,7 +161,7 @@ async function loadAndFingerprint(forceFallback, fixtureUrl) {
   }
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 60_000 });
-  const result = await page.evaluate(async ({ forceFallbackInner, fixtureUrlInner }) => {
+  const result = await page.evaluate(async ({ forceFallbackInner, fixtureUrlInner, clashCheckInner, npTypes }) => {
     if (forceFallbackInner) {
       window.Worker = class BrokenWorker { constructor() { throw new Error('forced fallback for differential test'); } };
     }
@@ -192,8 +203,44 @@ async function loadAndFingerprint(forceFallback, fixtureUrl) {
       boundaries: model._ccBoundaries ? { total: model._ccBoundaries.total, placed: model._ccBoundaries.placed, frame: model._ccBoundaries.frame,
         offset: model._ccBoundaries.offset, spaceToEls: model._ccBoundaries.spaceToEls,
         geometry: model._ccBoundaries.geometry ? Array.from(model._ccBoundaries.geometry).map((v) => Math.round(v * 1e4)) : null } : null,
+      // element order, the stub elements (no meshes) with their identity
+      // props, and the loader's not-drawn report
+      order: model.elements.map((e) => e.expressId),
+      // every element's identity props, key-order independent (psets and
+      // quantities arrive lazily on the worker path; compared elsewhere)
+      props: model.elements.map((e) => JSON.stringify(Object.keys(e.props || {}).filter((k) => k !== 'psets' && k !== 'quantities').sort().map((k) => [k, e.props[k]]))),
+      stubs: model.elements.filter((e) => !(e.meshes || []).length).map((e) => {
+        const p = e.props || {};
+        return [e.expressId, p.ifcType, p.storey, p.name, p.globalId, p.description, p.objectType, p.material, p.typeId == null ? null : p.typeId, p.predefinedType || null, !!(e.box && e.box.isEmpty())];
+      }),
+      notDrawn: (model.stats && model.stats.notDrawn) || null,
+      clashes: clashCheckInner ? await (async () => {
+        const typeOf = new Map(model.elements.map((e) => [e.expressId, e.props && e.props.ifcType]));
+        const run = async () => {
+          const res = await window.ClashControl.runDetection({ fullRerun: true, hard: true, maxGap: 50 });
+          return (res || []).map((c) => [typeOf.get(c.elemA), typeOf.get(c.elemB)]);
+        };
+        const loaded = await run();
+        // A source that DOES give them geometry (GLB / Revit / an old cache):
+        // graft a wall's meshes onto every non-physical stub — the broad
+        // phase must still never pair them.
+        const wall = model.elements.find((e) => e.props && e.props.ifcType === 'IfcWall' && e.meshes.length);
+        const np = model.elements.filter((e) => npTypes.includes(e.props && e.props.ifcType));
+        const saved = np.map((e) => [e.meshes, e.box]);
+        np.forEach((e) => { e.meshes = wall.meshes.slice(); e.box = wall.box.clone(); });
+        const grafted = await run();
+        // control: the same grafted element relabelled as a physical type
+        // DOES clash — the overlap is real, only the type keeps it out
+        const p0 = np[0].props;
+        np[0].props = Object.assign({}, p0, { ifcType: 'IfcBuildingElementProxy' });
+        typeOf.set(np[0].expressId, 'IfcBuildingElementProxy');
+        const control = (await run()).filter((t) => t[0] === 'IfcBuildingElementProxy' || t[1] === 'IfcBuildingElementProxy').length;
+        np[0].props = p0;
+        np.forEach((e, i) => { e.meshes = saved[i][0]; e.box = saved[i][1]; });
+        return { loaded, grafted, control, npCount: np.length };
+      })() : null,
     };
-  }, { forceFallbackInner: forceFallback, fixtureUrlInner: fixtureUrl });
+  }, { forceFallbackInner: forceFallback, fixtureUrlInner: fixtureUrl, clashCheckInner: !!clashCheck, npTypes: NP_TYPES });
   await page.close();
   return result;
 }
@@ -355,12 +402,13 @@ try {
     const filePath = join(generatedDir, fileName);
     await writeFile(filePath, c.generateSemantic ? generateSemanticIfc(c.generateSemantic) : generateSyntheticIfc(c.generate));
     resolvedCases.push({ name: c.name, url: '/tests/fixtures/_generated-differential/' + fileName, expectSpaces: c.expectSpaces,
-      expectSemantics: c.expectSemantics, expectBoundaries: c.expectBoundaries, expectAddress: c.expectAddress });
+      expectSemantics: c.expectSemantics, expectBoundaries: c.expectBoundaries, expectAddress: c.expectAddress,
+      expectNonPhysical: c.expectNonPhysical, clashCheck: c.clashCheck });
   }
 
   for (const c of resolvedCases) {
-    const workerResult = await loadAndFingerprint(false, c.url);
-    const fallbackResult = await loadAndFingerprint(true, c.url);
+    const workerResult = await loadAndFingerprint(false, c.url, c.clashCheck);
+    const fallbackResult = await loadAndFingerprint(true, c.url, c.clashCheck);
     // modelFingerprint() itself only covers box/mesh/type per element — it
     // does NOT include unit scale, georeferencing or map-conversion data,
     // so a worker/fallback divergence limited to those fields would pass
@@ -368,7 +416,7 @@ try {
     // full result payload for the fields those extra fixture cases exist
     // to exercise.
     const pickCmp = (r) => ({ fingerprint: r.fingerprint, unitScale: r.unitScale, georef: r.georef, mapConversion: r.mapConversion, addresses: r.addresses, openings: r.openings,
-      semantics: r.semantics, disciplineInfo: r.disciplineInfo, boundaries: r.boundaries });
+      semantics: r.semantics, disciplineInfo: r.disciplineInfo, boundaries: r.boundaries, order: r.order, props: r.props, stubs: r.stubs, notDrawn: r.notDrawn });
     const workerComparable = pickCmp(workerResult);
     const fallbackComparable = pickCmp(fallbackResult);
     const same = JSON.stringify(workerComparable) === JSON.stringify(fallbackComparable);
@@ -404,6 +452,26 @@ try {
       allOk = false;
       continue;
     }
+    if (c.expectNonPhysical != null) {
+      const np = workerResult.fingerprint.filter((r) => NP_TYPES.includes(r.ifcType));
+      const stubNp = workerResult.stubs.filter((r) => NP_TYPES.includes(r[1]) && r[10]);
+      const nr = (workerResult.notDrawn && workerResult.notDrawn.byReason && workerResult.notDrawn.byReason.nonRenderable) || 0;
+      if (np.length !== c.expectNonPhysical || np.some((r) => r.meshCount !== 0) || stubNp.length !== c.expectNonPhysical || nr !== c.expectNonPhysical) {
+        fail('[' + c.name + '] expected ' + c.expectNonPhysical + ' non-physical stub elements (no meshes, empty box, reported nonRenderable), got ' +
+          JSON.stringify({ elements: np.length, withMeshes: np.filter((r) => r.meshCount).length, stubs: stubNp.length, nonRenderable: nr }));
+        allOk = false;
+        continue;
+      }
+    }
+    if (c.clashCheck) {
+      let bad = null;
+      for (const [label, r] of [['worker', workerResult], ['fallback', fallbackResult]]) {
+        const cl = r.clashes;
+        const hits = [].concat(cl.loaded, cl.grafted).filter((p) => NP_TYPES.includes(p[0]) || NP_TYPES.includes(p[1]));
+        if (hits.length || cl.npCount !== c.expectNonPhysical || !(cl.control > 0)) { bad = label + ': ' + JSON.stringify({ npPairs: hits.slice(0, 5), npCount: cl.npCount, control: cl.control }); break; }
+      }
+      if (bad) { fail('[' + c.name + '] non-physical elements took part in clash detection (or the run found nothing to compare) — ' + bad); allOk = false; continue; }
+    }
     if (c.expectSpaces != null) {
       const spacesWithGeo = workerResult.fingerprint.filter((r) => r.ifcType === 'IfcSpace' && r.meshCount > 0).length;
       if (spacesWithGeo !== c.expectSpaces) {
@@ -424,7 +492,7 @@ try {
   // Parallel + progressive preview == default sequential load.
   {
     const setUrls = ['/tests/fixtures/office-architecture.ifc', '/tests/fixtures/office-mep.ifc', '/tests/fixtures/multi-storey-smoke.ifc']
-      .concat(resolvedCases.filter((c) => /spaces|semantics|space boundaries|unit conversion/.test(c.name)).map((c) => c.url));
+      .concat(resolvedCases.filter((c) => /spaces|semantics|space boundaries|unit conversion|non-physical/.test(c.name)).map((c) => c.url));
     const seq = await loadSetDeep('?ccSafety=-progressivePreview,-parallelLoad', setUrls);
     const par = await loadSetDeep('?ccSafety=progressivePreview,parallelLoad', setUrls);
     const diffs = diffDigests(seq.digest, par.digest);
@@ -452,7 +520,7 @@ try {
   // matrix incl. cancel / failing shard: tests/browser/shard-load.mjs.
   {
     const shardFile = join(generatedDir, 'sharded-load.ifc');
-    await writeFile(shardFile, generateShardIfc({ storeys: 3, perStorey: 200, seed: 21 }));
+    await writeFile(shardFile, generateShardIfc({ storeys: 3, perStorey: 200, seed: 21, nonPhysical: 15 }));
     const urls = ['/tests/fixtures/_generated-differential/sharded-load.ifc'];
     const one = await loadSetDeep('?ccSafety=-shardedLoad', urls);
     const sh = await loadSetDeep('?ccSafety=shardedLoad', urls, 2);

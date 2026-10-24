@@ -51,7 +51,7 @@ test('every model-creation path classifies the loaded result', () => {
 });
 
 test('space boundaries persist in the geo cache and are drawn on the rooms layer only', () => {
-  assert.match(src, /sp:2, sem:1, xp:1, hasPsets:hasPsets/);
+  assert.match(src, /sp:2, sem:1, xp:1, np:1, hasPsets:hasPsets/);
   assert.match(src, /spaceBoundaries:cached\.spaceBoundaries\|\|null/);
   assert.match(src, /obj\.layers\.set\(_CC_SPACE_LAYER\);\n\s*obj\.raycast = function\(\) \{\};/);
   assert.match(src, /var _bObj = _ccBoundaryObject\(model\);\n\s*if \(_bObj\) grp\.add\(_bObj\);/);

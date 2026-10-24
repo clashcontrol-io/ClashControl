@@ -43,6 +43,12 @@ function generateSyntheticIfc(opts) {
   // placement near that footprint, so applying both doubles the offset.
   // The room is meant to sit exactly where the default writing puts it.
   const spaceFrame = opts.spaceFrame === 'parent' ? 'parent' : 'own';
+  // nonPhysical: true | {perStorey: n} — per storey, n elements cycling
+  // IfcVirtualElement / IfcAnnotation / IfcGrid (n = 3 for `true`), each
+  // with a 'Body' extruded box that OVERLAPS wall 0 of that storey and is
+  // contained in the storey. Not physical: a loader must never draw them as
+  // building parts and they must never produce clashes.
+  const nonPhysical = opts.nonPhysical ? Math.max(1, (opts.nonPhysical.perStorey | 0) || 3) : 0;
 
   let id = 0;
   const next = () => ++id;
@@ -126,6 +132,7 @@ function generateSyntheticIfc(opts) {
   const extrudeDirId = next();
   lines.push(`#${extrudeDirId}=IFCDIRECTION((0.,0.,1.));`);
 
+  let npProfileId = 0;
   for (let s = 0; s < storeyCount; s++) {
     const elevation = s * storeyHeight;
     const storeyId = next();
@@ -177,6 +184,43 @@ function generateSyntheticIfc(opts) {
       }
     }
     lines.push(`#${next()}=IFCRELCONTAINEDINSPATIALSTRUCTURE('2SynthRelCont00000000${id}',$,$,$,(${wallIds.map((w) => '#' + w).join(',')}),#${storeyId});`);
+    if (nonPhysical) {
+      if (!npProfileId) {
+        npProfileId = next();
+        lines.push(`#${npProfileId}=IFCRECTANGLEPROFILEDEF(.AREA.,$,#${profilePlacementId},1.,1.);`);
+      }
+      const npIds = [];
+      for (let j = 0; j < nonPhysical; j++) {
+        const kind = j % 3; // 0 virtual, 1 annotation, 2 grid
+        const elId = next(), plId = next(), axId = next(), orId = next(), shapeId = next(), repId = next(), solidId = next();
+        const dx = ((j % 7) - 3) * 0.4, dz = (Math.floor(j / 7) % 5) * 0.1;
+        lines.push(`#${orId}=IFCCARTESIANPOINT((${dx.toFixed(1)},0.,${dz.toFixed(1)}));`);
+        lines.push(`#${axId}=IFCAXIS2PLACEMENT3D(#${orId},$,$);`);
+        lines.push(`#${plId}=IFCLOCALPLACEMENT(#${storeyPlacementId},#${axId});`);
+        lines.push(`#${solidId}=IFCEXTRUDEDAREASOLID(#${npProfileId},#${axisId},#${extrudeDirId},${(storeyHeight - 0.5).toFixed(1)});`);
+        lines.push(`#${repId}=IFCSHAPEREPRESENTATION(#${geomCtxId},'Body','SweptSolid',(#${solidId}));`);
+        lines.push(`#${shapeId}=IFCPRODUCTDEFINITIONSHAPE($,$,(#${repId}));`);
+        const guid = (['8SynthVirt', '8SynthAnno', '8SynthGrid'][kind] + elId).padEnd(22, '0').slice(0, 22);
+        if (kind === 0) {
+          lines.push(`#${elId}=IFCVIRTUALELEMENT('${guid}',$,'Virtual S${s}N${j}',$,$,#${plId},#${shapeId},$);`);
+        } else if (kind === 1) {
+          lines.push(`#${elId}=IFCANNOTATION('${guid}',$,'Annotation S${s}N${j}',$,$,#${plId},#${shapeId});`);
+        } else {
+          const ax = [];
+          for (const [tag, a, b] of [['A', [0, -5], [0, 5]], ['1', [-5, 0], [5, 0]]]) {
+            const p1 = next(), p2 = next(), pl = next(), ga = next();
+            lines.push(`#${p1}=IFCCARTESIANPOINT((${a[0]}.,${a[1]}.));`);
+            lines.push(`#${p2}=IFCCARTESIANPOINT((${b[0]}.,${b[1]}.));`);
+            lines.push(`#${pl}=IFCPOLYLINE((#${p1},#${p2}));`);
+            lines.push(`#${ga}=IFCGRIDAXIS('${tag}',#${pl},.T.);`);
+            ax.push(ga);
+          }
+          lines.push(`#${elId}=IFCGRID('${guid}',$,'Grid S${s}N${j}',$,$,#${plId},#${shapeId},(#${ax[0]}),(#${ax[1]}),$,$);`);
+        }
+        npIds.push(elId);
+      }
+      lines.push(`#${next()}=IFCRELCONTAINEDINSPATIALSTRUCTURE('2SynthRelNP0000000000${id}',$,$,$,(${npIds.map((w) => '#' + w).join(',')}),#${storeyId});`);
+    }
     if (withSpaces) {
       const spaceId = next(), spPlacementId = next(), spAxisId = next(), spOriginId = next();
       const spProfileId = next(), spProfilePlacementId = next(), spShapeId = next(), spRepId = next(), spExtrudeId = next();
@@ -554,6 +598,23 @@ function generateShardIfc(opts) {
         L.push(`#${next()}=IFCRELDEFINESBYPROPERTIES('${guid()}',$,$,$,(#${e}),#${ps});`);
         psets++;
       }
+    }
+    // opts.nonPhysical: n per storey, cycling IfcVirtualElement / IfcAnnotation
+    // / IfcGrid with box bodies over the element grid (overlapping real
+    // elements). Off by default (other fixtures stay byte-identical; no rnd()).
+    for (let j = 0; j < (opts.nonPhysical | 0); j++) {
+      const k = j % 3, e = next();
+      const pl = place(stPl, (j % side) * 1.5, Math.floor(j / side) * 1.5, 0.2, 0);
+      const rep = '#' + shape(0.9, 0.9, 1.5 + (j % 4) * 0.1, null);
+      if (k === 0) L.push(`#${e}=IFCVIRTUALELEMENT('${guid()}',$,'virtual ${s}-${j}',$,$,#${pl},${rep},$);`);
+      else if (k === 1) L.push(`#${e}=IFCANNOTATION('${guid()}',$,'annotation ${s}-${j}',$,$,#${pl},${rep});`);
+      else {
+        const p1 = next(), p2 = next(), poly = next(), ga = next(), q1 = next(), q2 = next(), poly2 = next(), gb = next();
+        L.push(`#${p1}=IFCCARTESIANPOINT((0.,-5.));`, `#${p2}=IFCCARTESIANPOINT((0.,5.));`, `#${poly}=IFCPOLYLINE((#${p1},#${p2}));`, `#${ga}=IFCGRIDAXIS('A',#${poly},.T.);`);
+        L.push(`#${q1}=IFCCARTESIANPOINT((-5.,0.));`, `#${q2}=IFCCARTESIANPOINT((5.,0.));`, `#${poly2}=IFCPOLYLINE((#${q1},#${q2}));`, `#${gb}=IFCGRIDAXIS('1',#${poly2},.T.);`);
+        L.push(`#${e}=IFCGRID('${guid()}',$,'grid ${s}-${j}',$,$,#${pl},${rep},(#${ga}),(#${gb}),$,$);`);
+      }
+      contained.push(e);
     }
     // Openings voiding the first few walls.
     for (const w of walls.slice(0, 3)) {

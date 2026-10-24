@@ -3933,7 +3933,11 @@ function startApp() {
     // boundaries; older caches are refreshed once like sp:1 ones.
     // xp:1 — exact geometry (Float32 positions, live normal array); older
     // caches held 16-bit positions and are refreshed once the same way.
-    return {v:_ccGeoCacheV8Enabled()?8:7, sp:2, sem:1, xp:1, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, spaceBoundaries:result.spaceBoundaries||null, stats:result.stats};
+    // np:1 — non-physical elements (IfcVirtualElement / IfcAnnotation /
+    // IfcGrid) and rooms without geometry are stub elements on BOTH loader
+    // paths (older worker-written caches drew them and lacked the stubs);
+    // refreshed once the same way (docs/INTERNALS.md §21.49).
+    return {v:_ccGeoCacheV8Enabled()?8:7, sp:2, sem:1, xp:1, np:1, hasPsets:hasPsets, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, spaceBoundaries:result.spaceBoundaries||null, stats:result.stats};
   }
 
 
@@ -4062,9 +4066,11 @@ function startApp() {
   // the room elements at all — forever. When the source IFC is stored, treat
   // such a cache as stale so the restore cold-parses once and re-saves a
   // current cache; with no source bytes the old cache is still the best we have.
-  // The same applies to caches without exact geometry (xp !== 1).
+  // The same applies to caches without exact geometry (xp !== 1) and to
+  // caches written before non-physical elements were stubs on both loader
+  // paths (np !== 1).
   function _ccGeoCacheLacksSpaces(cached, entry) {
-    return !!(cached && (cached.sp !== 2 || cached.sem !== 1 || cached.xp !== 1) && entry && entry.buffer);
+    return !!(cached && (cached.sp !== 2 || cached.sem !== 1 || cached.xp !== 1 || cached.np !== 1) && entry && entry.buffer);
   }
 
   function _ccRestoredGeoMatchesCache(cached, result) {
@@ -4079,6 +4085,7 @@ function startApp() {
       var got = [actual.box.min.x,actual.box.min.y,actual.box.min.z,
         actual.box.max.x,actual.box.max.y,actual.box.max.z];
       for (var j = 0; j < 6; j++) {
+        if (got[j] === box[j]) continue; // incl. the +/-Infinity of a stub element's empty box
         if (!isFinite(got[j]) || Math.abs(got[j] - box[j]) > 0.000001) return false;
       }
     }
@@ -4952,8 +4959,8 @@ function startApp() {
   // changes what is loaded. Reasons: 'failed' (every geometry extraction
   // threw), 'empty' (no placements, or only zero-triangle geometry),
   // 'transparent' (every placement styled ~fully transparent; decided where
-  // the colour filter runs), 'nonRenderable' (fallback loader's pre-decode
-  // skip list), 'noRepresentation' (contained in a storey but never yielded a
+  // the colour filter runs), 'nonRenderable' (IfcVirtualElement /
+  // IfcAnnotation / IfcGrid, never drawn — §21.49), 'noRepresentation' (contained in a storey but never yielded a
   // mesh — assemblies whose parts are drawn are excluded).
   // typeNameOf (optional): eid -> type name, used instead of the model when
   // a report is rebuilt from recorded notes (sharded load, main thread).
@@ -5061,6 +5068,57 @@ function startApp() {
       for (var j = 0; j < v.size(); j++) ids.push(v.get(j));
     }
     return { ok: true, why: '', ids: ids, types: types };
+  }
+  // ── Non-physical IFC elements (docs/INTERNALS.md §21.49) ──
+  // IfcVirtualElement / IfcAnnotation / IfcGrid are not building parts: never
+  // drawn, never clashed, kept as stub elements (props, storey, relations, no
+  // meshes). The worker and the main-thread fallback both call these helpers,
+  // so they cannot drift. ids: every element of these types (type order, then
+  // GetLineIDsWithType order); set: id lookup; streamIds: StreamAllMeshes'
+  // element order without them, so web-ifc never tessellates them (that, not
+  // the copy-out, is the cost) — null when the file has none or the order
+  // probe cannot place every type: the caller then streams everything and
+  // drops them in the callback (same model, only slower).
+  // ord (optional): a _ccIfcStreamOrder result the caller already has.
+  function _ccIfcNonPhysical(api, modelID, ord) {
+    var out = { ids: [], set: {}, streamIds: null };
+    var T = [IFC.IFCVIRTUALELEMENT, IFC.IFCANNOTATION, IFC.IFCGRID];
+    for (var t = 0; t < T.length; t++) {
+      if (!T[t]) continue;
+      try {
+        var v = api.GetLineIDsWithType(modelID, T[t]);
+        for (var i = 0; i < v.size(); i++) { var id = v.get(i); if (!out.set[id]) { out.set[id] = 1; out.ids.push(id); } }
+      } catch (e) {}
+    }
+    if (out.ids.length) {
+      try {
+        var o = ord || _ccIfcStreamOrder(api, modelID);
+        if (o && o.ok) out.streamIds = o.ids.filter(function(id) { return !out.set[id]; });
+      } catch (e2) {}
+    }
+    return out;
+  }
+  // Non-physical elements reported 'nonRenderable' in the not-drawn report:
+  // every in-scope one (not drawn by design). No GetLine per element — that
+  // cost more than skipping their tessellation saved. Same list, same order,
+  // in both loaders.
+  function _ccIfcNonPhysicalNoteIds(np, storeyMap, scopeSet) {
+    var out = [];
+    for (var i = 0; i < np.ids.length; i++) {
+      var id = np.ids[i];
+      if (!scopeSet || scopeSet[storeyMap[id] || '']) out.push(id);
+    }
+    return out;
+  }
+  // Stub elements (no meshes) appended after every drawn element, in this
+  // order: rooms that got no geometry, then the non-physical elements. A
+  // storey-scoped load keeps only the stubs on the chosen storeys.
+  function _ccIfcStubIds(spaceIds, spaceHasGeo, np, storeyMap, scopeSet) {
+    var out = [];
+    function add(id) { if (!scopeSet || scopeSet[storeyMap[id] || '']) out.push(id); }
+    for (var i = 0; i < spaceIds.length; i++) if (!spaceHasGeo[spaceIds[i]]) add(spaceIds[i]);
+    for (var j = 0; j < np.ids.length; j++) add(np.ids[j]);
+    return out;
   }
   // Which positions of the global order shard k (of n) streams: blocks of
   // `block` consecutive elements dealt round-robin — whole type runs stay
@@ -5884,6 +5942,16 @@ function startApp() {
     return _ccSpaceMat;
   }
   function _ccIsSpaceEl(el) { return !!(el && el.props && el.props.ifcType === 'IfcSpace'); }
+  // Not building parts (docs/INTERNALS.md §21.49). With IfcSpace: what the
+  // 2D floor-plan cut (poché) and its framing skip. Without it (rooms have
+  // their own includeSpaces switch): what may NEVER clash, whatever the
+  // source (IFC worker/fallback, GLB join, Revit live link, cache restore) —
+  // both broad-phase sweeps and the snapshot context drop them.
+  var _NON_PHYSICAL_TYPES = {IfcSpace:true, IfcVirtualElement:true, IfcAnnotation:true, IfcGrid:true};
+  function _ccIsNonPhysicalEl(el) {
+    var t = el && el.props && el.props.ifcType;
+    return !!(t && t !== 'IfcSpace' && _NON_PHYSICAL_TYPES[t] === true);
+  }
   function _ccMarkSpaceMesh(mesh) {
     if (!mesh) return mesh;
     mesh.material = _ccSpaceMaterial();
@@ -6018,18 +6086,20 @@ function startApp() {
       if(onProgress) onProgress('Building the 3D model 45%');
 
       var _skipGeoEids = {};
-      var _skipTypes = [IFC.IFCOPENINGELEMENT, IFC.IFCSPACE, IFC.IFCVIRTUALELEMENT, IFC.IFCANNOTATION, IFC.IFCGRID];
+      var _skipTypes = [IFC.IFCOPENINGELEMENT, IFC.IFCSPACE];
       for (var _sti = 0; _sti < _skipTypes.length; _sti++) {
         var _stid = _skipTypes[_sti];
         if (!_stid) continue;
         try {
           var _stids = api.GetLineIDsWithType(modelID, _stid);
-          // 2 = drawable type this loader skips (virtual/annotation/grid) —
-          // reported as 'nonRenderable'; openings and rooms are deliberate.
-          var _skipMark = (_stid === IFC.IFCOPENINGELEMENT || _stid === IFC.IFCSPACE) ? true : 2;
-          for (var _stj = 0; _stj < _stids.size(); _stj++) _skipGeoEids[_stids.get(_stj)] = _skipMark;
+          for (var _stj = 0; _stj < _stids.size(); _stj++) _skipGeoEids[_stids.get(_stj)] = true;
         } catch(e) {}
       }
+      // Non-physical elements (virtual/annotation/grid): never streamed when
+      // the order probe works, else dropped in the callback; stubs + the
+      // 'nonRenderable' notes come after the stream (same helpers as the worker).
+      var _np = _ccIfcNonPhysical(api, modelID);
+      for (var _npi = 0; _npi < _np.ids.length; _npi++) _skipGeoEids[_np.ids[_npi]] = 2;
       var _skippedPredecode = 0;
 
       // Storey-scoped loading: when scope.storeys is set, geometry outside
@@ -6056,10 +6126,11 @@ function startApp() {
       // afterwards (mirrored exactly in _ifcWorkerMain).
       function _onIfcMesh(ifcMesh, isSpace) {
         var expressID = ifcMesh.expressID;
+        if (!isSpace && _np.set[expressID]) { _skippedPredecode++; return; }
         if (_scopeSet && !_scopeSet[storeyMap[expressID] || '']) { _scopedOut++; return; }
         _streamCount++;
         _streamed[expressID] = 1;
-        if (!isSpace && _skipGeoEids[expressID]) { _skippedPredecode++; if (_skipGeoEids[expressID] === 2) _notDrawn.note(expressID, 'nonRenderable'); return; }
+        if (!isSpace && _skipGeoEids[expressID]) { _skippedPredecode++; return; }
         if (onProgress && (_streamCount & 255) === 0) {
           var _spct = 45 + Math.min(33, Math.round(_streamCount / _estTotal * 33));
           onProgress('Building the 3D model ' + _spct + '%');
@@ -6132,7 +6203,8 @@ function startApp() {
           if (isSpace) _spaceGeoEids[expressID] = true;
         }
       }
-      api.StreamAllMeshes(modelID, function(ifcMesh) { _onIfcMesh(ifcMesh, false); });
+      if (_np.streamIds) { if (_np.streamIds.length) api.StreamMeshes(modelID, _np.streamIds, function(ifcMesh) { _onIfcMesh(ifcMesh, false); }); }
+      else api.StreamAllMeshes(modelID, function(ifcMesh) { _onIfcMesh(ifcMesh, false); });
       var _spaceIds = [];
       try {
         var _spv = api.GetLineIDsWithType(modelID, IFC.IFCSPACE);
@@ -6143,6 +6215,8 @@ function startApp() {
         catch(e) { console.warn('[IFC] IfcSpace geometry pass failed:', e); }
       }
 
+      var _npNotes = _ccIfcNonPhysicalNoteIds(_np, storeyMap, _scopeSet);
+      for (var _npn = 0; _npn < _npNotes.length; _npn++) _notDrawn.note(_npNotes[_npn], 'nonRenderable');
       try { _notDrawn.unseen(storeyMap, _streamed, _skipGeoEids, _scopeSet); } catch (_ndE) {}
       if (_skippedPredecode > 0) {
         console.log('%c[IFC] Skipped ' + _skippedPredecode + ' non-renderable elements before geometry decode (IfcOpeningElement / IfcVirtualElement / IfcAnnotation / IfcGrid)', 'color:#94a3b8');
@@ -6162,24 +6236,19 @@ function startApp() {
       try { _sbRecs = extractSpaceBoundaryRecords(api, modelID); } catch (_sbE) { console.warn('[IFC] space boundary extraction failed:', _sbE); }
       _lp.semanticsMs = Math.round(performance.now() - _tSemF);
 
-      var _reAddTypes = [IFC.IFCSPACE, IFC.IFCVIRTUALELEMENT, IFC.IFCANNOTATION, IFC.IFCGRID];
-      var _reAddNames = ['IFCSPACE','IFCVIRTUALELEMENT','IFCANNOTATION','IFCGRID'];
-      for (var _rti = 0; _rti < _reAddTypes.length; _rti++) {
-        var _rtid = _reAddTypes[_rti];
-        if (!_rtid) continue;
+      // Stub elements (no meshes): rooms without geometry, then the
+      // non-physical elements — _ccIfcStubIds, same list as the worker.
+      var _stubIds = _ccIfcStubIds(_spaceIds, _spaceGeoEids, _np, storeyMap, _scopeSet);
+      for (var _rj = 0; _rj < _stubIds.length; _rj++) {
+        var _reid = _stubIds[_rj];
         try {
-          var _rids = api.GetLineIDsWithType(modelID, _rtid);
-          for (var _rj = 0; _rj < _rids.size(); _rj++) {
-            var _reid = _rids.get(_rj);
-            if (_spaceGeoEids[_reid]) continue; // already loaded with geometry
-            var _rprops = extractProperties(api, modelID, _reid);
-            _rprops.storey = storeyMap[_reid] || '';
-            _rprops.material = matMap[_reid] || '';
-            var _rpm = propMap[_reid];
-            if (_rpm) { _rprops.quantities = _ccCanonQuantities(_rpm.quantities); _rprops.psets = _ccCanonPsets(_rpm.psets); }
-            rawElements.push({expressId:_reid, meshes:[], box:new THREE.Box3(), props:_rprops});
-          }
-        } catch(e) { console.warn('[IFC] Re-add pass failed for ' + _reAddNames[_rti] + ':', e); }
+          var _rprops = extractProperties(api, modelID, _reid);
+          _rprops.storey = storeyMap[_reid] || '';
+          _rprops.material = matMap[_reid] || '';
+          var _rpm = propMap[_reid];
+          if (_rpm) { _rprops.quantities = _ccCanonQuantities(_rpm.quantities); _rprops.psets = _ccCanonPsets(_rpm.psets); }
+          rawElements.push({expressId:_reid, meshes:[], box:new THREE.Box3(), props:_rprops});
+        } catch(e) { console.warn('[IFC] Stub element #' + _reid + ' failed:', e); }
       }
 
       api.CloseModel(modelID);
@@ -6560,6 +6629,7 @@ function startApp() {
 
         var xfer = [];
         var _geoTable = {}; // geometryExpressID → {pos, nrm, idx} (dedup)
+        var _spaceGeoEids = {}; // rooms packed with geometry (the rest become stubs)
         var _spaceGeoBox = {}; // geoExpId -> [minx,miny,minz,maxx,maxy,maxz] of IfcSpace geometry (ccSpacePlacementFix)
         var _spaceFixMemo = {}; // ccSpacePlacementFix cache (placement chains, fixed count)
         var _geoReused = 0;
@@ -6577,12 +6647,19 @@ function startApp() {
         // per packed element (pkOrder) and per not-drawn note, so the main
         // thread can merge the shards back into the single-worker order.
         var _ord = null, _gpos = null, _block = 0, _curG = -1, pkOrder = null, _ndRec = null;
+        // Non-physical elements (virtual/annotation/grid): same helper as the
+        // fallback — not streamed (or dropped in the callback), stubs and
+        // 'nonRenderable' notes after the stream. Shards share one order
+        // without them (_ordIds).
+        var _np = null, _ordIds = null;
         if (_shard) {
           _ord = _ccIfcStreamOrder(api, modelID);
           if (!_ord.ok) throw new Error('shard-unsupported: ' + _ord.why);
-          _block = _ccIfcShardBlock(_ord.ids.length, _shard.n);
+          _np = _ccIfcNonPhysical(api, modelID, _ord);
+          _ordIds = _np.streamIds || _ord.ids;
+          _block = _ccIfcShardBlock(_ordIds.length, _shard.n);
           _gpos = new Map();
-          for (var _gi = 0; _gi < _ord.ids.length; _gi++) _gpos.set(_ord.ids[_gi], _gi);
+          for (var _gi = 0; _gi < _ordIds.length; _gi++) _gpos.set(_ordIds[_gi], _gi);
           pkOrder = [];
           _ndRec = { g: [], eid: [], reason: [], type: [] };
           var _ndReal = _notDrawn;
@@ -6592,6 +6669,8 @@ function startApp() {
             unseen: function() {}, result: function() { return null; }
           };
         }
+        if (!_np) _np = _ccIfcNonPhysical(api, modelID);
+        for (var _npi = 0; _npi < _np.ids.length; _npi++) _skipGeoEids[_np.ids[_npi]] = 2;
         function _shardOf(gp) { return Math.floor(gp / _block) % _shard.n; }
 
         // ── Streaming batches (only when _stream) ──
@@ -6688,6 +6767,7 @@ function startApp() {
 
         function _onIfcMesh(ifcMesh, isSpace) {
           var eid = ifcMesh.expressID;
+          if (!isSpace && _np.set[eid]) { _skippedPredecode++; return; }
           if (_scopeSet && !_scopeSet[storeyMap[eid] || '']) { _scopedOut++; return; }
           _streamCount++;
           _streamed[eid] = 1;
@@ -6771,43 +6851,67 @@ function startApp() {
             var _tP = performance.now();
             var elProps = extractProperties(api, modelID, eid);
             _tProps += performance.now() - _tP;
-            pkExpressIds.push(eid);
-            if (pkOrder) pkOrder.push(_curG);
-            pkGeoCounts.push(geoCount);
-            pkGlobalIds.push(elProps.globalId);
-            pkNames.push(elProps.name);
-            pkDescriptions.push(elProps.description);
-            pkObjectTypes.push(elProps.objectType);
-            pkIfcTypeIdx.push(_pkIntern(elProps.ifcType));
-            pkStoreyIdx.push(_pkIntern(storeyMap[eid] || ''));
-            pkMaterialIdx.push(_pkIntern(matMap[eid] || ''));
-            pkTypeId.push(elProps.typeId != null ? elProps.typeId : -1);
-            pkPredefIdx.push(elProps.predefinedType ? _pkIntern(elProps.predefinedType) : -1);
-            var _hasAxis = Object.prototype.hasOwnProperty.call(elProps, 'axis') ? 1 : 0;
-            pkHasAxis.push(_hasAxis);
-            if (_hasAxis && elProps.axis) {
-              pkAxisX.push(elProps.axis[0]); pkAxisY.push(elProps.axis[1]); pkAxisZ.push(elProps.axis[2]);
-            } else {
-              pkAxisX.push(0); pkAxisY.push(0); pkAxisZ.push(0);
-            }
+            _pkPush(eid, elProps, geoCount);
+            if (isSpace) _spaceGeoEids[eid] = true;
+          }
+        }
+        // One packed element (geoCount 0 = a stub: no meshes, decoded as such).
+        function _pkPush(eid, elProps, geoCount) {
+          pkExpressIds.push(eid);
+          if (pkOrder) pkOrder.push(_curG);
+          pkGeoCounts.push(geoCount);
+          pkGlobalIds.push(elProps.globalId);
+          pkNames.push(elProps.name);
+          pkDescriptions.push(elProps.description);
+          pkObjectTypes.push(elProps.objectType);
+          pkIfcTypeIdx.push(_pkIntern(elProps.ifcType));
+          pkStoreyIdx.push(_pkIntern(storeyMap[eid] || ''));
+          pkMaterialIdx.push(_pkIntern(matMap[eid] || ''));
+          pkTypeId.push(elProps.typeId != null ? elProps.typeId : -1);
+          pkPredefIdx.push(elProps.predefinedType ? _pkIntern(elProps.predefinedType) : -1);
+          var _hasAxis = Object.prototype.hasOwnProperty.call(elProps, 'axis') ? 1 : 0;
+          pkHasAxis.push(_hasAxis);
+          if (_hasAxis && elProps.axis) {
+            pkAxisX.push(elProps.axis[0]); pkAxisY.push(elProps.axis[1]); pkAxisZ.push(elProps.axis[2]);
+          } else {
+            pkAxisX.push(0); pkAxisY.push(0); pkAxisZ.push(0);
           }
         }
         if (!_shard) {
-          api.StreamAllMeshes(modelID, function(ifcMesh) { _onIfcMesh(ifcMesh, false); });
+          if (_np.streamIds) { if (_np.streamIds.length) api.StreamMeshes(modelID, _np.streamIds, function(ifcMesh) { _onIfcMesh(ifcMesh, false); }); }
+          else api.StreamAllMeshes(modelID, function(ifcMesh) { _onIfcMesh(ifcMesh, false); });
         } else {
           var _mine = [];
-          for (var _mi = 0; _mi < _ord.ids.length; _mi++) if (_shardOf(_mi) === _shard.k) _mine.push(_ord.ids[_mi]);
+          for (var _mi = 0; _mi < _ordIds.length; _mi++) if (_shardOf(_mi) === _shard.k) _mine.push(_ordIds[_mi]);
           if (_mine.length) api.StreamMeshes(modelID, _mine, function(ifcMesh) { _curG = _gpos.get(ifcMesh.expressID); _onIfcMesh(ifcMesh, false); });
         }
+        var _nOrd = _ordIds ? _ordIds.length : 0;
         if (_spaceIds.length && !_aux) {
           // Rooms come after every element (global positions total + j).
           var _spPos = {};
-          for (var _spj = 0; _spj < _spaceIds.length; _spj++) _spPos[_spaceIds[_spj]] = (_ord ? _ord.ids.length : 0) + _spj;
+          for (var _spj = 0; _spj < _spaceIds.length; _spj++) _spPos[_spaceIds[_spj]] = _nOrd + _spj;
           try { api.StreamMeshes(modelID, _spaceIds, function(ifcMesh) { _curG = _spPos[ifcMesh.expressID]; _onIfcMesh(ifcMesh, true); }); }
           catch(e) { console.warn('[IFC Worker] IfcSpace geometry pass failed:', e); }
         }
         _flushBatch(true);
         mark('Meshes streamed');
+        // Non-physical 'nonRenderable' notes, then the stub elements (rooms
+        // without geometry, non-physical elements) — after rooms, before the
+        // unseen pass, exactly like the fallback (shard 0 only; global
+        // positions total + rooms + j).
+        if (!_aux) {
+          var _stubBase = _nOrd + _spaceIds.length;
+          var _npNotes = _ccIfcNonPhysicalNoteIds(_np, storeyMap, _scopeSet);
+          for (var _npn = 0; _npn < _npNotes.length; _npn++) { _curG = _stubBase + _npn; _notDrawn.note(_npNotes[_npn], 'nonRenderable'); }
+          var _stubIds = _ccIfcStubIds(_spaceIds, _spaceGeoEids, _np, storeyMap, _scopeSet);
+          for (var _sti = 0; _sti < _stubIds.length; _sti++) {
+            var _tPs = performance.now();
+            var _sProps = extractProperties(api, modelID, _stubIds[_sti]);
+            _tProps += performance.now() - _tPs;
+            _curG = _stubBase + _sti;
+            _pkPush(_stubIds[_sti], _sProps, 0);
+          }
+        }
         var _unseen = null;
         if (!_shard) {
           try { _notDrawn.unseen(storeyMap, _streamed, _skipGeoEids, _scopeSet); } catch (_ndE) {}
@@ -6852,7 +6956,9 @@ function startApp() {
           ifcTypeIdx: new Int32Array(pkIfcTypeIdx),
           storeyIdx: new Int32Array(pkStoreyIdx),
           materialIdx: new Int32Array(pkMaterialIdx),
-          typeId: new Int32Array(pkTypeId),
+          // Float64, not Int32: IFC type codes run up to 2^32 (IfcSpace,
+          // IfcVirtualElement, … are above 2^31) and came out negative.
+          typeId: new Float64Array(pkTypeId),
           predefIdx: new Int32Array(pkPredefIdx),
           hasAxis: new Uint8Array(pkHasAxis),
           axisX: new Float32Array(pkAxisX), axisY: new Float32Array(pkAxisY), axisZ: new Float32Array(pkAxisZ),
@@ -6877,7 +6983,7 @@ function startApp() {
         var _geoUnique = Object.keys(_geoTable).length;
         var shardInfo = null;
         if (_shard) {
-          shardInfo = { k: _shard.k, n: _shard.n, total: _ord.ids.length, order: new Uint32Array(pkOrder),
+          shardInfo = { k: _shard.k, n: _shard.n, total: _ordIds.length, order: new Uint32Array(pkOrder),
             geoKeys: new Uint32Array(Object.keys(_geoTable).map(Number)), notes: _ndRec, unseen: _unseen,
             spaceCount: _aux ? 0 : _spaceIds.length };
           xfer.push(shardInfo.order.buffer, shardInfo.geoKeys.buffer);
@@ -6938,6 +7044,9 @@ function startApp() {
       + 'var createNotDrawnReport=' + createNotDrawnReport.toString() + ';\n'
       + 'var _ccIfcStreamOrder=' + _ccIfcStreamOrder.toString() + ';\n'
       + 'var _ccIfcShardBlock=' + _ccIfcShardBlock.toString() + ';\n'
+      + 'var _ccIfcNonPhysical=' + _ccIfcNonPhysical.toString() + ';\n'
+      + 'var _ccIfcNonPhysicalNoteIds=' + _ccIfcNonPhysicalNoteIds.toString() + ';\n'
+      + 'var _ccIfcStubIds=' + _ccIfcStubIds.toString() + ';\n'
       + 'var ccSpacePlacementFix=' + ccSpacePlacementFix.toString() + ';\n'
       + 'var extractStoreys=' + extractStoreys.toString() + ';\n'
       + 'var extractSpatialHierarchy=' + extractSpatialHierarchy.toString() + ';\n'
@@ -7130,7 +7239,9 @@ function startApp() {
         elMeshes.push(mesh); meshes.push(mesh);
       }
       _placementOffset += gc;
-      if (elMeshes.length > 0) {
+      // gc === 0: a stub element (room without geometry, non-physical
+      // element) — kept without meshes, exactly like the fallback's.
+      if (elMeshes.length > 0 || gc === 0) {
         var props = {
           expressId: eid,
           globalId: pk.globalIds[i], name: pk.names[i], description: pk.descriptions[i], objectType: pk.objectTypes[i],
@@ -7147,7 +7258,7 @@ function startApp() {
         };
         if (pk.typeId[i] !== -1) props.typeId = pk.typeId[i];
         if (pk.predefIdx && pk.predefIdx[i] !== -1) props.predefinedType = _pkStr(pk.predefIdx[i]);
-        if (msg.openingRecs && msg.openingRecs[eid]) { var _wOpen = _ccOpeningsFlat(msg.openingRecs[eid]); if (_wOpen) props.openings = _wOpen; }
+        if (gc > 0 && msg.openingRecs && msg.openingRecs[eid]) { var _wOpen = _ccOpeningsFlat(msg.openingRecs[eid]); if (_wOpen) props.openings = _wOpen; }
         if (pk.hasAxis[i]) {
           var ax = pk.axisX[i], ay = pk.axisY[i], az = pk.axisZ[i];
           props.axis = (ax === 0 && ay === 0 && az === 0) ? null : [ax, ay, az];
@@ -7439,7 +7550,7 @@ function startApp() {
       expressIds: new Uint32Array(N), geoCounts: new Uint32Array(N),
       globalIds: new Array(N), names: new Array(N), descriptions: new Array(N), objectTypes: new Array(N),
       ifcTypeIdx: new Int32Array(N), storeyIdx: new Int32Array(N), materialIdx: new Int32Array(N),
-      typeId: new Int32Array(N), predefIdx: new Int32Array(N), hasAxis: new Uint8Array(N),
+      typeId: new Float64Array(N), predefIdx: new Int32Array(N), hasAxis: new Uint8Array(N),
       axisX: new Float32Array(N), axisY: new Float32Array(N), axisZ: new Float32Array(N),
       placementGeoIds: new Uint32Array(nPl), placementHasColor: new Uint8Array(nPl),
       placementColors: new Float32Array(nPl * 4), placementTransforms: new Float64Array(nPl * 16),
@@ -10591,6 +10702,8 @@ function startApp() {
         // in a room as a "clash". Opt in with rules.includeSpaces (set when the
         // user explicitly asks to clash against rooms/spaces, e.g. space-intrusion).
         if (!rules.includeSpaces && el.props && el.props.ifcType === 'IfcSpace') return;
+        // Virtual elements, annotations and grids are never physical.
+        if (_ccIsNonPhysicalEl(el)) return;
         // Suggestion groups the user (or a remembered project choice) left
         // out — rules.roleChoices[group] === 'exclude' (counted, reported).
         if (typeof _ccRoleExcluded === 'function' && _ccRoleExcluded(el, rules)) return;
@@ -10733,6 +10846,7 @@ function startApp() {
         if (!el.box) return;
         if (exTypes && el.props && exTypes.indexOf(el.props.ifcType)!==-1) return;
         if (!rules.includeSpaces && el.props && el.props.ifcType === 'IfcSpace') return;
+        if (_ccIsNonPhysicalEl(el)) return;
         if (typeof _ccRoleExcluded === 'function' && _ccRoleExcluded(el, rules)) return;
         if (modelIndexOf[m.id] === undefined) { modelIndexOf[m.id] = modelOrder.length; modelOrder.push(m); }
         items.push({el:el, m:m});
@@ -21120,7 +21234,7 @@ function startApp() {
           (m.elements || []).forEach(function(el) {
             if (el === e.a || el === e.b || !el.box || !el.meshes || !el.meshes.length || _ccIsSpaceEl(el)) return;
             var t = el.props && el.props.ifcType;
-            if (t === 'IfcOpeningElement' || t === 'IfcOpeningStandardCase' || t === 'IfcVirtualElement') return;
+            if (t === 'IfcOpeningElement' || t === 'IfcOpeningStandardCase' || _ccIsNonPhysicalEl(el)) return;
             if (!el.box.intersectsBox(clip)) return;
             ctxEls.push({ el: el, d: el.box.distanceToPoint(pt) });
           });
@@ -24613,8 +24727,6 @@ function startApp() {
     };
   }
 
-  // Non-physical for the 2D floor-plan cut (poché) — IfcSpace included.
-  var _NON_PHYSICAL_TYPES = {IfcSpace:true, IfcVirtualElement:true, IfcAnnotation:true, IfcGrid:true};
   // GLB joins: strip geometry of non-physical types, EXCEPT IfcSpace — rooms
   // keep their volume and get the shared hidden-by-default space look, same
   // as the direct IFC paths (_ccMarkSpaceMesh).

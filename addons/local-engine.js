@@ -677,6 +677,7 @@ clashcontrol-engine --install</pre>
   // Engine-frame origin of the last payload (index.html _ccChooseWorldOrigin):
   // coordinates are sent relative to it (f64 subtract before serialising) and
   // reported points are shifted back in _clashFromEngineResult.
+  var _NON_PHYSICAL = { IfcVirtualElement: 1, IfcAnnotation: 1, IfcGrid: 1 };
   var _payloadOrigin = [0, 0, 0];
   function _serializeForLocalEngine(models, rules) {
     var elements = [];
@@ -690,6 +691,8 @@ clashcontrol-engine --install</pre>
         // "exact" engine is never less filtered than the browser one while the
         // Python side doesn't yet honor rules.includeSpaces itself.
         if (!rules.includeSpaces && el.props && el.props.ifcType === 'IfcSpace') return;
+        // Never physical (own copy of the core's _ccIsNonPhysicalEl rule).
+        if (el.props && _NON_PHYSICAL[el.props.ifcType]) return;
         // Suggestion groups left out by rules.roleChoices (zones, provisions,
         // duplicates …) — the same core rule the browser sweeps apply.
         if (typeof window !== 'undefined' && typeof window._ccRoleExcluded === 'function' && window._ccRoleExcluded(el, rules)) return;
