@@ -280,12 +280,15 @@ try {
     const sm = window.ClashControl.review.summary();
     const grp = sm.items.find((it) => it.key === key);
     const btn = hdr.querySelector('button[aria-expanded]');
+    const shownNow = () => grp.ids.filter((id) => document.querySelector('.cc-issue-panel [data-item-id="' + id + '"]')).length;
+    // wait for the outcome itself (a busy machine can take longer than a frame or two to render)
+    const until = async (ok) => { for (let t = 0; t < 30 && !ok(); t++) await new Promise((r) => setTimeout(r, 100)); };
     btn.click();
-    await new Promise((r) => setTimeout(r, 300));
-    const stillShown = grp.ids.filter((id) => document.querySelector('.cc-issue-panel [data-item-id="' + id + '"]')).length;
+    await until(() => shownNow() === 0);
+    const stillShown = shownNow();
     btn.click();
-    await new Promise((r) => setTimeout(r, 300));
-    const back = grp.ids.filter((id) => document.querySelector('.cc-issue-panel [data-item-id="' + id + '"]')).length;
+    await until(() => shownNow() > 0);
+    const back = shownNow();
     return { stillShown, back };
   });
   if (coll.stillShown !== 0 || coll.back === 0) fail('collapse/expand a group: ' + JSON.stringify(coll));
@@ -307,6 +310,29 @@ try {
   });
   if (pin.atTop !== 0 || !pin.pinned || !pin.atViewportTop || !pin.hasHeader) fail('pinned group header: ' + JSON.stringify(pin));
   else ok('the current group header stays pinned at the top while scrolling (none at the very top)');
+
+  // ── D (deny) → the next clash ON SCREEN, and the camera shows that one ──
+  // (the reducer used to pick "next" from every non-denied clash and fly
+  // there 100 ms after the list's own advance, hidden ones included)
+  const deny = await page.evaluate(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const sc = document.querySelector('.cc-issue-panel [data-item-id]').closest('[style*="overflow"]') || document.querySelector('.cc-issue-panel');
+    sc.scrollTop = 0; sc.dispatchEvent(new Event('scroll')); await wait(150);
+    const rows = () => [...document.querySelectorAll('.cc-issue-panel [data-item-id]')].map((r) => r.dataset.itemId);
+    const first = rows()[0], second = rows()[1];
+    window._ccDispatch({ t: 'ACTIVE', id: first }); await wait(200);
+    const marks = []; const orig = window._ccShowActiveClashMarker;
+    window._ccShowActiveClashMarker = function(pt) { marks.push([pt[0], pt[1], pt[2]]); return orig && orig.apply(this, arguments); };
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', bubbles: true }));
+    await wait(600);
+    window._ccShowActiveClashMarker = orig;
+    const st = window._ccLatestState, act = st.clashes.find((c) => c.id === st.activeId);
+    return { first, second, active: st.activeId, firstStatus: (st.clashes.find((c) => c.id === first) || {}).status,
+      activeShown: rows().indexOf(st.activeId) !== -1, lastMark: marks[marks.length - 1] || null, activePoint: act && act.point ? [act.point[0], act.point[1], act.point[2]] : null };
+  });
+  if (deny.firstStatus !== 'denied' || deny.active !== deny.second || !deny.activeShown || !deny.lastMark || JSON.stringify(deny.lastMark) !== JSON.stringify(deny.activePoint)) fail('deny → next: ' + JSON.stringify(deny));
+  else ok('D denies and moves to the next row on screen; the camera marker is that clash');
 
   console.log('SUMMARY ' + JSON.stringify({ dom: doms, noop, status, save, select, key, projWrites }));
 } catch (e) {

@@ -246,6 +246,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ---
 
 ## Recently completed (details in git history)
+- **2026-10-24 — Confirm / Deny → next:** UPD_CLASH no longer picks a "next" clash or flies the camera (it chose from every non-denied clash, hidden ones included, 100 ms after the list's own advance — and on statuses arriving from sync / the AI bridge); the list's `_ccAdvanceToNext` advances in the order on screen and steps back from the last row.
 - **2026-10-24 — geo cache after props + native seeds:** worker-path loads wrote the geo cache without psets and the lazy-props patch missed it when the props won the race → `hasPsets:false` → every reopen re-parsed; now one write after the props merge, `pp:1` marks a props-complete cache (models without psets restore too). `addons/tauri-bridge.js` uses the per-pair seeds (`spec.sd`) like the web worker pool (`tests/tauri-bridge.test.js`).
 - **2026-10-23 — non-physical elements:** both IFC loaders share `_ccIfcNonPhysical`/`_ccIfcStubIds` (stream order without them, stubs incl. rooms without geometry, notes); `_ccIsNonPhysicalEl` in both sweeps + local engine; grids/annotations stay hidden (web-ifc yields no mesh for curve grids/2D annotations). Worker `typeId` was Int32 (codes > 2^31 negative) → Float64. INTERNALS §21.49.
 - **2026-10-24 — narrow phase (branch `exact-predicates`):** WASM built with opt-level 3 + faster BVH build (same tree, old build kept as a test reference), refinement triangle-box prefilter, stamped `_ccMeshTopo` tables, no JS probe pass — every result identical. Rejected with numbers: exact orient3d (kernel vs exact disagreements all < 1 µm, below tau — `tests/kernel-degenerate-bound.test.js`), SAH BVH (30x fewer triangle tests but the build cost made first runs slower), nearest-first min distance (not answer-identical). INTERNALS §21.48.
@@ -287,7 +288,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 **Clash review (2026-10-23):** snapshot of a clash whose element is hidden by the user still shows it (pictures ignore on-screen visibility by design); `rules.hideBuckets` has no settings UI yet (bucket bar is per run); the overview pages 60 cards at a time; facet chips cap at 8 values per facet before "+N more"; storey normalisation reads mm vs m from the largest |elevation| per model (heuristic).
 
-**Clashes:** opening data is missing from geo caches written before 2026-09-29 (re-import to get it); keyboard deny-next can still land on a hidden provided-opening clash; legacy clashes without `_sevSource` keep their stored severity.
+**Clashes:** opening data is missing from geo caches written before 2026-09-29 (re-import to get it); ~~keyboard deny-next can still land on a hidden provided-opening clash~~ (fixed 2026-10-24: the reducer no longer picks a next clash or flies; the list's `_ccAdvanceToNext` follows the order on screen, `tests/browser/action-cost.mjs`); legacy clashes without `_sevSource` keep their stored severity.
 
 **Reducer decomposition:** only slice 1 done; next is Area 2 (cache invalidation).
 

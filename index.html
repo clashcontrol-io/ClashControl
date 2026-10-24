@@ -2472,74 +2472,40 @@ function startApp() {
         })
       });
       case A.UPD_CLASH:
+        // Deny / Confirm change data only. Moving on to the next clash (and
+        // flying the camera there) is the clash list's job
+        // (_ccPrepareAdvance / _ccAdvanceToNext, called by every Confirm /
+        // Deny button and the C / D keys): only it knows the order on screen.
+        // The reducer used to pick "next" from every non-denied clash —
+        // hidden buckets and filtered-out clashes included — and fly there
+        // 100 ms later, so the camera could show a clash that is not in the
+        // list (and a status change arriving from a teammate's sync or the
+        // AI bridge moved this user's camera).
         if(a.u&&a.u.status==='denied'){
           var dClash=s.clashes.find(function(c){return c.id===a.id;});
-          if(dClash) _saveDeniedClash(dClash);
-          var dAllVisible=s.clashes.filter(function(c){return c.status!=='denied';});
-          var _dSortArr=Array.isArray(s.clashSortBy)?s.clashSortBy:(s.clashSortBy&&s.clashSortBy!=='none'?[s.clashSortBy]:[]);
-          var dSortFn=_dSortArr.length?function(a,b){for(var _i=0;_i<_dSortArr.length;_i++){var _f=SORT_FNS[_dSortArr[_i]];if(!_f)continue;var _r=_f(a,b);if(_r!==0)return _r;}return 0;}:null;
-          if(dSortFn) dAllVisible=dAllVisible.slice().sort(dSortFn);
-          var dVisible=dAllVisible.filter(function(c){return c.id!==a.id;});
           if(dClash){
-            // Bug 7: dVisible used to already exclude dClash, so
-            // dVisible.indexOf(dClash) was always -1 and Deny->Next always
-            // jumped to the first clash (dIdx forced to 0) instead of the
-            // actual next one. Find dClash's position in the list that
-            // still contains it (dAllVisible), then step to the item right
-            // after it; fall back to the new last item if it was last.
-            var dOrigIdx=dAllVisible.indexOf(dClash);
-            var dNext=(dOrigIdx>=0 && dOrigIdx+1<dAllVisible.length) ? dAllVisible[dOrigIdx+1] : (dVisible.length?dVisible[dVisible.length-1]:null);
-            var dNextId=dNext?dNext.id:null;
-            if(dNext) setTimeout(function(){
-              var dRefs=_itemRefs(dNext);
-              if(dRefs.length&&_ghostOthers) _ghostOthers(dRefs);
-              if(dRefs.length&&_highlightRefs) _highlightRefs(dRefs,false);
-              if(dNext.point&&window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(dNext.point);
-              if(_flyToElements&&dRefs.length) _flyToElements(dRefs, dNext.point);
-            },100);
-            return Object.assign({},s,{clashes:s.clashes.map(function(c){return c.id===a.id?Object.assign({},c,{status:'denied'}):c;}),activeId:dNextId});
+            _saveDeniedClash(dClash);
+            return Object.assign({},s,{clashes:s.clashes.map(function(c){return c.id===a.id?Object.assign({},c,{status:'denied'}):c;})});
           }
         }
         if(a.u&&a.u.status==='confirmed'){
-          var cClash=null;
-          var remainClashes=s.clashes.filter(function(c){
-            if(c.id===a.id){cClash=c;return false;}
-            return true;
-          });
+          var cClash=s.clashes.find(function(c){return c.id===a.id;});
           if(cClash){
             // Bug 6: full element identity (globalIdA/B, uniqueIdA/B,
             // revitIdA/B, storey, ...) via the shared helper, so a
             // confirm-created issue exports <Components> in BCF just like
             // a manually-created one.
             var newIssue=_ccBuildConfirmIssue(cClash);
-            var _cSortArr=Array.isArray(s.clashSortBy)?s.clashSortBy:(s.clashSortBy&&s.clashSortBy!=='none'?[s.clashSortBy]:[]);
-            var cSortFn=_cSortArr.length?function(a,b){for(var _i=0;_i<_cSortArr.length;_i++){var _f=SORT_FNS[_cSortArr[_i]];if(!_f)continue;var _r=_f(a,b);if(_r!==0)return _r;}return 0;}:null;
-            var sortedRemain = cSortFn ? remainClashes.slice().sort(cSortFn) : remainClashes;
-            var clashIdx = cSortFn ? sortedRemain.findIndex(function(c2){
-              return cSortFn(c2, cClash) >= 0;
-            }) : s.clashes.indexOf(cClash);
-            if(clashIdx<0) clashIdx=0;
-            var nextClash = sortedRemain[Math.min(clashIdx, sortedRemain.length-1)] || null;
-            var nextId = nextClash ? nextClash.id : null;
-            if(nextClash) setTimeout(function(){
-              var nRefs=_itemRefs(nextClash);
-              if(nRefs.length&&_ghostOthers) _ghostOthers(nRefs);
-              if(nRefs.length&&_highlightRefs) _highlightRefs(nRefs,false);
-              if(nextClash.point&&window._ccShowActiveClashMarker) window._ccShowActiveClashMarker(nextClash.point);
-              if(_flyToElements&&nRefs.length) _flyToElements(nRefs, nextClash.point);
-            },100);
             // Bug 4: keep the confirmed clash in state.clashes (status
             // 'confirmed', linked to the new issue) instead of deleting
             // it. Deleting it meant the next detection run's reconciliation
             // never saw a prior record for that element pair, so the same
             // physical clash came back as brand-new ("new") even though
-            // its issue still existed. remainClashes/nextId above are only
-            // used to pick where the UI navigates next -- confirmed
-            // clashes are "handled", so the list still advances past them.
+            // its issue still existed.
             var confirmedClashes=s.clashes.map(function(c){
               return c.id===a.id ? Object.assign({},c,{status:'confirmed',linkedIssueId:newIssue.id}) : c;
             });
-            return Object.assign({},s,{clashes:confirmedClashes,issues:s.issues.concat([newIssue]),activeId:nextId});
+            return Object.assign({},s,{clashes:confirmedClashes,issues:s.issues.concat([newIssue])});
           }
         }
         return Object.assign({},s,{clashes:s.clashes.map(function(c){
@@ -34530,11 +34496,16 @@ function startApp() {
     };
     window._ccAdvanceToNext = function(currentId) {
       if (!flatItems.length) return;
+      // The item after the handled one in the order on screen. Called right
+      // after the status dispatch (C / D keys: the list still holds the
+      // handled item) or after the list re-rendered (buttons: a now-hidden
+      // item is gone and its slot holds the next one). Past the end: the
+      // item before it.
       var idx = window._ccAdvanceIdx != null ? window._ccAdvanceIdx : 0;
-      if (idx >= flatItems.length) idx = flatItems.length - 1;
       if (flatItems[idx] && flatItems[idx].id === currentId) idx++;
-      if (idx >= flatItems.length) idx = Math.max(0, flatItems.length - 1);
-      if (idx < 0 || idx >= flatItems.length || (flatItems[idx] && flatItems[idx].id === currentId)) return;
+      if (idx >= flatItems.length) idx = flatItems.length - 1;
+      if (flatItems[idx] && flatItems[idx].id === currentId) idx--;
+      if (idx < 0 || idx >= flatItems.length) return;
       var nxt = flatItems[idx];
       d({t:A.ACTIVE, id:nxt.id});
       var hRefs2 = _itemRefs(nxt);
