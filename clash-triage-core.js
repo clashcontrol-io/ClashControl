@@ -121,6 +121,12 @@
     var dy = Number(bb.dy), h = Math.max(Number(bb.dx) || 0, Number(bb.dz) || 0);
     return dy > 0 && dy >= 2 * h;               // scene space is Y-up
   }
+  // The one facet value that reads the model names (a rename patches only it).
+  /** @param {any} c @param {(id: any) => any} [modelName] */
+  function modelPairValue(c, modelName) {
+    var mn = modelName || function(id) { return id; };
+    return _pair(mn(c.modelAId), mn(c.modelBId || c.modelAId), ' ↔ ');
+  }
   // ctx: { severity(c), bucket(c), storey(modelId, name), modelName(id), trade(c, side) }
   function facetValues(c, ctx) {
     ctx = ctx || {};
@@ -152,7 +158,7 @@
       severity: sev,
       extent: ext,
       storey: stA || stB || '',
-      modelPair: _pair(mn(c.modelAId), mn(c.modelBId || c.modelAId), ' ↔ '),
+      modelPair: modelPairValue(c, mn),
       trade: _pair(tA || 'other', tB || 'other', ' × '),
       typePair: _pair(_nice(c.elemAType), _nice(c.elemBType), ' × '),
       status: c.status || 'open',
@@ -317,6 +323,7 @@
     FACETS: FACETS,
     SEV_RANK: SEV_RANK,
     facetValues: facetValues,
+    modelPairValue: modelPairValue,
     indexItems: indexItems,
     applyFacets: applyFacets,
     matchesFacets: matchesFacets,

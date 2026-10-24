@@ -263,7 +263,8 @@ test('UI: full re-run + hide-provided toggles, list notice, row pills — all th
   }
   // provided-opening clashes are their own review bucket, counted in the bucket bar
   assert.match(src, /provided: n \+ ' ' \+ _cc_t\('opening\.passThrough', 'pass through provided openings'\)/);
-  assert.match(src, /var _tmR = isClashTab \? _ccTriageModel\(s\) : null;/);
+  assert.match(src, /var tmAll = _ccTriageModel\(s\);/);
+  assert.match(src, /var _tmR = isClashTab \? tmAll : null;/);
   assert.match(require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'clash-classification-core.js'), 'utf8'), /if \(c\.opening === 'provided'\) return 'provided';/);
   assert.match(src, /showProvided:false/);
   // pill colours come from tokens, not hex

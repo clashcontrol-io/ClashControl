@@ -2323,6 +2323,26 @@ function startApp() {
     // Core script failed to load: keep the list usable with a flat guess.
     return c.type === 'hard' ? 'major' : (c.type === 'duplicate' || c.type === 'contact') ? 'info' : 'minor';
   }
+  // The 3D clash markers read, per clash and in order: id, point, cluster
+  // key (_ccClusterKeyFor) and the effective severity (colour). Two clash
+  // arrays that agree on exactly that draw the same markers (§21.54).
+  function _ccMarkerClashesSame(a, b) {
+    if (!a || !b || a.length !== b.length) return false;
+    var keyFor = window._ccClusterKeyFor;
+    for (var i = 0; i < a.length; i++) {
+      var x = a[i], y = b[i];
+      if (x === y) continue;
+      if (!x || !y || x.id !== y.id) return false;
+      var px = x.point, py = y.point;
+      if (px !== py) {
+        if (!px || !py || px.length !== py.length) return false;
+        for (var j = 0; j < px.length; j++) if (px[j] !== py[j]) return false;
+      }
+      if (keyFor && keyFor(x) !== keyFor(y)) return false;
+      if ((x.aiSeverity || _ccDeterministicSeverity(x)) !== (y.aiSeverity || _ccDeterministicSeverity(y))) return false;
+    }
+    return true;
+  }
   function _clearElCaches(model) {
     _bvhLRURemoveModel(model);
     if (model && model.id && typeof _pairCacheClearForModel === 'function') {
@@ -2341,7 +2361,11 @@ function startApp() {
       if (_ccUndoEntry) _ccPushUndoable(_ccUndoEntry);
     }
     switch(a.t) {
-      case A.ADD_MODEL:   var _am=a.v; if(s.modelMeta){var _mm=s.modelMeta.find(function(m){return m.id===_am.id});if(_mm){if(_mm.visible===false)_am=Object.assign({},_am,{visible:false});if(_mm.discipline)_am=Object.assign({},_am,{discipline:_mm.discipline});if(_mm.color)_am=Object.assign({},_am,{color:_mm.color});if(_mm.tag)_am=Object.assign({},_am,{tag:_mm.tag});if(_mm.georef)_am=Object.assign({},_am,{georef:_mm.georef});}}
+      case A.ADD_MODEL:   var _am=a.v;
+        // Every model carries an explicit boolean `visible` (restore paths built
+        // the model without it; persisted modelMeta then saved `undefined`).
+        if(_am && _am.visible!==true && _am.visible!==false) _am=Object.assign({},_am,{visible:_am.visible!==false});
+        if(s.modelMeta){var _mm=s.modelMeta.find(function(m){return m.id===_am.id});if(_mm){if(_mm.visible===false)_am=Object.assign({},_am,{visible:false});if(_mm.discipline)_am=Object.assign({},_am,{discipline:_mm.discipline});if(_mm.color)_am=Object.assign({},_am,{color:_mm.color});if(_mm.tag)_am=Object.assign({},_am,{tag:_mm.tag});if(_mm.georef)_am=Object.assign({},_am,{georef:_mm.georef});}}
         // Race-safe model dedup.  See docs/INTERNALS.md § 21.32
         var _dupIdx = -1;
         for (var _di=0; _di<s.models.length; _di++) {
@@ -6153,16 +6177,162 @@ function startApp() {
   // sources (class / storey / temp) — union them here. Keys: modelId_eid
   // for class+storey, bare eid for temp (it is model-agnostic).
   var _ccBatchHidden = { class: {}, storey: {}, temp: {} };
-  function _ccBatchApplyVisibility(root) {
-    _ccForEachBatchInstance(root, function(b, i, eid, mid) {
-      var k = (mid || '') + '_' + eid;
-      // temp (hide hotkey) supports both a bare-eid entry (any model — set
-      // by a caller with no modelId, e.g. a legacy/ambiguous selection) and
-      // a model-scoped `k` entry, same composite-key convention as class/
-      // storey above — see window._ccTempHide.
-      var hidden = !!(_ccBatchHidden.class[k] || _ccBatchHidden.storey[k] || _ccBatchHidden.temp[eid] || _ccBatchHidden.temp[k]);
-      try { b.setVisibleAt(i, !hidden); } catch (_) {}
+  // One slot's visibility = the union of every hide source. temp (hide
+  // hotkey) supports both a bare-eid entry (any model — set by a caller with
+  // no modelId, e.g. a legacy/ambiguous selection) and a model-scoped `k`
+  // entry, same composite-key convention as class/storey above — see
+  // window._ccTempHide. A slot split out as a real mesh while ghosted
+  // (b.userData._ccGhostSplit) stays hidden underneath it.
+  function _ccBatchApplySlot(b, i, eid, mid) {
+    var k = (mid || '') + '_' + eid;
+    var gs = b.userData._ccGhostSplit;
+    var hidden = !!(_ccBatchHidden.class[k] || _ccBatchHidden.storey[k] || _ccBatchHidden.temp[eid] || _ccBatchHidden.temp[k] || (gs && gs.has(i)));
+    try { b.setVisibleAt(i, !hidden); } catch (_) {}
+  }
+  // eids (optional): only the slots of these expressIds (any type; matched
+  // like an object key) — a temp hide / unhide touches what it changes, not
+  // every batched instance in the federation (docs/INTERNALS.md §21.54).
+  function _ccBatchApplyVisibility(root, eids) {
+    if (!eids) {
+      _ccForEachBatchInstance(root, function(b, i, eid, mid) { _ccBatchApplySlot(b, i, eid, mid); });
+      return;
+    }
+    if (!root || !eids.length) return;
+    var keys = [], seen = Object.create(null);
+    for (var e0 = 0; e0 < eids.length; e0++) { var k0 = String(eids[e0]); if (!seen[k0]) { seen[k0] = true; keys.push(k0); } }
+    _ccBatchesUnder(root).forEach(function(b) {
+      var slots = _ccBatchSlots(b), ids = b.userData.batchExprIds || [];
+      var mid = b.parent && b.parent.userData ? b.parent.userData.modelId : null;
+      for (var e = 0; e < keys.length; e++) {
+        var list = slots.get(keys[e]);
+        if (list) for (var j = 0; j < list.length; j++) _ccBatchApplySlot(b, list[j], ids[list[j]], mid);
+      }
     });
+  }
+
+  // expressId → ifcType of one model (render-style glass detection), built
+  // once per elements array — only for the styles that read it.
+  var _ccEidTypeMaps = new WeakMap();
+  var _CC_GREY_CC = new THREE.Color(0xcccccc);
+  function _ccEidTypeMap(m) {
+    var els = m.elements || [];
+    var hit = _ccEidTypeMaps.get(els);
+    if (hit && hit.n === els.length) return hit.map;
+    var map = new Map();
+    els.forEach(function(el){ if (el.props && el.props.ifcType) map.set(String(el.expressId), el.props.ifcType); });
+    _ccEidTypeMaps.set(els, { n: els.length, map: map });
+    return map;
+  }
+
+  // ── Per-model mesh lookup (docs/INTERNALS.md §21.54) ─────────────────
+  // expressId → scene meshes, one index per top-level child of S.mg (a model
+  // group), in depth-first traversal order — so a lookup returns exactly what
+  // `S.mg.traverse` + an expressId test found, without walking the scene.
+  // Built when the model group is created (the [s.models] scene effect) and
+  // dropped with it; it follows the group by itself: a ghost split-out mesh
+  // appended to the group (userData._splitOut) is added / removed in place,
+  // any other child added or removed anywhere inside marks the index dirty
+  // and the next lookup rebuilds it (one walk of that model). Known blind
+  // spot (same as the pick index): a mesh that later gets mesh children.
+  // Keys are String(expressId) (object-key semantics); callers that compared
+  // strictly still compare strictly.
+  var _ccMeshIdx = new WeakMap();
+  function _ccMeshIndexBuild(root) {
+    var old = _ccMeshIdx.get(root);
+    if (old) old.detach();
+    var idx = { gen: old ? old.gen + 1 : 1, dirty: false, byEid: new Map(), multi: [], conts: [] };
+    function add(o) {
+      var eid = o.userData && o.userData.expressId;
+      if (eid == null) return;
+      var k = String(eid), a = idx.byEid.get(k);
+      if (a) a.push(o); else idx.byEid.set(k, [o]);
+    }
+    function onAdd(e) {
+      if (idx.dirty) return;
+      var c = e.child;
+      if (this === root && c && c.isMesh && c.userData && c.userData._splitOut && !c.children.length) { add(c); return; }
+      idx.dirty = true;
+    }
+    function onRemove(e) {
+      if (idx.dirty) return;
+      var c = e.child;
+      if (this === root && c && c.isMesh && c.userData && c.userData._splitOut && !c.children.length) {
+        var a = c.userData.expressId != null ? idx.byEid.get(String(c.userData.expressId)) : null;
+        var at = a ? a.indexOf(c) : -1;
+        if (at !== -1) { a.splice(at, 1); if (!a.length) idx.byEid.delete(String(c.userData.expressId)); }
+        return;
+      }
+      idx.dirty = true;
+    }
+    root.traverse(function(o) {
+      if (o.isMesh) {
+        add(o);
+        if ((o.userData && o.userData._isCCBatch) || o.isInstancedMesh) idx.multi.push(o);
+      }
+      if (o === root || !o.isMesh) {
+        o.addEventListener('childadded', onAdd);
+        o.addEventListener('childremoved', onRemove);
+        idx.conts.push(o);
+      }
+    });
+    idx.detach = function() {
+      idx.conts.forEach(function(o) { o.removeEventListener('childadded', onAdd); o.removeEventListener('childremoved', onRemove); });
+      idx.conts = [];
+    };
+    _ccMeshIdx.set(root, idx);
+    return idx;
+  }
+  function _ccMeshIndexDrop(root) {
+    var idx = root && _ccMeshIdx.get(root);
+    if (idx) { idx.detach(); _ccMeshIdx.delete(root); }
+  }
+  function _ccMeshIndexFor(root) {
+    var idx = _ccMeshIdx.get(root);
+    return (!idx || idx.dirty) ? _ccMeshIndexBuild(root) : idx;
+  }
+  // The roots to look in: every top-level child of the scene model root
+  // (S.mg, marked userData._ccModelRoot), else the object itself.
+  function _ccMeshRoots(root) {
+    if (!root) return [];
+    return root.userData && root.userData._ccModelRoot ? root.children : [root];
+  }
+  // Scene meshes with this expressId under root, in traversal order (a fresh
+  // array; [] when none).
+  function _ccMeshesByEid(root, eid) {
+    var out = [];
+    if (eid == null) return out;
+    var roots = _ccMeshRoots(root), k = String(eid);
+    for (var r = 0; r < roots.length; r++) {
+      var a = _ccMeshIndexFor(roots[r]).byEid.get(k);
+      if (a) for (var i = 0; i < a.length; i++) out.push(a[i]);
+    }
+    return out;
+  }
+  // BatchedMeshes (+ InstancedMeshes with `multi`) under root, traversal order.
+  function _ccBatchesUnder(root, multi) {
+    if (!root) return [];
+    if (root.userData && root.userData._isCCBatch) return [root];
+    var roots = _ccMeshRoots(root), out = [];
+    for (var r = 0; r < roots.length; r++) {
+      _ccMeshIndexFor(roots[r]).multi.forEach(function(o) { if (multi || (o.userData && o.userData._isCCBatch)) out.push(o); });
+    }
+    return out;
+  }
+  // String(expressId) → slot indices of one BatchedMesh (or instance indices
+  // of an InstancedMesh), built once per id array.
+  var _ccSlotIdx = new WeakMap();
+  function _ccBatchSlots(b) {
+    var ids = (b.userData._isCCBatch ? b.userData.batchExprIds : b.userData.instanceExprIds) || [];
+    var hit = _ccSlotIdx.get(b);
+    if (hit && hit.ids === ids && hit.n === ids.length) return hit.map;
+    var map = new Map();
+    for (var i = 0; i < ids.length; i++) {
+      if (ids[i] == null) continue;
+      var k = String(ids[i]), a = map.get(k);
+      if (a) a.push(i); else map.set(k, [i]);
+    }
+    _ccSlotIdx.set(b, { ids: ids, n: ids.length, map: map });
+    return map;
   }
 
   // Module-level material cache shared across all IFC + GLB loads. Same RGBA
@@ -8973,8 +9143,13 @@ function startApp() {
     if (!changed.length) return o;
     var tcore = window._ccClashTriageCore;
     if (!o._visPos) { o._visPos = new Map(); o.visible.forEach(function(c, vi) { o._visPos.set(c.id, vi); }); }
-    var bucketOf = new Map(o.bucketOf), counts = Object.assign({}, o.counts), zoneGroups = Object.assign({}, o.zoneGroups);
-    var visible = o.visible.slice(), index = o.index.slice(), rowById = new Map(o.rowById);
+    // For the live state (the one being rendered) the big per-clash
+    // structures are updated in place — the model it replaces is retired
+    // with it (§21.54). Any other caller (an older state from a stale
+    // closure) gets copies, so the live model is never rewritten for it.
+    var live = !!(window._ccLatestState && window._ccLatestState.clashes === next);
+    var bucketOf = live ? o.bucketOf : new Map(o.bucketOf), counts = Object.assign({}, o.counts), zoneGroups = Object.assign({}, o.zoneGroups);
+    var visible = live ? o.visible : o.visible.slice(), index = live ? o.index : o.index.slice(), rowById = live ? o.rowById : new Map(o.rowById);
     var fctx = Object.assign({}, o.fctx, { bucket: function(c) { return bucketOf.get(c.id) || 'review'; } });
     changed.forEach(function(ci) {
       var c0 = prev[ci], c = next[ci];
@@ -8989,46 +9164,89 @@ function startApp() {
       if (tcore && index[vi]) { var row = tcore.indexItems([c], fctx)[0]; index[vi] = row; rowById.set(c.id, row); }
     });
     return { bucketOf: bucketOf, counts: counts, total: o.total, visible: visible, ctx: ctx, fctx: fctx,
-      storeyNorm: o.storeyNorm, index: index, rowById: rowById, visibleModels: o.visibleModels, zoneGroups: zoneGroups, _visPos: o._visPos };
+      storeyNorm: o.storeyNorm, index: index, rowById: rowById, visibleModels: o.visibleModels, zoneGroups: zoneGroups, _visPos: o._visPos, _visKey: o._visKey };
   }
+  // Exactly what the triage model reads from the models (visibility, name,
+  // storeys, storey unit) — a model edit that changes none of it (colour,
+  // discipline, storey hide, lazy props …) keeps the model (§21.54).
+  function _ccTriageModelsSig(s) {
+    return (s.models || []).map(function(m) {
+      return [m.id, m.visible !== false, m.name || m.id, m.storeyData, m.storeyData && m.storeyData.length ? _ccStoreyUnitScale(m, s.prefs) : 0];
+    });
+  }
+  function _ccTriageSigSame(a, b) {
+    if (!a || !b || a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) for (var j = 0; j < 5; j++) if (a[i][j] !== b[i][j]) return false;
+    return true;
+  }
+  var _ccTriageRowCache = new WeakMap(); // clash → { row, bucketOf, norm, nA, nB }
   function _ccTriageModel(s) {
     var L = _ccTriageLast;
-    if (L && L.clashes === s.clashes && L.rules === s.rules && L.models === s.models) return L.out;
-    var inc = (L && L.rules === s.rules && L.models === s.models) ? _ccTriageIncremental(L, s) : null;
-    if (inc) { _ccTriageLast = { clashes: s.clashes, rules: s.rules, models: s.models, out: inc }; return inc; }
+    if (L && L.models === s.models && L.clashes === s.clashes && L.rules === s.rules && L.prefs === s.prefs) return L.out;
+    var msig = _ccTriageModelsSig(s);
+    var sameModels = !!(L && _ccTriageSigSame(L.msig, msig));
+    if (sameModels && L.clashes === s.clashes && L.rules === s.rules) {
+      _ccTriageLast = { clashes: s.clashes, rules: s.rules, models: s.models, prefs: s.prefs, msig: msig, out: L.out };
+      return L.out;
+    }
+    var inc = (sameModels && L.rules === s.rules) ? _ccTriageIncremental(L, s) : null;
+    if (inc) { _ccTriageLast = { clashes: s.clashes, rules: s.rules, models: s.models, prefs: s.prefs, msig: msig, out: inc }; window._ccListPerfCounters.triageInc++; return inc; }
+    window._ccListPerfCounters.triageFull++;
     var tcore = window._ccClashTriageCore, ccore = window._ccClashClassificationCore;
     var ctx = _ccTriageCtx(s.clashes || []);
-    var vis = {}, names = {}, stE = [];
+    // Only the models changed (§21.54): the buckets (clash + rules), the
+    // storey normaliser (ids, storeys, units) and every row whose inputs are
+    // unchanged are reused — a visibility toggle refiles nothing.
+    var P = (L && L.clashes === s.clashes && L.rules === s.rules) ? L.out : null;
+    var sameStoreys = !!(L && L.msig && L.msig.length === msig.length && msig.every(function(e, i) { var o = L.msig[i]; return o[0] === e[0] && o[3] === e[3] && o[4] === e[4]; }));
+    var vis = {}, names = {}, stE = [], visKey = '';
     (s.models || []).forEach(function(m) {
-      if (m.visible !== false) vis[m.id] = true;
+      if (m.visible !== false) { vis[m.id] = true; visKey += m.id + '\u0001'; }
       names[m.id] = m.name || m.id;
+      if (sameStoreys && P) return;
       var _us = _ccStoreyUnitScale(m, s.prefs);
       (m.storeyData || []).forEach(function(st) { if (st && st.name) stE.push({ modelId: m.id, name: st.name, elevation: st.elevation, unitScale: _us }); });
     });
-    var bucketOf = new Map(), counts = {}, visible = [], zoneGroups = {};
+    if (P && P._visKey === visKey) vis = P.visibleModels;    // same visible set: same object (pass caches hit)
+    var bucketOf = P ? P.bucketOf : new Map(), counts = {}, visible = [], zoneGroups = {};
     ((ccore && ccore.REVIEW_BUCKETS) || ['review']).forEach(function(b) { counts[b] = 0; });
     (s.clashes || []).forEach(function(c) {
-      var b = _ccReviewBucket(c, s.rules, ctx);
-      bucketOf.set(c.id, b);
+      var b;
+      if (P) b = bucketOf.get(c.id); else { b = _ccReviewBucket(c, s.rules, ctx); bucketOf.set(c.id, b); }
       if ((c.modelAId && !vis[c.modelAId]) || (c.modelBId && !vis[c.modelBId])) return;
       counts[b] = (counts[b] || 0) + 1;
       if (b === 'zone' && c.roleGroup) zoneGroups[c.roleGroup] = (zoneGroups[c.roleGroup] || 0) + 1;
       visible.push(c);
     });
-    var norm = tcore ? tcore.buildStoreyNormaliser(stE) : { label: function(m, n) { return n || ''; }, labels: [] };
+    var norm = (sameStoreys && P) ? P.storeyNorm : (tcore ? tcore.buildStoreyNormaliser(stE) : { label: function(m, n) { return n || ''; }, labels: [] });
     var fctx = {
       severity: function(c) { return _ccDeterministicSeverity(c); },
       bucket: function(c) { return bucketOf.get(c.id) || 'review'; },
-      storey: function(mid, n) { return norm.label(mid, n); },
+      storey: norm.label,
       modelName: function(id) { return names[id] || id || '?'; },
       trade: function(c, side) { var i = side === 'A' ? 0 : 1; return (c.trades && c.trades[i]) || (c.disciplines && c.disciplines[i]) || 'other'; }
     };
-    var index = tcore ? tcore.indexItems(visible, fctx) : [];
+    // a clash's facet row depends on the clash, its bucket (bucketOf), the
+    // storey normaliser and the names of its two models — nothing else
+    var index = [];
+    if (tcore) for (var vi = 0; vi < visible.length; vi++) {
+      var c = visible[vi], nA = fctx.modelName(c.modelAId), nB = fctx.modelName(c.modelBId || c.modelAId);
+      var h = _ccTriageRowCache.get(c);
+      if (h && h.bucketOf === bucketOf && h.norm === norm && (h.nA !== nA || h.nB !== nB) && tcore.modelPairValue) {
+        // a model renamed: only the model-pair value differs
+        h = { row: { c: c, v: Object.assign({}, h.row.v, { modelPair: tcore.modelPairValue(c, fctx.modelName) }) }, bucketOf: bucketOf, norm: norm, nA: nA, nB: nB };
+        _ccTriageRowCache.set(c, h);
+      } else if (!(h && h.bucketOf === bucketOf && h.norm === norm)) {
+        h = { row: tcore.indexItems([c], fctx)[0], bucketOf: bucketOf, norm: norm, nA: nA, nB: nB };
+        _ccTriageRowCache.set(c, h);
+      }
+      index.push(h.row);
+    }
     var rowById = new Map();
     index.forEach(function(r) { rowById.set(r.c.id, r); });
     var out = { bucketOf: bucketOf, counts: counts, total: visible.length, visible: visible, ctx: ctx, fctx: fctx,
-      storeyNorm: norm, index: index, rowById: rowById, visibleModels: vis, zoneGroups: zoneGroups };
-    _ccTriageLast = { clashes: s.clashes, rules: s.rules, models: s.models, out: out };
+      storeyNorm: norm, index: index, rowById: rowById, visibleModels: vis, zoneGroups: zoneGroups, _visKey: visKey };
+    _ccTriageLast = { clashes: s.clashes, rules: s.rules, models: s.models, prefs: s.prefs, msig: msig, out: out };
     return out;
   }
   // Legacy per-bucket "show" switches still count as showing that bucket.
@@ -13421,6 +13639,32 @@ function startApp() {
     });
   }
 
+  // Search narrowing (§21.54): does every item passing token u also pass
+  // token t? (same rules as _ccFilterTextMatches: substring of the token or
+  // its #-less form, a trailing-s plural, an exact item number)
+  function _ccSearchTokImplies(u, t) {
+    if (u === t) return true;
+    var bu = u.charAt(0) === '#' ? u.slice(1) : u, bt = t.charAt(0) === '#' ? t.slice(1) : t;
+    if (/^\d+$/.test(bu)) return false;               // u may pass on the item number alone
+    if (bu.indexOf(bt) === -1) return false;
+    if (u.length > 3 && u.charAt(u.length - 1) === 's' && u.slice(0, -1).indexOf(bt) === -1) return false;
+    return true;
+  }
+  // fNew differs from fOld only in its search, and that search can only
+  // narrow: the items passing fNew are a subset of those passing fOld, so a
+  // filter of the previous result (same order) equals a filter of the whole.
+  function _ccSearchNarrows(fOld, fNew) {
+    if (!fOld || !fNew || fOld === fNew) return false;
+    var k;
+    for (k in fOld) if (k !== 'search' && Object.prototype.hasOwnProperty.call(fOld, k) && fOld[k] !== fNew[k]) return false;
+    for (k in fNew) if (k !== 'search' && Object.prototype.hasOwnProperty.call(fNew, k) && fOld[k] !== fNew[k]) return false;
+    var qa = fOld.search || '', qb = fNew.search || '';
+    if (qa === qb) return true;
+    if (!qb) return !_ccFilterTokens(qa).length;
+    var ta = qa ? _ccFilterTokens(qa).slice() : [], tb = _ccFilterTokens(qb).slice();
+    return ta.every(function(t) { return tb.some(function(u) { return _ccSearchTokImplies(u, t); }); });
+  }
+
   function deriveFloors(clashes) {
     if (!clashes.length) return [];
     var ys = clashes.map(function(c){return c.elevation||0}).sort(function(a,b){return a-b});
@@ -15980,6 +16224,21 @@ function startApp() {
     var ref = useRef(null);
     var planOverlayRef = useRef(null); // 2D canvas overlay for the floor-plan cut poché — see _ccDrawPlanOverlay
     var state3d = useRef({scene:null,camera:null,renderer:null,orbit:null,mg:null,map:{},raf:null});
+    // What the scene effects read from s.models (docs/INTERNALS.md §21.54),
+    // so a rename / colour / storey hide does not re-run them. meshKey: a
+    // version bumped when a model is added / removed or its meshes / elements
+    // array is replaced or resized; visKey: meshKey + each model's visibility.
+    var sceneKeyRef = useRef({ v: 0, ids: '', arrs: [] });
+    (function(){
+      var k = sceneKeyRef.current, ids = '', arrs = [];
+      s.models.forEach(function(m){
+        ids += m.id + ':' + (m.meshes ? m.meshes.length : 0) + ':' + (m.elements ? m.elements.length : 0) + '|';
+        arrs.push(m.meshes || null, m.elements || null);
+      });
+      if (ids !== k.ids || arrs.length !== k.arrs.length || arrs.some(function(a, i){ return a !== k.arrs[i]; })) { k.v++; k.ids = ids; k.arrs = arrs; }
+    })();
+    var meshKey = sceneKeyRef.current.v;
+    var visKey = meshKey + ':' + s.models.map(function(m){ return m.visible === false ? 0 : 1; }).join('');
     var se = useState(null), selectedEl=se[0], setSelectedEl=se[1];
     window._ccSelectedExpressId = selectedEl ? selectedEl.expressId : null;
     // modelId sibling for _ccSelectedExpressId — bare expressId alone is
@@ -16037,9 +16296,27 @@ function startApp() {
     // frame.axes.{x,y,z}: unit Vector3s (y is always world up);
     // frame.min/max.{x,y,z}: extents along those axes; frame.center: world
     // centre; frame.cut(axis,pos) -> {normal, d, point}.
-    var _planFrameCache = { key: null, frame: null };
+    // A few frames, most recent first: toggling a model off and back on with
+    // a section active reuses the frame instead of re-reading every wall
+    // vertex (§21.54). The key carries each elements array's identity token,
+    // so a replaced model with the same id and size never hits a stale frame.
+    // Kept on state3d: Viewer re-creates these functions on every render, so
+    // a cache in a render-local variable never outlived one render.
+    var _PLAN_FRAME_CACHE_MAX = 8;
+    var _pfStore = state3d.current._planFrame || (state3d.current._planFrame = { cache: [], tok: new WeakMap(), n: 0 });
+    var _planFrameCache = _pfStore.cache;   // [{ key, frame }], most recent first
     function _planFrameKey() {
-      return modelsRef.current.map(function(m){ return m.id + ':' + (m.visible === false ? 0 : 1) + ':' + ((m.elements || []).length); }).join('|');
+      return modelsRef.current.map(function(m){
+        var els = m.elements || [], t = _pfStore.tok.get(els);
+        if (!t) { t = ++_pfStore.n; _pfStore.tok.set(els, t); }
+        return m.id + ':' + (m.visible === false ? 0 : 1) + ':' + els.length + ':' + t;
+      }).join('|') + _refLayerKey();
+    }
+    // reference layers (point clouds) widen the frame's box too
+    function _refLayerKey() {
+      if (typeof window._ccGetReferenceLayerBBox !== 'function') return '';
+      var rb = window._ccGetReferenceLayerBBox();
+      return rb && !rb.isEmpty() ? '#' + rb.min.toArray().concat(rb.max.toArray()).join(',') : '';
     }
     function _computePlanAngle() {
       var api = window._ccSectionClipping;
@@ -16089,7 +16366,12 @@ function startApp() {
     }
     function _ccPlanFrame() {
       var key = _planFrameKey();
-      if (_planFrameCache.key === key && _planFrameCache.frame) return _planFrameCache.frame;
+      for (var ci = 0; ci < _planFrameCache.length; ci++) {
+        if (_planFrameCache[ci].key !== key) continue;
+        var hit = _planFrameCache[ci];
+        if (ci) { _planFrameCache.splice(ci, 1); _planFrameCache.unshift(hit); }
+        return hit.frame;
+      }
       var box = _elemsBBox();
       var angle = box.isEmpty() ? 0 : _computePlanAngle();
       var q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);
@@ -16138,7 +16420,8 @@ function startApp() {
           return span > 1e-9 ? (worldPoint.dot(ax[axis]) - min[axis]) / span : 0.5;
         }
       };
-      _planFrameCache = { key: key, frame: frame };
+      _planFrameCache.unshift({ key: key, frame: frame });
+      if (_planFrameCache.length > _PLAN_FRAME_CACHE_MAX) _planFrameCache.length = _PLAN_FRAME_CACHE_MAX;
       return frame;
     }
     window._ccPlanFrame = _ccPlanFrame;
@@ -17019,9 +17302,17 @@ function startApp() {
       S._isGhostMat = _isGhostMat;
       S._makeGhostClone = _makeGhostClone;
       // When a ref has a modelId, the mesh's parent modelId must match for
-      function ghostOthers(targets) {
-        unghostAll();
-        if(!targets||!targets.length) return;
+      // ── Ghost (isolate) — docs/INTERNALS.md §21.54 ──
+      // The first ghost walks the scene once; every later ghostOthers while
+      // ghosted applies only the DELTA between the previous and the new kept
+      // set (the result equals unghostAll() + a full ghost: same materials,
+      // same records, split-outs recreated in the same traversal order). A
+      // scene change in between (model added / removed / swapped, any child
+      // added or removed inside a model other than a split-out) takes the
+      // full path again.
+      var _ghostState = null;  // { keep, scene } of the live ghost
+      var _ghostRecOf = new Map(); // plain mesh → its live record
+      function _ghostKeepSets(targets) {
         var keepAny = Object.create(null);       // eid → true (match any model)
         var keepScoped = Object.create(null);    // eid → { modelId: true }
         targets.forEach(function(t){
@@ -17036,113 +17327,153 @@ function startApp() {
             keepAny[t] = true;
           }
         });
-        S.mg.traverse(function(obj){
-          if(!obj.isMesh||!obj.material) return;
-          if(_isGhostMat(obj.material)) return; // already ghosted
-          var meshModelId = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
-
-          if(obj.userData._isCCBatch) {
-            // Batched model: ghost the whole batch material, split kept
-            // elements out as real meshes from their off-scene originals
-            // (element.meshes — same proxy source the outline uses).
-            var bIds = obj.userData.batchExprIds || [];
-            var bSplit = [], bHiddenIdx = [];
-            for(var bi=0; bi<bIds.length; bi++){
-              var beid = bIds[bi]; if(beid==null) continue;
-              var bkeep = keepAny[beid] || (keepScoped[beid] && meshModelId && keepScoped[beid][meshModelId]);
-              if(!bkeep) continue;
-              var pm = (typeof _ccProxyMeshFor==='function') ? _ccProxyMeshFor(beid, meshModelId) : null;
-              if(pm && pm.geometry){
-                var bm = new THREE.Mesh(pm.geometry, pm.material);
-                bm.applyMatrix4(pm.matrix);
-                _ccBakeMesh(bm);
-                bm.userData.expressId = beid;
-                bm.userData._splitOut = true;
-                obj.parent.add(bm);
-                bSplit.push(bm);
-              }
-              try { obj.setVisibleAt(bi, false); } catch(_){}
-              bHiddenIdx.push(bi);
-            }
-            _ghostedMeshes.push({mesh:null, bMesh:obj, origMaterial:obj.material, splitOuts:bSplit, bHiddenIdx:bHiddenIdx});
-            obj.material = _makeGhostClone(obj.material);
-            return;
-          }
-
-          if(obj.isInstancedMesh) {
-            var exprIds = obj.userData.instanceExprIds || [];
-            var ghostMat = _makeGhostClone(obj.material);
-            var splitOuts = [];
-            var needsHide = false;
-            for(var ii=0; ii<exprIds.length; ii++){
-              var ieid = exprIds[ii];
-              var keep = keepAny[ieid] || (keepScoped[ieid] && meshModelId && keepScoped[ieid][meshModelId]);
-              if(keep){
-                var _kMx = new THREE.Matrix4();
-                obj.getMatrixAt(ii, _kMx);
-                var _kMesh = new THREE.Mesh(obj.geometry, obj.material);
-                _kMesh.applyMatrix4(_kMx);
-                _ccBakeMesh(_kMesh);
-                _kMesh.userData.expressId = ieid;
-                _kMesh.userData._splitOut = true;
-                obj.parent.add(_kMesh);
-                obj.setMatrixAt(ii, _INST_HIDE_MX);
-                splitOuts.push(_kMesh);
-                needsHide = true;
-              }
-            }
-            if(needsHide) obj.instanceMatrix.needsUpdate = true;
-            _ghostedMeshes.push({mesh:null, iMesh:obj, origMaterial:obj.material, splitOuts:splitOuts});
-            obj.material = ghostMat;
-            return;
-          }
-
-          var eid = obj.userData.expressId;
-          if(eid==null) return;
-          if(obj.userData._ccSpace) return; // rooms are already translucent; never ghost them
-          var keep = keepAny[eid] || (keepScoped[eid] && meshModelId && keepScoped[eid][meshModelId]);
-          if (!keep) {
-            _ghostedMeshes.push({mesh:obj, origMaterial:obj.material});
-            obj.material = _makeGhostClone(obj.material);
-          }
-        });
-        invalidate();
+        return { any: keepAny, scoped: keepScoped };
       }
-      function unghostAll(){
-        _ghostedMeshes.forEach(function(g){
-          if(g._keptProxies){
-            g._keptProxies.forEach(function(m){ if(m.parent) m.parent.remove(m); });
-            return;
+      function _ghostKept(k, eid, modelId) {
+        return !!(k.any[eid] || (k.scoped[eid] && modelId && k.scoped[eid][modelId]));
+      }
+      function _ghostSceneSig() {
+        return S.mg.children.map(function(r){ return { r: r, idx: _ccMeshIndexFor(r) }; });
+      }
+      function _ghostSceneSame(sig) {
+        var ch = S.mg.children;
+        if (!sig || sig.length !== ch.length) return false;
+        for (var i = 0; i < ch.length; i++) {
+          var idx = _ccMeshIdx.get(ch[i]);
+          if (sig[i].r !== ch[i] || idx !== sig[i].idx || idx.dirty) return false;
+        }
+        return true;
+      }
+      // Split a batch's / instanced mesh's kept elements out as real meshes
+      // (from their off-scene originals / the instance matrix) and hide their
+      // slots. Slots come from the per-object slot map, ascending — the same
+      // slots, in the same order, as a loop over every instance.
+      function _ghostKeptSlots(obj, k, meshModelId) {
+        var slots = _ccBatchSlots(obj), seen = Object.create(null), out = [];
+        function take(eid) {
+          var a = slots.get(String(eid));
+          if (a) a.forEach(function(i){ if (!seen[i]) { seen[i] = true; out.push(i); } });
+        }
+        Object.keys(k.any).forEach(take);
+        if (meshModelId) Object.keys(k.scoped).forEach(function(eid){ if (k.scoped[eid][meshModelId]) take(eid); });
+        return out.sort(function(a, b){ return a - b; });
+      }
+      function _ghostSplitBatch(obj, k, meshModelId) {
+        var bIds = obj.userData.batchExprIds || [];
+        var bSplit = [], bHiddenIdx = [];
+        var gs = obj.userData._ccGhostSplit || (obj.userData._ccGhostSplit = new Set());
+        _ghostKeptSlots(obj, k, meshModelId).forEach(function(bi){
+          var beid = bIds[bi];
+          var pm = (typeof _ccProxyMeshFor==='function') ? _ccProxyMeshFor(beid, meshModelId) : null;
+          if(pm && pm.geometry){
+            var bm = new THREE.Mesh(pm.geometry, pm.material);
+            bm.applyMatrix4(pm.matrix);
+            _ccBakeMesh(bm);
+            bm.userData.expressId = beid;
+            bm.userData._splitOut = true;
+            obj.parent.add(bm);
+            bSplit.push(bm);
           }
-          if(g.bMesh){
-            g.bMesh.material = g.origMaterial;
-            (g.splitOuts||[]).forEach(function(sm){ if(sm.parent) sm.parent.remove(sm); });
-            (g.bHiddenIdx||[]).forEach(function(bi){ try { g.bMesh.setVisibleAt(bi, true); } catch(_){} });
-            _ccBatchApplyVisibility(g.bMesh.parent || g.bMesh);
-            return;
-          }
-          if(g.iMesh){
-            g.iMesh.material = g.origMaterial;
-            if(g.splitOuts && g.splitOuts.length){
-              var exprIds = g.iMesh.userData.instanceExprIds || [];
-              g.splitOuts.forEach(function(sm){
-                var ieid = sm.userData.expressId;
-                var idx = exprIds.indexOf(ieid);
-                if(idx !== -1){
-                  var _origMx = new THREE.Matrix4();
-                  _origMx.copy(sm.matrixWorld); // matrixWorld = baked instance transform
-                  g.iMesh.setMatrixAt(idx, _origMx);
-                }
-                if(sm.parent) sm.parent.remove(sm);
-                if(sm.material) sm.material.dispose();
-              });
-              g.iMesh.instanceMatrix.needsUpdate = true;
+          gs.add(bi);
+          try { obj.setVisibleAt(bi, false); } catch(_){}
+          bHiddenIdx.push(bi);
+        });
+        return { splitOuts: bSplit, bHiddenIdx: bHiddenIdx };
+      }
+      function _ghostSplitInstanced(obj, k, meshModelId) {
+        var exprIds = obj.userData.instanceExprIds || [];
+        var splitOuts = [], iIdx = [];
+        _ghostKeptSlots(obj, k, meshModelId).forEach(function(ii){
+          var _kMx = new THREE.Matrix4();
+          obj.getMatrixAt(ii, _kMx);
+          var _kMesh = new THREE.Mesh(obj.geometry, obj.material);
+          _kMesh.applyMatrix4(_kMx);
+          _ccBakeMesh(_kMesh);
+          _kMesh.userData.expressId = exprIds[ii];
+          _kMesh.userData._splitOut = true;
+          obj.parent.add(_kMesh);
+          obj.setMatrixAt(ii, _INST_HIDE_MX);
+          splitOuts.push(_kMesh);
+          iIdx.push(ii);
+        });
+        if(iIdx.length) obj.instanceMatrix.needsUpdate = true;
+        return { splitOuts: splitOuts, iIdx: iIdx };
+      }
+      // Undo one batch / instanced record's split-outs (material untouched).
+      function _ghostJoinBatch(g) {
+        (g.splitOuts||[]).forEach(function(sm){ if(sm.parent) sm.parent.remove(sm); });
+        var gs = g.bMesh.userData._ccGhostSplit;
+        var mid = g.bMesh.parent && g.bMesh.parent.userData ? g.bMesh.parent.userData.modelId : null;
+        var ids = g.bMesh.userData.batchExprIds || [];
+        (g.bHiddenIdx||[]).forEach(function(bi){
+          if (gs) gs.delete(bi);
+          _ccBatchApplySlot(g.bMesh, bi, ids[bi], mid);
+        });
+      }
+      function _ghostJoinInstanced(g) {
+        if(g.splitOuts && g.splitOuts.length){
+          var exprIds = g.iMesh.userData.instanceExprIds || [];
+          g.splitOuts.forEach(function(sm){
+            var ieid = sm.userData.expressId;
+            var idx = exprIds.indexOf(ieid);
+            if(idx !== -1){
+              var _origMx = new THREE.Matrix4();
+              _origMx.copy(sm.matrixWorld); // matrixWorld = baked instance transform
+              g.iMesh.setMatrixAt(idx, _origMx);
             }
-          } else {
-            if(g.mesh && g.mesh.parent) g.mesh.material = g.origMaterial;
+            if(sm.parent) sm.parent.remove(sm);
+            if(sm.material) sm.material.dispose();
+          });
+          g.iMesh.instanceMatrix.needsUpdate = true;
+        }
+      }
+      function _ghostPlain(obj) {
+        var rec = {mesh:obj, origMaterial:obj.material};
+        _ghostedMeshes.push(rec);
+        _ghostRecOf.set(obj, rec);
+        obj.material = _makeGhostClone(obj.material);
+      }
+      function _ghostDelta(oldK, newK) {
+        // Plain meshes: only those whose expressId is in either kept set can
+        // change between kept and ghosted.
+        var eids = Object.keys(oldK.any).concat(Object.keys(oldK.scoped), Object.keys(newK.any), Object.keys(newK.scoped));
+        _ccUniqueMeshes(eids).forEach(function(obj){
+          if (!obj.material || obj.userData._isCCBatch || obj.isInstancedMesh || obj.userData._splitOut) return;
+          if (obj.userData._ccSpace) return; // rooms are already translucent; never ghost them
+          var eid = obj.userData.expressId;
+          var meshModelId = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
+          var keep = _ghostKept(newK, eid, meshModelId), rec = _ghostRecOf.get(obj);
+          if (keep && rec) {
+            if (obj.parent) obj.material = rec.origMaterial;
+            rec.dead = true; _ghostRecOf.delete(obj);
+          } else if (!keep && !rec && !_isGhostMat(obj.material)) {
+            _ghostPlain(obj);
           }
         });
-        _ghostedMeshes = [];
+        // Batches / instanced meshes: when any kept slot set changes, every
+        // split-out is recreated in traversal order (as a full re-ghost
+        // would), so their draw order is unchanged.
+        var multi = _ghostedMeshes.filter(function(g){ return !g.dead && (g.bMesh || g.iMesh); });
+        var changed = multi.some(function(g){
+          var o = g.bMesh || g.iMesh;
+          var mid = o.parent && o.parent.userData && o.parent.userData.modelId;
+          var now = _ghostKeptSlots(o, newK, mid), was = g.bMesh ? (g.bHiddenIdx || []) : (g.iIdx || []);
+          return now.length !== was.length || now.some(function(v, i){ return v !== was[i]; });
+        });
+        if (!changed) return;
+        multi.forEach(function(g){ if (g.bMesh) _ghostJoinBatch(g); else _ghostJoinInstanced(g); });
+        var order = new Map();
+        _ccBatchesUnder(S.mg, true).forEach(function(o, i){ order.set(o, i); });
+        multi.sort(function(a, b){ return order.get(a.bMesh || a.iMesh) - order.get(b.bMesh || b.iMesh); });
+        multi.forEach(function(g){
+          var o = g.bMesh || g.iMesh;
+          var mid = o.parent && o.parent.userData && o.parent.userData.modelId;
+          var r = g.bMesh ? _ghostSplitBatch(o, newK, mid) : _ghostSplitInstanced(o, newK, mid);
+          g.splitOuts = r.splitOuts;
+          if (g.bMesh) g.bHiddenIdx = r.bHiddenIdx; else g.iIdx = r.iIdx;
+        });
+      }
+      function _ghostResetHover() {
         if(lastHoveredMesh && lastHoverOriginals){
           try {
             if(lastHoveredMesh.material && !_isGhostMat(lastHoveredMesh.material)){
@@ -17156,6 +17487,71 @@ function startApp() {
         }
         _clearHoverRef();
         invalidate();
+      }
+      function ghostOthers(targets) {
+        if(!targets||!targets.length){ unghostAll(); return; }
+        var keep = _ghostKeepSets(targets);
+        if (_ghostState && _ghostedMeshes.length && _ghostSceneSame(_ghostState.scene)) {
+          _ghostDelta(_ghostState.keep, keep);
+          _ghostState.keep = keep;
+          _ghostResetHover();
+          return;
+        }
+        unghostAll();
+        S.mg.traverse(function(obj){
+          if(!obj.isMesh||!obj.material) return;
+          if(_isGhostMat(obj.material)) return; // already ghosted
+          var meshModelId = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
+
+          if(obj.userData._isCCBatch) {
+            // Batched model: ghost the whole batch material, split kept
+            // elements out as real meshes from their off-scene originals
+            // (element.meshes — same proxy source the outline uses).
+            var rb = _ghostSplitBatch(obj, keep, meshModelId);
+            _ghostedMeshes.push({mesh:null, bMesh:obj, origMaterial:obj.material, splitOuts:rb.splitOuts, bHiddenIdx:rb.bHiddenIdx});
+            obj.material = _makeGhostClone(obj.material);
+            return;
+          }
+
+          if(obj.isInstancedMesh) {
+            var ghostMat = _makeGhostClone(obj.material);
+            var ri = _ghostSplitInstanced(obj, keep, meshModelId);
+            _ghostedMeshes.push({mesh:null, iMesh:obj, origMaterial:obj.material, splitOuts:ri.splitOuts, iIdx:ri.iIdx});
+            obj.material = ghostMat;
+            return;
+          }
+
+          var eid = obj.userData.expressId;
+          if(eid==null) return;
+          if(obj.userData._ccSpace) return; // rooms are already translucent; never ghost them
+          if (!_ghostKept(keep, eid, meshModelId)) _ghostPlain(obj);
+        });
+        _ghostState = { keep: keep, scene: _ghostSceneSig() };
+        invalidate();
+      }
+      function unghostAll(){
+        _ghostedMeshes.forEach(function(g){
+          if(g.dead) return;
+          if(g._keptProxies){
+            g._keptProxies.forEach(function(m){ if(m.parent) m.parent.remove(m); });
+            return;
+          }
+          if(g.bMesh){
+            g.bMesh.material = g.origMaterial;
+            _ghostJoinBatch(g);
+            return;
+          }
+          if(g.iMesh){
+            g.iMesh.material = g.origMaterial;
+            _ghostJoinInstanced(g);
+          } else {
+            if(g.mesh && g.mesh.parent) g.mesh.material = g.origMaterial;
+          }
+        });
+        _ghostedMeshes = [];
+        _ghostRecOf.clear();
+        _ghostState = null;
+        _ghostResetHover();
       }
       // Occluder-reveal (Wave 2.2): temporarily hides whatever sits between
       // the camera and a clash point, layered ADDITIVELY on top of whatever
@@ -17249,6 +17645,28 @@ function startApp() {
 
       S._ghostOthers = ghostOthers;
       S._unghostAll = unghostAll;
+      // Render-style swap while ghosted: what unghost restores for a ghosted
+      // mesh / batch / instanced mesh (null = not ghosted by ghostOthers).
+      function _ghostRecFor(obj) {
+        var rec = _ghostRecOf.get(obj);
+        if (rec) return rec;
+        for (var i = 0; i < _ghostedMeshes.length; i++) {
+          var g = _ghostedMeshes[i];
+          if (!g.dead && (g.bMesh === obj || g.iMesh === obj)) return g;
+        }
+        return null;
+      }
+      S._ghostOrigOf = function(obj) { var r = _ghostRecFor(obj); return r ? r.origMaterial : null; };
+      S._ghostRestoreTo = function(obj, mat) {
+        var rec = _ghostRecFor(obj);
+        if (!rec || rec.origMaterial === mat) return;
+        // same clipping-plane carry-over as the style swap itself
+        var cur = Array.isArray(rec.origMaterial) ? rec.origMaterial[0] : rec.origMaterial;
+        var planes = cur && cur.clippingPlanes, arr = Array.isArray(mat) ? mat : [mat];
+        if (planes && planes.length) arr.forEach(function(m){ m.clippingPlanes = planes; m.needsUpdate = true; });
+        else arr.forEach(function(m){ if (m.clippingPlanes && m.clippingPlanes.length) { m.clippingPlanes = []; m.needsUpdate = true; } });
+        rec.origMaterial = mat;
+      };
       // Called before disposing a model's meshes: drop ghost clones whose
       // source material is about to die, so the Map doesn't accumulate
       // orphan entries across session-long use.
@@ -17260,6 +17678,7 @@ function startApp() {
         if (_ghostedMeshes.length) {
           ghostOrig = new Map();
           _ghostedMeshes.forEach(function(g){
+            if (g.dead) return;
             if (g.mesh) ghostOrig.set(g.mesh, g.origMaterial);
             if (g.iMesh) ghostOrig.set(g.iMesh, g.origMaterial);
           });
@@ -17286,6 +17705,22 @@ function startApp() {
       window._unghostAll = unghostAll;
 
       var _tempHiddenMeshes = [];
+      // expressIds named by temp-hide dict keys ('eid' or 'modelId_eid'):
+      // the batch slots a temp hide / unhide / restore can change.
+      function _ccTempKeyEids(dicts) {
+        var seen = {}, out = [];
+        dicts.forEach(function(d){ Object.keys(d || {}).forEach(function(k){
+          var e = k.slice(k.lastIndexOf('_') + 1);
+          if (!seen[e]) { seen[e] = true; out.push(e); }
+        }); });
+        return out;
+      }
+      // Scene meshes carrying any of these expressIds (each mesh once).
+      function _ccUniqueMeshes(eids) {
+        var seen = new Set(), out = [];
+        eids.forEach(function(e){ _ccMeshesByEid(S.mg, e).forEach(function(m){ if (!seen.has(m)) { seen.add(m); out.push(m); } }); });
+        return out;
+      }
       // Exact-restore snapshot of the "temp hide" system (the shared
       // _ccBatchHidden.temp dict plus the plain-mesh visibility list), used
       // by undo/redo below so Hide/Show-all round-trip precisely regardless
@@ -17301,14 +17736,18 @@ function startApp() {
       function _ccRestoreTempHide(snap) {
         _tempHiddenMeshes.forEach(function(m){ m.visible = true; });
         _tempHiddenMeshes = [];
+        var prevTemp = _ccBatchHidden.temp;
         _ccBatchHidden.temp = snap ? Object.assign({}, snap.temp) : {};
-        _ccBatchApplyVisibility(S.mg);
+        _ccBatchApplyVisibility(S.mg, _ccTempKeyEids([prevTemp, _ccBatchHidden.temp]));
         if (snap && snap.meshRefs && snap.meshRefs.length && S.mg) {
-          var want = {};
-          snap.meshRefs.forEach(function(r){ want[(r.modelId||'')+'_'+r.expressId] = true; });
-          S.mg.traverse(function(obj){
-            if(!obj.isMesh) return;
-            var eid = obj.userData.expressId; if(eid==null) return;
+          var want = {}, wantEids = [];
+          snap.meshRefs.forEach(function(r){
+            if (r.expressId == null) return;
+            var wk = (r.modelId||'')+'_'+r.expressId;
+            if (!want[wk]) { want[wk] = true; wantEids.push(r.expressId); }
+          });
+          _ccUniqueMeshes(wantEids).forEach(function(obj){
+            var eid = obj.userData.expressId;
             var mid = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
             if (want[(mid||'')+'_'+eid] && obj.visible) { obj.visible = false; _tempHiddenMeshes.push(obj); }
           });
@@ -17337,12 +17776,11 @@ function startApp() {
         Object.keys(idScoped).forEach(function(id){
           Object.keys(idScoped[id]).forEach(function(mid){ _ccBatchHidden.temp[mid + '_' + id] = true; });
         });
-        _ccBatchApplyVisibility(S.mg);
+        var hideEids = Object.keys(idAny).concat(Object.keys(idScoped));
+        _ccBatchApplyVisibility(S.mg, hideEids);
         if(S.mg) {
-          S.mg.traverse(function(obj){
-            if(!obj.isMesh) return;
+          _ccUniqueMeshes(hideEids).forEach(function(obj){
             var eid = obj.userData.expressId;
-            if (eid == null) return;
             var meshModelId = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
             var match = idAny[eid] || (idScoped[eid] && meshModelId && idScoped[eid][meshModelId]);
             if(match && obj.visible){
@@ -17362,8 +17800,9 @@ function startApp() {
       function _ccTempUnhideCore() {
         _tempHiddenMeshes.forEach(function(m){ m.visible = true; });
         _tempHiddenMeshes = [];
+        var prevTemp = _ccBatchHidden.temp;
         _ccBatchHidden.temp = {};
-        _ccBatchApplyVisibility(S.mg);
+        _ccBatchApplyVisibility(S.mg, _ccTempKeyEids([prevTemp]));
         invalidate();
       }
       window._ccTempUnhide = function() {
@@ -17464,18 +17903,21 @@ function startApp() {
         if (pr && pr.el.meshes && pr.el.meshes.length) return pr.el.meshes[0];
         return null;
       }
+      // First scene mesh with this expressId (+ model) in traversal order —
+      // from the per-model mesh index, not a walk of every model (§21.54).
       function _findMeshByRef(expressId, modelId) {
         if (expressId == null || !S.mg) return null;
         var found = null;
-        S.mg.traverse(function(obj){
-          if (found) return;
-          if (!obj.isMesh || obj.userData.expressId !== expressId) return;
+        var cands = _ccMeshesByEid(S.mg, expressId);
+        for (var ci = 0; ci < cands.length && !found; ci++) {
+          var obj = cands[ci];
+          if (obj.userData.expressId !== expressId) continue;
           if (modelId) {
             var mm = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
-            if (mm !== modelId) return;
+            if (mm !== modelId) continue;
           }
           found = obj;
-        });
+        }
         // [Stage 2] Fall back to the off-scene per-element proxy when the
         // element is rendered inside a merged chunk.
         if (!found) found = _ccProxyMeshFor(expressId, modelId);
@@ -17593,6 +18035,7 @@ function startApp() {
         invalidate();
       };
       window._highlightRefs = _highlightRefs;
+      S._findMeshByRef = _findMeshByRef; // tests/browser/scene-action-cost.mjs compares it with a full walk
 
       // ── Active Clash Point Marker (bright blue) ──
       var _activeClashMarker = null;
@@ -17737,8 +18180,13 @@ function startApp() {
         });
       }
       _showClashMarkers = function(clashes) {
+        // Same markers as the ones on screen (every clash the same object,
+        // or equal in every field the markers read): keep them.
+        var _cur = clashMarkersRef.current;
+        if (_cur && clashes && _ccMarkerClashesSame(_cur.userData.srcClashes, clashes)) { _cur.userData.srcClashes = clashes; return; }
         _clearClashMarkers();
         if (!clashes || !clashes.length) return;
+        window._ccListPerfCounters.clashMarkers++;
         // Bucket by Week-1 cluster key.
         var clusters = Object.create(null);
         var keyFor = window._ccClusterKeyFor;
@@ -17806,6 +18254,7 @@ function startApp() {
         pts.frustumCulled = false;
         pts.userData.kind = 'clash';
         pts.userData.clusters = clusterTable;
+        pts.userData.srcClashes = clashes;
         pts.userData.idxToCluster = []; // rebuilt per LOD update
         pts.userData.lastLODCam = null;
         // ── LOD update: collapsed (hotspot) by default; expand a cluster's
@@ -18075,8 +18524,8 @@ function startApp() {
           if (expressId == null) return;
           var refBox = new THREE.Box3();
           var refFound = false;
-          S.mg.traverse(function(obj){
-            if(!obj.isMesh || obj.userData.expressId !== expressId) return;
+          _ccMeshesByEid(S.mg, expressId).forEach(function(obj){
+            if(obj.userData.expressId !== expressId) return;
             if (modelId) {
               var mm = obj.parent && obj.parent.userData && obj.parent.userData.modelId;
               if (mm !== modelId) return;
@@ -20800,6 +21249,7 @@ function startApp() {
       };
 
       var mg = new THREE.Group(); scene.add(mg); S.mg = mg;
+      mg.userData._ccModelRoot = true; // per-model mesh lookup roots = its children (_ccMeshRoots)
 
       // Scene pick index (viewer-pick-index.js, docs/INTERNALS.md §21.47):
       // every ray against the models goes through here — hover, click,
@@ -20848,6 +21298,7 @@ function startApp() {
       window._ccClearScene = function() {
         while(mg.children.length>0) {
           var child = mg.children[0];
+          _ccMeshIndexDrop(child);
           mg.remove(child);
           if(child.traverse) child.traverse(function(c){
             if(c.geometry) c.geometry.dispose();
@@ -22015,7 +22466,11 @@ function startApp() {
           S._lastDpr = _targetDpr;
         }
         cullFrame++;
-        if((cullFrame >= cullEvery || S._forceCull) && S.mg && S.mg.children.length > 0){
+        // Every 8th rendered frame, when forced (scene change), and on the
+        // LAST frame of a render burst: a camera that stopped between two
+        // 8-frame samples would otherwise keep the previous pose's culling
+        // (frustum / LOD) until it moves again. Gated by the camera key.
+        if((cullFrame >= cullEvery || S._forceCull || _needsRender === 0) && S.mg && S.mg.children.length > 0){
           cullFrame = 0;
           S._forceCull = false;
           var _camKey = _camFingerprint();
@@ -22215,6 +22670,7 @@ function startApp() {
         if(ids.indexOf(id)===-1){
           if(S._pruneGhostCache) S._pruneGhostCache(S.map[id]);
           S.map[id].traverse(function(obj){if(obj.isMesh){_ccDisposeStyleResources(obj);obj.geometry&&obj.geometry.dispose();if(obj.material){(Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();});}}else if(obj.userData&&obj.userData._ccBoundary&&obj.geometry){obj.geometry.dispose();}});
+          _ccMeshIndexDrop(S.map[id]);
           S.mg.remove(S.map[id]);delete S.map[id];
           if(S._elMapCache) delete S._elMapCache[id];
           if(S._hsCache) delete S._hsCache[id];
@@ -22228,6 +22684,7 @@ function startApp() {
             if(S._unghostAll) S._unghostAll(); // clear stale ghost refs before dispose
             if(S._pruneGhostCache) S._pruneGhostCache(existingGrp);
             existingGrp.traverse(function(obj){if(obj.isMesh){_ccDisposeStyleResources(obj);obj.geometry&&obj.geometry.dispose();if(obj.material){(Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();});}}else if(obj.userData&&obj.userData._ccBoundary&&obj.geometry){obj.geometry.dispose();}});
+            _ccMeshIndexDrop(existingGrp);
             S.mg.remove(existingGrp); delete S.map[model.id];
             if(S._elMapCache) delete S._elMapCache[model.id];
             if(S._hsCache) delete S._hsCache[model.id];
@@ -22243,6 +22700,7 @@ function startApp() {
             var _bObj = _ccBoundaryObject(model);
             if (_bObj) grp.add(_bObj);
             S.mg.add(grp); S.map[model.id] = grp;
+            _ccMeshIndexBuild(grp); // expressId → meshes for selection / ghost / hide (§21.54)
             if(!needsSwap && window._ccUpdateShadowFrustum) window._ccUpdateShadowFrustum();
             // A progressive preview may already have framed this model (and
             // the user may have moved since): don't jump at commit then.
@@ -22335,11 +22793,20 @@ function startApp() {
 
     useEffect(function(){
       var S = state3d.current; if(!S.renderer||!S.mg) return;
+      // No section plane now and none before: nothing to rebuild or clip
+      // (a model / style change must not walk the scene for it).
+      var _planeOn = !!(s.sectionAxis || s.sectionCustom);
+      if (!_planeOn && !S._sectionPlaneWasOn) { window._ccCurrentSection = null; return; }
+      S._sectionPlaneWasOn = _planeOn;
       if(s.sectionAxis) window._ccCurrentSection = {axis:s.sectionAxis, pos:s.sectionPos, custom:null};
       else if(s.sectionCustom) window._ccCurrentSection = {axis:null, pos:s.sectionPos, custom:s.sectionCustom};
       else window._ccCurrentSection = null;
       var planes = [];
-      if (S._sectionPlaneVis) {
+      // A plane that stays on is refitted in place (as during a drag): its
+      // materials — and so their GL programs — survive a model / style
+      // change instead of being disposed and recompiled (§21.54).
+      var _visKeep = !!((s.sectionAxis && S.mg.children.length>0) || s.sectionCustom);
+      if (S._sectionPlaneVis && !_visKeep) {
         S._sectionPlaneVis.traverse(function(o){if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose();});
         S.scene.remove(S._sectionPlaneVis); S._sectionPlaneVis = null;
       }
@@ -22352,8 +22819,8 @@ function startApp() {
         var axPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(fc.normal.clone().negate(), fc.point);
         if(s.sectionFlip) axPlane.negate();
         planes.push(axPlane);
-        S._sectionPlaneVis = _sectionVisFit(S, null, fc.normal, fc.point);
-        S.scene.add(S._sectionPlaneVis);
+        S._sectionPlaneVis = _sectionVisFit(S, S._sectionPlaneVis, fc.normal, fc.point);
+        if (!S._sectionPlaneVis.parent) S.scene.add(S._sectionPlaneVis);
       } else if(s.sectionCustom){
         var sc=s.sectionCustom;
         var normal=new THREE.Vector3(sc.normal[0],sc.normal[1],sc.normal[2]).normalize();
@@ -22362,8 +22829,8 @@ function startApp() {
         var plane=new THREE.Plane().setFromNormalAndCoplanarPoint(normal.clone().negate(),shiftedPt);
         if(s.sectionFlip) plane.negate();
         planes.push(plane);
-        S._sectionPlaneVis = _sectionVisFit(S, null, normal, shiftedPt);
-        S.scene.add(S._sectionPlaneVis);
+        S._sectionPlaneVis = _sectionVisFit(S, S._sectionPlaneVis, normal, shiftedPt);
+        if (!S._sectionPlaneVis.parent) S.scene.add(S._sectionPlaneVis);
       }
       // ── Per-material clipping ──  See docs/INTERNALS.md § 21.36
       S._sectionPlanes = planes;
@@ -22396,8 +22863,8 @@ function startApp() {
         }, 500);
       }
       invalidate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- plane rebuild keyed on the plane params; sectionBox.enabled is only read to decide clipping ownership (the section-box effect re-applies on its own toggle); the renderStyle term is a deliberate composite dep
-    }, [s.sectionAxis, s.sectionPos, s.sectionCustom, s.sectionFlip, s.sectionHatch, s.models, s.prefs&&s.prefs.renderStyle]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- plane rebuild keyed on the plane params; sectionBox.enabled is only read to decide clipping ownership (the section-box effect re-applies on its own toggle); the renderStyle term is a deliberate composite dep; s.models is read through visKey (meshes + visibility: the plan frame and the cut lines use the visible models)
+    }, [s.sectionAxis, s.sectionPos, s.sectionCustom, s.sectionFlip, s.sectionHatch, visKey, s.prefs&&s.prefs.renderStyle]);
 
     useEffect(function(){
       var S = state3d.current; if(!S.renderer||!S.mg) return;
@@ -22503,8 +22970,8 @@ function startApp() {
       // freshly-added section-box helpers.
       if (S.renderer && S.renderer.shadowMap) S.renderer.shadowMap.needsUpdate = true;
       invalidate(2);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- sectionAxis/sectionCustom are only read when the box is disabled, to avoid clearing an active section plane; the plane effect re-applies its own planes when they change
-    }, [s.sectionBox, s.models, s.prefs&&s.prefs.renderStyle]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sectionAxis/sectionCustom are only read when the box is disabled, to avoid clearing an active section plane; the plane effect re-applies its own planes when they change; meshKey re-clips a new model's meshes
+    }, [s.sectionBox, meshKey, s.prefs&&s.prefs.renderStyle]);
 
     // Persist section state so it survives page refresh
     useEffect(function(){
@@ -22855,19 +23322,26 @@ function startApp() {
       invalidate();
     }, [s.colorByClass, s.classifications]);
 
+    // Markers: one effect per marker kind, so a status edit never rebuilds
+    // the comment pins and vice versa; _showClashMarkers itself keeps the
+    // built markers when no marker-relevant clash field changed (§21.54).
     useEffect(function(){
       if(s.prefs.showMarkers && s.clashes.length>0 && _showClashMarkers){
         _showClashMarkers(s.clashes);
       } else if(_clearClashMarkers){
         _clearClashMarkers();
       }
+    }, [s.clashes, s.prefs.showMarkers]);
+    useEffect(function(){
       if(s.prefs.showMarkers && s.issues.length>0 && _showIssueMarkers){
         _showIssueMarkers(s.issues);
       } else if(_clearIssueMarkers){
         _clearIssueMarkers();
       }
+    }, [s.issues, s.prefs.showMarkers]);
+    useEffect(function(){
       if (window._ccShowCommentMarkers) window._ccShowCommentMarkers(s.comments||[], s.activeCommentId);
-    }, [s.clashes, s.issues, s.prefs.showMarkers, s.comments, s.activeCommentId]);
+    }, [s.comments, s.activeCommentId]);
 
     useEffect(function(){
       if(s.measurements.length===0 && measureObjsRef.current.length>0) {
@@ -22948,10 +23422,14 @@ function startApp() {
         S.scene.background = new THREE.Color(light ? 0xfafafa : 0x141414);
       }
       if(S.grid){
+        // new colours (vertex colours = geometry), same material: disposing it
+        // would drop its GL program and recompile it on every theme toggle
+        var _gridMat = S.grid.material;
         S.scene.remove(S.grid);
         S.grid.geometry.dispose();
-        S.grid.material.dispose();
         S.grid = new THREE.GridHelper(200,80, light?0xc8c8c8:0x404040, light?0xe2e2e2:0x272727);
+        S.grid.material.dispose(); // never drawn
+        S.grid.material = _gridMat;
         S.grid.material.opacity = light ? 0.16 : 0.22; S.grid.material.transparent = true;
         S.grid.visible = s.prefs.showGrid!==false;
         S.scene.add(S.grid);
@@ -23117,6 +23595,27 @@ function startApp() {
         }
       }
       _ccUpdateGround();
+      // Rebuild shadow map when we switch into rendered mode or lighting changes
+      if (style === 'rendered' && S.renderer) S.renderer.shadowMap.needsUpdate = true;
+      invalidate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- lights / ground / grid: style, theme (the theme effect re-shows the grid), model meshes + visibility (visKey: bbox, ground), light settings, plan mode on/off; s.models itself is read through visKey
+    }, [s.prefs.renderStyle, s.prefs.theme, visKey, s.prefs.lightSettings, !!s.floorPlan]);
+
+    // ── Materials per render style ── (docs/INTERNALS.md §21.11, §21.54)
+    // Keyed on what the swap reads: the style, plan mode, the theme only for
+    // the styles that colour by it (standard, plan), the ambient factor only
+    // for 'rendered', and the scene's mesh set (meshKey). A rename, a
+    // visibility toggle or a theme toggle in Shaded touches no material.
+    var _rsStyle = s.prefs.renderStyle || 'shaded', _rsPlan = !!s.floorPlan;
+    var _rsLs = s.prefs.lightSettings || {};
+    var _rsThemeDep = (_rsStyle === 'standard' || _rsPlan) ? (s.prefs.theme || 'light') : null;
+    var _rsAmbDep = _rsStyle === 'rendered' ? ((typeof _rsLs.ambient === 'number') ? _rsLs.ambient : 1.0) : null;
+    useEffect(function(){
+      var S = state3d.current;
+      if(!S.mg) return;
+      var style = _rsStyle, isPlan = _rsPlan;
+      var light = (_rsThemeDep || 'light') === 'light';
+      var ambMul = _rsAmbDep == null ? 1.0 : _rsAmbDep;
 
       // Per-mesh shadow flags (cast/receive only in rendered).
       // Transparent meshes (glass, curtain walls) skip shadow casting so light
@@ -23134,22 +23633,25 @@ function startApp() {
         });
       }
       var meshList = S._meshList;
-      var _mlKey = s.models.map(function(m){return m.id+':'+(m.meshes?m.meshes.length:0);}).join('|');
+      var _mlKey = String(meshKey);
       if (!meshList || S._meshListKey !== _mlKey) {
         meshList = [];
         S.mg.traverse(function(obj){ if(obj.isMesh) meshList.push(obj); });
         S._meshList = meshList;
         S._meshListKey = _mlKey;
       }
-      // Build expressId → ifcType lookup so glass detection can fall back to
-      // IfcWindow / IfcCurtainWall / etc. when material name is empty.
-      var _eidToType = {}, _eidToName = {};
-      (s.models||[]).forEach(function(m){
-        (m.elements||[]).forEach(function(el){
-          if (el.props && el.props.ifcType) _eidToType[el.expressId] = el.props.ifcType;
-          if (el.props && el.props.name) _eidToName[el.expressId] = (el.props.name||'').toLowerCase();
-        });
-      });
+      // expressId → ifcType of the mesh's OWN model, so glass detection can
+      // fall back to IfcWindow / IfcCurtainWall / etc. when the material name
+      // is empty. Built only when a style asks (cached per elements array);
+      // expressIds repeat across models, so never one map for all models.
+      var _modelsById = {};
+      modelsRef.current.forEach(function(m){ _modelsById[m.id] = m; });
+      function _typeOf(obj) {
+        var p = obj.parent;
+        while (p && !(p.userData && p.userData.modelId)) p = p.parent;
+        var m = p ? _modelsById[p.userData.modelId] : null;
+        return (m && _ccEidTypeMap(m).get(String(obj.userData.expressId))) || '';
+      }
 
       // ── Materials per render style ──  See docs/INTERNALS.md § 21.11
       function _disposeEdges(obj) {
@@ -23192,9 +23694,13 @@ function startApp() {
         var obj = meshList[_mi];
         if (obj.userData._isGround) continue;
         if (obj.userData._ccSpace) continue; // rooms keep their own translucent look in every style
-        if (!obj.userData._origMaterial) obj.userData._origMaterial = obj.material;
+        // Ghosted (isolate): keep the ghost look, but let unghost restore
+        // THIS style's material (S._ghostRestoreTo), not the previous one.
+        var ghosted = !!(S._isGhostMat && S._isGhostMat(obj.material));
+        var ghostOrig = ghosted && S._ghostOrigOf ? S._ghostOrigOf(obj) : null;
+        if (ghosted && !ghostOrig) continue;
+        if (!obj.userData._origMaterial) obj.userData._origMaterial = ghostOrig || obj.material;
         var orig = obj.userData._origMaterial;
-        if (S._isGhostMat && S._isGhostMat(obj.material)) continue;
         if (obj.userData._ccColored) continue; // [Stage 2B] chunk in color-by-class mode owns its material
         var cache = obj.userData._styleMats || (obj.userData._styleMats = {});
         // Multi-material meshes (per-face-group, e.g. from Revit Bridge) have an
@@ -23202,7 +23708,7 @@ function startApp() {
         // transparency reads — the style result is a single uniform material so
         // the mesh renders the dominant face colour rather than grey (0xcccccc).
         var origRef = Array.isArray(orig) ? (orig[0] || orig) : orig;
-        var origColor = origRef.color ? origRef.color.clone() : new THREE.Color(0xcccccc);
+        var origColor = origRef.color || _CC_GREY_CC;
         var mat;
         if (isPlan) {
           _disposeEdges(obj);
@@ -23222,7 +23728,7 @@ function startApp() {
           // Hidden Line — shared Lambert + glass.  See docs/INTERNALS.md § 21.39
           _disposeEdges(obj);
           var _hlMatName  = (obj.userData._ifcMaterial || '').toLowerCase();
-          var _hlType     = _eidToType[obj.userData.expressId] || '';
+          var _hlType     = _typeOf(obj);
           var _hlOpaque   = /steel|metal|alum|copper|brass|iron|zinc|concrete|beton|brick|masonry|wood|timber|stone|gypsum|plaster|insul/.test(_hlMatName);
           var _hlHardFrame = /^Ifc(Member|CurtainWall|Beam|Column|Pile|Footing|Wall|Slab|Roof|Stair|Ramp|Covering|Railing|Rail)/i.test(_hlType);
           var _hlSoftFrame = /^Ifc(Door|BuildingElementProxy)/i.test(_hlType);
@@ -23245,7 +23751,7 @@ function startApp() {
           _disposeEdges(obj);
           if (!cache.shaded) {
             var _shMatName = (obj.userData._ifcMaterial || '').toLowerCase();
-            var _shType = _eidToType[obj.userData.expressId] || '';
+            var _shType = _typeOf(obj);
             var _shOpaque = /steel|metal|alum|copper|brass|iron|zinc|concrete|beton|brick|masonry|wood|timber|stone|gypsum|plaster|insul/.test(_shMatName);
             // Hard frame types: ALWAYS opaque — type beats material name.
             // Revit often assigns "Glass" material to mullions (IfcMember) because
@@ -23276,7 +23782,7 @@ function startApp() {
               );
               var _fo = !_g && (_shHardFrame || _shSoftFrame || _shOpaque);
               return new THREE.MeshLambertMaterial({
-                color: _g ? new THREE.Color(0xbfe8ff) : (srcCol ? srcCol.clone() : origColor),
+                color: _g ? new THREE.Color(0xbfe8ff) : (srcCol ? srcCol.clone() : origColor.clone()),
                 transparent: _g ? true : (_fo ? false : srcTransp),
                 opacity: _g ? 0.25 : (_fo ? 1.0 : srcOpac),
                 depthWrite: _g ? false : true,
@@ -23291,7 +23797,7 @@ function startApp() {
           if (!cache.rendered) {
             // Rendered style — IFC colour respected.  See docs/INTERNALS.md § 21.40
             var _matName = (obj.userData._ifcMaterial || '').toLowerCase();
-            var _rdType = _eidToType[obj.userData.expressId] || '';
+            var _rdType = _typeOf(obj);
             var _rdHardFrame = /^Ifc(Member|CurtainWall|Beam|Column|Pile|Footing|Wall|Slab|Roof|Stair|Ramp|Covering|Railing|Rail)/i.test(_rdType);
             var _rdSoftFrame = /^Ifc(Door|BuildingElementProxy)/i.test(_rdType);
             var _rdOpaqueMat = /steel|metal|alum|copper|brass|iron|zinc|concrete|beton|brick|masonry|wood|timber|stone|gypsum|plaster|insul/.test(_matName);
@@ -23324,7 +23830,7 @@ function startApp() {
               var _r = _g ? 0.05 : _rdBaseR;
               var _fo = !_g && (_rdHardFrame || _rdSoftFrame || _rdOpaqueMat);
               return new THREE.MeshStandardMaterial({
-                color: srcCol ? srcCol.clone() : origColor,
+                color: srcCol ? srcCol.clone() : origColor.clone(),
                 roughness: _r, metalness: _g ? 0.0 : _rdBaseM,
                 envMapIntensity: 0.85,
                 transparent: _g ? true : (_fo ? false : srcTransp),
@@ -23341,6 +23847,7 @@ function startApp() {
           _disposeEdges(obj);
           mat = orig;
         }
+        if (ghosted) { S._ghostRestoreTo(obj, mat); continue; }
         if (obj.material !== mat) {
           // Preserve per-material clipping planes (section box / section plane).
           // Either side may be an array (multi-material mesh) — read from the
@@ -23354,8 +23861,8 @@ function startApp() {
         }
       }
       invalidate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-runs on style/theme/models/lights and on plan-mode truthiness (!!s.floorPlan is deliberate: only on/off matters); showGrid is owned by its own effect
-    }, [s.prefs.renderStyle, s.prefs.theme, s.models, s.prefs.lightSettings, !!s.floorPlan]);
+    // keyed on exactly what the swap reads (see above); s.models is read through meshKey / modelsRef
+    }, [_rsStyle, _rsPlan, _rsThemeDep, _rsAmbDep, meshKey]);
 
     var hcSt = useState(0), hcTick = hcSt[0], setHcTick = hcSt[1];
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setHcTick is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
@@ -30768,6 +31275,13 @@ function startApp() {
     // "Run details" (stats, AI summary, model matrix) is built only while open
     var rdo=useState(false), runDetailsOpen=rdo[0], setRunDetailsOpen=rdo[1];
     var isClashTab = s.tab==='clashes';
+    // one memoised triage model per (clashes, rules, model signature)
+    var tmAll = _ccTriageModel(s);
+    // The list's rows / group headers read a model's id, name and elements
+    // (+ lazily merged props): keep the array while those are unchanged, so
+    // a visibility toggle or a colour change re-renders no row (§21.54).
+    var listModelsRef = useRef(null);
+    var listModels = _ccStableModels(listModelsRef, s.models, true);
     var isExplorerTab = s.tab==='navigator';
     var isStandardsTab = s.tab==='standards';
     // Memoize the rawItems pipeline (not-denied filter + IDS validation
@@ -30786,7 +31300,7 @@ function startApp() {
       // finishes, grazes and handled clashes sit behind the bucket bar's
       // counts — one click shows a bucket, nothing is dropped. A status pill
       // (e.g. "Denied") still lists the handled clashes of that status.
-      var _tmR = isClashTab ? _ccTriageModel(s) : null;
+      var _tmR = isClashTab ? tmAll : null;
       var base = isClashTab ? s.clashes.filter(function(c){
         var b = _tmR.bucketOf.get(c.id) || 'review';
         if (_ccBucketShown(b, s.rules, f)) return true;
@@ -30813,15 +31327,19 @@ function startApp() {
         };
       });
       return base.concat(idsItems);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- s.models feeds _ccTriageModel (memoised on clashes/rules/models identity)
-    }, [isClashTab, s.clashes, s.issues, s.models, s.idsValidation, f.status, f.showHandled, f.showProvided, f.showProvisions, f.showRoleGroups, f.showContacts, f.showBuckets, f.hideBuckets, s.rules]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the models reach the list only through the triage model (tmAll)
+    }, [isClashTab, s.clashes, s.issues, tmAll, s.idsValidation, f.status, f.showHandled, f.showProvided, f.showProvisions, f.showRoleGroups, f.showContacts, f.showBuckets, f.hideBuckets, s.rules]);
 
 
+    // keyed on the visible ids, not on s.models identity: a rename / colour
+    // / storey hide keeps it, and with it every memo below (§21.54)
+    var _visIdsKey = s.models.filter(function(m){ return m.visible !== false; }).map(function(m){ return m.id; }).join('\u0001');
     var visibleModelIds = useMemo(function(){
       var ids = {};
       s.models.forEach(function(m){ if(m.visible !== false) ids[m.id] = true; });
       return ids;
-    }, [s.models]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- _visIdsKey is exactly what this reads from s.models
+    }, [_visIdsKey]);
 
     // the filter dropdowns' choices — only needed while the filter panel is open
     var filterLists = useMemo(function(){
@@ -30912,16 +31430,24 @@ function startApp() {
 
     // Bucket counts (all buckets, visible models — they add up to the raw
     // total) for the bucket bar; the triage model is memoised per result.
-    var triage = useMemo(function(){ return isClashTab ? _ccTriageModel(s) : null; }, [isClashTab, s.clashes, s.rules, s.models]); // eslint-disable-line react-hooks/exhaustive-deps -- _ccTriageModel reads exactly s.clashes/s.rules/s.models
+    var triage = isClashTab ? tmAll : null;
     var facets = (s.triage && s.triage.facets) || {};
     var reviewModel = isClashTab && triage && triage.total > 0 ? _ccReviewModel(s) : null;
     var _tcore = window._ccClashTriageCore;
     var facetsOn = !!(isClashTab && _tcore && _tcore.hasFacets(facets));
 
+    // A keystroke that only narrows the search filters the previous result
+    // (a subset of it, same order) instead of every clash (§21.54).
+    var itemsPreRef = useRef(null);
     var itemsPre = useMemo(function(){
-      return rawItems.filter(function(it){
-        return _ccListItemPasses(it, f, isClashTab, isClashTab && triage ? triage.visibleModels : visibleModelIds, triage, s.rules);
+      var vis = isClashTab && triage ? triage.visibleModels : visibleModelIds;
+      var P = itemsPreRef.current;
+      var from = (P && P.rawItems === rawItems && P.isClashTab === isClashTab && P.vis === vis && P.triage === triage && P.rules === s.rules && _ccSearchNarrows(P.f, f)) ? P.out : rawItems;
+      var out = from.filter(function(it){
+        return _ccListItemPasses(it, f, isClashTab, vis, triage, s.rules);
       });
+      itemsPreRef.current = { rawItems: rawItems, isClashTab: isClashTab, vis: vis, triage: triage, rules: s.rules, f: f, out: out };
+      return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- triage changes together with rawItems (same clashes/rules/models); s.rules only feeds the handled-bucket test
     }, [rawItems, f, isClashTab, visibleModelIds]);
     // Facet filters (s.triage.facets, persisted per project) on top of the
@@ -30938,13 +31464,13 @@ function startApp() {
     var runCaption = useMemo(function(){ return isClashTab ? _ccStatsSummaryLine(rawItems, true) : ''; },
       [rawItems, isClashTab, window._ccGetLocale && window._ccGetLocale()]); // eslint-disable-line react-hooks/exhaustive-deps -- the UI language is part of the caption
     var counts = useMemo(function(){
-      var _tmC = _ccTriageModel(s);
+      var _tmC = tmAll;
       return {
         oC: s.clashes.filter(function(c){return c.status==='open' && _tmC.bucketOf.get(c.id)==='review';}).length,
         oI: s.issues.filter(function(i){return i.status!=='resolved'&&i.status!=='closed';}).length
       };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- s.models only feeds the memoised triage model
-    }, [s.clashes, s.issues, s.rules, s.models]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the models reach the counts only through the triage model (tmAll)
+    }, [s.clashes, s.issues, s.rules, tmAll]);
     var oC=counts.oC, oI=counts.oI;
     var FL={fontSize:'var(--text-2xs)',color:'var(--text-muted)',marginBottom:'var(--space-1)',display:'block'};
     var PILL=function(active){return Object.assign({},S_BTN,{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-1)',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'var(--accent-contrast)':'var(--text-faint)'});};
@@ -31275,7 +31801,7 @@ function startApp() {
       }()}
       ${!isExplorerTab && !isStandardsTab && items.length>0 && html`<${BulkActionBar} s=${s} d=${d} items=${items} isClash=${isClashTab} />`}
 
-      ${!isExplorerTab && !isStandardsTab && html`<${VirtualList} items=${items} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${s.models} storeyLabel=${isClashTab && triage ? triage.fctx.storey : null} groupBy=${isClashTab?s.clashGroupBy:s.issueGroupBy} sortBy=${isClashTab?s.clashSortBy:s.issueSortBy} selectMode=${s.selectMode} selected=${s.selected} trainingMode=${s.trainingMode} triageResults=${s.triageResults}
+      ${!isExplorerTab && !isStandardsTab && html`<${VirtualList} items=${items} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${listModels} storeyLabel=${isClashTab && triage ? triage.fctx.storey : null} groupBy=${isClashTab?s.clashGroupBy:s.issueGroupBy} sortBy=${isClashTab?s.clashSortBy:s.issueSortBy} selectMode=${s.selectMode} selected=${s.selected} trainingMode=${s.trainingMode} triageResults=${s.triageResults}
         emptyCtx=${{
           hasModel: (s.models||[]).length > 0,
           detecting: !!s.detecting,
@@ -34259,7 +34785,10 @@ function startApp() {
   // can assert these stay flat across scroll-driven re-renders instead of
   // just asserting a useMemo call exists in the source (a source-pattern
   // check can't catch an unmemoized upstream dependency invalidating it).
-  window._ccListPerfCounters = { groupAndSort: 0, buildConflictRows: 0, computeRowOffsets: 0 };
+  window._ccListPerfCounters = { groupAndSort: 0, buildConflictRows: 0, computeRowOffsets: 0,
+    // scene / review rebuilds (docs/INTERNALS.md §21.54) — tests assert an
+    // unrelated action leaves them flat
+    clashMarkers: 0, triageFull: 0, triageInc: 0, reviewBuild: 0 };
   var _CC_SEV_RANK = { critical: 4, major: 3, minor: 2, info: 1 };
   function groupAndSort(items, groupBy, sortBy, opts) {
     window._ccListPerfCounters.groupAndSort++;
@@ -34340,10 +34869,15 @@ function startApp() {
   function _ccReviewModel(s) {
     var facets = (s.triage && s.triage.facets) || {};
     var L = _ccReviewLast;
-    if (L && L.clashes === s.clashes && L.rules === s.rules && L.models === s.models && L.filters === s.filters && L.facets === facets) return L.out;
+    // the models reach the review set only through the triage model
     var tm = _ccTriageModel(s), tcore = window._ccClashTriageCore, f = s.filters || INIT_FILTERS;
+    if (L && L.clashes === s.clashes && L.rules === s.rules && L.tm === tm && L.filters === s.filters && L.facets === facets) return L.out;
+    window._ccListPerfCounters.reviewBuild++;
     var facetsOn = !!(tcore && tcore.hasFacets(facets));
-    var pre = tm.visible.filter(function(c) {
+    // A search that only narrows the previous one (§21.54) filters the
+    // previous review set: same clashes, same order, a subset of it.
+    var narrow = !!(L && L.clashes === s.clashes && L.rules === s.rules && L.tm === tm && _ccSearchNarrows(L.filters || INIT_FILTERS, f));
+    var pre = (narrow ? L.out.pre : tm.visible).filter(function(c) {
       return tm.bucketOf.get(c.id) === 'review' && _ccListItemPasses(c, f, true, tm.visibleModels, tm, s.rules);
     });
     var clashes = !facetsOn ? pre : pre.filter(function(c) {
@@ -34367,7 +34901,7 @@ function startApp() {
     var byClash = {};
     items.forEach(function(it) { it.items.forEach(function(c) { byClash[c.id] = it; }); });
     var out = { pre: pre, clashes: clashes, items: items, byClash: byClash };
-    _ccReviewLast = { clashes: s.clashes, rules: s.rules, models: s.models, filters: s.filters, facets: facets, out: out, groups: groups };
+    _ccReviewLast = { clashes: s.clashes, rules: s.rules, tm: tm, filters: s.filters, facets: facets, out: out, groups: groups };
     return out;
   }
 
@@ -34755,9 +35289,24 @@ function startApp() {
       return { label: g.label, items: g.items.map(function(it) { return byId.get(it.id) || it; }) };
     });
   }
+  // The models array as far as the clash list reads it — id, elements (+ the
+  // lazily merged props) and, with withName, the name: the previous array
+  // while none of those changed, so memoised rows / headers skip a
+  // visibility toggle, colour or storey change (§21.54).
+  function _ccStableModels(ref, models, withName) {
+    var p = ref.current;
+    var same = p && p.length === models.length && models.every(function(m, i){
+      var q = p[i]; return q === m || (q.id === m.id && q.elements === m.elements && q._propsVersion === m._propsVersion && (!withName || q.name === m.name));
+    });
+    if (!same) ref.current = models;
+    return ref.current;
+  }
   var _VL_NO_MODELS = []; // shared empty fallback so `props.models||[]` doesn't mint a new array (and bust the groups memo) every render
   function VirtualList(props) {
     var rawItemsProp=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs, models=props.models||_VL_NO_MODELS;
+    var rowModelsRef = useRef(null);
+    var rowModels = _ccStableModels(rowModelsRef, models, false); // rows never show a model name
+    var groupModels = [].concat(props.groupBy || []).indexOf('model') !== -1 ? models : null;
     var triageResults = props.triageResults || {};
     var storeyLabel = props.storeyLabel || null; // normalised storey names for the group headers
     var groupBy = props.groupBy || 'none';
@@ -34895,7 +35444,8 @@ function startApp() {
       prevGroupsRef.current = next;
       prevGroupInRef.current = { items: items, groupBy: groupBy, sortBy: sortBy };
       return next;
-    }, [items, groupBy, sortBy, models]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the models only name the groups of a 'model' grouping (groupModels)
+    }, [items, groupBy, sortBy, groupModels]);
     var flatItems = useMemo(function(){
       if(!groups) return items;
       var flat = [];
@@ -35283,7 +35833,7 @@ function startApp() {
     }
 
     function renderItemRow(it) {
-      return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} autoHighlight=${autoHighlight} autoFlyTo=${autoFlyTo} models=${models} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`;
+      return html`<${IssueRow} key=${it.id} item=${it} active=${activeId===it.id} d=${d} isClash=${isClash} autoHighlight=${autoHighlight} autoFlyTo=${autoFlyTo} models=${rowModels} selectMode=${selectMode} isSelected=${!!selected[it.id]} trainingMode=${trainingMode} />`;
     }
     function renderMoreRow(g, limit) {
       return html`<button key=${'more:'+g.label} onClick=${function(e){e.stopPropagation();showMore(g.label);}}
@@ -40655,10 +41205,9 @@ function startApp() {
     var lines = S._sectionCutLines;
     try { S.scene.remove(lines); } catch (_) {}
     try { if (lines.geometry) lines.geometry.dispose(); } catch (_) {}
-    try {
-      var mats = Array.isArray(lines.material) ? lines.material : [lines.material];
-      mats.forEach(function(mat) { if (mat && mat.dispose) mat.dispose(); });
-    } catch (_) {}
+    // the material is kept for the next cut lines (same look): disposing it
+    // would drop its GL program and recompile it 300 ms later (§21.54)
+    if (lines.material && !Array.isArray(lines.material)) S._sectionCutMat = lines.material;
     S._sectionCutLines = null;
   }
   function _getSectionCutWorker() {
@@ -40749,7 +41298,7 @@ function startApp() {
       if(!positions.length) return;
       var geo=new THREE.BufferGeometry();
       geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
-      var mat=new THREE.LineBasicMaterial({depthTest:false,transparent:true,opacity:0.9});
+      var mat=S._sectionCutMat || new THREE.LineBasicMaterial({depthTest:false,transparent:true,opacity:0.9});
       mat.clippingPlanes=[];
       var lines=new THREE.LineSegments(geo,mat);
       lines.renderOrder=998;
