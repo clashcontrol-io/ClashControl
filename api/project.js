@@ -226,6 +226,41 @@ function isMissingSchema(e) {
   return !!(e && (e.code === '42P01' || e.code === '42703' || /(relation|column) .* does not exist/i.test(String(e.message || ''))));
 }
 
+// The change log's tables, created by the server itself the first time a
+// request finds them missing — the same statements as api/schema.sql
+// (tests/project-changelog.test.js keeps them identical), all "if not
+// exists", so running them again or concurrently is harmless. Once per
+// function instance; when the database role may not create tables, the
+// request still answers the 503 that says to run api/schema.sql.
+var _schemaEnsured = null;
+function ensureChangeLogSchema(sql) {
+  if (!_schemaEnsured) {
+    _schemaEnsured = (async function() {
+      await sql`/* cc:schema-seq */ ALTER TABLE shared_projects ADD COLUMN IF NOT EXISTS change_seq BIGINT NOT NULL DEFAULT 0`;
+      await sql`/* cc:schema-migrated */ ALTER TABLE shared_projects ADD COLUMN IF NOT EXISTS log_migrated BOOLEAN NOT NULL DEFAULT false`;
+      await sql`/* cc:schema-changes */ CREATE TABLE IF NOT EXISTS shared_changes (
+  project_id  TEXT NOT NULL REFERENCES shared_projects(id) ON DELETE CASCADE,
+  seq         BIGINT NOT NULL,
+  id          TEXT NOT NULL,
+  user_id     TEXT NOT NULL,
+  user_name   TEXT,
+  ts          BIGINT NOT NULL,
+  target_kind TEXT NOT NULL,
+  target_key  TEXT NOT NULL,
+  field       TEXT NOT NULL,
+  value       JSONB,
+  base        TEXT,
+  resolves    JSONB,
+  meta        JSONB NOT NULL DEFAULT '{}',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (project_id, id)
+)`;
+      await sql`/* cc:schema-seq-idx */ CREATE INDEX IF NOT EXISTS shared_changes_seq_idx ON shared_changes (project_id, seq)`;
+    })().catch(function(e) { _schemaEnsured = null; throw e; });
+  }
+  return _schemaEnsured;
+}
+
 // Appends records (already validated, deduped). Sequence numbers come from
 // the project row, bumped in the SAME statement: the row lock orders
 // concurrent appends, so seqs are committed in increasing order and a pull
@@ -316,7 +351,7 @@ function legacyView(changes) {
   return out;
 }
 
-module.exports = async function handler(req, res) {
+async function handler(req, res) {
   if (cors(req, res, 'GET, POST, PUT, DELETE')) return;
 
   // Rate limit + payload cap — this is the only unauthenticated DB-write
@@ -330,9 +365,27 @@ module.exports = async function handler(req, res) {
   var { neon } = require('@neondatabase/serverless');
   var sql = neon(url);
 
-  var projectId = req.query.id || null;
-
   try {
+    return await serve(sql, req, res);
+  } catch (e) {
+    if (isMissingSchema(e)) {
+      // a deployment whose database predates the change log: set it up once
+      // and answer this request again
+      try { await ensureChangeLogSchema(sql); } catch (e2) {
+        console.error('Shared change log setup failed:', e2);
+        return res.status(503).json({ error: 'Shared change log not set up on this deployment (run api/schema.sql)' });
+      }
+      try { return await serve(sql, req, res); } catch (e3) { e = e3; }
+      if (isMissingSchema(e)) return res.status(503).json({ error: 'Shared change log not set up on this deployment (run api/schema.sql)' });
+    }
+    console.error('Project sync error:', e);
+    return res.status(500).json({ error: 'Database error' });
+  }
+}
+
+async function serve(sql, req, res) {
+  var projectId = req.query.id || null;
+  {
     switch (req.method) {
 
       // POST — Create a new shared project
@@ -506,12 +559,10 @@ module.exports = async function handler(req, res) {
       default:
         return res.status(405).json({ error: 'Method not allowed' });
     }
-  } catch (e) {
-    if (isMissingSchema(e)) return res.status(503).json({ error: 'Shared change log not set up on this deployment (run api/schema.sql)' });
-    console.error('Project sync error:', e);
-    return res.status(500).json({ error: 'Database error' });
   }
-};
+}
+
+module.exports = handler;
 
 // Exposed for direct unit testing (this file has no DOM/browser dependency,
 // unlike the addons/*.js IIFEs, so plain CommonJS exports work here).

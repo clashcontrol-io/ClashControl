@@ -268,14 +268,37 @@ test('editKey still gates DELETE; deleting the project removes its change log', 
   } finally { restore(); }
 });
 
-test('a deployment that has not run the schema migration answers 503 with what to do', async () => {
-  const { handler, restore } = setup({ noChangeLog: true });
+test('a deployment that has not run the schema migration sets the change log up itself', async () => {
+  const { handler, restore, db } = setup({ noChangeLog: true });
+  try {
+    const p = await createProject(handler);
+    const r = await call(handler, { method: 'GET', query: { id: p.id, v: '2' } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(db.calls.filter((t) => t.startsWith('schema-')), ['schema-seq', 'schema-migrated', 'schema-changes', 'schema-seq-idx']);
+    const again = await call(handler, { method: 'GET', query: { id: p.id, v: '2' } });
+    assert.equal(again.status, 200);
+    assert.equal(db.calls.filter((t) => t.startsWith('schema-')).length, 4, 'set up once, not per request');
+  } finally { restore(); }
+});
+
+test('when the database role may not create tables, the answer is a 503 that says what to do', async () => {
+  const { handler, restore } = setup({ noChangeLog: true, noDdl: true });
   try {
     const p = await createProject(handler);
     const r = await call(handler, { method: 'GET', query: { id: p.id, v: '2' } });
     assert.equal(r.status, 503);
     assert.match(r.body.error, /schema\.sql/);
   } finally { restore(); }
+});
+
+test('the server\'s own change-log setup runs exactly the statements of api/schema.sql', () => {
+  const fs = require('node:fs');
+  const norm = (t) => t.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')').trim();
+  const schema = norm(fs.readFileSync(require.resolve('../api/schema.sql'), 'utf8'));
+  const src = fs.readFileSync(require.resolve('../api/project.js'), 'utf8');
+  const stmts = (src.match(/sql`\/\* cc:schema-[a-z-]+ \*\/([^`]*)`/g) || []).map((s) => norm(s.replace(/^sql`\/\* cc:schema-[a-z-]+ \*\//, '').replace(/`$/, '')));
+  assert.equal(stmts.length, 4);
+  stmts.forEach((st) => assert.ok(schema.includes(st), 'not in api/schema.sql: ' + st.slice(0, 80)));
 });
 
 test('every statement in api/project.js is tagged (so the in-memory db covers all of them)', () => {

@@ -25,6 +25,8 @@ function createMemoryDb(opts) {
     calls: [],
     // simulate a deployment that has not run the change-log migration
     noChangeLog: !!opts.noChangeLog,
+    // ...and whose role may not create tables (the server's own setup fails)
+    noDdl: !!opts.noDdl,
   };
   function missing(what) { const e = new Error('relation "' + what + '" does not exist'); e.code = '42P01'; return e; }
   function changesOf(pid) { let a = db.changes.get(pid); if (!a) { a = []; db.changes.set(pid, a); } return a; }
@@ -39,6 +41,11 @@ function createMemoryDb(opts) {
   }
   function run(tag, v) {
     switch (tag) {
+      case 'schema-seq': case 'schema-migrated': case 'schema-changes': case 'schema-seq-idx': {
+        if (db.noDdl) { const e = new Error('permission denied for schema public'); e.code = '42501'; throw e; }
+        if (tag === 'schema-seq-idx') db.noChangeLog = false;
+        return [];
+      }
       case 'project-row': case 'project-row-2': case 'project-row-3': {
         const p = db.projects.get(v[0]);
         return p ? [Object.assign({}, p)] : [];
