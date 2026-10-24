@@ -195,7 +195,20 @@ async function fullRun(label, query, atPort) {
   r.load = await loadAll(page, FED);
   r.loadPeak = await ps.stop(); r.loadPeakMB = Math.max(r.loadPeak.peakMB, await page.evaluate(() => window.__mem.stopPeak()));
   await page.waitForTimeout(3000); // preview grace period + idle-time cache writes
-  r.afterLoadMB = await page.evaluate(() => window.__mem.gcMB());
+  // Settled heap: the geo-cache write (serialized geometry streamed to its
+  // worker in idle-time chunks) can still be in flight 3 s after a fast
+  // load; wait until two post-GC readings agree (≤ 40 s) instead of
+  // measuring whatever is mid-flight.
+  r.afterLoadMB = await page.evaluate(async () => {
+    let a = await window.__mem.gcMB();
+    for (let t = 0; t < 26; t++) {
+      await new Promise((res) => setTimeout(res, 1500));
+      const b = await window.__mem.gcMB();
+      if (Math.abs(b - a) < 8) return b;
+      a = b;
+    }
+    return a;
+  });
   r.digest = await page.evaluate(deepModelDigest);
   // Pixels: one frame of the loaded federation from a fixed camera, read
   // back in the same task as the render (no preserveDrawingBuffer needed).
