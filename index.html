@@ -3302,6 +3302,10 @@ function startApp() {
       if (s.detecting) return;                     // don't churn caches mid-run
       if (Date.now() - _AUTOPARK_LAST_ACTION_MS < _AUTOPARK_COOLDOWN_MS) return; // let the last action settle
       if (performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit < _AUTOPARK_RATIO) return;
+      // Cheapest relief first: the detection caches (re-extracted on the next
+      // run that needs them, same results) before parking a whole model.
+      // The next pass re-checks the heap.
+      if (_ccDropDetectCaches() > 0) return;
       var models = s.models || [];
       if (models.length < 2) return;               // don't empty the only view
       var hidden = models.filter(function(m){
@@ -9610,6 +9614,15 @@ function startApp() {
   }
   function _bvhLRUEvict() {
     while (_bvhLRU.size && _bvhLRU.size >= _BVH_CACHE_MAX_FN()) _bvhLRUEvict1();
+  }
+  // Drops every cached detection structure (world triangles, BVH, topology);
+  // returns the estimated bytes released. Used under memory pressure.
+  function _ccDropDetectCaches() {
+    var bytes = _bvhLRUBytes, n = _bvhLRU.size;
+    while (_bvhLRU.size) _bvhLRUEvict1();
+    if (n && window._ccWasmEngine && typeof window._ccWasmEngine.clear === 'function') { try { window._ccWasmEngine.clear(); } catch (_) {} }
+    if (n) console.info('[memory] heap tight — dropped the detection caches of ' + n + ' elements (~' + Math.round(bytes / 1048576) + ' MB)');
+    return n ? Math.max(1, bytes) : 0;
   }
   function _bvhLRURemoveModel(model) {
     if (!model || !model.elements) return;
@@ -21443,6 +21456,7 @@ function startApp() {
           });
         }
         S.renderer.clippingPlanes=[];
+        try { S.renderer.renderLists.dispose(); } catch (e) {} // no stale items holding the removed models
         S._modelsSceneSig = null; // the next models effect runs in full
         invalidate();
       };
@@ -22808,6 +22822,7 @@ function startApp() {
         return x.id === y.id && x.mesh0 === y.mesh0 && x.n === y.n && x.vis === y.vis && x.hs === y.hs && x.grid === y.grid;
       })) return;
       var ids = s.models.map(function(m){return m.id});
+      var _groupsLeft = false; // a model group left the scene (removed / swapped)
       S._lastCullCamKey = '';
       // Force the next tick's culling pass to run immediately, bypassing the
       // 8-frame throttle below — otherwise a model just re-shown stays
@@ -22821,7 +22836,7 @@ function startApp() {
           if(S._pruneGhostCache) S._pruneGhostCache(S.map[id]);
           S.map[id].traverse(function(obj){if(obj.isMesh){_ccDisposeStyleResources(obj);obj.geometry&&obj.geometry.dispose();if(obj.material){(Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();});}}else if(obj.userData&&obj.userData._ccBoundary&&obj.geometry){obj.geometry.dispose();}});
           _ccMeshIndexDrop(S.map[id]);
-          S.mg.remove(S.map[id]);delete S.map[id];
+          S.mg.remove(S.map[id]);delete S.map[id]; _groupsLeft = true;
           if(S._elMapCache) delete S._elMapCache[id];
           if(S._hsCache) delete S._hsCache[id];
         }
@@ -22835,7 +22850,7 @@ function startApp() {
             if(S._pruneGhostCache) S._pruneGhostCache(existingGrp);
             existingGrp.traverse(function(obj){if(obj.isMesh){_ccDisposeStyleResources(obj);obj.geometry&&obj.geometry.dispose();if(obj.material){(Array.isArray(obj.material)?obj.material:[obj.material]).forEach(function(m){m.dispose();});}}else if(obj.userData&&obj.userData._ccBoundary&&obj.geometry){obj.geometry.dispose();}});
             _ccMeshIndexDrop(existingGrp);
-            S.mg.remove(existingGrp); delete S.map[model.id];
+            S.mg.remove(existingGrp); delete S.map[model.id]; _groupsLeft = true;
             if(S._elMapCache) delete S._elMapCache[model.id];
             if(S._hsCache) delete S._hsCache[model.id];
             S._meshList = null; S._meshListKey = ''; // force renderStyle to rescan new meshes
@@ -22914,6 +22929,11 @@ function startApp() {
         S.camera.lookAt(S.orbit.target);
         S.orbit.sync(); S.orbit.apply();
       }
+      // Render lists keep their render items between frames, and a reused
+      // item still points at the object / geometry / material it last held —
+      // a model that left the scene stays reachable through them until those
+      // slots are overwritten. Drop them when that happens (rebuilt next frame).
+      if (_groupsLeft && S.renderer && S.renderer.renderLists) { try { S.renderer.renderLists.dispose(); } catch (e) {} }
       // grid overlay: rebuilt only when a visible model's grid lines change
       var _grids = s.models.map(function(m){ return m.visible !== false && m.gridLines && m.gridLines.length ? m.gridLines : null; }).filter(Boolean);
       var _gridsWas = S._gridsDrawn || [];
@@ -50654,22 +50674,12 @@ function startApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setShowMemWarn is a useState setter (stable identity; the lint cannot see through the `var st = useState()` destructuring)
     }, []);
 
-    // ── Periodic memory cleanup (runs every 2 minutes) ──
-    useEffect(function(){
-      var timer = setInterval(function(){
-        var S = window._ccState3d;
-        if(!_latestSRef.current.detecting) _flushGeoCache(_latestSRef.current.models);
-        if(S && S.renderer && S.renderer.renderLists) {
-          try { S.renderer.renderLists.dispose(); } catch(e){}
-        }
-        if(S && S._elMapCache) {
-          var modelIds = {};
-          _latestSRef.current.models.forEach(function(m){ modelIds[m.id]=true; });
-          Object.keys(S._elMapCache).forEach(function(k){ if(!modelIds[k]){ delete S._elMapCache[k]; delete S._hsCache[k]; } });
-        }
-      }, 120000);
-      return function(){ clearInterval(timer); };
-    }, []);
+    // (No periodic cleanup timer. What it did every 2 minutes now happens on
+    // the event it belongs to: detection caches stay between runs — they are
+    // capped by count and by bytes from the heap headroom (§21.46) — and are
+    // dropped first when memory is actually tight (_ccAutoParkPass); render
+    // lists are disposed when a model leaves the scene and its per-model
+    // storey maps go with it (models effect).)
     useEffect(function() {
       var sheet = s.activeSheetId && (s.sheets||[]).find(function(sh){return sh.id===s.activeSheetId;});
       if (sheet && s.models.length) {
