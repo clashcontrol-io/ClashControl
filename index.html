@@ -4717,8 +4717,21 @@ function startApp() {
           if (sub) for (var t = 0; t < sub.length; t++) pts.push(sub[t]);
         }
       } else if (c.BasisCurve && c.Trim1 && c.Trim2) {
+        // a trim is an IfcCartesianPoint reference (type 5) or an
+        // IfcParameterValue — a number, never an entity id (reading it as
+        // one picked whatever point had that id); parameters are evaluated
+        // on an IfcLine basis: Pnt + t * Dir (Dir an IfcVector with magnitude)
+        var basis = line(rv(c.BasisCurve));
         [c.Trim1, c.Trim2].forEach(function(tr) {
-          for (var u = 0; u < tr.length; u++) { var tp = coords(line(rv(tr[u]))); if (tp) { pts.push(tp); break; } }
+          var tp = null, u;
+          for (u = 0; u < tr.length && !tp; u++) if (tr[u] && tr[u].type === 5) tp = coords(line(tr[u].value));
+          for (u = 0; u < tr.length && !tp; u++) {
+            if (!tr[u] || tr[u].type === 5 || !/PARAMETER/i.test(String(tr[u].name || ''))) continue;
+            var lp = basis && basis.Pnt ? coords(line(rv(basis.Pnt))) : null, vec = basis && basis.Dir ? line(rv(basis.Dir)) : null;
+            var dv = vec ? dirOf(vec.Orientation) : null, t = num(tr[u]) * (vec ? num(vec.Magnitude) : NaN);
+            if (lp && dv && isFinite(t)) tp = [lp[0] + t * dv[0], lp[1] + t * dv[1], lp[2] + t * dv[2]];
+          }
+          if (tp) pts.push(tp);
         });
       }
       var minPts = open ? 2 : 3;
@@ -4736,6 +4749,36 @@ function startApp() {
     function clsName(l) { try { return api.GetNameFromTypeCode(l.type) || ''; } catch (e) { return ''; } }
     return { rv: rv, num: num, line: line, coords: coords, norm: norm, dirOf: dirOf, axisMatrix: axisMatrix, mul: mul, apply: apply,
       invRigid: invRigid, placement: placement, curvePoints: curvePoints, clsName: clsName };
+  }
+
+  // IfcGrid axes as data — grids are non-physical: never drawn as model
+  // geometry, never clashed. Each axis: its tag (A, B, 1, 2 …), family
+  // (U / V / W) and polyline in IFC world coordinates, file units (grid
+  // placement applied). Shared by the worker and the main-thread fallback.
+  function extractGridAxes(api, modelID) {
+    var out = [];
+    try {
+      var ids = api.GetLineIDsWithType(modelID, IFC.IFCGRID), R = null;
+      for (var i = 0; i < ids.size(); i++) {
+        R = R || ifcGeomReader(api, modelID);
+        var gid = ids.get(i), g = R.line(gid);
+        if (!g) continue;
+        var M = R.placement(R.rv(g.ObjectPlacement), 0) || [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+        var grid = { id: gid, name: safeStr(g.Name), axes: [] };
+        [['UAxes', 'U'], ['VAxes', 'V'], ['WAxes', 'W']].forEach(function(f) {
+          (g[f[0]] || []).forEach(function(ref) {
+            var ax = R.line(R.rv(ref));
+            var pts = ax ? R.curvePoints(ax.AxisCurve, 0, true) : null;
+            if (!pts) return;
+            var w = [];
+            for (var k = 0; k < pts.length; k++) { var q = R.apply(M, pts[k]); w.push(q[0], q[1], q[2]); }
+            grid.axes.push({ tag: safeStr(ax.AxisTag), fam: f[1], pts: w });
+          });
+        });
+        if (grid.axes.length) out.push(grid);
+      }
+    } catch (e) {}
+    return out.length ? out : null;
   }
 
   // ── Space boundaries (IfcRelSpaceBoundary + 1st/2nd-level subtypes) ──────
@@ -7040,6 +7083,7 @@ function startApp() {
       + 'var extractOpeningRecords=' + extractOpeningRecords.toString() + ';\n'
       + 'var extractSemanticRecords=' + extractSemanticRecords.toString() + ';\n'
       + 'var ifcGeomReader=' + ifcGeomReader.toString() + ';\n'
+      + 'var extractGridAxes=' + extractGridAxes.toString() + ';\n'
       + 'var extractSpaceBoundaryRecords=' + extractSpaceBoundaryRecords.toString() + ';\n'
       + 'var createNotDrawnReport=' + createNotDrawnReport.toString() + ';\n'
       + 'var _ccIfcStreamOrder=' + _ccIfcStreamOrder.toString() + ';\n'
