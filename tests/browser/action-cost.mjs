@@ -279,14 +279,15 @@ try {
     const key = hdr.getAttribute('data-element-group-key');
     const sm = window.ClashControl.review.summary();
     const grp = sm.items.find((it) => it.key === key);
-    const btn = hdr.querySelector('button[aria-expanded]');
+    // re-query the header's button per click: collapsing re-renders the header
+    const btn = () => document.querySelector('.cc-issue-panel [data-element-group-key="' + key + '"] button[aria-expanded]');
     const shownNow = () => grp.ids.filter((id) => document.querySelector('.cc-issue-panel [data-item-id="' + id + '"]')).length;
     // wait for the outcome itself (a busy machine can take longer than a frame or two to render)
     const until = async (ok) => { for (let t = 0; t < 30 && !ok(); t++) await new Promise((r) => setTimeout(r, 100)); };
-    btn.click();
+    btn().click();
     await until(() => shownNow() === 0);
     const stillShown = shownNow();
-    btn.click();
+    btn().click();
     await until(() => shownNow() > 0);
     const back = shownNow();
     return { stillShown, back };
