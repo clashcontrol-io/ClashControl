@@ -70,5 +70,6 @@ test('the reducer changes data only on Deny / Confirm: no next-clash pick, no ca
   assert.doesNotMatch(block, /setTimeout/);
   assert.doesNotMatch(block, /activeId/);
   assert.doesNotMatch(block, /_flyToElements|_ghostOthers|_highlightRefs/);
-  assert.match(block, /_saveDeniedClash\(dClash\);/);
+  // who / when / why on the clash; the denied memory follows in _ccAppReducer
+  assert.match(block, /_ccDenyFields\(dClash, a\.u, a\._fromSync\)/);
 });

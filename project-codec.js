@@ -31,6 +31,9 @@
       assignmentRules: state.assignmentRules || [],
       changelog: state.changelog || [],
       comments: state.comments || [],
+      // denied memory: clashes a person denied are dropped by later runs
+      // (identity key → {pair, point, ts, reason, by}); per project, shared
+      deniedPairs: state.deniedPairs || {},
       // clash review: facet filters, search, saved views and the overview/list
       // choice — per project (autoOpen is per run and never stored)
       triage: serializeTriage(state),
@@ -52,7 +55,26 @@
     if (!data._cc || data._cc !== 'ClashControl') throw new Error('Not a ClashControl project file.');
   }
 
-  function restoreProject(data, dispatch, actions) {
+  /** @param {any} v */
+  function isDeniedMemory(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+  // The old per-browser store (`cc_denied_clashes`: element pair → {point,
+  // ts}) as denied memory. Keyed `legacy:<pair>` — the old store had no
+  // identity key; matching uses pair + point either way.
+  /** @param {any} store */
+  function importLegacyDenied(store) {
+    /** @type {any} */
+    var out = {};
+    if (!isDeniedMemory(store)) return out;
+    Object.keys(store).forEach(function(pair) {
+      var e = store[pair];
+      if (!pair || !e || !Array.isArray(e.point) || e.point.length < 3) return;
+      out['legacy:' + pair] = {pair: pair, point: [+e.point[0] || 0, +e.point[1] || 0, +e.point[2] || 0], ts: +e.ts || 0, reason: '', by: ''};
+    });
+    return out;
+  }
+
+  /** @param {any} data @param {(a:any)=>void} dispatch @param {any} actions @param {{legacyDenied?:any}} [opts] */
+  function restoreProject(data, dispatch, actions, opts) {
     data.models.forEach(function(model) {
       dispatch({t:actions.ADD_MODEL, v:Object.assign({}, model, {meshes:[],elements:[],_stub:true})});
     });
@@ -62,6 +84,14 @@
     // project saved with the old default loads with the new one (0 = off).
     if (rules && rules.minOverlapVolM3 === 1e-5) rules = Object.assign({}, rules, {minOverlapVolM3: 0});
     dispatch({t:actions.UPD_RULES, u:rules});
+    // Before the clashes: a restored list drops what is denied, as it always
+    // did with the per-browser store. A file saved before the denied memory
+    // was project state has no `deniedPairs`: it gets the old store's
+    // entries (opts.legacyDenied) once — saved again, it carries its own.
+    if (actions.DENIED_SET) {
+      var denied = isDeniedMemory(data.deniedPairs) ? data.deniedPairs : importLegacyDenied(opts && opts.legacyDenied);
+      dispatch({t:actions.DENIED_SET, v:denied});
+    }
     if (data.clashes) dispatch({t:actions.SET_CLASHES, v:data.clashes});
     if (data.runHistory || data.lastDeltaSummary) dispatch({
       t:actions.LOAD_PROJECT_STATE,
@@ -87,6 +117,7 @@
     serializeProject: serializeProject,
     validateProject: validateProject,
     restoreProject: restoreProject,
+    importLegacyDenied: importLegacyDenied,
     serializeTriage: serializeTriage
   });
 }));

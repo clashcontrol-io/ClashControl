@@ -238,3 +238,60 @@ test('a clash with Revit UniqueIds gets decisions recorded under its GlobalId id
   sess.sync({ full: true });
   assert.equal(st.clashes[0].status, 'closed');
 });
+
+// Deny with a reason (docs/INTERNALS.md §21.58): the reason is a clash field
+// of its own (`deniedReason`); who / when come from the status record.
+test('a deny reason is shared with the status; the teammate gets who / when from the record; reopen clears it', () => {
+  const a = app('ua'), b = app('ub');
+  b.sess.sync({});
+  a.act({ t: 'UPD_CLASH', id: 'c1-ua', u: { status: 'denied', deniedReason: 'insulation only' } });
+  assert.deepEqual(a.sess.outbox().map((r) => [r.target.kind, r.target.key, r.field, r.value]).sort(),
+    [['clash', 'A|B@0,0,0', 'deniedReason', 'insulation only'], ['clash', 'A|B@0,0,0', 'status', 'denied']]);
+  const mine = a.sess.takeBatch(); a.sess.done(mine);
+  const r = b.sess.ingest(mine, { ua: 'Ann' });
+  b.sess.sync({ touched: r.touched, remote: r.added });
+  const got = b.st.clashes[0];
+  assert.equal(got.status, 'denied');
+  assert.equal(got.deniedReason, 'insulation only');
+  assert.equal(got.deniedBy, 'Ann');
+  assert.equal(got.deniedAt, mine.find((x) => x.field === 'status').ts);
+  // reopening (status only) also clears the reason for everyone
+  a.act({ t: 'UPD_CLASH', id: 'c1-ua', u: { status: 'open' } });
+  assert.ok(a.sess.outbox().some((x) => x.field === 'deniedReason' && x.value === ''));
+  a.exchange(b);
+  assert.equal(b.st.clashes[0].status, 'open');
+  assert.equal(b.st.clashes[0].deniedReason, '');
+});
+
+test('two people giving a denied clash different reasons is a conflict both see; both denying is not', () => {
+  const a = app('ua'), b = app('ub');
+  a.sess.sync({}); b.sess.sync({});
+  a.act({ t: 'UPD_CLASH', id: 'c1-ua', u: { status: 'denied' } });
+  a.exchange(b);
+  assert.equal(b.st.clashes[0].status, 'denied');
+  a.act({ t: 'UPD_CLASH', id: 'c1-ua', u: { deniedReason: 'sleeve provided' } });
+  b.act({ t: 'UPD_CLASH', id: 'c1-ub', u: { deniedReason: 'outside scope' } });
+  a.exchange(b); b.exchange(a);
+  for (const p of [a, b]) {
+    const m = p.st.clashes[0]._sharedConflict;
+    assert.ok(m && m.length === 1, 'one conflict marker');
+    assert.equal(m[0].field, 'deniedReason');
+    assert.deepEqual(m[0].heads.map((h) => h.value).sort(), ['outside scope', 'sleeve provided']);
+    assert.equal(p.sess.conflictCount(), 1);
+  }
+  // both denying (status) at once is never a conflict: the same value
+  const c = app('uc'), e = app('ue');
+  c.sess.sync({}); e.sess.sync({});
+  c.act({ t: 'UPD_CLASH', id: 'c1-uc', u: { status: 'denied' } });
+  e.act({ t: 'UPD_CLASH', id: 'c1-ue', u: { status: 'denied' } });
+  c.exchange(e); e.exchange(c);
+  assert.equal(c.sess.conflictCount() + e.sess.conflictCount(), 0);
+});
+
+test('undo of a run\'s issue changes (CLASH_BATCH_RESTORE issuePrev) is shared as issue edits', () => {
+  const a = app('ua');
+  a.sess.sync({});
+  const prev = { clashes: a.st.clashes, issues: [{ id: 'iss_r', title: 'Duct', status: 'resolved', comments: [{ id: 'rc1', text: 'Resolved by re-check' }] }] };
+  a.sess.note({ t: 'CLASH_BATCH_RESTORE', prev: {}, keepIssueIds: null, issuePrev: { iss_r: { status: 'open', comments: [] } } }, prev, null);
+  assert.deepEqual(a.sess.outbox().map((r) => [r.target.key, r.field, r.value]), [['iss_r', 'status', 'open'], ['iss_r', 'comment:rc1', null]]);
+});

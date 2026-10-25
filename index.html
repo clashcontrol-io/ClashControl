@@ -1725,6 +1725,8 @@ function startApp() {
       summary: null      // {total, pass, fail, bySpec:{specName:{pass,fail}}}
     },
     changelog: [],       // [{id, ts, user, type, targetId, field, value, prev}]
+    deniedPairs: {},     // denied memory: clash identity key → {pair, point, ts, reason, by} (docs/INTERNALS.md §21.58)
+    lastIssueLifecycle: null, // the last run's linked-issue changes {ts, resolved, reopened, changes} (toast + sharing)
     showShare: false,
     shareTab: 'overview', // 'overview' | 'comments'
     comments: [],         // [{id, anchor:{point:[x,y,z], globalId, modelId}, author, text, ts, resolved, replies:[{id,author,text,ts}]}]
@@ -1833,7 +1835,7 @@ function startApp() {
     SHARE:'SHARE', SHARE_TAB:'SHARE_TAB', PRESENT:'PRESENT',
     SMART_VIEWS:'SMART_VIEWS', ADD_SMART_VIEW:'ADD_SMART_VIEW', DEL_SMART_VIEW:'DEL_SMART_VIEW',
     COMMENT_MODE:'COMMENT_MODE', ADD_COMMENT:'ADD_COMMENT', UPD_COMMENT:'UPD_COMMENT',
-    DEL_COMMENT:'DEL_COMMENT', SET_ACTIVE_COMMENT:'SET_ACTIVE_COMMENT', MERGE_COMMENTS:'MERGE_COMMENTS',
+    DEL_COMMENT:'DEL_COMMENT', SET_ACTIVE_COMMENT:'SET_ACTIVE_COMMENT', MERGE_COMMENTS:'MERGE_COMMENTS', DENIED_SET:'DENIED_SET',
     /* UI shell — workspace switcher and persisted panel/inspector/ask state */
     SET_WORKSPACE:'SET_WORKSPACE', DIAGNOSTICS:'DIAGNOSTICS', PRE_RUN:'PRE_RUN',
     INSPECTOR_OPEN:'INSPECTOR_OPEN',
@@ -2478,7 +2480,57 @@ function startApp() {
   // The App's reducer: every action, then the migrations that depend on
   // state other actions bring in (name-valued model-pair facets → model ids
   // once the models are there, §21.54).
-  function _ccAppReducer(s, a) { return _ccMigrateTriageModelPairs(reducer(s, a)); }
+  function _ccAppReducer(s, a) { return _ccFollowDeniedMemory(s, _ccMigrateTriageModelPairs(reducer(s, a)), a); }
+  // The denied memory follows every clash-list change an action makes to a
+  // clash's status (deny, reopen, undo of either, a teammate's record):
+  // clash-reconciliation-core.js updateDeniedMemory, §21.58.
+  var _CC_DENY_FOLLOW = {UPD_CLASH:1, BATCH_UPD_CLASH:1, CLASH_BATCH_RESTORE:1};
+  function _ccFollowDeniedMemory(prev, next, a) {
+    if (!a || !_CC_DENY_FOLLOW[a.t] || prev.clashes === next.clashes) return next;
+    var core = window._ccClashReconciliationCore;
+    var mem = core.updateDeniedMemory(next.deniedPairs || {}, prev.clashes, next.clashes, {computeClashIdentityKey:computeClashIdentityKey, computeClashPair:computeClashPair});
+    return mem === next.deniedPairs ? next : Object.assign({}, next, {deniedPairs:mem});
+  }
+  // Fields a deny writes on the clash. A teammate's deny (sync) carries its
+  // own who / when (projected from the record); a local one is stamped here.
+  var _CC_DENY_CLEAR = {deniedReason:'', deniedBy:'', deniedAt:null};
+  function _ccDenyFields(c, u, fromSync) {
+    var f = {status:'denied'};
+    f.deniedReason = (u && typeof u.deniedReason === 'string') ? u.deniedReason.slice(0, 200) : (c.deniedReason || '');
+    if (!fromSync) { f.deniedBy = (typeof _ccChangelogUser === 'string' && _ccChangelogUser.trim()) ? _ccChangelogUser.trim() : ''; f.deniedAt = Date.now(); }
+    return f;
+  }
+  // MERGE_CLASHES' linked-issue lifecycle (clash-reconciliation-core.js
+  // applyIssueLifecycle): the changed issues, a History entry each, the
+  // record the App effect turns into the toast + shared records, and ONE
+  // undo entry that puts the issues (and the links it made) back.
+  function _ccIssueLifecycle(clashes, issues, a) {
+    var core = window._ccClashReconciliationCore;
+    var now = Date.now();
+    var day = function(ts){ try { return new Date(ts).toLocaleDateString((typeof window._ccGetLocale === 'function' && window._ccGetLocale()) || undefined); } catch(e) { return new Date(ts).toISOString().slice(0,10); } };
+    var lc = core.applyIssueLifecycle(clashes, issues || [], {
+      now: now, author: 'ClashControl',
+      resolvedText: function(ts){ return _cc_t('lifecycle.resolvedNote', 'Resolved by re-check on {date}', {date: day(ts)}); },
+      reopenedText: function(ts){ return _cc_t('lifecycle.reopenedNote', 'Reopened: the clash was found again by re-check on {date}', {date: day(ts)}); },
+      commentId: function(id, kind){ return 'rc_' + kind + '_' + now.toString(36) + '_' + id; }
+    });
+    if (!lc.resolved && !lc.reopened) return lc;
+    var user = (typeof _ccChangelogUser === 'string' && _ccChangelogUser) || 'anonymous';
+    lc.changelog = lc.issueChanges.map(function(ch, i){
+      return {id: now.toString(36) + 'rc' + i, ts: now, user: user, type: 'issue_update', targetId: ch.id, field: 'status', value: ch.next.status, prev: ch.prev.status, via: 'recheck'};
+    });
+    lc.record = {ts: now, resolved: lc.resolved, reopened: lc.reopened, changes: lc.issueChanges, clashChanges: lc.clashChanges};
+    if (!a._ccReplay && typeof _ccPushUndoable === 'function') {
+      var iPrev = {}, iNext = {}, cPrev = {}, cNext = {};
+      lc.issueChanges.forEach(function(ch){ iPrev[ch.id] = ch.prev; iNext[ch.id] = ch.next; });
+      lc.clashChanges.forEach(function(ch){ cPrev[ch.id] = ch.prev; cNext[ch.id] = ch.next; });
+      var replay = function(action){ if (window._ccDispatch) window._ccDispatch(Object.assign({}, action, {_ccReplay:true})); };
+      _ccPushUndoable({label:'Re-check issue changes', coalesceKey:'recheck-issues:' + now,
+        undo:function(){ replay({t:A.CLASH_BATCH_RESTORE, prev:cPrev, keepIssueIds:null, issuePrev:iPrev}); },
+        redo:function(){ replay({t:A.CLASH_BATCH_RESTORE, prev:cNext, keepIssueIds:null, issuePrev:iNext}); }});
+    }
+    return lc;
+  }
   function reducer(s,a) {
     // Track section-plane/box changes onto the unified undo stack generically
     // (see _ccBuildUndoEntry near invalidate()) — this is the one place that
@@ -2566,7 +2618,7 @@ function startApp() {
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
-      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[], a.coverageModelIds); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary, lastRunExcluded:a.excluded||null}; var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* The bucket bar's "show" choices are per run, whatever the reset pref says: a new result starts on its review set. */ _st.filters=Object.assign({},_st.filters||s.filters,{showBuckets:[],hideBuckets:[]}); /* Grouped by root-cause element ("one row = one thing to fix", see _ccRootCauseKeyFor) whenever the user has nothing chosen — at any size: big sets render through the windowed list (VirtualList). Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0) { _st.clashGroupBy=['element']; }
+      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[], a.coverageModelIds, s.deniedPairs); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); /* Linked issues follow their clash: resolved when the run no longer finds it, reopened when it comes back (never one a person resolved / closed) — one undo step, §21.58. */ var _lc=a.t===A.MERGE_CLASHES?_ccIssueLifecycle(_mr.clashes, s.issues, a):null; if(_lc&&(_lc.resolved||_lc.reopened)){ _mr.clashes=_lc.clashes; _mr.deltaSummary=Object.assign({},_mr.deltaSummary,{issuesResolved:_lc.resolved||undefined,issuesReopened:_lc.reopened||undefined}); } var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary, lastRunExcluded:a.excluded||null}; if(_lc&&(_lc.resolved||_lc.reopened)){ _st.issues=_lc.issues; _st.lastIssueLifecycle=_lc.record; _st.changelog=(s.changelog||[]).concat(_lc.changelog); } var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* The bucket bar's "show" choices are per run, whatever the reset pref says: a new result starts on its review set. */ _st.filters=Object.assign({},_st.filters||s.filters,{showBuckets:[],hideBuckets:[]}); /* Grouped by root-cause element ("one row = one thing to fix", see _ccRootCauseKeyFor) whenever the user has nothing chosen — at any size: big sets render through the windowed list (VirtualList). Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0) { _st.clashGroupBy=['element']; }
         return Object.assign({},s,_st);
       case A.ADD_CLASHES: { /* additive, non-destructive append (does NOT auto-resolve existing clashes like MERGE_CLASHES). Used by the accessibility panel. */
         var _addc=(a.v||[]).filter(Boolean); if(!_addc.length) return s;
@@ -2597,7 +2649,9 @@ function startApp() {
           });
         }
         return Object.assign({},s,{issues:s.issues.concat([a.v]),clashes:aiClashes});
-      case A.UPD_ISSUE:   return Object.assign({},s,{issues:s.issues.map(function(i){return i.id===a.id?Object.assign({},i,a.u):i})});
+      // A person's status change ends the re-check marker (autoResolved): an
+      // issue someone resolved / closed / reopened is never touched by a run.
+      case A.UPD_ISSUE:   return Object.assign({},s,{issues:s.issues.map(function(i){if(i.id!==a.id)return i; var _iu=Object.assign({},i,a.u); if(a.u&&'status' in a.u&&!('autoResolved' in a.u)&&!a._fromSync&&i.autoResolved) _iu.autoResolved=null; return _iu;})});
       case A.DEL_ISSUE:
         // Deleting an issue clears the clash-side link (linkedIssueId) so the
         // clash goes back to being unpromoted, and drops any viewpoint
@@ -2646,8 +2700,10 @@ function startApp() {
         if(a.u&&a.u.status==='denied'){
           var dClash=s.clashes.find(function(c){return c.id===a.id;});
           if(dClash){
-            _saveDeniedClash(dClash);
-            return Object.assign({},s,{clashes:s.clashes.map(function(c){return c.id===a.id?Object.assign({},c,{status:'denied'}):c;})});
+            // Who / when / why go on the clash; the denied memory follows
+            // in _ccAppReducer (and is shared with the status + reason).
+            var _dFields=_ccDenyFields(dClash, a.u, a._fromSync);
+            return Object.assign({},s,{clashes:s.clashes.map(function(c){return c.id===a.id?Object.assign({},c,_dFields):c;})});
           }
         }
         if(a.u&&a.u.status==='confirmed'){
@@ -2673,6 +2729,8 @@ function startApp() {
         return Object.assign({},s,{clashes:s.clashes.map(function(c){
         if(c.id!==a.id) return c;
         var upd=Object.assign({},c,a.u);
+        // Reopen (or any status) after a deny clears the deny's who / when / why.
+        if(a.u&&a.u.status&&c.status==='denied'&&a.u.status!=='denied') Object.assign(upd,_CC_DENY_CLEAR);
         if(a.u&&a.u.status&&a.u.status!==c.status){
           var sigs=(c.aiSignals||[]).slice(-49);
           if(a.u.status==='resolved'||a.u.status==='in_progress') sigs.push({type:'weak_positive',source:'status_change',value:a.u.status,ts:Date.now()});
@@ -2711,13 +2769,16 @@ function startApp() {
       // puts each clash's previous field values back and drops the issues
       // the batch confirm created.
       case A.CLASH_BATCH_RESTORE:
-        var _cbr=a.prev||{}, _cbrKeep=a.keepIssueIds||null;
-        // An undone deny must not stay in the denied-pair memory, or the
-        // next detection run would drop the pair again.
-        s.clashes.forEach(function(c){ if (_cbr[c.id] && c.status==='denied' && 'status' in _cbr[c.id] && _cbr[c.id].status!=='denied') _forgetDeniedClash(c); });
+        // An undone deny leaves the denied memory (or the next run would drop
+        // the pair again): _ccAppReducer keeps the memory in step with every
+        // clash whose status this changes. `issuePrev` (undo / redo of a
+        // run's linked-issue changes, §21.58) puts issue fields back too.
+        var _cbr=a.prev||{}, _cbrKeep=a.keepIssueIds||null, _cbrI=a.issuePrev||null;
+        var _cbrIssues=_cbrKeep ? s.issues.filter(function(i){ return !(i.clashId && _cbr[i.clashId]) || _cbrKeep[i.id]; }) : s.issues;
+        if(_cbrI) _cbrIssues=_cbrIssues.map(function(i){ return _cbrI[i.id] ? Object.assign({},i,_cbrI[i.id]) : i; });
         return Object.assign({},s,{
           clashes:s.clashes.map(function(c){ return _cbr[c.id] ? Object.assign({},c,_cbr[c.id]) : c; }),
-          issues:_cbrKeep ? s.issues.filter(function(i){ return !(i.clashId && _cbr[i.clashId]) || _cbrKeep[i.id]; }) : s.issues
+          issues:_cbrIssues
         });
       case A.SECTION:     if(a.axis&&!s.sectionAxis) _gcEvent('section-plane', a.axis); return Object.assign({},s,{sectionAxis:a.axis, sectionPos:a.pos!=null?a.pos:s.sectionPos, sectionCustom:null, sectionStorey:a.storeyName||null, sectionFlip:false, walkMode:false, commentMode:false}); // keeps measureMode — section plane coexists with measure
       case A.SECTION_CUSTOM: return Object.assign({},s,{sectionAxis:null, sectionCustom:a.v, sectionPos:a.pos!=null?a.pos:0.5, sectionFlip:false});
@@ -2845,6 +2906,9 @@ function startApp() {
       case A.SET_PROJECT:  return Object.assign({},s,{activeProject:a.id});
       case A.SET_PROJECT_LIST: return Object.assign({},s,{projectList:a.v});
       case A.LOAD_PROJECT_STATE: return Object.assign({},s,a.data);
+      // Denied memory: replaced (project load / restore) or merged (a.merge:
+      // the one-time import of the old per-browser store).
+      case A.DENIED_SET: { var _dv=(a.v&&typeof a.v==='object')?a.v:{}; return Object.assign({},s,{deniedPairs:a.merge?Object.assign({},_dv,s.deniedPairs||{}):_dv}); }
       case A.CLASH_GROUP_BY: _ccPersistUI('clashGroupBy', a.v); return Object.assign({},s,{clashGroupBy:a.v});
       case A.CLASH_SORT_BY: _ccPersistUI('clashSortBy', a.v); return Object.assign({},s,{clashSortBy:a.v});
       case A.ISSUE_GROUP_BY: _ccPersistUI('issueGroupBy', a.v); return Object.assign({},s,{issueGroupBy:a.v});
@@ -2902,6 +2966,8 @@ function startApp() {
         return Object.assign({},s,{clashes:s.clashes.map(function(c){
         if(!s.selected[c.id]) return c;
         var upd=Object.assign({},c,a.u);
+        if(a.u&&a.u.status==='denied'&&c.status!=='denied') Object.assign(upd,_ccDenyFields(c, a.u, a._fromSync));
+        else if(a.u&&a.u.status&&c.status==='denied'&&a.u.status!=='denied') Object.assign(upd,_CC_DENY_CLEAR);
         if(a.u&&a.u.status&&a.u.status!==c.status){
           var sigs=(c.aiSignals||[]).slice(-49);
           if(a.u.status==='resolved'||a.u.status==='in_progress') sigs.push({type:'weak_positive',source:'status_change',value:a.u.status,ts:Date.now()});
@@ -14097,42 +14163,16 @@ function startApp() {
 
 
   // ── Denied clash suppression ──────────────────────────────────
+  // The denied memory is project state (`state.deniedPairs`, identity key →
+  // {pair, point, ts, reason, by}; clash-reconciliation-core.js
+  // makeDeniedMatcher / updateDeniedMemory, docs/INTERNALS.md §21.58): saved
+  // with the project, shared through the change log as the clash's status
+  // and deny reason, kept in step with the clash list by _ccAppReducer.
+  // `cc_denied_clashes` is the old per-browser store (element pair →
+  // {point, ts}); it is only READ now, to import into a project that was
+  // saved before (IndexedDB restore, project file without `deniedPairs`).
   function _getDeniedClashStore() {
     try { return JSON.parse(localStorage.getItem('cc_denied_clashes')||'{}'); } catch(e) { return {}; }
-  }
-  function _saveDeniedClash(clash) {
-    try {
-      var store = _getDeniedClashStore();
-      var pair = computeClashPair(clash);
-      var p = clash.point||[0,0,0];
-      store[pair] = {point:[p[0],p[1],p[2]], ts:Date.now()};
-      // Was unbounded — one entry per denied pair forever. Cap by recency:
-      // a denial that old belongs to a model state long since re-detected.
-      var keys = Object.keys(store);
-      if (keys.length > 500) {
-        keys.sort(function(a,b){ return (store[a].ts||0) - (store[b].ts||0); });
-        keys.slice(0, keys.length - 500).forEach(function(k){ delete store[k]; });
-      }
-      _ccLsSet('cc_denied_clashes', store);
-    } catch(e) {}
-  }
-  function _forgetDeniedClash(clash) {
-    try {
-      var store = _getDeniedClashStore();
-      var pair = computeClashPair(clash);
-      if (!store[pair]) return;
-      delete store[pair];
-      _ccLsSet('cc_denied_clashes', store);
-    } catch(e) {}
-  }
-  function _isDeniedClash(clash) {
-    var store = _getDeniedClashStore();
-    var pair = computeClashPair(clash);
-    var denied = store[pair];
-    if (!denied) return false;
-    var p = clash.point||[0,0,0], dp = denied.point||[0,0,0];
-    var distMm = Math.sqrt(Math.pow((p[0]-dp[0])*1000,2)+Math.pow((p[1]-dp[1])*1000,2)+Math.pow((p[2]-dp[2])*1000,2));
-    return distMm <= 150;
   }
 
   // Finds the first assignment rule whose discipline-pair and storey match
@@ -14150,11 +14190,11 @@ function startApp() {
   }
 
 
-  function _ccReconciliationDeps(now) {
+  function _ccReconciliationDeps(now, deniedMemory) {
     var deps = {
       computeClashIdentityKey:computeClashIdentityKey,
       computeClashPair:computeClashPair,
-      isDeniedClash:_isDeniedClash,
+      isDeniedClash:_ccReconciliationCore.makeDeniedMatcher(deniedMemory, computeClashPair),
       isDefaultTitle:function(c){
         var core = window._ccClashClassificationCore;
         return core && typeof core.isDefaultTitle === 'function' ? core.isDefaultTitle(c) : true;
@@ -14203,8 +14243,8 @@ function startApp() {
   // regressions from #638 and ff02b09; graduated to the sole implementation
   // after a soak period — see MEMORY.md Architecture Decisions.
   var _ccReconciliationCore = window._ccClashReconciliationCore;
-  function mergeDetectionResults(newClashes, prevClashes, coverageModelIds) {
-    var deps = _ccReconciliationDeps();
+  function mergeDetectionResults(newClashes, prevClashes, coverageModelIds, deniedMemory) {
+    var deps = _ccReconciliationDeps(null, deniedMemory);
     if (coverageModelIds && !Array.isArray(coverageModelIds) && (coverageModelIds.a || coverageModelIds.b)) {
       // Precise single-rule coverage (the {a,b} shape from
       // _ccCoverageModelIds — every single-rule call site: RunDetectionModal,
@@ -14318,7 +14358,8 @@ function startApp() {
       ADD_SELSET:'ADD_SELSET', ADD_SEARCHSET:'ADD_SEARCHSET',
       ADD_ASSIGN_RULE:'ADD_ASSIGN_RULE', MERGE_CHANGELOG:A.MERGE_CHANGELOG,
       MERGE_COMMENTS:A.MERGE_COMMENTS, // Bug 9: comments weren't persisted at all
-      TRIAGE_STATE:A.TRIAGE_STATE, UPD_FILTERS:A.UPD_FILTERS // clash review facets / saved views / search
+      TRIAGE_STATE:A.TRIAGE_STATE, UPD_FILTERS:A.UPD_FILTERS, // clash review facets / saved views / search
+      DENIED_SET:A.DENIED_SET // denied memory (§21.58)
     };
   }
   function _ccSerializeProject(s, version, savedAt) {
@@ -14328,7 +14369,7 @@ function startApp() {
     return _ccProjectCodec.validateProject(data);
   }
   function _ccRestoreProject(data, dispatch) {
-    return _ccProjectCodec.restoreProject(data, dispatch, _ccProjectActionTypes());
+    return _ccProjectCodec.restoreProject(data, dispatch, _ccProjectActionTypes(), {legacyDenied:_getDeniedClashStore()});
   }
 
 
@@ -16073,7 +16114,7 @@ function startApp() {
         // clash's previous values of the changed fields (+ linkedIssueId for
         // a batch confirm) and which issues already existed.
         if (!Array.isArray(a.ids) || !a.u) return null;
-        var ids = {}, prev = {}, fields = Object.keys(a.u).concat(['linkedIssueId', 'aiSignals']);
+        var ids = {}, prev = {}, fields = Object.keys(a.u).concat(['linkedIssueId', 'aiSignals', 'deniedReason', 'deniedBy', 'deniedAt']);
         a.ids.forEach(function(id){ ids[id] = true; });
         (prevState.clashes || []).forEach(function(c){
           if (!ids[c.id]) return;
@@ -16093,7 +16134,7 @@ function startApp() {
         if (!uf.some(function(f){ return f === 'status' || f === 'assignee' || f === 'priority'; })) return null;
         var c1 = (prevState.clashes || []).find(function(c){ return c.id === a.id; });
         if (!c1) return null;
-        var p1 = {}; uf.concat(['linkedIssueId', 'aiSignals']).forEach(function(f){ p1[f] = c1[f]; });
+        var p1 = {}; uf.concat(['linkedIssueId', 'aiSignals', 'deniedReason', 'deniedBy', 'deniedAt']).forEach(function(f){ p1[f] = c1[f]; });
         var prev1 = {}; prev1[a.id] = p1;
         var keep1 = {}; (prevState.issues || []).forEach(function(i){ keep1[i.id] = true; });
         var onlyAssignee = uf.length === 1 && uf[0] === 'assignee';
@@ -25554,7 +25595,7 @@ function startApp() {
   // array without changing anything that is saved).
   var _AUTOSAVE_SLICES = ['clashes','issues','rules','floors','viewpoints','measurements','filters',
     'lastDeltaSummary','runHistory','sheets','activeSheetId','sheetPins','markups',
-    'selectionSets','searchSets','assignmentRules','modelMeta','triage'];
+    'selectionSets','searchSets','assignmentRules','modelMeta','triage','deniedPairs'];
   function _ccModelMeta(models) {
     return (models||[]).map(function(m){return {id:m.id,name:m.name,discipline:m.discipline,color:m.color,visible:m.visible,tag:m.tag||'',georef:m.georef||null};});
   }
@@ -25598,6 +25639,7 @@ function startApp() {
       selectionSets:s.selectionSets||[], searchSets:s.searchSets||[], assignmentRules:s.assignmentRules||[],
       // clash review facets / saved views / overview choice (autoOpen is per run)
       triage:s.triage ? Object.assign({}, s.triage, {autoOpen:false}) : undefined,
+      deniedPairs:s.deniedPairs||{},
       modelMeta:_ccModelMeta(s.models)
     }, 0);
     data.clashes = _ccCloneListCached(s.clashes);
@@ -25643,6 +25685,9 @@ function startApp() {
     idbGetProjectData(pid).then(function(data){
       if(data) {
         if(data.clashes) data.clashes = data.clashes.map(function(c){ return c._delta ? Object.assign({},c,{_delta:null}) : c; });
+        // Saved before the denied memory was project state: import the old
+        // per-browser store once (the next autosave stores it with the project).
+        if(!data.deniedPairs || typeof data.deniedPairs !== 'object') data.deniedPairs = _ccProjectCodec.importLegacyDenied(_getDeniedClashStore());
         d({t:A.LOAD_PROJECT_STATE, data:data});
       }
     }).then(function(){
@@ -25777,7 +25822,7 @@ function startApp() {
       // detected clashes, and project A's run history/comments/changelog
       // bled into project B's UI until the next full page reload.
       runHistory:[], selectionSets:[], searchSets:[], assignmentRules:[],
-      comments:[], changelog:[],
+      comments:[], changelog:[], deniedPairs:{}, lastIssueLifecycle:null,
       triage:Object.assign({},INIT.triage), // facets / saved views are per project (restored by project-codec)
     }});
     d({t:A.UPD_PREFS, u:{showMarkers:false}});
@@ -37033,6 +37078,49 @@ function startApp() {
     </div>`;
   }
 
+  // ── Denied clash: who / when / why (docs/INTERNALS.md §21.58) ─────
+  // Shown in the row detail of a denied clash as plain text, with a short
+  // optional reason (the D key and the Deny button deny without one) and
+  // Reopen. The reason is stored on the clash, in the denied memory and in
+  // the shared change log (field `deniedReason`).
+  function _ccDenialText(it) {
+    var when = '';
+    if (it.deniedAt) { try { when = new Date(it.deniedAt).toLocaleDateString((typeof window._ccGetLocale === 'function' && window._ccGetLocale()) || undefined); } catch(e) { when = ''; } }
+    var who = it.deniedBy || '';
+    var line = who && when ? _cc_t('deny.byOn', 'Denied by {name} on {date}', {name: who, date: when})
+      : who ? _cc_t('deny.by', 'Denied by {name}', {name: who})
+      : when ? _cc_t('deny.on', 'Denied on {date}', {date: when})
+      : _cc_t('deny.plain', 'Denied');
+    return it.deniedReason ? line + ' — ' + it.deniedReason : line;
+  }
+  function ClashDenialNote(props) {
+    var it = props.item, d = props.d;
+    var dSt = useState(null), draft = dSt[0], setDraft = dSt[1]; // null = not editing
+    function save() {
+      var v = String(draft || '').trim().slice(0, 200);
+      setDraft(null);
+      if (v !== (it.deniedReason || '')) d({t:A.UPD_CLASH, id:it.id, u:{deniedReason:v}});
+    }
+    return html`<div data-cc-denial=${it.id} onClick=${function(e){e.stopPropagation();}}
+      style=${{...S_NOTE, display:'flex', flexDirection:'column', gap:'var(--space-1)', marginBottom:'var(--space-2)'}}>
+      <span data-cc-denial-text="1" style=${{overflowWrap:'anywhere'}}>${_ccDenialText(it)}</span>
+      ${draft == null ? html`<div style=${{display:'flex', gap:'var(--space-1)', flexWrap:'wrap'}}>
+          <button class="cc-btn-press" data-cc-denial-edit="1" onClick=${function(){ setDraft(it.deniedReason || ''); }} style=${S_BTN_SECONDARY_SM}>${it.deniedReason ? _cc_t('deny.editReason', 'Edit reason') : _cc_t('deny.addReason', 'Add reason')}</button>
+          <button class="cc-btn-press" data-cc-denial-reopen="1" onClick=${function(){ d({t:A.UPD_CLASH, id:it.id, u:{status:'open'}}); }} style=${S_BTN_GHOST_SM}>${_cc_t('deny.reopen', 'Reopen')}</button>
+        </div>`
+      : html`<div style=${{display:'flex', gap:'var(--space-1)', alignItems:'center'}}>
+          <input type="text" data-cc-denial-input="1" value=${draft} maxLength=${200} autoFocus
+            placeholder=${_cc_t('deny.reasonPlaceholder', 'Why is this not a clash?')}
+            aria-label=${_cc_t('deny.reasonAria', 'Reason for denying this clash')}
+            onInput=${function(e){ setDraft(e.target.value); }}
+            onKeyDown=${function(e){ e.stopPropagation(); if (e.key === 'Enter') save(); else if (e.key === 'Escape') setDraft(null); }}
+            style=${{...S_INPUT, fontSize:'var(--text-xs)', padding:'var(--space-1) var(--space-2)', flex:1}} />
+          <button class="cc-btn-press" data-cc-denial-save="1" onClick=${save} style=${S_BTN_SECONDARY_SM}>${_cc_t('deny.saveReason', 'Save')}</button>
+          <button class="cc-btn-press" onClick=${function(){ setDraft(null); }} style=${S_BTN_GHOST_SM}>${_cc_t('deny.cancel', 'Cancel')}</button>
+        </div>`}
+    </div>`;
+  }
+
   // ── Clash/Issue History (from changelog) ─────────────────────
   function ClashHistory(props) {
     var targetId = props.targetId;
@@ -37273,7 +37361,8 @@ function startApp() {
     return ({status:_cc_t('sharedConflict.field.status','Status'), priority:_cc_t('sharedConflict.field.priority','Priority'), assignee:_cc_t('sharedConflict.field.assignee','Assignee'),
       title:_cc_t('sharedConflict.field.title','Title'), description:_cc_t('sharedConflict.field.description','Description'), category:_cc_t('sharedConflict.field.category','Category'),
       dueDate:_cc_t('sharedConflict.field.dueDate','Due date'), text:_cc_t('sharedConflict.field.text','Text'), resolved:_cc_t('sharedConflict.field.resolved','Resolved'),
-      created:_cc_t('sharedConflict.field.created','Created'), deleted:_cc_t('sharedConflict.field.deleted','Deleted')})[f] || f;
+      created:_cc_t('sharedConflict.field.created','Created'), deleted:_cc_t('sharedConflict.field.deleted','Deleted'),
+      deniedReason:_cc_t('sharedConflict.field.deniedReason','Deny reason')})[f] || f;
   }
   function _ccSharedValueLabel(f, v) {
     if (v == null || v === '') return _cc_t('sharedConflict.empty','(empty)');
@@ -37563,6 +37652,7 @@ function startApp() {
           <button onClick=${function(e){e.stopPropagation();d({t:A.ACTIVE,id:null});if(_unghostAll)_unghostAll();if(window._ccRemoveActiveClashMarker)window._ccRemoveActiveClashMarker();}}
             title=${_cc_t('issueRow.collapse','Collapse')} aria-label=${_cc_t('issueRow.collapseDetailsAria','Collapse details')} aria-expanded="true" style=${{...S_BTN,marginLeft:'auto',padding:'var(--space-1)',display:'inline-flex',alignItems:'center',justifyContent:'center',lineHeight:1,background:'none',color:'var(--text-muted)',fontSize:'var(--text-base)',flexShrink:0}}>▲</button>
         </div>
+        ${isClash && it.status==='denied' && html`<${ClashDenialNote} item=${it} d=${d} />`}
         ${it._sharedConflict && html`<${SharedConflictResolver} item=${it} />`}
         ${html`<${ClashProps} item=${it} models=${rowModels} isClash=${isClash} />`}
         <div style=${{display:'flex',gap:'var(--space-1)',alignItems:'center',marginTop:'var(--space-1)',marginBottom:'var(--space-1)'}}>
@@ -51041,6 +51131,26 @@ function startApp() {
       if (SSC && SSC.sessions().length) SSC.observeAll(s);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only the issues array matters
     }, [s.issues]);
+    // A run that resolved / reopened linked issues (MERGE_CLASHES →
+    // lastIssueLifecycle, §21.58): say so, and share the issue changes like
+    // the user's own edits (status + the re-check comment). Its undo replays
+    // CLASH_BATCH_RESTORE {issuePrev}, which the dispatch wrapper shares.
+    var _lcSeenRef = useRef(null);
+    useEffect(function(){
+      var lc = s.lastIssueLifecycle;
+      if (!lc || _lcSeenRef.current === lc) return;
+      _lcSeenRef.current = lc;
+      var parts = [];
+      if (lc.resolved) parts.push(lc.resolved === 1 ? _cc_t('lifecycle.toastResolvedOne', '1 issue resolved by this run') : _cc_t('lifecycle.toastResolved', '{n} issues resolved by this run', {n: lc.resolved}));
+      if (lc.reopened) parts.push(lc.reopened === 1 ? _cc_t('lifecycle.toastReopenedOne', '1 issue reopened: its clash was found again') : _cc_t('lifecycle.toastReopened', '{n} issues reopened: their clashes were found again', {n: lc.reopened}));
+      if (parts.length && typeof window._ccToast === 'function') window._ccToast(parts.join(' · '));
+      try {
+        var SSC = window._ccSharedSessionCore;
+        if (SSC && SSC.sessions().length) (lc.changes || []).forEach(function(ch){
+          SSC.noteAll({t:'UPD_ISSUE', id:ch.id, u:{status:ch.next.status, comments:ch.next.comments}}, {issues:[Object.assign({id:ch.id}, ch.prev)]}, null);
+        });
+      } catch(e) {}
+    }, [s.lastIssueLifecycle]);
     // Country pack follows the loaded models (address / CRS / site location);
     // activated without being saved — see window._ccAutoRegion.
     useEffect(function(){
@@ -51158,7 +51268,7 @@ function startApp() {
     // models persist only as modelMeta: keyed on its signature (a string), so
     // a storey hide or any other non-persisted model change saves nothing
     // eslint-disable-next-line react-hooks/exhaustive-deps -- persist keyed on the data fields that matter; depending on the whole state would save on every hover/selection change
-    }, [s.clashes, s.issues, s.viewpoints, s.measurements, s.rules, _ccModelMetaSig(s.models), s.triage && s.triage.savedViews, s.triage && s.triage.facets]);
+    }, [s.clashes, s.issues, s.viewpoints, s.measurements, s.rules, _ccModelMetaSig(s.models), s.triage && s.triage.savedViews, s.triage && s.triage.facets, s.deniedPairs]);
     // on pagehide and on visibilitychange→hidden because beforeunload is
     useEffect(function(){
       function flush() {
