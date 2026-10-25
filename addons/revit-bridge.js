@@ -1034,6 +1034,8 @@
         stats: {elementCount:finalElements.length, source:'revit-direct', lastSync:Date.now(), docVersion:_revitBuf.docVersion||null, numberOfSaves:_revitBuf.numberOfSaves||0}
       };
       window._ccDispatch({t:'REPLACE_MODEL', id:existingModel.id, v:modelData});
+      // Automatic re-check of the re-synced model (core: waits for export-end, pref autoRerun)
+      if (typeof window._ccScheduleAutoRerun === 'function') window._ccScheduleAutoRerun('replaced');
       _revitModelMap[mapKey] = existingModel.id;
       d({t:'BRIDGE_LOG', logType:'pull', text:_i18n('revitBridge.updatedModelElementsV','Updated model "{rawName}": {v1} elements (v{_version}).',{rawName:_revitBuf.rawName,v1:finalElements.length,_version:modelData._version})});
     } else {
@@ -1046,6 +1048,7 @@
         stats:{elementCount:_revitBuf.elements.length, source:'revit-direct', lastSync:Date.now(), docVersion:_revitBuf.docVersion||null, numberOfSaves:_revitBuf.numberOfSaves||0}
       };
       window._ccDispatch({t:'ADD_MODEL', v:modelData2});
+      if (typeof window._ccScheduleAutoRerun === 'function') window._ccScheduleAutoRerun('loaded');
       _revitModelMap[mapKey] = modelId;
       d({t:'BRIDGE_LOG', logType:'pull', text:_i18n('revitBridge.modelLoadedElements','Model "{rawName}" loaded: {v1} elements.',{rawName:_revitBuf.rawName,v1:_revitBuf.elements.length})});
     }
