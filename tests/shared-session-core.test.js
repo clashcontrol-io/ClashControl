@@ -210,3 +210,31 @@ test('a record the store refused leaves the outbox, stays in the local log, is l
   a.sess.dismissRejected();
   assert.deepEqual(a.sess.rejected(), []);
 });
+
+test('a clash with Revit UniqueIds gets decisions recorded under its GlobalId identity (old rows); its own key wins', () => {
+  const I = require('../clash-identity-core.js');
+  const c = { id: 'c1', globalIdA: 'GA', globalIdB: 'GB', uniqueIdA: 'ua-1', uniqueIdB: 'ub-2', point: [0.1, 0.2, 0.3], status: 'open', priority: 'normal' };
+  const key = I.computeClashIdentityKey(c), legacy = I.computeGlobalIdKey(c);
+  assert.ok(key.startsWith('u:') && legacy && legacy !== key);
+  assert.equal(I.computeGlobalIdKey({ globalIdA: 'GA', globalIdB: 'GB', point: [0, 0, 0] }), null, 'no alias when the keys agree');
+  let st = { clashes: [c], issues: [], comments: [], viewpoints: [] };
+  const sess = SC.createSession({ src: 'cloud', userId: 'ua', writer: 'uaw', projectKey: 'P', getState: () => st,
+    identityKey: I.computeClashIdentityKey, aliasKey: I.computeGlobalIdKey,
+    dispatch: (a) => { if (a.t === 'CLASH_BATCH_RESTORE') st = Object.assign({}, st, { clashes: st.clashes.map((x) => a.prev[x.id] ? Object.assign({}, x, a.prev[x.id]) : x) }); } });
+  // the migration's records (api/project.js) carry the GlobalId key
+  const mig = L.migrateLegacyRows([{ id: 'r1', data: { id: 'r1', source: 'auto', globalIdA: 'GA', globalIdB: 'GB', point: [0.1, 0.2, 0.3], status: 'resolved', priority: 'high' }, updated_by: 'Ann', updated_at: '2026-10-01' }],
+    { projectId: 'P', identityKey: I.computeClashIdentityKey });
+  const r = sess.ingest(mig.changes);
+  sess.sync({ touched: r.touched });
+  assert.equal(st.clashes[0].status, 'resolved');
+  assert.equal(st.clashes[0].priority, 'high');
+  // a newer edit (from any machine) is recorded under the clash's own key and wins
+  const e = L.makeChange(sess.log, { id: 'ub.1', user: 'ub', ts: 5, kind: 'clash', key, field: 'status', value: 'closed' });
+  const r2 = sess.ingest([e]);
+  sess.sync({ touched: r2.touched });
+  assert.equal(st.clashes[0].status, 'closed');
+  assert.equal(st.clashes[0].priority, 'high', 'the alias still fills what the own key does not know');
+  // a full pass keeps it that way (no flip-flop between the two keys)
+  sess.sync({ full: true });
+  assert.equal(st.clashes[0].status, 'closed');
+});

@@ -551,15 +551,29 @@
   // priority / assignee keyed by the clash identity (from the row's
   // GlobalIds + point), every issue as `created`. Ids derive from project,
   // row and field, so two servers migrating at once insert the same records.
+  //
+  // Clash or issue — exact, from `source`. Every row the old client wrote
+  // (2026-04-06 … 2026-10-24) carried the item's `source`, and every clash
+  // ever created had one of LEGACY_CLASH_SOURCES (browser detection 'auto'
+  // since 2026-03-19, the local engine, the visibility checks); every issue
+  // had another value ('clash', 'manual', 'element', 'bcf_import', …) or
+  // none (Smart Bridge issues — which DO carry a GlobalId pair, so the pair
+  // says nothing). A clash row without both GlobalIds has no identity that
+  // another machine can match (its element ids are per load): it is counted
+  // in `skipped`, never keyed on a meaningless id. The key is the GlobalId
+  // form; a clash whose elements have Revit UniqueIds is keyed differently
+  // today ('u:…') and finds these records through the session's GlobalId
+  // alias (shared-session-core.js `aliasKey`).
+  var LEGACY_CLASH_SOURCES = { auto: 1, local_engine: 1, visibility_check: 1, visibility_coverage: 1 };
   /**
    * @param {{id:string, data:any, updated_by?:string, updated_at?:any}[]} rows
    * @param {{projectId:string, identityKey:(c:any)=>string}} opts
-   * @returns {{changes:any[], names:Object<string,string>}}
+   * @returns {{changes:any[], names:Object<string,string>, skipped:{clashWithoutGlobalIds:number}}}
    */
   function migrateLegacyRows(rows, opts) {
     /** @type {Object<string,string>} */
     var names = {};
-    var recs = [], pid = String(opts.projectId || '');
+    var recs = [], pid = String(opts.projectId || ''), skipped = { clashWithoutGlobalIds: 0 };
     (rows || []).forEach(function(row) {
       var d = row && (typeof row.data === 'string' ? JSON.parse(row.data) : row.data);
       if (!d || typeof d !== 'object' || !row.id) return;
@@ -575,8 +589,8 @@
         if (prev !== undefined) r.prev = prev;
         recs.push(r);
       }
-      var isIssue = /^iss[_-]/.test(rid) || !!d.source || !(d.globalIdA && d.globalIdB);
-      if (!isIssue) {
+      if (LEGACY_CLASH_SOURCES[d.source] === 1) {
+        if (!(d.globalIdA && d.globalIdB)) { skipped.clashWithoutGlobalIds++; return; }
         var key = opts.identityKey({ globalIdA: d.globalIdA, globalIdB: d.globalIdB, point: d.point });
         if (!key) return;
         if (d.status && d.status !== 'open' && d.status !== 'auto_resolved') add('clash', key, 'status', d.status, 'open');
@@ -586,7 +600,7 @@
       }
       add('issue', rid, 'created', issueRecord(d));
     });
-    return { changes: recs.map(normaliseChange).filter(Boolean), names: names };
+    return { changes: recs.map(normaliseChange).filter(Boolean), names: names, skipped: skipped };
   }
 
   // Random [a-z0-9] string from the platform's cryptographic generator. Ids

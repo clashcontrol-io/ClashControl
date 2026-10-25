@@ -43063,6 +43063,7 @@ function startApp() {
       getState: function() { return window._ccLatestState || null; },
       i18n: _cc_t, storage: ls, outboxPrefix: 'cc_cloud_outbox',
       identityKey: function(c) { return ident ? ident.computeClashIdentityKey(c) : null; },
+      aliasKey: function(c) { return ident && ident.computeGlobalIdKey ? ident.computeGlobalIdKey(c) : null; },
       onRecorded: function(why) { _cloudSchedulePush(why === 'edit' ? CLOUD_PUSH_DELAY : 0); },
       onConflicts: function(n) { if (n !== _cloud.conflicts) { _cloud.conflicts = n; _cloudEmit(); } }
     }));

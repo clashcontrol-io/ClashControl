@@ -476,7 +476,7 @@ test('viewpoint records keep camera / section / clip / name and never the pictur
 
 test('migrateLegacyRows: decisions of the old per-issue rows, deterministic ids', () => {
   const rows = [
-    { id: 'c1', data: { id: 'c1', globalIdA: 'A', globalIdB: 'B', point: [0, 0, 0], status: 'resolved', priority: 'normal', assignee: '' }, updated_by: 'Ann', updated_at: '2026-10-01T00:00:00Z' },
+    { id: 'c1', data: { id: 'c1', source: 'auto', globalIdA: 'A', globalIdB: 'B', point: [0, 0, 0], status: 'resolved', priority: 'normal', assignee: '' }, updated_by: 'Ann', updated_at: '2026-10-01T00:00:00Z' },
     { id: 'iss_2', data: { id: 'iss_2', title: 'Leak', status: 'open', _updatedAt: 'x' }, updated_by: 'Ben', updated_at: '2026-10-02T00:00:00Z' },
   ];
   const opts = { projectId: 'P-1', identityKey: (c) => c.globalIdA + '|' + c.globalIdB };
@@ -485,6 +485,26 @@ test('migrateLegacyRows: decisions of the old per-issue rows, deterministic ids'
   assert.deepStrictEqual(m1.changes.map((r) => [r.target.kind, r.target.key, r.field]), [['clash', 'A|B', 'status'], ['issue', 'iss_2', 'created']]);
   assert.ok(!('_updatedAt' in m1.changes[1].value));
   assert.notDeepStrictEqual(L.migrateLegacyRows(rows, { projectId: 'P-2', identityKey: opts.identityKey }).changes[0].id, m1.changes[0].id);
+});
+
+test('migrateLegacyRows: clash or issue is decided by the row\'s source, exactly (never by the GlobalId pair)', () => {
+  const at = '2026-10-01T00:00:00Z';
+  const row = (id, d) => ({ id, data: Object.assign({ id }, d), updated_by: 'Ann', updated_at: at });
+  const rows = [
+    row('c-auto', { source: 'auto', globalIdA: 'A', globalIdB: 'B', point: [0, 0, 0], status: 'resolved' }),             // browser detection
+    row('c-local', { source: 'local_engine', globalIdA: 'C', globalIdB: 'D', point: [1, 0, 0], priority: 'high' }),       // local engine
+    row('c-vis', { source: 'visibility_check', globalIdA: 'E', globalIdB: 'F', point: [2, 0, 0], assignee: 'Bo' }),       // visibility
+    row('c-cov', { source: 'visibility_coverage', globalIdA: 'G', globalIdB: null, point: [3, 0, 0], status: 'closed' }), // one element only
+    row('i-bridge', { title: 'From the assistant', globalIdA: 'H', globalIdB: 'J', point: [4, 0, 0], status: 'open' }),   // Smart Bridge issue: no source, GlobalId pair
+    row('iss_9', { source: 'clash', title: 'Confirmed', globalIdA: 'A', globalIdB: 'B', status: 'open' }),                 // confirm-created issue
+    row('i-bcf', { source: 'bcf_import', title: 'BCF', status: 'open' }),
+  ];
+  const m = L.migrateLegacyRows(rows, { projectId: 'P', identityKey: (c) => c.globalIdA + '|' + c.globalIdB });
+  assert.deepStrictEqual(m.changes.map((r) => [r.target.kind, r.target.key, r.field]), [
+    ['clash', 'A|B', 'status'], ['clash', 'C|D', 'priority'], ['clash', 'E|F', 'assignee'],
+    ['issue', 'i-bridge', 'created'], ['issue', 'iss_9', 'created'], ['issue', 'i-bcf', 'created'],
+  ]);
+  assert.deepStrictEqual(m.skipped, { clashWithoutGlobalIds: 1 }, 'a clash with no cross-machine identity is counted, never keyed on a meaningless id');
 });
 
 test('ids come from the cryptographic generator: right length and alphabet, never Math.random', () => {

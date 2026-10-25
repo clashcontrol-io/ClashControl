@@ -343,6 +343,7 @@
       src: 'folder', userId: _userId, writer: _writer, projectKey: _projKey,
       dispatch: _d, getState: _state, i18n: _i18n, storage: ls, outboxPrefix: LS_OUTBOX,
       identityKey: function(c) { return ident ? ident.computeClashIdentityKey(c) : null; },
+      aliasKey: function(c) { return ident && ident.computeGlobalIdKey ? ident.computeGlobalIdKey(c) : null; },
       onRecorded: function(why) { if (why === 'edit') _scheduleFlush(); else _flush(); },
       onConflicts: function(n) { _d({t:A_UPD, u:{conflicts:n}}); }
     }));

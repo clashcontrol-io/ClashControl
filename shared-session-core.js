@@ -41,6 +41,7 @@
    *   src:string, userId:string, writer:string, projectKey:string,
    *   dispatch:(a:any)=>void, getState:()=>any,
    *   identityKey?:(c:any)=>(string|null),
+   *   aliasKey?:(c:any)=>(string|null),
    *   i18n?:(k:string, en:string, vars?:any)=>string,
    *   storage?:any, outboxPrefix?:string,
    *   onRecorded?:(why:string)=>void, onConflicts?:(n:number)=>void,
@@ -60,8 +61,8 @@
     var rejected = Object.create(null);
     var n = 0, recorded = false;
     var last = { clashes: null, issues: null, comments: null, viewpoints: null };
-    /** @type {{clashes:any, map:Map<string, any[]>}} */
-    var clashIndex = { clashes: null, map: new Map() };
+    /** @type {{clashes:any, map:Map<string, any[]>, alias:Map<string, any[]>}} */
+    var clashIndex = { clashes: null, map: new Map(), alias: new Map() };
     var pendingScan = [];            // issue lists before a confirm (their new issues get published)
     var stats = { dispatches: 0, records: 0, projected: 0 };
     var now = env.now || function() { return Date.now(); };
@@ -77,6 +78,15 @@
       if (!c) return null;
       if (c._identityKey) return c._identityKey;
       return env.identityKey ? env.identityKey(c) : null;
+    }
+    // A second key a clash is known under in the log: the GlobalId form of
+    // its identity, which old shared records (api/project.js migration) and
+    // older app versions used before UniqueIds were preferred. Fields known
+    // under the current key win; the alias only fills the rest.
+    function aliasOf(c) {
+      if (!c || !env.aliasKey) return null;
+      var a = env.aliasKey(c);
+      return a && a !== clashKey(c) ? a : null;
     }
     function newId() { return env.writer + '.' + (++n); }
 
@@ -327,14 +337,21 @@
     /** @returns {Map<string, any[]>} */
     function clashesByKey(st) {
       if (clashIndex.clashes === st.clashes) return clashIndex.map;
-      var map = new Map();
+      var map = new Map(), alias = new Map();
       (st.clashes || []).forEach(function(c) {
         var k = clashKey(c);
         if (!k) return;
         var arr = map.get(k); if (arr) arr.push(c); else map.set(k, [c]);
+        var a = aliasOf(c);
+        if (a) { var al = alias.get(a); if (al) al.push(c); else alias.set(a, [c]); }
       });
-      clashIndex = { clashes: st.clashes, map: map };
+      clashIndex = { clashes: st.clashes, map: map, alias: alias };
       return map;
+    }
+    // Local clashes a clash target applies to: by current key or by alias.
+    function clashesFor(st, key) {
+      var main = clashesByKey(st).get(key) || [], al = clashIndex.alias.get(key);
+      return al ? main.concat(al) : main;
     }
     function mergeList(local, ts, prefix) {
       var byId = new Map(), changed = false;
@@ -395,21 +412,27 @@
       var issues = new Map(); (st.issues || []).forEach(function(i) { issues.set(i.id, i); });
       var notes = new Map(); (st.comments || []).forEach(function(c) { notes.set(c.id, c); });
       var vps = new Map(); (st.viewpoints || []).forEach(function(v) { vps.set(v.id, v); });
-      var byKey = clashesByKey(st);
       function dd(a) { d(a); cnt++; }
       tks.forEach(function(tk) {
         var i = tk.indexOf('\u0001'), kind = tk.slice(0, i), key = tk.slice(i + 1);
         var ts = C.targetState(log, kind, key), mk = markers(ts), sig = markerSig(mk);
         if (kind === 'clash') {
-          (byKey.get(key) || []).forEach(function(c) {
+          clashesFor(st, key).forEach(function(c) {
             var patch = {}, any = false;
+            // current key first, the GlobalId alias for what it does not know
+            var mk0 = clashKey(c), al = aliasOf(c);
+            var tsMain = mk0 === key ? ts : C.targetState(log, 'clash', mk0);
+            var tsAl = al ? (al === key ? ts : C.targetState(log, 'clash', al)) : null;
             F.forEach(function(f) {
-              var fs = ts.fields[f];
+              var fs = tsMain.fields[f];
+              if ((!fs || !fs.known) && tsAl) fs = tsAl.fields[f];
               if (!fs || !fs.known) return;
               if (f === 'status' && c.status === 'auto_resolved') return; // the geometry says it is gone
               if (!C.same(c[f], fs.value)) { patch[f] = fs.value; any = true; }
             });
-            if (markerSig(c._sharedConflict) !== sig) { patch._sharedConflict = mk; any = true; }
+            var cmk = tsAl ? (markers(tsMain) || []).concat(markers(tsAl) || []) : markers(tsMain);
+            if (cmk && !cmk.length) cmk = undefined;
+            if (markerSig(c._sharedConflict) !== markerSig(cmk)) { patch._sharedConflict = cmk; any = true; }
             if (any) { restore[c.id] = patch; nRestore++; }
           });
         } else if (kind === 'issue') {
@@ -448,7 +471,7 @@
           if (!lv) {
             if (!crV || !crV.known || !crV.value) return;
             var v = Object.assign({}, crV.value);
-            if (v.linkedClash) { var lc = (byKey.get(v.linkedClash) || [])[0]; v.linkedId = lc ? lc.id : null; delete v.linkedClash; }
+            if (v.linkedClash) { var lc = clashesFor(st, v.linkedClash)[0]; v.linkedId = lc ? lc.id : null; delete v.linkedClash; }
             dd({ t: 'ADD_VIEWPOINT', v: Object.assign(v, patchV, { id: key, _sharedConflict: mk }), _fromSync: true });
             return;
           }
@@ -463,10 +486,10 @@
     // Teammates' changes in the History of each clash / issue.
     function history(recs, st) {
       if (!st) return;
-      var byKey = clashesByKey(st), out = [];
+      var out = [];
       recs.forEach(function(r) {
         if (r.user === env.userId || r.target.kind === 'viewpoint') return;
-        var targetId = r.target.kind === 'clash' ? ((byKey.get(r.target.key) || [])[0] || {}).id : r.target.key;
+        var targetId = r.target.kind === 'clash' ? (clashesFor(st, r.target.key)[0] || {}).id : r.target.key;
         if (!targetId) return;
         out.push({ id: r.id, ts: r.ts, user: who(r), type: r.target.kind === 'clash' ? 'clash_update' : (r.field === 'created' ? 'issue_created' : r.field === 'deleted' ? (r.value === true ? 'issue_deleted' : 'issue_update') : 'issue_update'),
           targetId: targetId, field: r.field, value: (r.value && typeof r.value === 'object') ? (r.value.title || r.value.text || r.value.name || '') : r.value });

@@ -220,8 +220,8 @@ test('lazy migration: a project\'s old shared_issues rows become records once, d
   try {
     // an old client created the project with initial issues (old POST shape)
     const r = await call(handler, { method: 'POST', body: { name: 'Old', user: 'Ann', issues: [
-      { id: 'c-123', status: 'resolved', priority: 'high', assignee: 'Ann', globalIdA: 'GA', globalIdB: 'GB', point: [0.1, 0.2, 0.3], title: 'Wall x duct' },
-      { id: 'c-124', status: 'open', priority: 'normal', globalIdA: 'GC', globalIdB: 'GD', point: [1, 1, 1], title: 'nothing decided' },
+      { id: 'c-123', source: 'auto', status: 'resolved', priority: 'high', assignee: 'Ann', globalIdA: 'GA', globalIdB: 'GB', point: [0.1, 0.2, 0.3], title: 'Wall x duct' },
+      { id: 'c-124', source: 'auto', status: 'open', priority: 'normal', globalIdA: 'GC', globalIdB: 'GD', point: [1, 1, 1], title: 'nothing decided' },
       { id: 'iss_77', status: 'open', title: 'Fire damper missing', source: 'manual', description: 'L2' },
     ] } });
     const pid = r.body.id;

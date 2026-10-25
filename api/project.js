@@ -308,6 +308,7 @@ async function ensureLog(sql, projectId) {
   var rows = await sql`/* cc:legacy-rows */ SELECT id, data, updated_by, updated_at FROM shared_issues WHERE project_id = ${projectId}`;
   var m = LOG.migrateLegacyRows(rows, { projectId: projectId, identityKey: IDENT.computeClashIdentityKey });
   if (m.changes.length) await appendChanges(sql, projectId, m.changes, function(r) { return m.names[r.user] || null; });
+  if (m.skipped && m.skipped.clashWithoutGlobalIds) console.warn('[api/project] migration of ' + projectId + ': ' + m.skipped.clashWithoutGlobalIds + ' old clash row(s) without a GlobalId pair have no cross-machine identity and were not migrated');
   await sql`/* cc:log-migrated */ UPDATE shared_projects SET log_migrated = true WHERE id = ${projectId}`;
 }
 
