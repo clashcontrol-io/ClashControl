@@ -23,6 +23,9 @@
     { store: 'ifcFiles', db: 'ClashControlFiles', retention: 'source',  scope: 'per-project' },
     { store: 'projects', db: 'ClashControlFiles', retention: 'source',  scope: 'per-project' },
     { store: 'geoCache', db: 'ClashControlFiles', retention: 'derived', scope: 'per-file' },
+    // One small validation verdict per geoCache record (same key, written in
+    // the same transaction): the park check reads it instead of the payload.
+    { store: 'geoOk', db: 'ClashControlFiles', retention: 'derived', scope: 'per-file' },
     // One-shot file handoff between / and /tour — written by one page,
     // consumed and cleared by the next load.
     { store: 'pending',  db: 'cc-handoff', retention: 'decay', scope: 'global' },

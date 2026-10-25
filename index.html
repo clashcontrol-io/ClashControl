@@ -2938,7 +2938,12 @@ function startApp() {
   var IDB_STORE = 'ifcFiles';
   var IDB_PROJSTORE = 'projects';
   var IDB_GEOCACHE = 'geoCache';
-  var IDB_VERSION = 4;
+  // v5: one tiny row per v8 geometry-cache record, {id: its cache key, ok,
+  // savedAt} = validateGeoCachePayload's verdict, written in the same
+  // transaction as the record. "Can this model be restored?" reads it plus
+  // the record's key — never the geometry (_ccModelIsRestorable).
+  var IDB_GEOOK = 'geoOk';
+  var IDB_VERSION = 5;
 
   // v4 adds key-only indexes so size/age/project questions never read the
   // stored buffers or geometry: 'cc_meta' (compound [bytes, savedAt, …],
@@ -2960,6 +2965,7 @@ function startApp() {
         if(!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE, {keyPath:'id'});
         if(!db.objectStoreNames.contains(IDB_PROJSTORE)) db.createObjectStore(IDB_PROJSTORE, {keyPath:'id'});
         if(!db.objectStoreNames.contains(IDB_GEOCACHE)) db.createObjectStore(IDB_GEOCACHE, {keyPath:'id'});
+        if(!db.objectStoreNames.contains(IDB_GEOOK)) db.createObjectStore(IDB_GEOOK, {keyPath:'id'});
         Object.keys(_CC_IDB_META).forEach(function(name) {
           var st = tx.objectStore(name);
           if (!st.indexNames.contains('cc_meta')) st.createIndex('cc_meta', _CC_IDB_META[name]);
@@ -3153,15 +3159,49 @@ function startApp() {
   // Can this model be parked? Only if it can be provably restored later — a live
   // Revit-direct model (no stored IFC / geoCache) or one whose caches are gone
   // would be lost. Returns a Promise<bool>.
+  //
+  // Costs keys and a verdict row, never the payloads: the geometry cache by
+  // its key + the validator's verdict stored with it (IDB_GEOOK, same answer
+  // as validating the record now — a stored record never changes and every
+  // write stores its verdict in the same transaction), the IFC by the
+  // project's file keys (every stored file record carries its buffer). A
+  // v8 record written before the verdict store existed is read and
+  // validated as before.
   function _ccModelIsRestorable(model) {
     if (!model) return Promise.resolve(false);
     if (model.stats && model.stats.source === 'revit-direct') return Promise.resolve(false);
-    var s = window._ccLatestState || {};
-    return idbGetGeoCache(model.id).then(function(cached) {
-      if (cached) return true;
-      return idbGetProjectFile(s.activeProject || 'default', model.id).then(function(f) {
-        return !!(f && f.buffer);
+    var s = window._ccLatestState || {}, pid = s.activeProject || 'default';
+    var candidate = _ccGeoCacheV8Enabled(), cacheKey = _ccGeoCacheKey(model.id, candidate);
+    function ifcStored() {
+      return _openIDB().then(function(db) {
+        return new Promise(function(resolve) {
+          var st = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE);
+          var req = st.indexNames.contains('projectId') ? st.index('projectId').getAllKeys(pid) : null;
+          if (!req) { idbGetProjectFile(pid, model.id).then(function(f) { resolve(!!(f && f.buffer)); }); return; }
+          req.onsuccess = function() { resolve((req.result || []).indexOf(model.id) !== -1); };
+          req.onerror = function() { resolve(false); };
+        });
       });
+    }
+    return _openIDB().then(function(db) {
+      return new Promise(function(resolve) {
+        var tx = db.transaction(_ccGeoStores(db), 'readonly'), out = { has: false, verdict: undefined };
+        var k = tx.objectStore(IDB_GEOCACHE).getKey(cacheKey);
+        k.onsuccess = function() { out.has = k.result !== undefined; };
+        if (candidate && db.objectStoreNames.contains(IDB_GEOOK)) {
+          var v = tx.objectStore(IDB_GEOOK).get(cacheKey);
+          v.onsuccess = function() { out.verdict = v.result; };
+        }
+        tx.oncomplete = function() { resolve(out); };
+        tx.onerror = tx.onabort = function() { resolve(out); };
+      });
+    }).then(function(o) {
+      if (o.has && (!candidate || (o.verdict && o.verdict.ok === 1))) return true;
+      if (o.has && candidate && !o.verdict) {
+        // written before verdicts were stored: read + validate it, as before
+        return idbGetGeoCache(model.id).then(function(cached) { return cached ? true : ifcStored(); });
+      }
+      return ifcStored();
     }).catch(function(){ return false; });
   }
 
@@ -3567,11 +3607,20 @@ function startApp() {
     }
     return candidate ? 'v8:' + String(fileId) : fileId;
   }
+  // The geometry-cache stores of a transaction: the verdict rows go with
+  // their records (the verdict store exists from database v5 on).
+  function _ccGeoStores(db) { return db.objectStoreNames.contains(IDB_GEOOK) ? [IDB_GEOCACHE, IDB_GEOOK] : [IDB_GEOCACHE]; }
+  // The validator's verdict for a v8 payload, stored with it (1 / 0).
+  function _ccGeoVerdict(data) {
+    var sm = window._ccSafetyMigrations;
+    return sm && sm.validateGeoCachePayload && sm.validateGeoCachePayload(data).valid ? 1 : 0;
+  }
   function _idbDeleteGeoCacheKey(key) {
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
-        var tx = db.transaction(IDB_GEOCACHE, 'readwrite');
+        var tx = db.transaction(_ccGeoStores(db), 'readwrite');
         tx.objectStore(IDB_GEOCACHE).delete(key);
+        if (db.objectStoreNames.contains(IDB_GEOOK)) tx.objectStore(IDB_GEOOK).delete(key);
         tx.oncomplete = function() { resolve(); };
         tx.onerror = function(e) { reject(e.target.error); };
       });
@@ -3596,17 +3645,17 @@ function startApp() {
   function _ccGeoSaveWorkerGet() {
     if (_ccGeoSaveWorker !== null) return _ccGeoSaveWorker;
     try {
-      var STORE = JSON.stringify(IDB_GEOCACHE);
+      var STORE = JSON.stringify(IDB_GEOCACHE), OKSTORE = JSON.stringify(IDB_GEOOK);
       var src = 'var conn=null,jobs={};function db(){if(conn)return conn;conn=new Promise(function(res,rej){var r=indexedDB.open(' + JSON.stringify(IDB_NAME) + ');' +
         'r.onsuccess=function(){var d=r.result;d.onversionchange=function(){d.close();conn=null;};res(d);};r.onerror=function(){conn=null;rej(r.error);};});return conn;}' +
         'function bufs(rec){var b=new Set(),d=rec.data||{};[d.geoData||[],d.meshData||[]].forEach(function(l){l.forEach(function(md){["pos","n8","nrm","idx"].forEach(function(k){if(md&&md[k]instanceof ArrayBuffer)b.add(md[k]);});});});return Array.from(b);}' +
         'onmessage=function(e){var m=e.data,j=jobs[m.seq];' +
-        'if(m.t==="begin"){jobs[m.seq]={rec:m.rec,geo:[],mesh:[],el:[]};return;}if(!j)return;' +
+        'if(m.t==="begin"){jobs[m.seq]={rec:m.rec,ok:m.ok||null,geo:[],mesh:[],el:[]};return;}if(!j)return;' +
         'if(m.t==="geo"){for(var g=0;g<m.items.length;g++)j.geo.push(m.items[g]);return;}' +
         'if(m.t==="mesh"){for(var i=0;i<m.items.length;i++)j.mesh.push(m.items[i]);return;}' +
         'if(m.t==="el"){for(var k=0;k<m.items.length;k++)j.el.push(m.items[k]);return;}' +
         'if(m.t==="end"){delete jobs[m.seq];var rec=j.rec;if(m.geo)rec.data.geoData=j.geo;rec.data.meshData=j.mesh;rec.data.elData=j.el;' +
-        'db().then(function(d){return new Promise(function(res,rej){var tx=d.transaction(' + STORE + ',"readwrite");tx.objectStore(' + STORE + ').put(rec);' +
+        'db().then(function(d){return new Promise(function(res,rej){var hasOk=d.objectStoreNames.contains(' + OKSTORE + ');var tx=d.transaction(hasOk?[' + STORE + ',' + OKSTORE + ']:' + STORE + ',"readwrite");tx.objectStore(' + STORE + ').put(rec);if(hasOk&&j.ok)tx.objectStore(' + OKSTORE + ').put(j.ok);' +
         'tx.oncomplete=function(){res();};tx.onerror=function(){rej(tx.error);};tx.onabort=function(){rej(tx.error);};});})' +
         '.then(function(){postMessage({seq:m.seq,ok:true});},function(err){postMessage({seq:m.seq,ok:false,error:String(err&&err.message||err),record:rec},bufs(rec));});}};';
       if (!_ccGeoSaveUrl) _ccGeoSaveUrl = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
@@ -3647,6 +3696,7 @@ function startApp() {
         Object.keys(data).forEach(function(k) { if (k !== 'geoData' && k !== 'meshData' && k !== 'elData') head[k] = data[k]; });
         var rec = candidate ? {id:cacheKey, sourceId:fileId, schema:8, data:head, savedAt:Date.now()} : {id:fileId, data:head, savedAt:Date.now()};
         rec.bytes = _ccEstimateBytesFast(data) + 64;
+        var okRow = candidate ? {id:cacheKey, ok:_ccGeoVerdict(data), savedAt:rec.savedAt} : null;
         var seq = ++_ccGeoSaveSeq, geoData = data.geoData || [], meshData = data.meshData || [], elData = data.elData || [];
         _ccGeoSavePending[seq] = function(m) {
           if (m.ok) { if (!m.lost) _ccScheduleBudgetCheck(); resolve(); return; }
@@ -3654,7 +3704,7 @@ function startApp() {
           // (it handles quota pressure with eviction + one retry).
           resolve(idbSaveGeoCache(fileId, m.record ? m.record.data : data));
         };
-        try { w.postMessage({ seq: seq, t: 'begin', rec: rec }); }
+        try { w.postMessage({ seq: seq, t: 'begin', rec: rec, ok: okRow }); }
         catch (e) { delete _ccGeoSavePending[seq]; _ccGeoSaveWorkerIdle(); fallback(); return; }
         var gi = 0, mi = 0, ei = 0;
         // Every geometry buffer is transferred exactly once: gs:1 buffers
@@ -3702,14 +3752,16 @@ function startApp() {
     var candidate = _ccGeoCacheV8Enabled();
     var cacheKey = _ccGeoCacheKey(fileId, candidate);
     var _bytes = _ccEstimateBytesFast(data) + 64;
+    var verdict = candidate ? _ccGeoVerdict(data) : null;
     function attempt() {
       return _openIDB().then(function(db) {
         return new Promise(function(resolve, reject) {
-          var tx = db.transaction(IDB_GEOCACHE, 'readwrite');
+          var tx = db.transaction(_ccGeoStores(db), 'readwrite');
           var record = candidate ? {id:cacheKey, sourceId:fileId, schema:8,
             data:data, savedAt:Date.now()} : {id:fileId, data:data, savedAt:Date.now()};
           record.bytes = _bytes;
           tx.objectStore(IDB_GEOCACHE).put(record);
+          if (candidate && db.objectStoreNames.contains(IDB_GEOOK)) tx.objectStore(IDB_GEOOK).put({id:cacheKey, ok:verdict, savedAt:record.savedAt});
           tx.oncomplete = function() { resolve(); };
           tx.onerror = function(e) { reject(e.target.error); };
         });
@@ -3758,9 +3810,9 @@ function startApp() {
       [fileId, _ccGeoCacheKey(fileId, true)] : [fileId];
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
-        var tx = db.transaction(IDB_GEOCACHE, 'readwrite');
-        var store = tx.objectStore(IDB_GEOCACHE);
-        keys.forEach(function(key){ store.delete(key); });
+        var tx = db.transaction(_ccGeoStores(db), 'readwrite');
+        var store = tx.objectStore(IDB_GEOCACHE), okSt = db.objectStoreNames.contains(IDB_GEOOK) ? tx.objectStore(IDB_GEOOK) : null;
+        keys.forEach(function(key){ store.delete(key); if (okSt) okSt.delete(key); });
         tx.oncomplete = function() { resolve(); };
         tx.onerror = function(e) { reject(e.target.error); };
       });
@@ -3788,9 +3840,9 @@ function startApp() {
             return !validSet[sourceKey];
           });
           if (!orphans.length) return;
-          var tx3 = db.transaction(IDB_GEOCACHE, 'readwrite');
-          var store = tx3.objectStore(IDB_GEOCACHE);
-          orphans.forEach(function(k){ store.delete(k); });
+          var tx3 = db.transaction(_ccGeoStores(db), 'readwrite');
+          var store = tx3.objectStore(IDB_GEOCACHE), okSt = db.objectStoreNames.contains(IDB_GEOOK) ? tx3.objectStore(IDB_GEOOK) : null;
+          orphans.forEach(function(k){ store.delete(k); if (okSt) okSt.delete(k); });
           console.log('Cleaned ' + orphans.length + ' orphaned geo cache entries');
         });
       });
@@ -3910,8 +3962,9 @@ function startApp() {
   window._ccClearGeoCache = function() {
     return _openIDB().then(function(db) {
       return new Promise(function(resolve, reject) {
-        var tx = db.transaction(IDB_GEOCACHE, 'readwrite');
+        var tx = db.transaction(_ccGeoStores(db), 'readwrite');
         tx.objectStore(IDB_GEOCACHE).clear();
+        if (db.objectStoreNames.contains(IDB_GEOOK)) tx.objectStore(IDB_GEOOK).clear();
         tx.oncomplete = function() { resolve(); };
         tx.onerror = function(e) { reject(e.target.error); };
       });

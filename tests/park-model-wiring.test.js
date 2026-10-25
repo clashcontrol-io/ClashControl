@@ -51,10 +51,16 @@ test('parking does NOT delete the geoCache or source file (that is what makes re
 test('parking is refused for models that cannot be restored (guards against data loss)', () => {
   const body = sliceFrom('window._ccParkModel = function', 900);
   assert.match(body, /_ccModelIsRestorable\(model\)/);
-  const guard = sliceFrom('function _ccModelIsRestorable', 700);
+  const guard = sliceFrom('function _ccModelIsRestorable', 2600);
   assert.match(guard, /source === 'revit-direct'/);   // live models: not restorable
-  assert.match(guard, /idbGetGeoCache\(model\.id\)/);  // else require a cache…
-  assert.match(guard, /idbGetProjectFile\(s\.activeProject \|\| 'default', model\.id\)/); // …or its stored source file (one get, not the project's files)
+  // else require a VALID cache — its key + the stored validator verdict, no payload read…
+  assert.match(guard, /objectStore\(IDB_GEOCACHE\)\.getKey\(cacheKey\)/);
+  assert.match(guard, /objectStore\(IDB_GEOOK\)\.get\(cacheKey\)/);
+  assert.match(guard, /o\.verdict\.ok === 1/);
+  // …(a record without a verdict is read + validated as before)…
+  assert.match(guard, /idbGetGeoCache\(model\.id\)/);
+  // …or its stored source file, by the project's file keys (never the buffers)
+  assert.match(guard, /index\('projectId'\)\.getAllKeys\(pid\)/);
   assert.doesNotMatch(guard, /idbGetProjectFiles/);
 });
 
