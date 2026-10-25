@@ -1697,7 +1697,13 @@ function startApp() {
     showBuckets:[],     // review buckets shown on top of 'review' (bucket bar "show"); reset at every run
     hideBuckets:[]      // buckets the rules show (e.g. "show contacts") hidden for this run by the bucket bar; reset at every run
   };
-  var _ccLoadPref = function(key,fallback){try{var v=localStorage.getItem('cc_'+key);return v!==null?JSON.parse(v):fallback;}catch(e){return fallback;}};
+  // _ccPersistUI stores strings raw (other readers expect that) and everything
+  // else as JSON: a stored value that is not JSON is that raw string.
+  var _ccLoadPref = function(key,fallback){
+    var v; try{ v=localStorage.getItem('cc_'+key); }catch(e){ return fallback; }
+    if (v===null) return fallback;
+    try{ return JSON.parse(v); }catch(e){ return typeof fallback==='string' ? v : fallback; }
+  };
 
   // ── Standards localStorage helpers ──────────────────────────────
   function _getStandardDefaultClearance(){try{var v=localStorage.getItem('cc_standard_default_clearance');return v!==null?Number(v):null;}catch(e){return null;}}
@@ -8896,14 +8902,18 @@ function startApp() {
       var pos = g && g.attributes && g.attributes.position;
       v = Math.round((pos ? pos.count : 0) * 10000) | 0; h1 = Math.imul(h1 ^ v, 16777619); h2 = (Math.imul(h2, 33) + v) | 0;
       v = Math.round((g && g.index ? g.index.count : 0) * 10000) | 0; h1 = Math.imul(h1 ^ v, 16777619); h2 = (Math.imul(h2, 33) + v) | 0;
-      // Cheap strided vertex sample (<= 64 vertices + the last one): an edit
-      // that keeps the counts, the matrix and the box (e.g. a sloped top face
-      // reshaped inside the same bounds) must not be carried over unseen.
-      // Hashed once per position attribute (+ its version), see below.
+      // Every vertex and every index (an edit that keeps the counts, the
+      // matrix and the box — a reshaped face, a re-triangulation — must not
+      // be carried over unseen). Hashed once per attribute (+ its version).
       if (pos && pos.count) {
         var vs = _ccVertexSampleHash(pos);
         h1 = Math.imul(h1 ^ vs[0], 16777619); h2 = (Math.imul(h2, 33) + vs[0]) | 0;
         h1 = Math.imul(h1 ^ vs[1], 16777619); h2 = (Math.imul(h2, 33) + vs[1]) | 0;
+      }
+      if (g && g.index && g.index.count) {
+        var ix = _ccIndexHash(g.index);
+        h1 = Math.imul(h1 ^ ix[0], 16777619); h2 = (Math.imul(h2, 33) + ix[0]) | 0;
+        h1 = Math.imul(h1 ^ ix[1], 16777619); h2 = (Math.imul(h2, 33) + ix[1]) | 0;
       }
       try { m.updateWorldMatrix(true, false); } catch (e) {}
       var me = m.matrixWorld && m.matrixWorld.elements;
@@ -8953,6 +8963,18 @@ function startApp() {
   // vertex sample of the federation. An attribute without a version (not a
   // three.js attribute) is hashed every time.
   var _ccVertexSampleCache = new WeakMap();
+  var _ccIndexHashCache = new WeakMap();
+  function _ccIndexHash(idx) {
+    var arr = idx.array, ver = idx.version;
+    if (!arr) return [idx.count | 0, 0];
+    var e = _ccIndexHashCache.get(idx);
+    if (e && e.v === ver && e.a === arr && e.n === idx.count) return e.h;
+    var s1 = 2166136261, s2 = 5381;
+    for (var i = 0, n = idx.count; i < n; i++) { var v = arr[i] | 0; s1 = Math.imul(s1 ^ v, 16777619); s2 = (Math.imul(s2, 33) + v) | 0; }
+    var h = [s1 | 0, s2 | 0];
+    _ccIndexHashCache.set(idx, { v: ver, a: arr, n: idx.count, h: h });
+    return h;
+  }
   function _ccVertexSampleHash(pos) {
     var ver = pos.isInterleavedBufferAttribute ? (pos.data && pos.data.version) : pos.version;
     var arr = pos.array;
@@ -8964,9 +8986,15 @@ function startApp() {
       s1 = Math.imul(s1 ^ v, 16777619);
       s2 = (Math.imul(s2, 33) + v) | 0;
     }
-    var vstep = Math.max(1, Math.floor(pos.count / 64));
-    for (var vi = 0; vi < pos.count; vi += vstep) { num(pos.getX(vi)); num(pos.getY(vi)); num(pos.getZ(vi)); }
-    num(pos.getX(pos.count - 1)); num(pos.getY(pos.count - 1)); num(pos.getZ(pos.count - 1));
+    // Every vertex (not a sample): a reloaded model version keeps the smart
+    // re-run memory (REPLACE_MODEL), so an element edited between sampled
+    // vertices must still read as changed. Hashed once per attribute version
+    // (cache below), so repeated runs cost nothing extra.
+    if (!pos.isInterleavedBufferAttribute && pos.itemSize === 3 && arr && arr.length >= pos.count * 3) {
+      for (var ai = 0, an = pos.count * 3; ai < an; ai++) num(arr[ai]);
+    } else {
+      for (var vi = 0; vi < pos.count; vi++) { num(pos.getX(vi)); num(pos.getY(vi)); num(pos.getZ(vi)); }
+    }
     var h = [s1 | 0, s2 | 0];
     if (ver !== undefined) _ccVertexSampleCache.set(pos, { v: ver, a: arr, n: pos.count, h: h });
     return h;

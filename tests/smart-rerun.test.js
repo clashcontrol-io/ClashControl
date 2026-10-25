@@ -88,6 +88,18 @@ test('_hashElement is stable for an untouched element and changes for every rele
   assert.notEqual(h(base), h(cloneEl(base, (c) => { c.expressId = 43; })), 'identity');
 });
 
+test('_hashElement sees an edit between any vertices and a re-triangulation (a reloaded version keeps the memo)', () => {
+  const h = fns._hashElement;
+  // 1000 vertices: vertex 7 was never in the old 64-vertex sample (stride 15)
+  const coords = []; for (let i = 0; i < 3000; i++) coords.push(i * 0.001);
+  const withVerts = (cs, idxArr) => element({ meshes: [Object.assign(mesh(IDENT, 1000, idxArr ? idxArr.length : 0, cs), {})] });
+  const a = withVerts(coords), moved = coords.slice(); moved[7 * 3 + 1] += 0.004;
+  assert.notEqual(h(a), h(withVerts(moved)), 'one interior vertex moved 4 mm');
+  const tri = (arr) => { const e = withVerts(coords, arr); e.meshes[0].geometry.index = { count: arr.length, array: Uint32Array.from(arr), version: 0 }; return e; };
+  assert.notEqual(h(tri([0, 1, 2, 2, 3, 0])), h(tri([0, 1, 3, 1, 2, 3])), 'same counts, different triangles');
+  assert.equal(h(tri([0, 1, 2, 2, 3, 0])), h(tri([0, 1, 2, 2, 3, 0])), 'identical index -> identical hash');
+});
+
 test('_hashElement ignores changes that cannot alter a clash (unrelated pset data)', () => {
   const h = fns._hashElement;
   const base = element();
