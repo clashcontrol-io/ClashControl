@@ -700,6 +700,12 @@
   //   provided   passes through an IFC opening made for it
   //   provision  MEP inside a provision / reservation volume (role group
   //              'provision' set to classify, the default)
+  //   penetration (rules.exceptions.penetration on) an MEP run passing
+  //              orthogonally through a wall / slab / covering, sticking out
+  //              of both faces (c.exception, clash-exceptions-core.js) —
+  //              unless it is a missing-provision finding: those stay in review
+  //   fitting    (rules.exceptions.fitting on) a terminal / light / outlet
+  //              set flush into a ceiling, wall or slab (c.exception)
   //   zone       an element of another suggestion group set to classify
   //              (zones, spaces, duplicates, proxies — rules.roleChoices)
   //   twice      the same conflict reported again against an exact copy of
@@ -715,7 +721,7 @@
   //              (wall-slab, wall-beam). Near misses (gap <= 30 % of the
   //              required clearance) stay in review.
   //   review     everything else — the list a coordinator works through
-  var REVIEW_BUCKETS = ['review', 'contact', 'openshape', 'provided', 'provision', 'zone', 'twice', 'embedded', 'finish', 'graze', 'adjacent', 'handled'];
+  var REVIEW_BUCKETS = ['review', 'contact', 'openshape', 'provided', 'provision', 'penetration', 'fitting', 'zone', 'twice', 'embedded', 'finish', 'graze', 'adjacent', 'handled'];
   var DEFAULT_HIDDEN_BUCKETS = REVIEW_BUCKETS.filter(function(b) { return b !== 'review'; });
   var ROLE_CHOICE_DEFAULTS = { provision: 'classify', zone: 'classify', space: 'exclude', duplicate: 'include', proxy: 'include' };
   var EMBEDDED_TYPES = { IfcReinforcingBar:1, IfcReinforcingMesh:1, IfcReinforcingElement:1, IfcTendon:1, IfcTendonAnchor:1,
@@ -759,6 +765,13 @@
     if (c.type === 'open-inside') return 'openshape';
     if (c.opening === 'provided') return 'provided';
     if (c.provision === 'inside' && _roleChoice('provision', rules, ctx) === 'classify') return 'provision';
+    var ex = rules.exceptions;
+    if (ex && (c.exception || c.missingProvision)) {
+      // a missing opening / provision is the finding the rule exists for
+      if (c.missingProvision && ex.requireProvision && ex.requireProvision.on === true) return 'review';
+      if (c.exception === 'penetration' && ex.penetration && ex.penetration.on === true) return 'penetration';
+      if (c.exception === 'fitting' && ex.fitting && ex.fitting.on === true) return 'fitting';
+    }
     if (c.roleGroup && c.roleGroup !== 'provision' && _roleChoice(c.roleGroup, rules, ctx) === 'classify') return 'zone';
     if (c.type === 'duplicate') return 'review';
     if (ctx && ctx.twice && c.id != null && ctx.twice[c.id]) return 'twice';

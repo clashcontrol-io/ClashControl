@@ -912,6 +912,7 @@
 <script src="clash-reconciliation-core.js" defer></script>
 <script src="clash-classification-core.js" defer></script>
 <script src="clash-triage-core.js" defer></script>
+<script src="clash-exceptions-core.js" defer></script>
 <script src="project-codec.js" defer></script>
 <script src="storage-core.js" defer></script>
 <script src="shared-log-core.js" defer></script>
@@ -8881,7 +8882,7 @@ function startApp() {
     try {
       var r = {};
       Object.keys(rules || {}).sort().forEach(function(k) {
-        if (k === 'fullRerun' || k === 'changeAware' || k === 'hideProvidedOpenings' || k === 'hideContacts' || k === 'hideBuckets' || k === 'roleChoicesRemembered') return;
+        if (k === 'fullRerun' || k === 'changeAware' || k === 'hideProvidedOpenings' || k === 'hideContacts' || k === 'hideBuckets' || k === 'roleChoicesRemembered' || k === 'exceptions') return; // exceptions: post-classification of the final list, never per-pair results
         // an absent / empty coordination matrix is the same run (old projects)
         if (rules[k] === undefined || (k === 'matrixRules' && (!rules[k] || !Object.keys(rules[k]).length))) return;
         r[k] = rules[k];
@@ -9247,6 +9248,65 @@ function startApp() {
       _ccApplyDefaultTitle(c);
     });
   }
+  // ── Intersection exceptions + "A requires B" (clash-exceptions-core.js) ──
+  // Post-classification on the run's final clash list, after every engine
+  // path (browser JS / WASM / Engine / pool / native, local engine) — so the
+  // annotations are identical whichever path produced the list; the kernel,
+  // BVH and candidates are untouched. Nothing runs (the result is returned
+  // exactly as the engine made it) unless one of rules.exceptions is on.
+  // Changed clashes are replaced by copies in place in the result array (its
+  // run tags stay on it); clash objects are never mutated.
+  function _ccApplyClashExceptions(result, models, rules) {
+    var xcore = window._ccClashExceptionsCore, ccore = window._ccClashClassificationCore;
+    if (!result || !result.length || !xcore || !rules || !xcore.anyOn(rules.exceptions)) return null;
+    var ex = xcore.normalize(rules.exceptions);
+    var byModel = {};
+    (models || []).forEach(function(m) {
+      var map = new Map();
+      (m.elements || []).forEach(function(el) { map.set(el.expressId, el); });
+      byModel[m.id] = map;
+    });
+    function elOf(c, side) {
+      var map = byModel[side === 'A' ? c.modelAId : c.modelBId];
+      return map ? map.get(side === 'A' ? c.elemA : c.elemB) || null : null;
+    }
+    var provList = null;
+    if (ex.requireProvision.on) {
+      try { var _pi = _ccBuildProvisionIndex(models, typeof _ccRoleIndex === 'function' ? _ccRoleIndex(models) : null); provList = _pi && _pi.list; } catch (e) { provList = null; }
+    }
+    function region(c) {
+      var a = elOf(c, 'A'), b = elOf(c, 'B');
+      if (!a || !b || !a.box || !b.box) return null;
+      return { min: [Math.max(a.box.min.x, b.box.min.x), Math.max(a.box.min.y, b.box.min.y), Math.max(a.box.min.z, b.box.min.z)],
+               max: [Math.min(a.box.max.x, b.box.max.x), Math.min(a.box.max.y, b.box.max.y), Math.min(a.box.max.z, b.box.max.z)] };
+    }
+    var ctx = {
+      extent: function(c) { return ccore && ccore.clashExtent ? ccore.clashExtent(c) : null; },
+      // the element's world triangles (engine frame — both sides share it)
+      points: function(c, side) {
+        var el = elOf(c, side);
+        if (!el || !el.meshes || !el.meshes.length) return null;
+        try { var t = _getWorldTris(el); return t && t.length >= 9 ? t : null; } catch (e) { return null; }
+      },
+      region: region,
+      openings: function(c, side) { var el = elOf(c, side); var o = el && el.props && el.props.openings; return o && o.length ? o : null; },
+      provisions: function(c) {
+        if (!provList || !provList.length) return null;
+        var r = region(c); if (!r) return null;
+        var pad = ex.requireProvision.withinMm / 1000, out = [];
+        for (var i = 0; i < provList.length; i++) {
+          var o = provList[i].o, rr = Math.sqrt(o[12] * o[12] + o[13] * o[13] + o[14] * o[14]) + pad;
+          if (o[0] >= r.min[0] - rr && o[0] <= r.max[0] + rr && o[1] >= r.min[1] - rr && o[1] <= r.max[1] + rr && o[2] >= r.min[2] - rr && o[2] <= r.max[2] + rr) out.push(o);
+        }
+        return out;
+      }
+    };
+    var res = xcore.annotate(result, ctx, ex);
+    for (var i = 0; i < res.clashes.length; i++) if (result[i] !== res.clashes[i]) result[i] = res.clashes[i];
+    try { result._ccExceptions = res.counts; } catch (e) {}
+    return res;
+  }
+
   // ── Provision for void: is a clash's passing element inside a host opening? ──
   // Classification on top of a clash the engine already produced — never
   // used to decide whether a clash exists. The host's openings are flat
@@ -12664,6 +12724,11 @@ function startApp() {
       // a mid-run stop) instead of overwriting it with 'complete'.
       var outcome = (result && result._ccOutcome && result._ccOutcome !== 'complete') ? result._ccOutcome : 'complete';
       if (result && _runExcluded) { try { result._ccExcluded = _runExcluded; } catch (e) {} }
+      // Intersection exceptions / required provisions (rules.exceptions, all
+      // off by default): post-classification on the final list, both engines.
+      if (result && result.length && rules && rules.exceptions) {
+        try { _ccApplyClashExceptions(result, models, rules); } catch (e) { console.warn('[Detect] exceptions annotation failed:', e); }
+      }
       // Matrix cell severities (rules.matrixRules): classifyClashes reads the
       // run's rules from here (both engines), see _ccMatrixSeverityCtx.
       if (result && typeof _ccDisciplineCore === 'object' && _ccDisciplineCore && _ccDisciplineCore.matrixSetsSeverity(rules)) {
@@ -30779,6 +30844,56 @@ function startApp() {
     return out.slice(0, 4);
   };
 
+  // Run modal → "Exceptions and required provisions" (rules.exceptions,
+  // clash-exceptions-core.js). Three rules, all off by default; each mm /
+  // degree value is kept while its rule is off. Plain rows (no hooks), so it
+  // can be called from the rules panel's render with its own MiniToggle.
+  function _ccExceptionRows(rules, d, MiniToggle, rowStyle) {
+    var xcore = window._ccClashExceptionsCore;
+    if (!xcore) return null;
+    var ex = xcore.normalize(rules && rules.exceptions);
+    function upd(key, patch) {
+      var next = xcore.normalize(rules && rules.exceptions);
+      next[key] = Object.assign({}, next[key], patch);
+      d({t:A.UPD_RULES, u:{exceptions: next}});
+    }
+    var NUM = {...S_INPUT,fontSize:'var(--text-xs)',width:56,padding:'var(--space-1)',textAlign:'right'};
+    var UNIT = {fontSize:'var(--text-2xs)',color:'var(--text-faint)'};
+    var SUB = {display:'flex',alignItems:'center',flexWrap:'wrap',gap:'var(--space-1) var(--space-2)',padding:'0 0 var(--space-1)'};
+    function num(key, field, value, label, unit, max) {
+      return html`<label style=${{display:'inline-flex',alignItems:'center',gap:'var(--space-1)',fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>
+        <span>${label}</span>
+        <input type="number" min="0" max=${max} step="1" value=${value} data-cc-exception-input=${key + '.' + field}
+          onChange=${function(e){ var v = Math.max(0, Math.min(max, +e.target.value || 0)); var p = {}; p[field] = v; upd(key, p); }}
+          style=${NUM} />
+        <span style=${UNIT}>${unit}</span>
+      </label>`;
+    }
+    function row(key, title, desc) {
+      return html`<div style=${rowStyle}>
+        <div>
+          <div style=${{fontSize:'var(--text-xs)',color:'var(--text-primary)'}}>${title}</div>
+          <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${desc}</div>
+        </div>
+        <span data-cc-exception=${key}><${MiniToggle} on=${ex[key].on} onToggle=${function(){ upd(key, {on: !ex[key].on}); }} /></span>
+      </div>`;
+    }
+    return html`<div data-cc-exceptions="1" style=${{display:'flex',flexDirection:'column'}}>
+      ${row('penetration', _cc_t('exceptions.penetration','Straight penetrations'), _cc_t('exceptions.penetrationDesc','A duct, pipe or cable carrier passing straight through a wall, slab or covering is filed under its own count instead of the review list'))}
+      ${ex.penetration.on && html`<div style=${SUB}>
+        ${num('penetration', 'minProtrusionMm', ex.penetration.minProtrusionMm, _cc_t('exceptions.minProtrusion','sticks out at least'), 'mm', 5000)}
+        ${num('penetration', 'angleDeg', ex.penetration.angleDeg, _cc_t('exceptions.angle','angle within'), _cc_t('exceptions.degrees','degrees'), 45)}
+      </div>`}
+      ${row('fitting', _cc_t('exceptions.fitting','Fittings set flush'), _cc_t('exceptions.fittingDesc','An air terminal, light fixture or outlet set into a ceiling, wall or slab with its face flush is filed under its own count'))}
+      ${ex.fitting.on && html`<div style=${SUB}>
+        ${num('fitting', 'flushMm', ex.fitting.flushMm, _cc_t('exceptions.flush','flush within'), 'mm', 500)}
+      </div>`}
+      ${row('requireProvision', _cc_t('exceptions.requireProvision','Require an opening or provision'), _cc_t('exceptions.requireProvisionDesc','An MEP run through a structural wall or slab needs an IFC opening or a provision volume nearby; without one it is marked and stays in review'))}
+      ${ex.requireProvision.on && html`<div style=${SUB}>
+        ${num('requireProvision', 'withinMm', ex.requireProvision.withinMm, _cc_t('exceptions.within','within'), 'mm', 5000)}
+      </div>`}
+    </div>`;
+  }
   function RunDetectionModal(props) {
     var s = props.s, d = props.d;
     var summary = _ccSummariseRules(s.rules, s.models);
@@ -31149,6 +31264,10 @@ function startApp() {
                   else { d({t:A.UPD_PREFS,u:{preRunDontAsk:false}}); d({t:A.UPD_RULES,u:{roleChoicesRemembered:false}}); }
                 }} />
               </div>
+              <${CcDisclosure} variant="item" title=${_cc_t('exceptions.title','Exceptions and required provisions')}
+                defaultOpen=${!!(window._ccClashExceptionsCore && window._ccClashExceptionsCore.anyOn(rules.exceptions))} bodyStyle=${{padding:'0 0 0 var(--space-3)'}}>
+                ${_ccExceptionRows(rules, d, MiniToggle, TOGROW)}
+              </${CcDisclosure}>
             </div>
           </div>
 
@@ -31478,6 +31597,8 @@ function startApp() {
       openshape: _cc_t('bucket.openshape', '{n} inside an open shape — check', {n:n}),
       provided: n + ' ' + _cc_t('opening.passThrough', 'pass through provided openings'),
       provision: n + ' ' + _cc_t('provision.passThrough', 'inside provisions / reservations'),
+      penetration: _cc_t('bucket.penetration', '{n} straight penetrations (wall / slab)', {n:n}),
+      fitting: _cc_t('bucket.fitting', '{n} fittings set flush', {n:n}),
       zone: _cc_t('bucket.zone', '{n} in classified groups', {n:n}),
       twice: _cc_t('bucket.twice', '{n} reported twice (copied element)', {n:n}),
       embedded: _cc_t('bucket.embedded', '{n} embedded by design', {n:n}),
@@ -31494,6 +31615,8 @@ function startApp() {
       openshape: _cc_t('bucket.openshapeHint', 'One element sits inside another whose shape is not closed (a gap, a missing face), so "inside" is not defined — check the model; never counted as a hard clash'),
       provided: _cc_t('bucket.providedHint', 'The element passes through an IFC opening made for it'),
       provision: _cc_t('provision.insideTitle', 'The element sits in or passes through a provision / reservation volume made for it'),
+      penetration: _cc_t('bucket.penetrationHint', 'A duct, pipe or cable carrier passes straight through a wall, slab or covering and sticks out of both faces (Detection rules → Exceptions and required provisions). One without an opening or provision stays in review when that check is on'),
+      fitting: _cc_t('bucket.fittingHint', 'An air terminal, light fixture or outlet is set into a ceiling, wall or slab, flush with its face (Detection rules → Exceptions and required provisions)'),
       zone: _cc_t('roles.classifiedTitle', 'Clashes with elements whose suggestion group is set to "classify only" (Detection rules → Suggestion groups)'),
       twice: _cc_t('bucket.twiceHint', 'The same conflict against an exact copy of an element in another model — reported once in review'),
       embedded: _cc_t('bucket.embeddedHint', 'Reinforcement, fasteners, element parts, voids, and doors/windows sitting in a wall or slab of another model'),
@@ -31573,13 +31696,13 @@ function startApp() {
     if (k === 'trade') return String(v).split(' × ').map(function(x){ return _ccDisciplineLabel(x); }).join(' × ');
     if (k === 'status') return (STAT[v] && STAT[v].label) || v;
     if (k === 'assignee') return v || _cc_t('facet.unassigned','Unassigned');
-    if (k === 'bucket') return ({review:_cc_t('bucket.name.review','To review'),contact:_cc_t('bucket.name.contact','Contact'),openshape:_cc_t('bucket.name.openshape','Inside an open shape'),provided:_cc_t('bucket.name.provided','Provided opening'),provision:_cc_t('bucket.name.provision','Provision'),zone:_cc_t('bucket.name.zone','Classified group'),twice:_cc_t('bucket.name.twice','Reported twice'),embedded:_cc_t('bucket.name.embedded','Embedded'),finish:_cc_t('bucket.name.finish','Finish'),graze:_cc_t('bucket.name.graze','Graze'),adjacent:_cc_t('bucket.name.adjacent','Adjacent'),handled:_cc_t('bucket.name.handled','Handled')})[v] || v;
+    if (k === 'bucket') return ({review:_cc_t('bucket.name.review','To review'),contact:_cc_t('bucket.name.contact','Contact'),openshape:_cc_t('bucket.name.openshape','Inside an open shape'),provided:_cc_t('bucket.name.provided','Provided opening'),provision:_cc_t('bucket.name.provision','Provision'),penetration:_cc_t('bucket.name.penetration','Straight penetration'),fitting:_cc_t('bucket.name.fitting','Flush fitting'),zone:_cc_t('bucket.name.zone','Classified group'),twice:_cc_t('bucket.name.twice','Reported twice'),embedded:_cc_t('bucket.name.embedded','Embedded'),finish:_cc_t('bucket.name.finish','Finish'),graze:_cc_t('bucket.name.graze','Graze'),adjacent:_cc_t('bucket.name.adjacent','Adjacent'),handled:_cc_t('bucket.name.handled','Handled')})[v] || v;
     if (k === 'tag') { var sv = ((window._ccClashTriageCore && window._ccClashTriageCore.SUGGESTED) || []).find(function(x){ return x.facets.tag[0] === v; }); return sv ? _ccSuggestedLabel(sv.id, sv.label) : v; }
     return v;
   }
   function _ccSuggestedLabel(id, label) {
     return ({'structural-penetration':_cc_t('view.structuralPenetration','Structural penetrations'),'riser-through-slab':_cc_t('view.riserThroughSlab','Risers through slabs'),
-      'unassigned-critical':_cc_t('view.unassignedCritical','Unassigned critical'),'opening-too-small':_cc_t('view.openingTooSmall','Openings too small'),'near-miss':_cc_t('view.nearMiss','Near misses'),'new':_cc_t('view.new','New since last run'),'shared-conflict':_cc_t('view.sharedConflict','Conflicts')})[id] || label;
+      'unassigned-critical':_cc_t('view.unassignedCritical','Unassigned critical'),'opening-too-small':_cc_t('view.openingTooSmall','Openings too small'),'missing-provision':_cc_t('view.missingProvision','Missing openings / provisions'),'near-miss':_cc_t('view.nearMiss','Near misses'),'new':_cc_t('view.new','New since last run'),'shared-conflict':_cc_t('view.sharedConflict','Conflicts')})[id] || label;
   }
   function _ccToggleFacet(facets, k, v) {
     var cur = (facets[k] || []).slice(), i = cur.indexOf(v);
@@ -37672,6 +37795,7 @@ function startApp() {
               ${it.opening==='provided' && html`<span class="cc-status-pill" title=${_cc_t('opening.providedTitle','The element passes through an IFC opening made for it')} style=${{color:'var(--color-info-fg)',background:'var(--color-info-bg)'}}>${_cc_t('opening.provided','provided opening')}</span>`}
               ${it.provision==='inside' && html`<span class="cc-status-pill" title=${_cc_t('provision.insideTitle','The element sits in or passes through a provision / reservation volume made for it')} style=${{color:'var(--color-info-fg)',background:'var(--color-info-bg)'}}>${_cc_t('provision.inside','in provision')}</span>`}
               ${it.provision==='partial' && html`<span class="cc-status-pill" title=${_cc_t('provision.partialTitle','The element overlaps a provision / reservation volume but pokes outside it')} style=${{color:'var(--color-warning-fg)',background:'var(--color-warning-bg)'}}>${_cc_t('provision.partial','provision too small')}</span>`}
+              ${it.missingProvision && html`<span class="cc-status-pill" data-cc-missing-provision="1" title=${_cc_t('provision.missingTitle','This MEP run passes through a structural wall or slab and no IFC opening or provision volume lies within {n} mm',{n:it.missingProvision.withinMm})} style=${{color:'var(--color-danger-fg)',background:'var(--color-danger-bg)'}}>${_cc_t('provision.missing','no opening / provision')}</span>`}
               ${it.provision==='obstructs' && html`<span class="cc-status-pill" title=${_cc_t('provision.obstructsTitle','A non-MEP element intersects a provision / reservation volume')} style=${{color:'var(--color-warning-fg)',background:'var(--color-warning-bg)'}}>${_cc_t('provision.obstructs','blocks a provision')}</span>`}
               ${it.roleGroup && it.roleGroup !== 'proxy' && html`<span class="cc-status-pill" title=${_cc_t('roles.pillTitle','One of the elements belongs to a suggestion group (see Detection rules)')} style=${{color:'var(--color-info-fg)',background:'var(--color-info-bg)'}}>${_ccRoleGroupLabel(it.roleGroup, false)}</span>`}
               ${it.status==='accepted_needs_check' && html`<span class="cc-status-pill" style=${{color:'var(--color-info-fg)',background:'var(--color-info-bg)'}}>${_cc_t('issueRow.needsCheck','needs check')}</span>`}
