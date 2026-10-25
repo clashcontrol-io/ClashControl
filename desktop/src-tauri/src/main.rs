@@ -17,6 +17,7 @@ fn main() {
             engine_cmds::clear_meshes,
             engine_cmds::intersect_batch,
             engine_cmds::min_dist_batch,
+            engine_cmds::min_dist_within_batch,
             engine_cmds::engine_info,
         ])
         .run(tauri::generate_context!())

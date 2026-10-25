@@ -67,51 +67,66 @@ test('loadBearingOf reads LoadBearing from any pset, any case, any boolean spell
 
 // ── deterministic severity ───────────────────────────────────────────────
 
+// Box sizes (mm) that make the extent explicit: a 100 mm pipe through a
+// 300 mm beam ('through' at depth >= 100) or only partly into it.
+const PIPE = { dx: 3000, dy: 100, dz: 100 }, BEAM = { dx: 300, dy: 500, dz: 6000 };
 function hard(roleA, roleB, depthMm, extra) {
-  return Object.assign({ type: 'hard', roleA, roleB, distance: -depthMm }, extra || {});
+  return Object.assign({ type: 'hard', roleA, roleB, distance: -depthMm, bboxA: PIPE, bboxB: BEAM }, extra || {});
 }
 const sev = (c) => core.deterministicSeverity(c);
 
-test('hard clash, structural involved: >=20mm critical, 10-19mm major, <10mm minor', () => {
-  assert.equal(sev(hard('structural', 'mep-main', 20)), 'critical');
-  assert.equal(sev(hard('structural', 'mep-main', 19)), 'major');
-  assert.equal(sev(hard('structural', 'mep-main', 10)), 'major');
-  assert.equal(sev(hard('structural', 'mep-main', 9)), 'minor');
-  assert.equal(sev(hard('structural', 'structural', 300)), 'critical');
+test('hard clash: pair class x extent — MEP run through structure is critical, partly into it major', () => {
+  assert.equal(core.clashExtent(hard('mep-main', 'structural', 120)), 'through');
+  assert.equal(core.clashExtent(hard('mep-main', 'structural', 60)), 'partial');
+  assert.equal(sev(hard('structural', 'mep-main', 120)), 'critical');
+  assert.equal(sev(hard('structural', 'mep-main', 60)), 'major');
+  assert.equal(sev(hard('structural', 'mep-main', 9)), 'minor', 'below the 10 mm floor');
+  // depth no longer decides on its own: a deep structural x structural overlap is major at most
+  assert.equal(sev(hard('structural', 'structural', 300)), 'major');
 });
 
-test('hard clash between a MEP run and non-structural: >=50mm critical, >=10mm major', () => {
-  assert.equal(sev(hard('mep-main', 'architectural', 50)), 'critical');
-  assert.equal(sev(hard('mep-main', 'architectural', 49)), 'major');
-  assert.equal(sev(hard('mep-main', 'architectural', 10)), 'major');
+test('hard clash between a MEP run and architecture needs builder\'s work: major through, minor partial', () => {
+  assert.equal(sev(hard('mep-main', 'architectural', 120)), 'major');
+  assert.equal(sev(hard('mep-main', 'architectural', 49)), 'minor');
   assert.equal(sev(hard('mep-main', 'architectural', 4)), 'minor');
 });
 
-test('hard clash between terminals / fittings / architectural only needs >=100mm for critical', () => {
-  assert.equal(sev(hard('mep-terminal', 'architectural', 99)), 'major');
-  assert.equal(sev(hard('mep-terminal', 'architectural', 100)), 'critical');
-  assert.equal(sev(hard('mep-terminal', 'mep-terminal', 60)), 'major');
+test('terminals / fittings / other are major at most', () => {
+  assert.equal(sev(hard('mep-terminal', 'architectural', 2000)), 'major');
+  assert.equal(sev(hard('mep-terminal', 'structural', 2000)), 'major');
+  assert.equal(sev(hard('mep-terminal', 'mep-terminal', 60)), 'minor');
 });
 
 test('finishes (covering, furniture) are never critical; shallow finish clashes are info', () => {
-  assert.equal(sev(hard('finish', 'finish', 500)), 'major');
-  assert.equal(sev(hard('finish', 'finish', 49)), 'minor');
+  assert.equal(sev(hard('finish', 'finish', 500)), 'minor');
+  assert.equal(sev(hard('finish', 'finish', 49)), 'info');
   assert.equal(sev(hard('finish', 'finish', 5)), 'info');
-  assert.equal(sev(hard('finish', 'finish', 5000)), 'major');
-  // ...but a finish against a structural element is judged by the structural rule
-  assert.equal(sev(hard('finish', 'structural', 30)), 'critical');
+  // ...a finish against structure is judged by its pair class, then drops one
+  // tier (never below minor): a covering is not the thing that has to move
+  assert.equal(sev(hard('finish', 'structural', 120)), 'minor');
+  assert.equal(sev(hard('finish', 'mep-main', 120)), 'minor');
 });
 
-test('pair criticality is the MAX of the two roles (the low side never dilutes the high side)', () => {
-  assert.equal(sev(hard('finish', 'mep-main', 60)), sev(hard('mep-main', 'mep-main', 60)));
-  assert.equal(sev(hard('architectural', 'structural', 25)), sev(hard('structural', 'structural', 25)));
+test('the overlap volume no longer bumps a tier (the extent already measures it)', () => {
+  assert.equal(sev(hard('mep-main', 'architectural', 5, { overlapVolM3: 0.2 })), 'minor');
+  assert.equal(sev(hard('mep-main', 'architectural', 60, { overlapVolM3: 0.2 })), 'minor');
 });
 
-test('a large overlap volume bumps minor/major up one tier for MEP runs and structure only', () => {
-  assert.equal(sev(hard('mep-main', 'architectural', 5, { overlapVolM3: 0.2 })), 'major');
-  assert.equal(sev(hard('mep-main', 'architectural', 20, { overlapVolM3: 0.2 })), 'critical');
-  assert.equal(sev(hard('mep-main', 'architectural', 5, { overlapVolM3: 0.01 })), 'minor');
-  assert.equal(sev(hard('mep-terminal', 'architectural', 5, { overlapVolM3: 0.2 })), 'minor');
+test('MEP x MEP is critical only across trades (two hard services cannot both move)', () => {
+  const two = (t, d) => hard('mep-main', 'mep-main', d, { trades: t, modelAId: 'V', modelBId: 'P' });
+  assert.equal(sev(two(['mep.ventilation', 'mep.plumbing'], 120)), 'critical');
+  assert.equal(sev(two(['mep.ventilation', 'mep.plumbing'], 60)), 'major');
+  assert.equal(sev(two(['mep.heating', 'mep.piping'], 120)), 'major', 'an unresolved pipe is the same trade');
+  assert.equal(sev(two(['mep', 'mep'], 120)), 'major', 'trade unknown');
+  assert.equal(core.crossTrade({ trades: ['mep.fire', 'mep.electrical'] }), true);
+  assert.equal(core.crossTrade({ trades: ['structural', 'mep.electrical'] }), false);
+});
+
+test('critical needs a known extent; unknown (local engine / no sizes) caps at major', () => {
+  assert.equal(sev(hard('mep-main', 'structural', 400, { bboxA: null })), 'major');
+  assert.equal(sev(hard('mep-main', 'structural', 400, { source: 'local_engine' })), 'major');
+  assert.equal(sev(hard('mep-main', 'architectural', 400, { bboxA: null })), 'major');
+  assert.equal(sev(hard('mep-main', 'architectural', 40, { bboxA: null })), 'minor');
 });
 
 test('soft clash: gap vs required clearance (<=30% near miss -> major), finishes drop one tier', () => {
@@ -141,21 +156,22 @@ test('duplicate is info, visibility is major, null is info; vocabulary is aiSeve
 });
 
 test('legacy clashes without roleA/roleB derive roles from element types and disciplines', () => {
-  const legacy = { type: 'hard', elemAType: 'IfcDuctSegment', elemBType: 'IfcBeam', disciplines: ['mep', 'structural'], distance: -20 };
+  const legacy = { type: 'hard', elemAType: 'IfcDuctSegment', elemBType: 'IfcBeam', disciplines: ['mep', 'structural'], distance: -120, bboxA: PIPE, bboxB: BEAM };
+  assert.equal(core.severityClass(legacy), 'struct-mep');
   assert.equal(sev(legacy), 'critical');
-  const finishOnly = { type: 'hard', elemAType: 'IfcCovering', elemBType: 'IfcFurnishingElement', distance: -200 };
-  assert.equal(sev(finishOnly), 'major');
+  const finishOnly = { type: 'hard', elemAType: 'IfcCovering', elemBType: 'IfcFurnishingElement', distance: -200, bboxA: PIPE, bboxB: BEAM };
+  assert.equal(sev(finishOnly), 'minor');
 });
 
 test('classifyClashes uses the same model and stamps the verdict as rule-derived', () => {
-  const c = { id: 'c', type: 'hard', elemAType: 'IfcDuctSegment', elemBType: 'IfcColumn', disciplines: ['mep', 'structural'], distance: -25, point: [0, 0, 0] };
+  const c = { id: 'c', type: 'hard', elemAType: 'IfcDuctSegment', elemBType: 'IfcColumn', disciplines: ['mep', 'structural'], distance: -125, bboxA: PIPE, bboxB: BEAM, point: [0, 0, 0] };
   const finish = { id: 'f', type: 'hard', elemAType: 'IfcCovering', elemBType: 'IfcCovering', disciplines: ['architectural', 'architectural'], distance: -25, point: [10, 0, 0] };
   core.classifyClashes([c, finish]);
   assert.equal(c.aiSeverity, core.deterministicSeverity(c));
   assert.equal(c.aiSeverity, 'critical');
   assert.equal(c._sevSource, 'rule');
-  assert.equal(finish.aiSeverity, 'minor');
-  assert.match(c.aiReason, /25mm deep/);
+  assert.equal(finish.aiSeverity, 'info');
+  assert.match(c.aiReason, /125mm deep/);
 });
 
 test('an AI-authored severity is never overwritten by classifyClashes', () => {

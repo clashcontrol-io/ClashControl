@@ -216,7 +216,8 @@
           // Hit-test the model group only (IFC meshes live under S.mg).
           var mg = S3.mg;
           if (mg) {
-            var hits = rc.intersectObjects(mg.children, true);
+            // Scene pick index when the core has one (same hits, fewer raycasts).
+            var hits = (S3.scenePick && typeof S3.scenePick.all === 'function') ? S3.scenePick.all(rc) : rc.intersectObjects(mg.children, true);
             // Skip alignment markers we placed earlier
             for (var i = 0; i < hits.length; i++) {
               if (hits[i].object.userData && hits[i].object.userData._alignMarker) continue;
@@ -1043,7 +1044,7 @@
 
       var pagesHtml = issues.map(function(it, i){
         var vp = vpByLinkedId[it.id];
-        var img = vp && vp.snapshot ? ('<img src="' + vp.snapshot + '" alt="hotspot snapshot" />') : '<div class="no-snap">No snapshot captured</div>';
+        var img = vp && vp.snapshot ? ('<img src="' + _escapeHtml(vp.snapshot) + '" alt="hotspot snapshot" />') : '<div class="no-snap">No snapshot captured</div>';
         return '<section class="hotspot-page">'
           + '<h2>Hotspot ' + (i+1) + ' · ' + _escapeHtml(it.title) + '</h2>'
           + '<div class="hotspot-grid">'

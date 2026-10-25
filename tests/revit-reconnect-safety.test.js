@@ -30,6 +30,7 @@ function harness(opts) {
     connect(port, dispatch) { connects.push({ port, dispatch }); },
   };
   const api = new Function('deps', `
+    var _i18n = function(k, en, v){ return v ? en.replace(/\{(\w+)\}/g, function(m, n){ return n in v ? v[n] : m; }) : en; };
     var _revitUserDisconnected = deps.disconnected;
     var _revitLastDispatch = deps.dispatch;
     var _revitReconnect = null;

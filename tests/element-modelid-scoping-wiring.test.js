@@ -89,8 +89,12 @@ test('_ccTempHideCore accepts {expressId,modelId} refs and only hides meshes who
 });
 
 test('_ccBatchHidden.temp visibility check honors a model-scoped key alongside the legacy bare-eid one', () => {
-  const body = sliceFrom('function _ccBatchApplyVisibility(root) {', 700);
+  // one slot's visibility (_ccBatchApplySlot) is what both the full and the
+  // keyed _ccBatchApplyVisibility apply
+  const body = sliceFrom('function _ccBatchApplySlot(b, i, eid, mid) {', 700);
   assert.match(body, /_ccBatchHidden\.temp\[eid\] \|\| _ccBatchHidden\.temp\[k\]/);
+  const apply = sliceFrom('function _ccBatchApplyVisibility(root, eids) {', 900);
+  assert.equal((apply.match(/_ccBatchApplySlot\(/g) || []).length, 2, 'both paths go through _ccBatchApplySlot');
 });
 
 test('Selection Set +/- editing matches by (expressId, modelId), falling back to expressId-only for legacy refs with no modelId', () => {

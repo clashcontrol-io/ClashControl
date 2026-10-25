@@ -26,13 +26,13 @@ function loadJsReference() {
   const full = fs.readFileSync(path.join(REPO, 'index.html'), 'utf8');
   const startIdx = full.indexOf('var _ttIvalA = new Float64Array(8)');
   const endMarkerIdx = full.indexOf('window._ccJsMeshIntersectRef = {');
-  const endIdx = full.indexOf('\n  };\n\n  // ── Approximate penetration depth', endMarkerIdx);
+  const endIdx = full.indexOf('\n  };\n\n  // ── Point-to-surface distance helpers', endMarkerIdx);
   assert.ok(startIdx !== -1 && endMarkerIdx !== -1 && endIdx !== -1, 'JS reference extraction is stale');
   const body = full.slice(startIdx, endIdx + '\n  };'.length);
   const window = { _ccSafetyMigrations: null };
-  return new Function('window', '_DETECT_CHUNK_SIZE', '_getWorldTris', '_getBVH', '_bvhLRU',
+  return new Function('window', '_DETECT_CHUNK_SIZE', '_getWorldTris', '_getBVH', '_bvhLRU', '_ccFrameBox',
     body + '; return {ref:window._ccJsMeshIntersectRef,post:_postProcessIntersectPoints,margin:_MI_MARGIN};'
-  )(window, 80, () => [], () => null, new Map());
+  )(window, 80, () => [], () => null, new Map(), (el) => el.box);
 }
 
 function box(x0, x1, y0, y1, z0, z1) {
@@ -61,7 +61,7 @@ function makeMock(wasm, opts) {
     calls.push(cmd);
     if (opts.failCmd === cmd && (opts.failAfter === undefined || calls.filter((c) => c === cmd).length > opts.failAfter)) throw new Error('mock IPC failure in ' + cmd);
     switch (cmd) {
-      case 'engine_info': return { api: opts.api || 1, threads: 4, meshes: 0, floats: 0 };
+      case 'engine_info': return { api: opts.api || 1, threads: 4, meshes: 0, floats: 0, within: opts.within !== false };
       case 'register_meshes': {
         assert.ok(args instanceof Uint8Array, 'register_meshes must send raw bytes, not JSON');
         const dv = new DataView(args.buffer, args.byteOffset, args.byteLength);
@@ -85,6 +85,12 @@ function makeMock(wasm, opts) {
       case 'min_dist_batch': {
         const r = pairsOf(args).map(([a, b]) => eng.min_distance(a, b));
         return opts.tamper === 'mindist' ? enc(r.map((x) => (x && x[0] !== Infinity ? x.map((v, i) => (i === 0 ? v * (1 + 1e-12) : v)) : x))) : enc(r);
+      }
+      case 'min_dist_within_batch': {
+        assert.ok(args instanceof Uint8Array);
+        const seed = new Float64Array(args.buffer.slice(args.byteOffset, args.byteOffset + 8))[0];
+        const r = pairsOf(args.subarray(8)).map(([a, b]) => eng.min_distance_within(a, b, seed));
+        return opts.tamper === 'within' ? enc(r.map((x) => (x && x[0] !== Infinity ? x.map((v, i) => (i === 0 ? v * (1 + 1e-12) : v)) : x))) : enc(r);
       }
       default: throw new Error('command not allowed: ' + cmd);
     }
@@ -200,6 +206,61 @@ test('self-check gate: a 1-ulp-class wrong min-distance => NOT published', async
   const wasm = await loadWasm(), js = loadJsReference();
   const { win } = await boot(makeMock(wasm, { tamper: 'mindist' }).invoke, js.ref);
   assert.strictEqual(win._ccNativeNarrow, undefined);
+});
+
+test('self-check gate: a wrong seeded (min_dist_within_batch) answer => NOT published', async () => {
+  const wasm = await loadWasm(), js = loadJsReference();
+  const { win } = await boot(makeMock(wasm, { tamper: 'within' }).invoke, js.ref);
+  assert.strictEqual(win._ccNativeNarrow, undefined);
+});
+
+test('seeded pool (ctx.seedSq): min_dist_within_batch, records equal the seeded JS reference; older engines keep min_dist_batch', async () => {
+  const wasm = await loadWasm(), js = loadJsReference();
+  for (const within of [true, false]) {
+    const m = makeMock(wasm, { within });
+    const { win } = await boot(m.invoke, js.ref);
+    assert.ok(win._ccNativeNarrow, 'published');
+    const els = [[0, 1, 0, 1, 0, 1], [1.03, 2, 0, 1, 0, 1], [1.2, 2, 0, 1, 0, 1], [0.2, 0.8, 0.2, 0.8, 1.0005, 2]].map((b) => el(box(...b), b));
+    const seedSq = js.ref.seedSq(0.05);
+    const pool = win._ccNativeNarrow.createPool(Object.assign(ctxFor(js), { seedSq }));
+    const cidx = [], eA = [], eB = [], fl = [];
+    for (let i = 1; i < els.length; i++) { cidx.push(i); eA.push(els[0]); eB.push(els[i]); fl.push(2); }
+    await pool.addWindow([{ cidx, eA, eB, fl }]).promise;
+    let inf = 0;
+    cidx.forEach((ci, k) => {
+      const rec = pool.results.get(ci);
+      const want = within ? js.ref.minDist(eA[k].tris, eB[k].tris, seedSq) : js.ref.minDist(eA[k].tris, eB[k].tris);
+      assert.strictEqual(rec[5], want[0], 'distance');
+      if (want[0] !== Infinity) assert.deepStrictEqual(Array.from(rec.subarray(6, 12)), want.slice(1, 7));
+      else inf++;
+    });
+    assert.strictEqual(m.calls.includes('min_dist_within_batch'), within);
+    if (within) assert.strictEqual(inf, 1, 'the 200 mm pair is beyond the 50 mm seed');
+    pool.terminate('finished');
+  }
+});
+
+test('per-pair seeds (spec.sd): each pair searched within its own radius, records equal the JS reference at that radius', async () => {
+  const wasm = await loadWasm(), js = loadJsReference();
+  const m = makeMock(wasm, { within: true });
+  const { win } = await boot(m.invoke, js.ref);
+  const els = [[0, 1, 0, 1, 0, 1], [1.03, 2, 0, 1, 0, 1], [1.2, 2, 0, 1, 0, 1], [0.2, 0.8, 0.2, 0.8, 1.0005, 2], [1.08, 2, 0, 1, 0, 1]].map((b) => el(box(...b), b));
+  const runSeed = js.ref.seedSq(0.25);
+  const pool = win._ccNativeNarrow.createPool(Object.assign(ctxFor(js), { seedSq: runSeed }));
+  // gaps 30, 200, 0.5, 80 mm against per-pair tolerances 50, 250, 50, 50 mm
+  const sdOf = [js.ref.seedSq(0.05), js.ref.seedSq(0.25), js.ref.seedSq(0.05), js.ref.seedSq(0.05)];
+  const cidx = [], eA = [], eB = [], fl = [], sd = [];
+  for (let i = 1; i < els.length; i++) { cidx.push(i); eA.push(els[0]); eB.push(els[i]); fl.push(2); sd.push(sdOf[i - 1]); }
+  const before = m.calls.length;
+  await pool.addWindow([{ cidx, eA, eB, fl, sd }]).promise;
+  cidx.forEach((ci, k) => {
+    const rec = pool.results.get(ci), want = js.ref.minDist(eA[k].tris, eB[k].tris, sd[k]);
+    assert.strictEqual(rec[5], want[0], 'pair ' + k + ' distance at its own seed');
+    if (want[0] !== Infinity) assert.deepStrictEqual(Array.from(rec.subarray(6, 12)), want.slice(1, 7));
+  });
+  assert.strictEqual(pool.results.get(4)[5], Infinity, 'the 80 mm pair is beyond its own 50 mm seed (the run seed would have searched 250 mm)');
+  assert.strictEqual(m.calls.slice(before).filter((c) => c === 'min_dist_within_batch').length, 2, 'one call per distinct seed');
+  pool.terminate('finished');
 });
 
 test('no JS reference available: cannot verify => NOT published', async () => {

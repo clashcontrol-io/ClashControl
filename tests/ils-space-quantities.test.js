@@ -7,14 +7,14 @@
 // missing all four.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
-const path = require('node:path');
+const { countryWindow, loadAddon } = require('./_country-pack.js');
 
+// The rules are data in regulations/nl.json (country pack), run by the
+// generic standards engine in addons/data-quality.js.
 function loadEngine() {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'addons', 'data-quality.js'), 'utf8');
-  const window = {};
-  new Function('window', src)(window);
-  return window;
+  const window = loadAddon('data-quality.js', countryWindow({ regions: ['nl'], active: 'nl' }));
+  assert.equal(typeof window._ccRunStandard, 'function');
+  return { runILS: (input) => window._ccRunStandard('ils', input) };
 }
 
 function space(id, overrides) {
@@ -29,42 +29,42 @@ function space(id, overrides) {
 }
 
 test('a fully-complete space (Name/LongName/ObjectType/IsExternal/all quantities) passes', () => {
-  const { _ccRunILSChecks } = loadEngine();
-  const result = _ccRunILSChecks([space(1)]);
+  const { runILS } = loadEngine();
+  const result = runILS([space(1)]);
   assert.equal(result.spaceIncomplete.count, 0);
 });
 
 test('missing ObjectType is now caught', () => {
-  const { _ccRunILSChecks } = loadEngine();
-  const result = _ccRunILSChecks([space(1, { props: { objectType: '' } })]);
+  const { runILS } = loadEngine();
+  const result = runILS([space(1, { props: { objectType: '' } })]);
   assert.equal(result.spaceIncomplete.count, 1);
   assert.ok(result.spaceIncomplete.ex[0].detail.indexOf('ObjectType') !== -1);
 });
 
 test('missing IsExternal (Pset_SpaceCommon) is now caught', () => {
-  const { _ccRunILSChecks } = loadEngine();
-  const result = _ccRunILSChecks([space(1, { props: { psets: {} } })]);
+  const { runILS } = loadEngine();
+  const result = runILS([space(1, { props: { psets: {} } })]);
   assert.equal(result.spaceIncomplete.count, 1);
   assert.ok(result.spaceIncomplete.ex[0].detail.indexOf('IsExternal') !== -1);
 });
 
 test('IsExternal=FALSE counts as present (boolean false is not "missing")', () => {
-  const { _ccRunILSChecks } = loadEngine();
-  const result = _ccRunILSChecks([space(1, { props: { psets: { Pset_SpaceCommon: { IsExternal: 'FALSE' } } } })]);
+  const { runILS } = loadEngine();
+  const result = runILS([space(1, { props: { psets: { Pset_SpaceCommon: { IsExternal: 'FALSE' } } } })]);
   assert.ok(result.spaceIncomplete.ex.length === 0 || result.spaceIncomplete.ex[0].detail.indexOf('IsExternal') === -1);
 });
 
 test('missing GrossFloorArea and Height (Qto_SpaceBaseQuantities) are now caught together', () => {
-  const { _ccRunILSChecks } = loadEngine();
-  const result = _ccRunILSChecks([space(1, { props: { quantities: { NetFloorArea: 20 } } })]);
+  const { runILS } = loadEngine();
+  const result = runILS([space(1, { props: { quantities: { NetFloorArea: 20 } } })]);
   assert.equal(result.spaceIncomplete.count, 1);
   assert.ok(result.spaceIncomplete.ex[0].detail.indexOf('GrossFloorArea') !== -1);
   assert.ok(result.spaceIncomplete.ex[0].detail.indexOf('Height') !== -1);
 });
 
 test('a zero-value quantity counts the same as missing (matches the existing NetFloorArea convention)', () => {
-  const { _ccRunILSChecks } = loadEngine();
-  const result = _ccRunILSChecks([space(1, { props: { quantities: { NetFloorArea: 20, GrossFloorArea: 0, Height: 0 } } })]);
+  const { runILS } = loadEngine();
+  const result = runILS([space(1, { props: { quantities: { NetFloorArea: 20, GrossFloorArea: 0, Height: 0 } } })]);
   assert.ok(result.spaceIncomplete.ex[0].detail.indexOf('GrossFloorArea') !== -1);
   assert.ok(result.spaceIncomplete.ex[0].detail.indexOf('Height') !== -1);
 });

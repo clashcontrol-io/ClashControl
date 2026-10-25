@@ -1,0 +1,29 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const source = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+
+test('fresh geometry-cache payloads are saved off the main thread, in idle-time chunks', () => {
+  // Every save of a freshly serialised payload goes through the worker path.
+  // two cold-parse restores (props complete) + the load path, which writes
+  // its payload once the lazy props have merged (job.afterProps)
+  assert.equal((source.match(/idbSaveGeoCacheFresh\(entry\.id, _geoSerialize\(result, true\)\)/g) || []).length, 2);
+  assert.match(source, /var _geoPayload = _geoSerialize\(result\), _geoMid = modelId;/);
+  assert.match(source, /job\.afterProps\(function\(\) \{[\s\S]{0,400}idbSaveGeoCacheFresh\(_geoMid, _geoPayload\);/);
+  assert.doesNotMatch(source, /idbSaveGeoCache\((?:entry\.id|modelId), _geoSerialize\(result/);
+  const start = source.indexOf('function idbSaveGeoCacheFresh(');
+  const fn = source.slice(start, source.indexOf('\n  function idbSaveGeoCache(', start));
+  // chunked protocol, buffers transferred, idle-scheduled, DB opened on main first, main-thread fallback
+  assert.match(fn, /t: 'begin'/); assert.match(fn, /t: 'mesh', items: mc \}, bufList\(mc\)\)/);
+  // gs:1: shared geometries go first in their own chunks, buffers transferred once
+  assert.match(fn, /t: 'geo', items: gc \}, bufList\(gc\)\)/);
+  assert.match(fn, /t: 'end', geo: !!data\.geoData/); assert.match(fn, /t: 'el'/); assert.match(fn, /t: 'end'/);
+  assert.match(fn, /_ccIdle\(function\(\) \{ _openIDB\(\)\.then\(start, fallback\); \}, 5000\)/);
+  assert.match(fn, /resolve\(idbSaveGeoCache\(fileId, m\.record \? m\.record\.data : data\)\)/);
+});
+
+test('a payload read back from the cache is re-saved on the main thread (its buffers back the live scene)', () => {
+  assert.match(source, /cached\.hasPsets = true; cached\.pp = 1;\s*\n\s*idbSaveGeoCache\(modelId, cached\);/);
+});

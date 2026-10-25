@@ -16,6 +16,9 @@
     var INSULATION_MAT = 'insulation';
 
     clashes.forEach(function(c) {
+      // Extent is geometry, not a verdict: stamped on every hard clash (also
+      // AI-triaged ones) so filters and buckets never depend on who judged.
+      if (c.type === 'hard') c.extent = clashExtent(c); else if (c.extent != null) delete c.extent;
       if (c.aiSeverity) return;
 
       var typeA = c.elemAType || '';
@@ -37,15 +40,21 @@
       for (var fi = 0; fi < FP_TYPES.length; fi++) {
         if (typeA.indexOf(FP_TYPES[fi]) !== -1 || typeB.indexOf(FP_TYPES[fi]) !== -1) { isFP = true; break; }
       }
+      // (The old "size ratio > 50 -> info / false positive" rule is gone: it
+      // ran before the role model and labelled 99 % of a real structure +
+      // HVAC federation as noise — a pipe through a slab IS a large size
+      // ratio. Extent + review buckets below decide what needs review.)
       if (isFP) {
         sev = 'info'; cat = 'false_positive';
         reason = 'Opening/space element pair — likely intentional';
-      } else if (fv.size_ratio > 50) {
-        sev = 'info'; cat = 'false_positive';
-        reason = 'Extreme size ratio (' + Math.round(fv.size_ratio) + ':1) — small element inside large one';
       } else if (c.type === 'duplicate') {
         sev = 'info'; cat = 'duplicate';
         reason = 'Duplicate element at same location';
+      } else if (c.type === 'contact') {
+        // Surfaces touch, nothing interpenetrates (flush faces, an element
+        // resting on another): reported for completeness, not a clash.
+        sev = 'info'; cat = 'contact';
+        reason = 'Surfaces touch — no interpenetration';
       } else if (c.type === 'soft') {
         // Severity comes from the shared deterministic model (gap vs the
         // required clearance, weighted by element role) — see
@@ -68,7 +77,7 @@
         if (typeof c.distance === 'number' && c.distance < 0) reason += ' — ' + Math.round(-c.distance) + 'mm deep';
       }
 
-      if (cat !== 'false_positive' && cat !== 'duplicate') {
+      if (cat !== 'false_positive' && cat !== 'duplicate' && cat !== 'contact') {
         var matA = fv.mat_cat_a || '';
         var matB = fv.mat_cat_b || '';
         if (matA === INSULATION_MAT || matB === INSULATION_MAT) {
@@ -97,12 +106,14 @@
     // wall on large federations (≈2.2 billion iterations / ~130s at 47k clashes).
     var CLUSTER_DIST_SQ = 0.5 * 0.5; // 500mm in meters squared
     var CELL = 0.5;
-    function _cKey(pair, storey, cx, cy, cz){ return pair + '|' + storey + '|' + cx + ',' + cy + ',' + cz; }
+    // key = '<typeA>:<typeB>|<storey>|<cx>,<cy>,<cz>'; the '<pair>|<storey>|'
+    // prefix is built once per clash and reused for its 27 neighbour lookups.
+    function _cPrefix(c){ return (c.elemAType||'') + ':' + (c.elemBType||'') + '|' + (c.elemAStorey||c.elemBStorey||'') + '|'; }
     var buckets = {};
+    var prefixes = new Array(clashes.length);
     for (var bi = 0; bi < clashes.length; bi++) {
       var cb = clashes[bi], pb = cb.point || [0,0,0];
-      var kb = _cKey((cb.elemAType||'')+':'+(cb.elemBType||''), cb.elemAStorey||cb.elemBStorey||'',
-        Math.floor(pb[0]/CELL), Math.floor(pb[1]/CELL), Math.floor(pb[2]/CELL));
+      var kb = (prefixes[bi] = _cPrefix(cb)) + Math.floor(pb[0]/CELL) + ',' + Math.floor(pb[1]/CELL) + ',' + Math.floor(pb[2]/CELL);
       (buckets[kb] || (buckets[kb] = [])).push(bi);
     }
     var groupId = 0;
@@ -111,12 +122,11 @@
       if (assigned[i]) continue;
       var ci = clashes[i];
       var pi = ci.point || [0,0,0];
-      var pairI = (ci.elemAType || '') + ':' + (ci.elemBType || '');
-      var storeyI = ci.elemAStorey || ci.elemBStorey || '';
+      var preI = prefixes[i];
       var cix = Math.floor(pi[0]/CELL), ciy = Math.floor(pi[1]/CELL), ciz = Math.floor(pi[2]/CELL);
       var cluster = [i];
       for (var dx = -1; dx <= 1; dx++) for (var dy = -1; dy <= 1; dy++) for (var dz = -1; dz <= 1; dz++) {
-        var bucket = buckets[_cKey(pairI, storeyI, cix+dx, ciy+dy, ciz+dz)];
+        var bucket = buckets[preI + (cix+dx) + ',' + (ciy+dy) + ',' + (ciz+dz)];
         if (!bucket) continue;
         for (var bj = 0; bj < bucket.length; bj++) {
           var j = bucket[bj];
@@ -227,25 +237,80 @@
     return ROLE_CRIT.hasOwnProperty(role) ? ROLE_CRIT[role] : 1;
   }
 
+  // ── Extent: how the two elements overlap ──────────────────────────
+  // Read only from fields BOTH engines could produce: the element bounding-box
+  // sizes (bboxA/bboxB, mm) and the penetration depth (distance < 0, mm — the
+  // browser's separating-axis upper bound on the minimum translation
+  // distance). Hard clashes only; null for every other type.
+  //   'graze'        depth below min(25 mm, 10 % of the thinner element):
+  //                  the surfaces barely overlap (a beam end 15 mm into a
+  //                  column, a duct grazing a slab edge)
+  //   'through'      depth >= the smaller cross-section (thinnest dimension)
+  //                  of the passing element or of the host: one element runs
+  //                  through the other (pipe through a slab, duct through a
+  //                  wall, a pipe fully inside a column)
+  //   'through-thin' a 'through' where that cross-section is <= 30 mm (hanger
+  //                  rods, cables, plates, boards)
+  //   'partial'      anything deeper than a graze that does not go through
+  //   'unknown'      no usable depth/size data — and every local-engine clash:
+  //                  its depth is an AABB-overlap bound, not a penetration
+  // The passing element is the one with the smaller MIDDLE dimension (a duct
+  // 400x600x5000 passes a wall 200x3000x5000); ties go to the smaller volume.
+  var GRAZE_MAX_MM = 25, GRAZE_FRAC = 0.1, THIN_MM = 30;
+  function _dimsSorted(bb) {
+    if (!bb || typeof bb !== 'object') return null;
+    var a = [Number(bb.dx), Number(bb.dy), Number(bb.dz)];
+    for (var i = 0; i < 3; i++) if (!(a[i] >= 0) || !isFinite(a[i])) return null;
+    return a.sort(function(x, y) { return x - y; });
+  }
+  function clashExtent(c) {
+    if (!c || c.type !== 'hard') return null;
+    if (c.source === 'local_engine' || c.depthSemantics === 'aabb') return 'unknown';
+    var d = (typeof c.distance === 'number' && c.distance < 0) ? -c.distance : null;
+    var a = _dimsSorted(c.bboxA), b = _dimsSorted(c.bboxB);
+    if (d == null || !a || !b) return 'unknown';
+    var thin = Math.min(a[0], b[0]);
+    if (d < Math.min(GRAZE_MAX_MM, GRAZE_FRAC * thin)) return 'graze';
+    var aPasses = a[1] < b[1] || (a[1] === b[1] && a[0] * a[1] * a[2] <= b[0] * b[1] * b[2]);
+    var P = aPasses ? a : b, H = aPasses ? b : a;
+    var cross = Math.min(P[0], H[0]);
+    if (d >= cross) return cross <= THIN_MM ? 'through-thin' : 'through';
+    return 'partial';
+  }
+
   // ── Deterministic severity ──────────────────────────────────────────
   // Vocabulary matches aiSeverity exactly (critical / major / minor / info).
   // Inputs read from the clash object: type, distance (mm, negative =
   // penetration depth), clearanceMm (soft gap), requiredClearanceMm (the
-  // clearance the rule asked for; default 50), overlapVolM3 (AABB overlap
-  // volume from the engine), roleA/roleB (stamped at detection) with a
-  // fallback derived from elemAType/elemBType + disciplines for legacy clashes.
+  // clearance the rule asked for; default 50), roleA/roleB (stamped at
+  // detection) with a fallback derived from elemAType/elemBType + disciplines
+  // for legacy clashes, trades (per-side matrix key, 'mep.ventilation' …),
+  // bboxA/bboxB (extent, above) and opening.
   //
-  // HARD clash, depth d (mm), pair criticality c = max(critA, critB):
-  //   d < 10                     -> minor (info when c == 0): tolerance/rounding floor
-  //   c = 3 (structural)         -> d >= 20 critical, d >= 10 major
-  //   c = 2 (MEP run / civil)    -> d >= 50 critical, d >= 10 major
-  //   c = 1 (terminal, arch ...) -> d >= 100 critical, d >= 10 major
-  //   c = 0 (finishes only)      -> never critical; d >= 50 major, else minor
-  //   overlap volume >= 0.05 m3 bumps minor/major one tier when c >= 2
+  // HARD clash: the PAIR CLASS (what the two elements are) x the EXTENT (how
+  // they overlap) — not an absolute depth. A column sitting 300 mm inside an
+  // architectural wall is embedment / double modelling, not compromised
+  // structure; a 100 mm duct cutting a beam is.
+  //   pair class (severityClass)               through   through-thin  partial
+  //   struct-mep  structure x MEP run              critical  major         major
+  //   mep-mep     MEP run x MEP run, other trade   critical  major         major
+  //   arch-mep    architecture x MEP run           major     major         minor
+  //   struct-arch structure x architecture         major     major         minor
+  //   other       anything x terminal / other …    major     major         minor
+  //   same        same role, same model            minor     minor         minor
+  // Critical needs a known extent: 'unknown' (no depth/size data, every
+  // local-engine clash — its depth is an AABB bound) uses the 'partial' tier,
+  // or the 'through' tier capped at major when the depth is >= 50 mm.
+  // Then, in this order:
+  //   depth < 10 mm                                  -> at most minor (info for finish x finish)
+  //   one side a finish (covering, furniture)        -> -1 tier (not below minor)
+  //   extent 'graze'                                 -> at most minor
+  //   opening 'partial' (opening too small)          -> at least major
   // SOFT clash, gap g vs required clearance r (ratio = g / r):
-  //   ratio <= 0.3 -> major (near miss), else minor;  c == 0 drops one tier
-  // duplicate -> info;  visibility (sight-line) -> major.
+  //   ratio <= 0.3 -> major (near miss), else minor;  finish x finish drops one tier
+  // duplicate / contact (surfaces only touch) -> info;  visibility (sight-line) -> major.
   var TIERS = ['info', 'minor', 'major', 'critical'];
+  var NEAR_MISS_RATIO = 0.3, DEFAULT_REQUIRED_MM = 50;
   function _shift(sev, delta) {
     var i = TIERS.indexOf(sev) + delta;
     return TIERS[Math.max(0, Math.min(TIERS.length - 1, i))];
@@ -259,28 +324,81 @@
   function pairCriticality(c) {
     return Math.max(roleCriticality(_clashRole(c, 'A')), roleCriticality(_clashRole(c, 'B')));
   }
-  var HARD_THRESH = { 3:{major:10, critical:20}, 2:{major:10, critical:50}, 1:{major:10, critical:100}, 0:{major:50, critical:Infinity} };
+  // Two MEP trades that cannot both move ('mep.ventilation' x 'mep.plumbing').
+  // An unresolved pipe ('mep.piping') is the same trade as every pipe trade,
+  // a bare 'mep' (no sub-discipline) is unknown — neither counts as crossing
+  // trades (same rule as clash-discipline-core.js disciplinePairEnabled).
+  var TRADE_FAMILY = { ventilation: 'air', heating: 'pipe', plumbing: 'pipe', fire: 'pipe', piping: 'pipe', electrical: 'elec' };
+  function crossTrade(c) {
+    var t = c && c.trades;
+    if (!t || t.length < 2) return false;
+    var a = String(t[0] || ''), b = String(t[1] || '');
+    if (a.indexOf('mep.') !== 0 || b.indexOf('mep.') !== 0) return false;
+    var sa = a.slice(4), sb = b.slice(4);
+    if (!sa || !sb || sa === sb) return false;
+    if ((sa === 'piping' || sb === 'piping') && TRADE_FAMILY[sa] && TRADE_FAMILY[sa] === TRADE_FAMILY[sb]) return false;
+    return true;
+  }
+  function _sameModel(c) {
+    return !!c.selfClash || (c.modelAId != null && c.modelAId === c.modelBId);
+  }
+  // Pair class of a clash for severity (table above).
+  function severityClass(c) {
+    if (!c) return 'other';
+    var a = _clashRole(c, 'A'), b = _clashRole(c, 'B');
+    function has(r) { return a === r || b === r; }
+    if (has('structural') && has('mep-main')) return 'struct-mep';
+    if (a === 'mep-main' && b === 'mep-main' && crossTrade(c)) return 'mep-mep';
+    if (a === b && _sameModel(c)) return 'same';
+    if (has('architectural') && has('mep-main')) return 'arch-mep';
+    if (has('structural') && has('architectural')) return 'struct-arch';
+    return 'other';
+  }
+  var CLASS_TIERS = {
+    'struct-mep':  { through: 'critical', thin: 'major', partial: 'major' },
+    'mep-mep':     { through: 'critical', thin: 'major', partial: 'major' },
+    'arch-mep':    { through: 'major', thin: 'major', partial: 'minor' },
+    'struct-arch': { through: 'major', thin: 'major', partial: 'minor' },
+    other:         { through: 'major', thin: 'major', partial: 'minor' },
+    same:          { through: 'minor', thin: 'minor', partial: 'minor' }
+  };
+  // gap / required clearance of a soft clash (null when there is no gap data)
+  function clearanceRatio(c) {
+    if (!c) return null;
+    var gap = typeof c.clearanceMm === 'number' ? c.clearanceMm : (typeof c.distance === 'number' ? Math.abs(c.distance) : null);
+    if (gap == null || !isFinite(gap)) return null;
+    var req = (typeof c.requiredClearanceMm === 'number' && c.requiredClearanceMm > 0) ? c.requiredClearanceMm : DEFAULT_REQUIRED_MM;
+    return gap / req;
+  }
+  function isNearMiss(c) {
+    if (!c || c.type !== 'soft') return false;
+    var r = clearanceRatio(c);
+    return r != null && r <= NEAR_MISS_RATIO;
+  }
   function deterministicSeverity(c) {
     if (!c) return 'info';
-    if (c.type === 'duplicate') return 'info';
+    if (c.type === 'duplicate' || c.type === 'contact') return 'info';
     if (c.type === 'visibility') return 'major';
     var crit = pairCriticality(c);
     if (c.type !== 'hard') {
-      var gap = typeof c.clearanceMm === 'number' ? c.clearanceMm : (typeof c.distance === 'number' ? Math.abs(c.distance) : null);
-      var req = (typeof c.requiredClearanceMm === 'number' && c.requiredClearanceMm > 0) ? c.requiredClearanceMm : 50;
       // No gap data at all -> no signal to escalate on.
-      var soft = (gap != null && (gap / req) <= 0.3) ? 'major' : 'minor';
+      var soft = isNearMiss(c) ? 'major' : 'minor';
       return crit === 0 ? _shift(soft, -1) : soft;
     }
     var depth = (typeof c.distance === 'number' && c.distance < 0) ? -c.distance : 0;
-    var vol = typeof c.overlapVolM3 === 'number' ? c.overlapVolM3 : 0;
-    var th = HARD_THRESH[crit] || HARD_THRESH[1];
+    var roleA = _clashRole(c, 'A'), roleB = _clashRole(c, 'B');
+    var tiers = CLASS_TIERS[severityClass(c)] || CLASS_TIERS.other;
+    var ext = clashExtent(c);
     var sev;
-    if (depth < 10) sev = crit === 0 ? 'info' : 'minor';
-    else if (depth >= th.critical) sev = 'critical';
-    else if (depth >= th.major) sev = 'major';
-    else sev = 'minor';
-    if (crit >= 2 && vol >= 0.05 && (sev === 'minor' || sev === 'major')) sev = _shift(sev, 1);
+    if (ext === 'through') sev = tiers.through;
+    else if (ext === 'through-thin') sev = tiers.thin;
+    else if (ext === 'unknown') sev = depth >= 50 && tiers.through !== 'minor' ? 'major' : tiers.partial;
+    else sev = tiers.partial;                      // partial, graze (capped below)
+    if (depth < 10) sev = crit === 0 ? 'info' : (TIERS.indexOf(sev) > 1 ? 'minor' : sev);
+    else if (crit > 0 && (roleA === 'finish' || roleB === 'finish')) sev = sev === 'minor' ? 'minor' : _shift(sev, -1);
+    else if (crit === 0) sev = _shift(sev, -1);
+    if (ext === 'graze' && TIERS.indexOf(sev) > 1) sev = 'minor';
+    if (c.opening === 'partial' && TIERS.indexOf(sev) < 2) sev = 'major';
     return sev;
   }
 
@@ -421,9 +539,20 @@
   //   "Supply duct L0 through Corridor wall L0 — opening too small"
   //   "Sprinkler main crosses Beam B-12 (L1)"
   //   "Duct segment too close to Slab"           (no meaningful names, soft)
+  // Pure per type string, called for every clash title / row: memoised (the
+  // vocabulary of IFC types is small; the cache is capped all the same).
+  /** @type {Object<string, string>} */
+  var _typeLabelCache = Object.create(null);
+  var _typeLabelCacheN = 0;
   function niceTypeLabel(t) {
     if (!t) return 'Element';
-    return String(t).replace(/^Ifc/i, '').replace(/([a-z])([A-Z])/g, '$1 $2') || 'Element';
+    var k = String(t);
+    var hit = _typeLabelCache[k];
+    if (hit !== undefined) return hit;
+    var label = k.replace(/^Ifc/i, '').replace(/([a-z])([A-Z])/g, '$1 $2') || 'Element';
+    if (_typeLabelCacheN >= 2000) { _typeLabelCache = Object.create(null); _typeLabelCacheN = 0; }
+    _typeLabelCache[k] = label; _typeLabelCacheN++;
+    return label;
   }
   // The pre-2026-09-29 default ("Wall × Pipe Segment"): kept as the secondary
   // line / tooltip, and to recognise an untouched legacy default title.
@@ -477,6 +606,9 @@
     var a = _titleSide(c, 'A'), b = _titleSide(c, 'B');
     var verb;
     var opening = (c.type === 'hard' || c.type === 'soft') ? c.opening : null;
+    // Provision volumes (role 'provision', see clash-discipline-core.js) read
+    // like openings; an IFC opening, when present, is the stronger statement.
+    var provision = (c.type === 'hard' || c.type === 'soft') && !opening ? c.provision : null;
     // The MEP element is the passing one; otherwise order alphabetically so
     // the title does not depend on which engine called a given side "A".
     var first = a, second = b;
@@ -484,13 +616,18 @@
     else if (b.text.toLowerCase() < a.text.toLowerCase()) { first = b; second = a; }
     var directed = a.mep !== b.mep;
     if (c.type === 'duplicate') verb = 'duplicates';
+    else if (c.type === 'contact') verb = 'touches';
     else if (opening === 'partial') verb = directed ? 'through' : 'in';
     else if (opening === 'provided') verb = directed ? 'through' : 'in';
+    else if (provision === 'inside' || provision === 'partial') verb = directed ? 'through' : 'in';
     else if (c.type === 'soft') verb = 'too close to';
     else verb = directed ? 'crosses' : 'clashes with';
     var title = first.text + ' ' + verb + ' ' + second.text;
     if (opening === 'partial') title += ' — opening too small';
     else if (opening === 'provided') title += ' — provided opening';
+    else if (provision === 'inside') title += ' — inside provision';
+    else if (provision === 'partial') title += ' — provision too small';
+    else if (provision === 'obstructs') title += ' — blocks a provision';
     // Storey: only when it adds information — i.e. neither name already carries
     // a level ("Supply duct L0"). One label when both share it, "L0 / L1" when
     // the two elements sit on different storeys.
@@ -525,8 +662,182 @@
     return c;
   }
 
+  // ════════════════════════════════════════════════════════════════════
+  // Review buckets — "what needs a human" vs "counted, one click to show"
+  // ════════════════════════════════════════════════════════════════════
+  // Every raw clash lands in EXACTLY one bucket (first match wins), so the
+  // bucket counts always add up to the raw total — nothing silently
+  // disappears, it is only filed. Buckets other than 'review' are hidden by
+  // default behind one bar of counts ("1243 inside provisions · 16 touch —
+  // show"). Pure: reads only clash fields + rules (+ an optional context).
+  //   handled    status resolved / closed / denied (a person already decided)
+  //   contact    surfaces only touch (type 'contact')
+  //   provided   passes through an IFC opening made for it
+  //   provision  MEP inside a provision / reservation volume (role group
+  //              'provision' set to classify, the default)
+  //   zone       an element of another suggestion group set to classify
+  //              (zones, spaces, duplicates, proxies — rules.roleChoices)
+  //   twice      the same conflict reported again against an exact copy of
+  //              an element in another model (findTwice)
+  //   embedded   by-design embedment: reinforcement, fasteners, accessories,
+  //              building-element parts, voids/virtual elements, and doors /
+  //              windows sitting in a wall, slab or roof of another model
+  //   finish     finishes only (both sides covering / furniture) or movable
+  //              furniture against anything
+  //   graze      hard clash whose extent is 'graze' (barely overlaps)
+  //   adjacent   clearance-only finding between architectural / structural /
+  //              finish elements that sit next to each other by design
+  //              (wall-slab, wall-beam). Near misses (gap <= 30 % of the
+  //              required clearance) stay in review.
+  //   review     everything else — the list a coordinator works through
+  var REVIEW_BUCKETS = ['review', 'contact', 'provided', 'provision', 'zone', 'twice', 'embedded', 'finish', 'graze', 'adjacent', 'handled'];
+  var DEFAULT_HIDDEN_BUCKETS = REVIEW_BUCKETS.filter(function(b) { return b !== 'review'; });
+  var ROLE_CHOICE_DEFAULTS = { provision: 'classify', zone: 'classify', space: 'exclude', duplicate: 'include', proxy: 'include' };
+  var EMBEDDED_TYPES = { IfcReinforcingBar:1, IfcReinforcingMesh:1, IfcReinforcingElement:1, IfcTendon:1, IfcTendonAnchor:1,
+    IfcTendonConduit:1, IfcFastener:1, IfcMechanicalFastener:1, IfcDiscreteAccessory:1, IfcBuildingElementPart:1,
+    IfcOpeningElement:1, IfcOpeningStandardCase:1, IfcVirtualElement:1 };
+  var FILL_TYPES = { IfcDoor:1, IfcDoorStandardCase:1, IfcWindow:1, IfcWindowStandardCase:1 };
+  var FILL_HOSTS = { IfcWall:1, IfcWallStandardCase:1, IfcWallElementedCase:1, IfcCurtainWall:1, IfcSlab:1,
+    IfcSlabStandardCase:1, IfcSlabElementedCase:1, IfcRoof:1 };
+  var FURNITURE_TYPES = { IfcFurnishingElement:1, IfcFurniture:1, IfcSystemFurnitureElement:1 };
+  function _ifc(t) { t = String(t || ''); return (t && t.indexOf('Ifc') !== 0) ? 'Ifc' + t : t; }
+  function _roleChoice(group, rules, ctx) {
+    if (ctx && typeof ctx.roleChoice === 'function') return ctx.roleChoice(group, rules);
+    var rc = (rules && rules.roleChoices) || {};
+    if (rc[group]) return rc[group];
+    if (group === 'space' && rules && rules.includeSpaces) return 'include';
+    return ROLE_CHOICE_DEFAULTS[group] || 'include';
+  }
+  function isEmbedded(c) {
+    var a = _ifc(c.elemAType), b = _ifc(c.elemBType);
+    if (EMBEDDED_TYPES[a] || EMBEDDED_TYPES[b]) return true;
+    return !!((FILL_TYPES[a] && FILL_HOSTS[b]) || (FILL_TYPES[b] && FILL_HOSTS[a]));
+  }
+  function isFinishOnly(c) {
+    if (FURNITURE_TYPES[_ifc(c.elemAType)] || FURNITURE_TYPES[_ifc(c.elemBType)]) return true;
+    return _clashRole(c, 'A') === 'finish' && _clashRole(c, 'B') === 'finish';
+  }
+  var ADJACENT_ROLES = { structural: 1, architectural: 1, finish: 1 };
+  function isAdjacentByDesign(c) {
+    if (!c || c.type !== 'soft') return false;
+    if (!ADJACENT_ROLES[_clashRole(c, 'A')] || !ADJACENT_ROLES[_clashRole(c, 'B')]) return false;
+    var r = clearanceRatio(c);
+    return r != null && r > NEAR_MISS_RATIO;
+  }
+  // ctx (optional): { twice: {clashId: true} } from findTwice, roleChoice(g, rules)
+  function reviewBucket(c, rules, ctx) {
+    if (!c) return 'review';
+    rules = rules || {};
+    var st = c.status;
+    if (st === 'resolved' || st === 'closed' || st === 'denied') return 'handled';
+    if (c.type === 'contact') return 'contact';
+    if (c.opening === 'provided') return 'provided';
+    if (c.provision === 'inside' && _roleChoice('provision', rules, ctx) === 'classify') return 'provision';
+    if (c.roleGroup && c.roleGroup !== 'provision' && _roleChoice(c.roleGroup, rules, ctx) === 'classify') return 'zone';
+    if (c.type === 'duplicate') return 'review';
+    if (ctx && ctx.twice && c.id != null && ctx.twice[c.id]) return 'twice';
+    if (isEmbedded(c)) return 'embedded';
+    if (isFinishOnly(c)) return 'finish';
+    if (clashExtent(c) === 'graze') return 'graze';
+    if (isAdjacentByDesign(c)) return 'adjacent';
+    return 'review';
+  }
+  // Buckets hidden by the rules. rules.hideBuckets (array) wins; the legacy
+  // switches still apply on top (hideContacts:false / hideProvidedOpenings:
+  // false keep those buckets visible), so old projects behave as before.
+  function hiddenBuckets(rules) {
+    rules = rules || {};
+    var h = Array.isArray(rules.hideBuckets) ? rules.hideBuckets.filter(function(b) { return REVIEW_BUCKETS.indexOf(b) > 0; }) : DEFAULT_HIDDEN_BUCKETS.slice();
+    if (rules.hideContacts === false) h = h.filter(function(b) { return b !== 'contact'; });
+    if (rules.hideProvidedOpenings === false) h = h.filter(function(b) { return b !== 'provided'; });
+    return h;
+  }
+  // { review: n, contact: n, ... } over every bucket (zeros included); the
+  // values always sum to clashes.length.
+  function bucketCounts(clashes, rules, ctx) {
+    var out = {};
+    REVIEW_BUCKETS.forEach(function(b) { out[b] = 0; });
+    (clashes || []).forEach(function(c) { out[reviewBucket(c, rules, ctx)]++; });
+    return out;
+  }
+
+  // ── "Twice": one conflict reported against two copies of an element ──
+  // A federation often carries the same physical element in two models (the
+  // architect's copy of a structural column). A pipe crossing it is then
+  // reported twice — once per copy. Copies are found from the clashes
+  // themselves: a hard/duplicate clash between two elements of the same size
+  // (each bbox axis within 2 mm) whose boxes overlap almost completely (AABB
+  // overlap >= 90 % of the element volume). Every other clash of a copy is
+  // keyed by (the other element, copy group, clash type); within a key the
+  // clash on the copy with the smallest element key is kept, the rest are
+  // 'twice'. The clash between the two copies stays in review (it IS the
+  // finding: a duplicate). Deterministic: independent of the input order.
+  function _elemKey(c, side) {
+    var A = side === 'A';
+    var g = A ? c.globalIdA : c.globalIdB;
+    return g ? ('g:' + g) : ('m' + (A ? c.modelAId : c.modelBId) + ':' + (A ? c.elemA : c.elemB));
+  }
+  function _sameSize(c) {
+    var a = _dimsSorted(c.bboxA), b = _dimsSorted(c.bboxB);
+    if (!a || !b) return false;
+    for (var i = 0; i < 3; i++) if (Math.abs(a[i] - b[i]) > 2) return false;
+    var vol = a[0] * a[1] * a[2] * 1e-9;
+    if (c.type === 'duplicate') return true;
+    return vol > 0 && typeof c.overlapVolM3 === 'number' && c.overlapVolM3 >= 0.9 * vol;
+  }
+  function findTwice(clashes) {
+    var parent = {};
+    function find(k) { while (parent[k] && parent[k] !== k) { parent[k] = parent[parent[k]] || parent[k]; k = parent[k]; } return k; }
+    function union(x, y) {
+      var rx = find(x), ry = find(y);
+      if (rx === ry) return;
+      if (rx < ry) parent[ry] = rx; else parent[rx] = ry;
+    }
+    var list = clashes || [], i, c;
+    for (i = 0; i < list.length; i++) {
+      c = list[i];
+      if (!c || (c.type !== 'hard' && c.type !== 'duplicate') || c.modelAId === c.modelBId) continue;
+      if (!_sameSize(c)) continue;
+      var ka = _elemKey(c, 'A'), kb = _elemKey(c, 'B');
+      if (!parent[ka]) parent[ka] = ka;
+      if (!parent[kb]) parent[kb] = kb;
+      union(ka, kb);
+    }
+    var groups = {}, out = {};
+    for (i = 0; i < list.length; i++) {
+      c = list[i];
+      if (!c || c.id == null) continue;
+      var kA = _elemKey(c, 'A'), kB = _elemKey(c, 'B');
+      var inA = !!parent[kA], inB = !!parent[kB];
+      if (!inA && !inB) continue;
+      if (inA && inB && find(kA) === find(kB)) continue;      // the copy-vs-copy clash itself
+      // the copy side (when both sides are copies of different groups, A's)
+      var copySide = inA ? 'A' : 'B';
+      var copyKey = copySide === 'A' ? kA : kB, otherKey = copySide === 'A' ? kB : kA;
+      var gk = otherKey + '|' + find(copyKey) + '|' + c.type;
+      var cur = groups[gk];
+      if (!cur) { groups[gk] = { keep: c, keepKey: copyKey, all: [c] }; continue; }
+      cur.all.push(c);
+      if (copyKey < cur.keepKey || (copyKey === cur.keepKey && String(c.id) < String(cur.keep.id))) { cur.keep = c; cur.keepKey = copyKey; }
+    }
+    Object.keys(groups).forEach(function(k) {
+      var g = groups[k];
+      g.all.forEach(function(x) { if (x !== g.keep) out[x.id] = true; });
+    });
+    return out;
+  }
+
   return Object.freeze({
-    contractVersion: 2,
+    contractVersion: 4,
+    clashExtent: clashExtent,
+    REVIEW_BUCKETS: REVIEW_BUCKETS,
+    DEFAULT_HIDDEN_BUCKETS: DEFAULT_HIDDEN_BUCKETS,
+    reviewBucket: reviewBucket,
+    hiddenBuckets: hiddenBuckets,
+    bucketCounts: bucketCounts,
+    findTwice: findTwice,
+    isEmbedded: isEmbedded,
+    isFinishOnly: isFinishOnly,
     niceTypeLabel: niceTypeLabel,
     typePairTitle: typePairTitle,
     meaningfulName: meaningfulName,
@@ -541,6 +852,12 @@
     loadBearingOf: loadBearingOf,
     pairCriticality: pairCriticality,
     deterministicSeverity: deterministicSeverity,
+    severityClass: severityClass,
+    crossTrade: crossTrade,
+    clearanceRatio: clearanceRatio,
+    isNearMiss: isNearMiss,
+    isAdjacentByDesign: isAdjacentByDesign,
+    NEAR_MISS_RATIO: NEAR_MISS_RATIO,
     OPENING_STRIDE: OPENING_STRIDE,
     obbFromLocalBox: obbFromLocalBox,
     obbContains: obbContains,

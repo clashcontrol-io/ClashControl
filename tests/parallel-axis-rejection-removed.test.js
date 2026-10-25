@@ -36,11 +36,11 @@ test('the parallel-axis rejection shortcut is gone from index.html', () => {
 // tests/penetration-depth.test.js: pre-populate el._triCache so
 // _getWorldTris/_getBVH short-circuit before ever touching
 // _ccGetElementGeometry or real THREE.js objects). ──────────────────────────
-const start = src.indexOf('function _getWorldVerts(el) {');
+const start = src.indexOf('// ── Session origin offset (engine frame)');
 assert.ok(start !== -1, '_getWorldVerts not found');
 const fnStart = src.indexOf('function _meshesIntersect(elA, elB) {', start);
 assert.ok(fnStart !== -1, '_meshesIntersect not found');
-const retLine = src.indexOf('return _jsIntersectBVH(_getBVH(elA), _getBVH(elB), elA.box, elB.box);', fnStart);
+const retLine = src.indexOf('return _jsIntersectBVH(_getBVH(elA), _getBVH(elB), _ccFrameBox(elA), _ccFrameBox(elB));', fnStart);
 assert.ok(retLine !== -1, '_meshesIntersect body not found');
 const closeIdx = src.indexOf('\n  }', retLine) + '\n  }'.length;
 const _window = {};

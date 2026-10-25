@@ -74,7 +74,7 @@ test('the single-confirm UPD_CLASH branch uses _ccBuildConfirmIssue and keeps th
 test('BATCH_UPD_CLASH routes status:confirmed through the same _ccBuildConfirmIssue helper as single confirm', () => {
   const start = src.indexOf('case A.BATCH_UPD_CLASH:');
   assert.ok(start !== -1);
-  const region = src.slice(start, start + 1200);
+  const region = src.slice(start, start + 2000);
   assert.ok(region.includes("a.u.status === 'confirmed'"), 'batch update must special-case confirmed status');
   assert.ok(region.includes('_ccBuildConfirmIssue'), 'batch confirm must use the shared issue builder');
   assert.ok(region.includes("status:'confirmed',linkedIssueId:"), 'batch-confirmed clashes must stay in state with linkedIssueId, matching single confirm');

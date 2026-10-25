@@ -21,13 +21,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-const start = src.indexOf('function _getWorldVerts(el) {');
-assert.ok(start !== -1, '_getWorldVerts not found');
+const start = src.indexOf('// ── Session origin offset (engine frame)');
+assert.ok(start !== -1, 'origin section not found');
 const fnStart = src.indexOf('function _estimatePenetrationDepthM(elA, elB) {', start);
 assert.ok(fnStart !== -1, '_estimatePenetrationDepthM not found');
-const retLine = src.indexOf('return found ? best : null;', fnStart);
-assert.ok(retLine !== -1, '_estimatePenetrationDepthM body not found');
-const closeIdx = src.indexOf('\n  }', retLine) + '\n  }'.length;
+const closeIdx = src.indexOf('  function _flushGeoCache(models) {', fnStart);
+assert.ok(closeIdx !== -1, 'hit-refinement block end not found');
 const _window = {};
 new Function('window', src.slice(start, closeIdx) + `
   window._ccT_rayTriHit = _rayTriHit;
@@ -82,7 +81,7 @@ function buildBVH(tris) {
 // _getBVH before they ever touch THREE.js.
 function preparedEl(x0, y0, z0, x1, y1, z1) {
   var tris = boxTris(x0, y0, z0, x1, y1, z1);
-  return { _wvCache: boxVerts(x0, y0, z0, x1, y1, z1), _bvhCache: buildBVH(tris) };
+  return { _triCache: tris, _wvCache: boxVerts(x0, y0, z0, x1, y1, z1), _bvhCache: buildBVH(tris) };
 }
 
 // ── _rayTriHit ────────────────────────────────────────────────────
@@ -165,49 +164,40 @@ test('_closestDistToBVH: zero at the surface itself', () => {
   assert.ok(d < 1e-4);
 });
 
-// ── _estimatePenetrationDepthM — full analytic-solid integration ──
+// ── _estimatePenetrationDepthM — separating-axis MTD estimate ──
+// Since 2026-10-22 the depth is the smallest projection overlap over the box
+// axes and the meshes' face normals: a translation of that length along that
+// axis separates the meshes, so it is an upper bound on the true minimum
+// translation distance (exact for these box pairs). It replaces the vertex-
+// inside estimate, which returned null for pass-through cases (the chord /
+// AABB fallbacks then reported e.g. 0.33 m for a duct whose MTD is 0.7 m).
 test('two unit cubes offset on all 3 axes: penetration = the smallest overlap dimension (0.3)', () => {
   var A = preparedEl(0, 0, 0, 1, 1, 1);
   var B = preparedEl(0.7, 0.3, 0.3, 1.7, 1.3, 1.3); // overlap box: 0.3 x 0.7 x 0.7
   var depth = _estimatePenetrationDepthM(A, B);
-  assert.ok(depth != null, 'expected a numeric depth, got null');
-  assert.ok(Math.abs(depth - 0.3) < 1e-3, 'expected ≈0.3, got ' + depth);
+  assert.ok(Math.abs(depth - 0.3) < 1e-6, 'expected 0.3, got ' + depth);
 });
-test('a post penetrating 0.2 into a 0.3-thick slab (not all the way through): depth = distance to the far face (0.1)', () => {
+test('a post entering 0.2 into a 0.3-thick slab: MTD = pull it back out (0.2), the post is only 0.2 wide too', () => {
   var slab = preparedEl(-2, -2, 0, 2, 2, 0.3);
-  var post = preparedEl(-0.1, -0.1, -1, 0.1, 0.1, 0.2); // reaches 0.2 up into the 0.3-thick slab
+  var post = preparedEl(-0.1, -0.1, -1, 0.15, 0.1, 0.2); // 0.25 x 0.2 footprint, top 0.2 into the slab
   var depth = _estimatePenetrationDepthM(post, slab);
-  assert.ok(depth != null, 'expected a numeric depth, got null');
-  assert.ok(Math.abs(depth - 0.1) < 1e-3, 'expected ≈0.1, got ' + depth);
+  assert.ok(Math.abs(depth - 0.2) < 1e-6, 'expected 0.2, got ' + depth);
 });
-test('KNOWN LIMITATION, by design: a thin post fully through a slab with no vertex inside either solid returns null', () => {
-  // The post's own corners are far above/below the slab (z=-1 and z=1 vs
-  // slab z=[0,0.3]); the slab's corners are far outside the post's tiny
-  // x/y footprint. The surfaces genuinely cross, but no *vertex* of either
-  // mesh lies inside the other, so vertex sampling can't see it — this is
-  // exactly the documented fallback trigger (caller must use the
-  // chord-length/AABB estimate instead of trusting a false "no penetration").
+test('a thin post fully THROUGH a slab (no vertex inside either solid): MTD = slide it out sideways (its width)', () => {
   var slab = preparedEl(-2, -2, 0, 2, 2, 0.3);
   var post = preparedEl(-0.1, -0.1, -1, 0.1, 0.1, 1);
-  assert.equal(_estimatePenetrationDepthM(post, slab), null);
+  var depth = _estimatePenetrationDepthM(post, slab);
+  // along z: min(1-0, 0.3-(-1)) = 1, along x/y: min(0.1+2, 2+0.1) = 2.1 -> 1
+  assert.ok(Math.abs(depth - 1) < 1e-6, 'expected 1 (lift it out of the slab), got ' + depth);
 });
-test('two disjoint (non-intersecting) cubes: no interior vertices, returns null', () => {
-  var A = preparedEl(0, 0, 0, 1, 1, 1);
-  var B = preparedEl(5, 5, 5, 6, 6, 6);
-  assert.equal(_estimatePenetrationDepthM(A, B), null);
+test('a duct through a wall: MTD along the wall plane, not the chord (0.7)', () => {
+  var wall = preparedEl(4.9, -2, 0, 5.1, 4, 3.2);
+  var duct = preparedEl(-1, 0.6, 2.5, 9, 1.4, 2.9);
+  assert.ok(Math.abs(_estimatePenetrationDepthM(duct, wall) - 0.7) < 1e-6);
 });
-test('one cube fully inside another, centered: depth = each corner\'s distance to the nearest outer face', () => {
-  // Centered inner cube makes all 8 corners symmetric (every corner's
-  // min-distance-to-any-outer-face is the same 4), so the expected value
-  // isn't sensitive to which single corner the max picks out — an
-  // off-center inner box is a real case too, but its expected value
-  // depends on which corner is "most centered" (max of 8 per-corner
-  // minimums, not simply "distance to the nearest face overall"), which
-  // is easy to get wrong by hand; the symmetric case pins the algorithm
-  // down unambiguously.
+test('one cube fully inside another: depth = push the inner one out (6)', () => {
   var outer = preparedEl(0, 0, 0, 10, 10, 10);
   var inner = preparedEl(4, 4, 4, 6, 6, 6);
   var depth = _estimatePenetrationDepthM(inner, outer);
-  assert.ok(depth != null);
-  assert.ok(Math.abs(depth - 4) < 1e-3, 'expected ≈4, got ' + depth);
+  assert.ok(Math.abs(depth - 6) < 1e-6, 'expected 6, got ' + depth);
 });

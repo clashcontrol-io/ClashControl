@@ -53,6 +53,7 @@ function revitHarness(fp) {
   const logs = [];
   const api = new Function('fp', 'FakeWS', 'logs', `
     var window = { _ccRuntime: null };
+    var _i18n = function(k, en, v){ return v ? en.replace(/\{(\w+)\}/g, function(m, n){ return n in v ? v[n] : m; }) : en; };
     var WebSocket = FakeWS;
     var _revitPairing = fp ? fp.pairing : null;
     var _revitConnectAttempt = 0;

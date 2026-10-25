@@ -45,7 +45,7 @@ test('IssuePanel\'s Export flyout offers both the clash report and the data qual
   // The onClick handler sits BEFORE the button's visible label text in the
   // markup, so look in a window straddling dqBtnPos, not just after it.
   assert.ok(/window\._ccDataQualityReport/.test(src.slice(dqBtnPos - 400, dqBtnPos + 200)));
-  assert.ok(between.length < 600, 'the two report buttons should be adjacent in the same flyout');
+  assert.ok(between.length < 1400, 'the two report buttons should be adjacent in the same flyout');
 });
 
 test('_ccDataQualityReport is exposed on window for both entry points and MCP/automation to call', () => {

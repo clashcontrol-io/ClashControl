@@ -54,13 +54,15 @@ test('parking is refused for models that cannot be restored (guards against data
   const guard = sliceFrom('function _ccModelIsRestorable', 700);
   assert.match(guard, /source === 'revit-direct'/);   // live models: not restorable
   assert.match(guard, /idbGetGeoCache\(model\.id\)/);  // else require a cache…
-  assert.match(guard, /idbGetProjectFiles/);           // …or a stored source file
+  assert.match(guard, /idbGetProjectFile\(s\.activeProject \|\| 'default', model\.id\)/); // …or its stored source file (one get, not the project's files)
+  assert.doesNotMatch(guard, /idbGetProjectFiles/);
 });
 
 test('restore rebuilds with the SAME id (preserving clash/issue references) via the geoCache fast path', () => {
   const body = sliceFrom('window._ccRestoreParkedModel = function', 3200);
   assert.match(body, /idbGetGeoCache\(id\)/);            // fast path, not a re-parse with a new id
-  assert.match(body, /_ccRestoreModelGeometry\(entry, cached\)/);
+  assert.match(body, /_ccRestoreModelGeometry\(id, cached, getEntry\)/); // the IFC is read only when needed
+  assert.doesNotMatch(body, /idbGetProjectFiles/);
   assert.match(body, /id: id, name: stub\.name/);        // restored model keeps the original id
   assert.match(body, /A\.ADD_MODEL, v: restoredModel/);
   assert.match(body, /A\.UNPARK_MODEL, id: id/);
@@ -72,7 +74,7 @@ test('a concurrent restore of the same model dedupes on a single promise', () =>
 });
 
 test('the sidebar Park button is hidden for live Revit-direct models', () => {
-  assert.match(html, /!\(m\.stats&&m\.stats\.source==='revit-direct'\) && html`<button onClick=\$\{function\(e\)\{e\.stopPropagation\(\);if\(window\._ccParkModel\)window\._ccParkModel\(m\.id\);/);
+  assert.match(html, /!\(m\.stats&&m\.stats\.source==='revit-direct'\) && html`<button onClick=\$\{function\(\)\{if\(window\._ccParkModel\)window\._ccParkModel\(m\.id\);/);
 });
 
 test('a Parked section renders stubs with a Restore action', () => {

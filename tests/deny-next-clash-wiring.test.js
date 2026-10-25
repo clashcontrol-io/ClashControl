@@ -1,14 +1,10 @@
 'use strict';
-// Bug 7: denying a clash must jump to the NEXT clash in the (sorted)
-// visible list, not always back to the first one. The old code built
-// dVisible by already filtering OUT the clash being denied, so
-// dVisible.indexOf(dClash) was always -1 -> dIdx forced to 0 -> "next"
-// always resolved to whatever was first in the list.
-//
-// The logic lives inline inside the UPD_CLASH reducer case (React closure
-// deps aside, it's plain data computation), so this extracts that exact
-// block by source markers and evaluates it against synthetic state,
-// matching the extraction pattern other *-wiring tests use for index.html.
+// Confirm / Deny → next: the clash list advances to the next item IN THE
+// ORDER ON SCREEN (_ccPrepareAdvance / _ccAdvanceToNext over its flatItems),
+// never to a clash the list does not show (hidden bucket, filtered out). The
+// reducer only changes data: it used to pick "next" from every non-denied
+// clash and fly the camera there 100 ms later — onto hidden clashes, and on
+// status changes that came from a teammate's sync or the AI bridge too.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -16,64 +12,63 @@ const path = require('node:path');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 
-const start = src.indexOf('case A.UPD_CLASH:');
-assert.ok(start !== -1, 'UPD_CLASH reducer case not found');
-const markerEnd = "activeId:dNextId});\n          }";
-const endIdx = src.indexOf(markerEnd, start);
-assert.ok(endIdx !== -1, 'end of the denied-clash branch not found');
-const block = src.slice(start, endIdx + markerEnd.length);
-
-assert.ok(block.includes('dAllVisible'), 'expected fix marker dAllVisible not present -- source may have drifted');
-
-// Build a runnable function computing just {status, activeId} from (s, a),
-// with the async side-effect calls (setTimeout/_itemRefs/etc.) stubbed out.
-function buildReducerSlice() {
-  var body = block
-    .replace('case A.UPD_CLASH:', '')
-    .replace(/setTimeout\(function\(\)\{[\s\S]*?\},100\);/, ';'); // drop the async fly-to/highlight side effect
-  body += '\n}\nreturn null;'; // close if(a.u&&a.u.status==='denied'){ left open by the slice
-  // eslint-disable-next-line no-new-func
-  return new Function('s', 'a', 'SORT_FNS', '_saveDeniedClash', body);
+function slice(startMarker, endMarker) {
+  const s = src.indexOf(startMarker);
+  assert.ok(s !== -1, startMarker + ' not found');
+  const e = src.indexOf(endMarker, s);
+  assert.ok(e !== -1, endMarker + ' not found');
+  return src.slice(s, e + endMarker.length);
 }
 
-test('denying a clash advances activeId to the NEXT clash in sorted order, not the first', () => {
-  var run = buildReducerSlice();
-  var clashes = [
-    { id: 'c1', status: 'open' },
-    { id: 'c2', status: 'open' },
-    { id: 'c3', status: 'open' },
-  ];
-  var s = { clashes: clashes, clashSortBy: null };
-  var a = { id: 'c2', u: { status: 'denied' } };
-  var result = run(s, a, {}, function(){});
-  assert.equal(result.activeId, 'c3', 'expected the clash after the denied one, not the first');
+// _ccPrepareAdvance + _ccAdvanceToNext with the list's closure stubbed.
+function advanceHarness() {
+  const code = slice('    window._ccPrepareAdvance = function(currentId) {', "rows.forEach(function(row) { if (row.dataset.itemId === nxt.id) row.scrollIntoView({block:'nearest'}); });\n      }\n    };");
+  const win = {}, actions = [], flights = [];
+  // the window.* helpers close over `flatItems`, as each list render's closure does
+  const make = new Function('window', 'd', '_itemRefs', '_ghostOthers', '_highlightRefs', '_flyToElements', '_flyTo', 'scrollRef', 'A',
+    'var flatItems = [];\n' + code + '\nreturn function(items) { flatItems = items; };');
+  const bind = make(win, (a) => actions.push(a), (it) => [{ expressId: it.id }], null, null, (refs) => flights.push(refs[0].expressId), null, { current: null }, { ACTIVE: 'ACTIVE' });
+  return { win, actions, flights, render: bind };
+}
+
+test('C / D keys: the next item on screen, in list order (the handled item still listed)', () => {
+  const h = advanceHarness();
+  const items = [{ id: 'c1' }, { id: 'c5' }, { id: 'c3' }];
+  h.render(items);
+  h.win._ccPrepareAdvance('c5');
+  h.win._ccAdvanceToNext('c5');
+  assert.deepEqual(h.actions.map((a) => a.id), ['c3']);
+  assert.deepEqual(h.flights, ['c3']);
 });
 
-test('denying the last clash in the list falls back to the new last remaining clash', () => {
-  var run = buildReducerSlice();
-  var clashes = [
-    { id: 'c1', status: 'open' },
-    { id: 'c2', status: 'open' },
-    { id: 'c3', status: 'open' },
-  ];
-  var s = { clashes: clashes, clashSortBy: null };
-  var a = { id: 'c3', u: { status: 'denied' } };
-  var result = run(s, a, {}, function(){});
-  assert.equal(result.activeId, 'c2');
+test('buttons: after the re-render the handled (now hidden) item is gone — its slot holds the next one', () => {
+  const h = advanceHarness();
+  h.render([{ id: 'c1' }, { id: 'c5' }, { id: 'c3' }]);
+  h.win._ccPrepareAdvance('c5');
+  h.render([{ id: 'c1' }, { id: 'c3' }]);
+  h.win._ccAdvanceToNext('c5');
+  assert.deepEqual(h.actions.map((a) => a.id), ['c3']);
 });
 
-test('denying the first clash advances to the second, respecting an active sort', () => {
-  var run = buildReducerSlice();
-  var clashes = [
-    { id: 'c1', status: 'open', n: 3 },
-    { id: 'c2', status: 'open', n: 1 },
-    { id: 'c3', status: 'open', n: 2 },
-  ];
-  var s = { clashes: clashes, clashSortBy: 'byN' };
-  var SORT_FNS = { byN: function(x, y) { return x.n - y.n; } };
-  // Sorted order by n: c2(1), c3(2), c1(3). Denying c2 (first in sorted
-  // order) should advance to c3, not c1 (the array's own first element).
-  var a = { id: 'c2', u: { status: 'denied' } };
-  var result = run(s, a, SORT_FNS, function(){});
-  assert.equal(result.activeId, 'c3');
+test('the last item: steps back to the one before it (both timings); an emptied list does nothing', () => {
+  let h = advanceHarness();
+  h.render([{ id: 'c1' }, { id: 'c2' }]);
+  h.win._ccPrepareAdvance('c2'); h.win._ccAdvanceToNext('c2');
+  assert.deepEqual(h.actions.map((a) => a.id), ['c1']);
+  h = advanceHarness();
+  h.render([{ id: 'c1' }, { id: 'c2' }]);
+  h.win._ccPrepareAdvance('c2'); h.render([{ id: 'c1' }]); h.win._ccAdvanceToNext('c2');
+  assert.deepEqual(h.actions.map((a) => a.id), ['c1']);
+  h = advanceHarness();
+  h.render([{ id: 'c1' }]);
+  h.win._ccPrepareAdvance('c1'); h.render([]); h.win._ccAdvanceToNext('c1');
+  assert.deepEqual(h.actions, []);
+});
+
+test('the reducer changes data only on Deny / Confirm: no next-clash pick, no camera side effect', () => {
+  const block = slice('      case A.UPD_CLASH:', "            return Object.assign({},s,{clashes:confirmedClashes,issues:s.issues.concat([newIssue])});");
+  assert.doesNotMatch(block, /setTimeout/);
+  assert.doesNotMatch(block, /activeId/);
+  assert.doesNotMatch(block, /_flyToElements|_ghostOthers|_highlightRefs/);
+  assert.match(block, /_saveDeniedClash\(dClash\);/);
 });

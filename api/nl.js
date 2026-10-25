@@ -1,7 +1,7 @@
 // ClashControl — Groq NL proxy with native (OpenAI-style) function calling
 // Receives { command, context } from client, returns { intent, ...params }
 
-var { cors, llmGuard, fetchWithRetry } = require('./_lib');
+var { cors, llmGuard, fetchWithRetry, localeInstruction } = require('./_lib');
 
 // Hard cap on the user-provided NL command. Anything longer than this is
 // either a copy-paste mistake or a deliberate abuse attempt — neither
@@ -661,6 +661,9 @@ module.exports = async function handler(req, res) {
   var systemPrompt = isKnowledgeQuery(body.command)
     ? buildSystemPrompt(body.context || {})
     : buildRoutingPrompt(body.context || {});
+  // Answer in the user's UI language (intents/tool calls stay English).
+  var langLine = localeInstruction(body.context && body.context.locale);
+  if (langLine) systemPrompt += '\n\n' + langLine;
 
   // Backend: Groq only (OpenAI-compatible, fast, generous free tier).
   // The built-in assistant is intentionally BASIC: it routes simple commands

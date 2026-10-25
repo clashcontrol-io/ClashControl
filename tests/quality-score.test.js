@@ -8,11 +8,12 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { countryWindow, loadAddon } = require('./_country-pack.js');
 
-function loadEngine() {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'addons', 'data-quality.js'), 'utf8');
-  const window = {};
-  new Function('window', src)(window);
+// The Dutch ILS / RVB standards are country-pack data (regulations/nl.json);
+// with the nl pack active they behave exactly like the former built-in engines.
+function loadEngine(opts) {
+  const window = loadAddon('data-quality.js', countryWindow(opts || { regions: ['nl'], active: 'nl' }));
   assert.equal(typeof window._ccComputeQualityScore, 'function');
   return window;
 }
@@ -78,6 +79,25 @@ test('ILS/NL-SfB folds into the score once the project is actually using it', ()
   const ilsCat = result.breakdown.categories.find((c) => c.label === 'ILS / NL-SfB');
   assert.ok(ilsCat);
   assert.equal(ilsCat.countsTowardScore, true, 'adopted NL-SfB must count toward the score');
+});
+
+test('IFC-neutral: without an active country pack no national standard appears or counts', () => {
+  const elements = [1, 2, 3].map((i) => wall(i, { Pset_WallCommon: { FireRating: '60' } }));
+  for (const opts of [{ regions: [], active: null }, { regions: ['nl'], active: null }, { regions: ['nl'], active: 'be' }]) {
+    const result = loadEngine(opts)._ccComputeQualityScore(elements, [{ id: 'm1', elements }], { force: true });
+    const labels = result.breakdown.categories.map((c) => c.label);
+    assert.deepStrictEqual(labels.filter((l) => /ILS|RVB/.test(l)), [], JSON.stringify(opts));
+    assert.ok(labels.includes('Data quality') && labels.includes('BIM basics'));
+  }
+});
+
+test('a project that uses NL-SfB counts the Dutch standard even without the nl region', () => {
+  const full = { FireRating: '60', IsExternal: 'TRUE', LoadBearing: 'TRUE' };
+  const elements = [1, 2, 3].map((i) => wall(i, { Pset_WallCommon: Object.assign({ 'NL-SfB': '21' }, full) }));
+  const result = loadEngine({ regions: ['nl'], active: null })._ccComputeQualityScore(elements, [{ id: 'm1', elements }], { force: true });
+  const ilsCat = result.breakdown.categories.find((c) => c.label === 'ILS / NL-SfB');
+  assert.ok(ilsCat && ilsCat.countsTowardScore === true);
+  assert.ok(!result.breakdown.categories.find((c) => c.label === 'RVB BIM Norm'), 'RVB has no classification to adopt: region only');
 });
 
 test('get_data_quality (smart-bridge.js) calls the same scoring function, not a re-implementation', () => {

@@ -47,19 +47,15 @@ test('stripToShared still defaults a genuinely-absent field to null', () => {
   assert.equal(shared.description, null);
 });
 
-// ── PUT: dedupe + optimistic-concurrency wiring ───────────────────────────
+// ── PUT: the old per-issue shape is refused (the change log is v2) ────────
+// The compare-and-swap on updated_at (and its dedupe / updatedAt / conflicts
+// replies) is gone: a v2 PUT appends change records and never rejects a
+// concurrent edit (tests/project-changelog.test.js). An old client's PUT is
+// refused as a whole, without touching the database beyond the project row.
 
-test('PUT dedupes duplicate ids in one batch (last wins) instead of letting Postgres reject the double UPSERT', async () => {
+test('an old-shape PUT writes nothing and reports every id as not applied (client_outdated)', async () => {
   const mock = installMockNeon([
-    () => [{ id: 'PRJ-1', name: 'Test', edit_key: null, expires_at: null }], // loadProjectRow
-    (strings, values) => {
-      // values[0] is the JSON.stringify(rows) payload for jsonb_to_recordset
-      const rows = JSON.parse(values[0]);
-      assert.equal(rows.length, 1, 'duplicate ids must be deduped before hitting the DB');
-      assert.equal(rows[0].data.title, 'second'); // last one wins
-      return [{ id: 'c1', updated_at: new Date().toISOString() }];
-    },
-    () => [], // UPDATE last_activity
+    () => [{ id: 'PRJ-1', name: 'Test', edit_key: null, expires_at: null }], // loadProjectRow — and nothing else
   ]);
   const handler = require('../api/project.js');
   const res = makeRes();
@@ -68,51 +64,14 @@ test('PUT dedupes duplicate ids in one batch (last wins) instead of letting Post
     query: { id: 'PRJ-1' },
     body: { issues: [
       { id: 'c1', status: 'open', title: 'first' },
-      { id: 'c1', status: 'open', title: 'second' },
+      { id: 'c2', status: 'open', title: 'second' },
     ] },
   }), res);
   assert.equal(res.statusCode, 200);
-  assert.equal(res.body.synced, 1);
-  mock.restore();
-});
-
-test('PUT returns per-id updatedAt so the client can remember the server-authoritative timestamp for its next push', async () => {
-  const serverNow = new Date().toISOString();
-  const mock = installMockNeon([
-    () => [{ id: 'PRJ-1', name: 'Test', edit_key: null, expires_at: null }],
-    () => [{ id: 'c1', updated_at: serverNow }],
-    () => [],
-  ]);
-  const handler = require('../api/project.js');
-  const res = makeRes();
-  await handler(makeReq({
-    method: 'PUT',
-    query: { id: 'PRJ-1' },
-    body: { issues: [{ id: 'c1', status: 'open', title: 'x' }] },
-  }), res);
-  assert.equal(res.statusCode, 200);
-  assert.deepEqual(res.body.updatedAt, { c1: serverNow });
-  mock.restore();
-});
-
-test('PUT reports unwritten ids as conflicts', async () => {
-  const mock = installMockNeon([
-    () => [{ id: 'PRJ-1', name: 'Test', edit_key: null, expires_at: null }],
-    () => [{ id: 'c1', updated_at: new Date().toISOString() }], // only c1 written back, c2 was a conflict
-    () => [],
-  ]);
-  const handler = require('../api/project.js');
-  const res = makeRes();
-  await handler(makeReq({
-    method: 'PUT',
-    query: { id: 'PRJ-1' },
-    body: { issues: [
-      { id: 'c1', status: 'open', title: 'x' },
-      { id: 'c2', status: 'open', title: 'y' },
-    ] },
-  }), res);
-  assert.equal(res.statusCode, 200);
-  assert.deepEqual(res.body.conflicts, ['c2']);
+  assert.equal(res.body.synced, 0);
+  assert.equal(res.body.error, 'client_outdated');
+  assert.deepEqual(res.body.conflicts, ['c1', 'c2']);
+  assert.equal(mock.calls.length, 1, 'no write statement ran');
   mock.restore();
 });
 
@@ -155,6 +114,7 @@ test('DELETE scope=project removes every issue and the project row when the edit
   const mock = installMockNeon([
     () => [{ id: 'PRJ-1', name: 'Test', edit_key: hash, expires_at: null }], // loadProjectRow
     (strings) => { deleteCalls.push(strings.join('?')); return []; }, // DELETE shared_issues
+    (strings) => { deleteCalls.push(strings.join('?')); return []; }, // DELETE shared_changes
     (strings) => { deleteCalls.push(strings.join('?')); return []; }, // DELETE shared_projects
   ]);
   const handler = require('../api/project.js');
@@ -166,7 +126,8 @@ test('DELETE scope=project removes every issue and the project row when the edit
   }), res);
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.deletedProject, true);
-  assert.equal(deleteCalls.length, 2);
+  assert.equal(deleteCalls.length, 3);
+  assert.match(deleteCalls[1], /DELETE FROM shared_changes/);
   mock.restore();
 });
 

@@ -318,7 +318,11 @@ test('synthesizes a viewpoint for a clash-pair issue with no captured view, when
   assert.ok(!files[Object.keys(files).find((n) => n.startsWith('topic-1/') && n.endsWith('.png'))], 'no snapshot exists for a synthesized viewpoint');
 });
 
-test('does not synthesize a viewpoint when the issue\'s elements are not resolvable in state.models (no boxes to frame)', () => {
+test('an issue whose elements are not loaded still exports its Components, in a camera-less viewpoint', () => {
+  // Was: no .bcfv at all, so the topic lost its element GUIDs (found by the
+  // pressure-test harness: clashes of a parked model exported without
+  // components and re-imported without globalIds). Cameras are optional in
+  // both visinfo schemas; there is nothing to frame, so none is written.
   const items = [{
     id: 'i1', bcfGuid: 'topic-1', title: 'Unresolvable', type: 'hard', status: 'open',
     description: 'desc', createdAt: '2026-06-10T00:00:00Z',
@@ -326,5 +330,9 @@ test('does not synthesize a viewpoint when the issue\'s elements are not resolva
   }];
   const files = runExportNoViewpoints('3.0', items, []);
   const bcfvName = Object.keys(files).find((n) => n.startsWith('topic-1/') && n.endsWith('.bcfv'));
-  assert.ok(!bcfvName, 'no .bcfv should be written when there is nothing to frame — matches the pre-existing "no vp, skip the whole file" behavior');
+  assert.ok(bcfvName, 'a camera-less .bcfv carries the components');
+  const bcfv = files[bcfvName];
+  assert.ok(bcfv.includes('<Component IfcGuid="GUID_A"/>'));
+  assert.ok(!bcfv.includes('Camera>'), 'no camera when there is nothing to frame');
+  assert.ok(files['topic-1/markup.bcf'].includes(bcfvName.split('/')[1]), 'the markup references the viewpoint');
 });

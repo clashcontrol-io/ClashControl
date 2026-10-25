@@ -19,12 +19,12 @@ const section = src.slice(identityStart, sectionEnd);
 test('the breadcrumb row renders when available, with a fallback to the plain Floor row', () => {
   assert.ok(/breadcrumb\.length>0/.test(section));
   assert.ok(/breadcrumb\.join\(' › '\)/.test(section));
-  assert.ok(section.indexOf("storey && html`<div style=${ROW}><span style=${LBL}>Floor</span>") !== -1, 'fallback Floor row must survive when breadcrumb is empty');
+  assert.ok(section.indexOf("storey && html`<div style=${ROW}><span style=${LBL}>${_cc_t('aiChat.floor','Floor')}</span>") !== -1, 'fallback Floor row must survive when breadcrumb is empty');
 });
 
 test('the Hosted elements card only renders when there are hosted elements, and caps the list', () => {
   assert.ok(/hostedEls\.length>0 && html/.test(section));
-  assert.ok(/Hosted elements \(\$\{hostedEls\.length\}\)/.test(section));
+  assert.ok(/_cc_t\('aiChat\.hostedElements','Hosted elements \(\{n\}\)',\{n:hostedEls\.length\}\)/.test(section));
   assert.ok(/hostedEls\.slice\(0,20\)/.test(section));
   assert.ok(/hostedEls\.length>20/.test(section), 'a "+N more" overflow indicator must exist for large hosted lists');
 });

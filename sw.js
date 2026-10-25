@@ -16,6 +16,10 @@ var PRECACHE = [
   'cc-runtime.js',
   'safety-migrations.js',
   'section-clipping.js',
+  'viewer-camera-core.js',
+  'viewer-pick-core.js',
+  'viewer-pick-index.js',
+  'viewer-gizmo-core.js',
   'occlusion-core.js',
   'renderer-contract.js',
   'clash-discipline-core.js',
@@ -23,8 +27,12 @@ var PRECACHE = [
   'clash-identity-core.js',
   'clash-reconciliation-core.js',
   'clash-classification-core.js',
+  'clash-triage-core.js',
+  'country-pack-core.js',
   'project-codec.js',
   'storage-core.js',
+  'shared-log-core.js',
+  'shared-session-core.js',
   // Addons that load eagerly at boot — precached so a first-ever offline
   // session still has them (same-origin /addons/ responses ARE now runtime-
   // cached too, see the fetch handler's sameOriginAddon check below, but
@@ -53,7 +61,6 @@ var PRECACHE = [
   // Loader addons preloaded by the ESM bootstrap in index.html head.
   'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/GLTFLoader.js',
   'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/exporters/GLTFExporter.js',
-  'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/controls/TransformControls.js',
   'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/PLYLoader.js',
   'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/loaders/PCDLoader.js',
   'https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/postprocessing/EffectComposer.js',

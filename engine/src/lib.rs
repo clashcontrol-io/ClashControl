@@ -32,7 +32,7 @@ use wasm_bindgen::prelude::*;
 mod bvh;
 mod tri_tri;
 mod mesh_dist;
-mod point_in_mesh;
+// (point_in_mesh: containment moved out of the kernel, see index.html _ccContainment)
 mod broadphase;
 
 use bvh::BvhNode;
@@ -156,7 +156,7 @@ fn min_distance_prebuilt(bvh_a: &BvhNode, tris_a: &[f32], bvh_b: &BvhNode, tris_
     let mut out_a = [0.0f64; 3];
     let mut out_b = [0.0f64; 3];
     mesh_dist::traverse_min_dist(bvh_a, tris_a, bvh_b, tris_b, &mut best, &mut out_a, &mut out_b);
-    mesh_dist::containment_fix(bvh_a, tris_a, bvh_b, tris_b, &mut best, &mut out_a, &mut out_b);
+    // Pure surface distance: containment is decided in JS (closed meshes only).
     vec![
         best.sqrt(),
         out_a[0], out_a[1], out_a[2],
@@ -564,5 +564,348 @@ impl RegisteredMesh {
     fn build(tris: Vec<f32>) -> RegisteredMesh {
         let bvh = if tris.len() < 9 { None } else { Some(BvhNode::build(&tris)) };
         RegisteredMesh { tris, bvh }
+    }
+}
+
+// ── Threshold-seeded min distance (2026-10-22) ──────────────────────
+// Appended at the END of the file (see the note above `native`): nothing
+// above shifts, so existing panic locations in the wasm stay put.
+//
+// Mirrors JS `_jsMinDistBVH(bvhA, bvhB, out, seedSq)`: the running best
+// starts at `seed_sq` (squared metres; <= 0 or NaN = unseeded) instead of
+// Infinity. With `>=` pruning and strict `<` updates the seeded best is
+// min(seed_sq, unseeded best) at every step, so whenever the true minimum is
+// below the seed the distance and both closest points are bit-identical to
+// `mesh_min_distance`; when it is not, nothing is written and the result is
+// `[Infinity]`.
+fn min_distance_within_prebuilt(bvh_a: &BvhNode, tris_a: &[f32], bvh_b: &BvhNode, tris_b: &[f32], seed_sq: f64) -> Vec<f64> {
+    let seed = if seed_sq > 0.0 { seed_sq } else { f64::INFINITY };
+    let mut best = seed;
+    let mut out_a = [0.0f64; 3];
+    let mut out_b = [0.0f64; 3];
+    mesh_dist::traverse_min_dist(bvh_a, tris_a, bvh_b, tris_b, &mut best, &mut out_a, &mut out_b);
+    if best == seed {
+        return vec![f64::INFINITY];
+    }
+    vec![
+        best.sqrt(),
+        out_a[0], out_a[1], out_a[2],
+        out_b[0], out_b[1], out_b[2],
+    ]
+}
+
+/// `mesh_min_distance` restricted to surfaces closer than `sqrt(seed_sq)`:
+/// `[distance, ax,ay,az, bx,by,bz]` (bit-identical to `mesh_min_distance`)
+/// when the minimum is below the seed, else `[Infinity]` (also for an empty
+/// mesh).
+#[wasm_bindgen]
+pub fn mesh_min_distance_within(tris_a: &[f32], tris_b: &[f32], seed_sq: f64) -> Vec<f64> {
+    if tris_a.len() < 9 || tris_b.len() < 9 {
+        return vec![f64::INFINITY];
+    }
+    let bvh_a = BvhNode::build(tris_a);
+    let bvh_b = BvhNode::build(tris_b);
+    min_distance_within_prebuilt(&bvh_a, tris_a, &bvh_b, tris_b, seed_sq)
+}
+
+#[wasm_bindgen]
+impl Engine {
+    /// Same return value as `mesh_min_distance_within(tris(id_a), tris(id_b),
+    /// seed_sq)`. `None` when either id is not registered.
+    pub fn min_distance_within(&self, id_a: u32, id_b: u32, seed_sq: f64) -> Option<Vec<f64>> {
+        let a = self.meshes.get(&id_a)?;
+        let b = self.meshes.get(&id_b)?;
+        match (&a.bvh, &b.bvh) {
+            (Some(ba), Some(bb)) => Some(min_distance_within_prebuilt(ba, &a.tris, bb, &b.tris, seed_sq)),
+            _ => Some(vec![f64::INFINITY]),
+        }
+    }
+}
+
+#[cfg(test)]
+mod within_tests {
+    use super::*;
+
+    fn bx(x0: f32, x1: f32, y0: f32, y1: f32, z0: f32, z1: f32) -> Vec<f32> {
+        let v = [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]];
+        let f = [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 2, 3, 7, 2, 7, 6, 1, 2, 6, 1, 6, 5, 0, 3, 7, 0, 7, 4];
+        f.iter().flat_map(|&i| v[i].to_vec()).collect()
+    }
+
+    // index.html _ccMinDistSeedSq (contact tolerance 1e-4)
+    fn seed_for(t: f64) -> f64 {
+        let s = t.max(1e-4) * (1.0 + 1e-9) + 1e-9;
+        s * s
+    }
+
+    fn check(a: &[f32], b: &[f32], t: f64) {
+        let full = mesh_min_distance(a, b);
+        let w = mesh_min_distance_within(a, b, seed_for(t));
+        if full[0] * full[0] < seed_for(t) {
+            assert_eq!(w, full, "t {t}");
+        } else {
+            assert_eq!(w, vec![f64::INFINITY], "t {t}");
+        }
+    }
+
+    #[test]
+    fn within_matches_unseeded_below_seed_and_is_infinite_beyond() {
+        let a = bx(0.0, 1.0, 0.0, 1.0, 0.0, 1.0);
+        // 49.9 / 50.0 / 50.1 mm against a 50 mm tolerance, plus contact-scale gaps
+        for gap_mm in [49.9f64, 50.0, 50.1, 0.0, 0.05, 0.1, 0.2, 10.0, 500.0] {
+            let g = (gap_mm / 1000.0) as f32;
+            let b = bx(1.0 + g, 2.0 + g, 0.25, 0.75, 0.25, 0.75);
+            for t in [0.05f64, 0.0001, 0.2] {
+                check(&a, &b, t);
+            }
+            assert_eq!(mesh_min_distance_within(&a, &b, 0.0), mesh_min_distance(&a, &b));
+        }
+        let mut lcg: u64 = 0x2545F4914F6CDD1D;
+        let mut rnd = move || {
+            lcg = lcg.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((lcg >> 33) as f64) / ((1u64 << 31) as f64)
+        };
+        for _ in 0..300 {
+            let o = [rnd() * 2.0, rnd() * 2.0, rnd() * 2.0];
+            let mut b = bx(0.0, 0.3 + rnd() as f32, 0.0, 0.2, 0.0, 0.4);
+            let ang = rnd() * 3.0;
+            let (s, c) = (ang.sin(), ang.cos());
+            for p in b.chunks_mut(3) {
+                let (x, y) = (p[0] as f64, p[1] as f64);
+                p[0] = (x * c - y * s + o[0]) as f32;
+                p[1] = (x * s + y * c + o[1]) as f32;
+                p[2] = (p[2] as f64 + o[2]) as f32;
+            }
+            check(&a, &b, rnd() * 1.5);
+        }
+    }
+
+    #[test]
+    fn engine_within_matches_free_function() {
+        let a = bx(0.0, 1.0, 0.0, 1.0, 0.0, 1.0);
+        let b = bx(1.03, 2.0, 0.0, 1.0, 0.0, 1.0);
+        let mut eng = Engine::new();
+        eng.register(1, &a);
+        eng.register(2, &b);
+        eng.register(3, &[]);
+        for t in [0.01f64, 0.05, 0.0] {
+            assert_eq!(eng.min_distance_within(1, 2, seed_for(t)).unwrap(), mesh_min_distance_within(&a, &b, seed_for(t)));
+        }
+        assert_eq!(eng.min_distance_within(1, 3, 1.0).unwrap(), vec![f64::INFINITY]);
+        assert!(eng.min_distance_within(1, 9, 1.0).is_none());
+    }
+}
+
+// ── BVH export (2026-10-23) ─────────────────────────────────────────
+// Appended at the END of the file (see the notes above): nothing above
+// shifts, so existing panic locations in the wasm stay put.
+//
+// The JS hit refinement (crossing vs contact, containment, depth) walks a JS
+// BVH. `BvhNode::build` is an op-for-op port of JS `_buildBVHNode` (same
+// leaf size, axis choice, stable centroid-sum sort, median split), so the
+// tree the Engine already built for a registered mesh IS the tree JS would
+// build; exporting it saves the second build. Pre-order, per node:
+//   mnx, mny, mnz, mxx, mxy, mxz (the f32 box, exact in f64), then
+//   inner: count (> 4), left subtree, right subtree
+//   leaf:  -k (k = 1..4 triangles), then the k triangle indices.
+// `None` (JS `undefined`) when `id` is not registered; an empty Vec for a
+// registered mesh without triangles. Callers must only use it for meshes
+// whose coordinates are all finite (on NaN split keys the JS comparator sort
+// and Rust's stable sort may order differently).
+fn bvh_flat_into(node: &BvhNode, out: &mut Vec<f64>) {
+    out.extend_from_slice(&[
+        node.mn[0] as f64, node.mn[1] as f64, node.mn[2] as f64,
+        node.mx[0] as f64, node.mx[1] as f64, node.mx[2] as f64,
+    ]);
+    match &node.kind {
+        bvh::BvhKind::Leaf { indices } => {
+            let indices = indices.as_slice();
+            out.push(-(indices.len() as f64));
+            for &i in indices {
+                out.push(i as f64);
+            }
+        }
+        bvh::BvhKind::Inner { children, count } => {
+            out.push(*count as f64);
+            bvh_flat_into(&children[0], out);
+            bvh_flat_into(&children[1], out);
+        }
+    }
+}
+
+#[wasm_bindgen]
+impl Engine {
+    /// The registered mesh's BVH, flattened (layout above).
+    pub fn bvh_flat(&self, id: u32) -> Option<Vec<f64>> {
+        let m = self.meshes.get(&id)?;
+        let mut out = Vec::new();
+        if let Some(b) = &m.bvh {
+            bvh_flat_into(b, &mut out);
+        }
+        Some(out)
+    }
+}
+
+#[cfg(test)]
+mod bvh_flat_tests {
+    use super::*;
+
+    #[test]
+    fn flat_bvh_round_trips_the_tree() {
+        // 3 x 5 grid of quads: ties on every axis, several levels deep
+        let mut t: Vec<f32> = Vec::new();
+        for i in 0..3 {
+            for j in 0..5 {
+                let (x, y) = (i as f32, j as f32);
+                t.extend_from_slice(&[x, y, 0.0, x + 1.0, y, 0.0, x + 1.0, y + 1.0, 0.0]);
+                t.extend_from_slice(&[x, y, 0.0, x + 1.0, y + 1.0, 0.0, x, y + 1.0, 0.0]);
+            }
+        }
+        let mut eng = Engine::new();
+        eng.register(1, &t);
+        eng.register(2, &[]);
+        let flat = eng.bvh_flat(1).unwrap();
+        let tree = BvhNode::build(&t);
+        let mut want = Vec::new();
+        bvh_flat_into(&tree, &mut want);
+        assert_eq!(flat, want);
+        assert_eq!(flat[6], 30.0);
+        // every triangle index appears exactly once
+        let mut seen = vec![0u32; 30];
+        let mut i = 0;
+        while i < flat.len() {
+            let tag = flat[i + 6];
+            i += 7;
+            if tag < 0.0 {
+                for k in 0..(-tag as usize) { seen[flat[i + k] as usize] += 1; }
+                i += -tag as usize;
+            }
+        }
+        assert!(seen.iter().all(|&c| c == 1));
+        assert_eq!(eng.bvh_flat(2).unwrap(), Vec::<f64>::new());
+        assert!(eng.bvh_flat(3).is_none());
+    }
+}
+
+// ── BVH build speed (2026-10-23) ─────────────────────────────────────
+// `BvhNode::build` now reads per-triangle boxes, sorts (key, index) pairs
+// and keeps leaf indices inline; the tree must stay the one the original
+// build made (= JS `_buildBVHNode`). The original build is kept here, test
+// only, and compared node for node (boxes as bits, counts, leaf order).
+#[cfg(test)]
+mod bvh_build_equivalence_tests {
+    use super::*;
+
+    // The pre-2026-10-23 build, verbatim apart from returning the flat layout.
+    fn reference_flat(tris: &[f32]) -> Vec<f64> {
+        fn rec(tris: &[f32], keys: &[f64], indices: &mut [usize], lo: usize, hi: usize, out: &mut Vec<f64>) {
+            let mut mn = [f32::INFINITY; 3];
+            let mut mx = [f32::NEG_INFINITY; 3];
+            for &idx in &indices[lo..hi] {
+                let o = idx * 9;
+                for v in 0..3 {
+                    for c in 0..3 {
+                        let val = tris[o + v * 3 + c];
+                        if val < mn[c] { mn[c] = val; }
+                        if val > mx[c] { mx[c] = val; }
+                    }
+                }
+            }
+            out.extend_from_slice(&[mn[0] as f64, mn[1] as f64, mn[2] as f64, mx[0] as f64, mx[1] as f64, mx[2] as f64]);
+            let count = hi - lo;
+            if count <= 4 {
+                out.push(-(count as f64));
+                for &i in &indices[lo..hi] { out.push(i as f64); }
+                return;
+            }
+            let dx = mx[0] as f64 - mn[0] as f64;
+            let dy = mx[1] as f64 - mn[1] as f64;
+            let dz = mx[2] as f64 - mn[2] as f64;
+            let axis = if dx >= dy && dx >= dz { 0 } else if dy >= dz { 1 } else { 2 };
+            indices[lo..hi].sort_by(|&a, &b| keys[a * 3 + axis].partial_cmp(&keys[b * 3 + axis]).unwrap_or(std::cmp::Ordering::Equal));
+            out.push(count as f64);
+            let mid = (lo + hi) / 2;
+            rec(tris, keys, indices, lo, mid, out);
+            rec(tris, keys, indices, mid, hi, out);
+        }
+        let n = tris.len() / 9;
+        let mut out = Vec::new();
+        if n == 0 { return out; }
+        let mut indices: Vec<usize> = (0..n).collect();
+        let mut keys = vec![0.0f64; n * 3];
+        for t in 0..n {
+            for axis in 0..3 {
+                keys[t * 3 + axis] = tris[t * 9 + axis] as f64 + tris[t * 9 + 3 + axis] as f64 + tris[t * 9 + 6 + axis] as f64;
+            }
+        }
+        rec(tris, &keys, &mut indices, 0, n, &mut out);
+        out
+    }
+
+    fn new_flat(tris: &[f32]) -> Vec<f64> {
+        let mut out = Vec::new();
+        if tris.len() >= 9 { bvh_flat_into(&BvhNode::build(tris), &mut out); }
+        out
+    }
+
+    fn same_bits(a: &[f64], b: &[f64]) -> bool {
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
+    }
+
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> f32 {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((self.0 >> 33) as f32) / (1u64 << 31) as f32
+        }
+    }
+
+    #[test]
+    fn new_build_equals_reference_build() {
+        let mut rng = Lcg(7);
+        for case in 0..400 {
+            let n = 1 + (rng.next() * 300.0) as usize;
+            let mode = case % 5;
+            let mut t = Vec::with_capacity(n * 9);
+            for _ in 0..n * 9 {
+                let v = match mode {
+                    0 => rng.next() * 10.0 - 5.0,                          // soup
+                    1 => ((rng.next() * 6.0) as i32 - 3) as f32 * 0.5,      // grid: many ties, +-0
+                    2 => if rng.next() < 0.3 { -0.0 } else { (rng.next() * 3.0).floor() }, // -0 vs +0
+                    3 => (rng.next() * 4.0).floor() * 1e-3 + 100.0,         // far, near-flat
+                    _ => rng.next() * 0.001,                                 // tiny
+                };
+                t.push(v);
+            }
+            // long thin member along one axis (same split axis level after level)
+            if mode == 4 { for k in 0..n { t[k * 9] += k as f32; t[k * 9 + 3] += k as f32; t[k * 9 + 6] += k as f32; } }
+            assert!(same_bits(&new_flat(&t), &reference_flat(&t)), "case {} mode {} n {}", case, mode, n);
+        }
+    }
+
+    #[test]
+    fn non_finite_inputs_build_the_reference_tree() {
+        let mut rng = Lcg(11);
+        for case in 0..200 {
+            let n = 2 + (rng.next() * 60.0) as usize;
+            let mut t: Vec<f32> = (0..n * 9).map(|_| (rng.next() * 8.0).floor() - 4.0).collect();
+            for _ in 0..1 + case % 4 {
+                let i = (rng.next() * (n * 9) as f32) as usize % (n * 9);
+                t[i] = match case % 3 { 0 => f32::NAN, 1 => f32::INFINITY, _ => f32::NEG_INFINITY };
+            }
+            // NaN split keys (a NaN coordinate, or +Inf and -Inf in one
+            // triangle) are not a total order: the sort may panic (Rust's
+            // sort detects it) — the new build must then panic too, and
+            // otherwise build the same tree.
+            let (a, b) = (t.clone(), t.clone());
+            let got = std::panic::catch_unwind(move || new_flat(&a)).ok();
+            let want = std::panic::catch_unwind(move || reference_flat(&b)).ok();
+            match (got, want) {
+                (Some(g), Some(w)) => assert!(same_bits(&g, &w), "case {}", case),
+                (None, None) => {}
+                (g, w) => panic!("case {}: new build {} but the reference {}", case,
+                    if g.is_some() { "succeeded" } else { "panicked" }, if w.is_some() { "succeeded" } else { "panicked" }),
+            }
+        }
     }
 }

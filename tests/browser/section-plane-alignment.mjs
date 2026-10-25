@@ -85,6 +85,16 @@ async function newPage(query = '') {
   }
   await page.goto(`http://127.0.0.1:${port}/${query}`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 60_000 });
+  // Dispatch a section change and wait until the plane effect has published
+  // the new clip plane (React runs it after a paint — a fixed sleep raced it).
+  await page.evaluate(() => {
+    window.__secDispatch = async (a) => {
+      const p0 = window._ccActivePlanes, t0 = performance.now();
+      window._ccDispatch(a);
+      while ((window._ccActivePlanes === p0 || !(window._ccActivePlanes || []).length) && performance.now() - t0 < 8000) await new Promise((r) => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, 100));
+    };
+  });
   return page;
 }
 
@@ -114,8 +124,7 @@ async function measure(page) {
   return page.evaluate(async () => {
     const out = {};
     for (const axis of ['x', 'z', 'y']) {
-      window._ccDispatch({ t: 'SECTION', axis, pos: 0.5 });
-      await new Promise((r) => setTimeout(r, 400));
+      await window.__secDispatch({ t: 'SECTION', axis, pos: 0.5 });
       const fr = window._ccPlanFrame(), pl = window._ccActivePlanes[0];
       const n = [pl.normal.x, pl.normal.y, pl.normal.z];
       let tot = 0, aligned = 0;
@@ -156,8 +165,7 @@ async function measure(page) {
 // (Furniture far below a high cut used to drift outside it.)
 async function outlineCoversInPerspective(page) {
   return page.evaluate(async () => {
-    window._ccDispatch({ t: 'SECTION', axis: 'y', pos: 0.9 });
-    await new Promise((r) => setTimeout(r, 400));
+    await window.__secDispatch({ t: 'SECTION', axis: 'y', pos: 0.9 });
     const S = window._ccState3d, V = S.camera.position.constructor, fr = window._ccPlanFrame();
     const vis = S._sectionPlaneVis, prm = vis.children[0].geometry.parameters;
     const hw = prm.width / 2, hh = prm.height / 2, P0 = vis.position.clone();

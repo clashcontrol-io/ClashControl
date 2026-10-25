@@ -6,6 +6,13 @@
 (function() {
   'use strict';
 
+  // i18n passthrough: translated through the core's locale registry (window._cc_t) when it is
+  // present, plain English otherwise, so this addon never depends on the core being newer.
+  function _i18n(key, en, vars) {
+    if (typeof window._cc_t === 'function') return window._cc_t(key, en, vars);
+    return vars ? String(en).replace(/\{(\w+)\}/g, function(m, k) { return Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : m; }) : en;
+  }
+
   var _CLASH_TRAIN_CAP = 5000;
   var _NL_TRAIN_CAP = 2000;
   var _AI_VERDICT_MAP = {open:'unreviewed', confirmed:'true_clash', denied:'false_positive', in_progress:'true_clash', resolved:'acceptable', closed:'false_positive'};
@@ -23,10 +30,10 @@
     function done(msg){ if(onSuccess) onSuccess(); onStatus('ok', msg||null); }
     fetch(action, {method:'POST', body:fd}).then(function(resp){
       if(resp.ok||resp.status===0){ done(null); }
-      else{ onStatus('error','Form returned '+resp.status+'. Check the form URL and entry field IDs.'); }
+      else{ onStatus('error',_i18n('trainingData.formReturnedCheckTheForm','Form returned {status}. Check the form URL and entry field IDs.',{status:resp.status})); }
     }).catch(function(){
       fetch(action, {method:'POST', mode:'no-cors', body:fd}).then(function(){
-        done('Sent (unverified — no-cors)');
+        done(_i18n('trainingData.sentUnverifiedNoCors','Sent (unverified — no-cors)'));
       }).catch(function(){
         try{
           var frame = 'cc_gf_'+Date.now();
@@ -39,15 +46,40 @@
           input.type = 'hidden'; input.name = entryId; input.value = value;
           form.appendChild(input); document.body.appendChild(form); form.submit();
           setTimeout(function(){ try{ document.body.removeChild(form); document.body.removeChild(iframe); }catch(e){} }, 5000);
-          done('Sent via iframe fallback');
-        }catch(e){ onStatus('error','Send failed — network or CORS blocked'); }
+          done(_i18n('trainingData.sentViaIframeFallback','Sent via iframe fallback'));
+        }catch(e){ onStatus('error',_i18n('trainingData.sendFailedNetworkOrCors','Send failed — network or CORS blocked')); }
       });
     });
   }
 
   // ── Clash Training Data (localStorage) ─────────────────────────
+  // The parsed store is kept in memory (write-through): the count read on
+  // every clash/issue edit and each verdict save no longer re-parse the
+  // whole localStorage value. localStorage holds exactly what it held
+  // before (each save still writes the whole store). The memory copy is
+  // dropped when the key changes outside this addon: another tab ('storage'
+  // event), or the core removing it ('cc-ls-removed': Clear training data,
+  // the localStorage quota pruner), and after a failed write.
+  var _CLASH_KEY = 'cc_clash_training_data';
+  var _clashMem = null; // {store, count} — count null until asked
+  function _dropClashMem() { _clashMem = null; }
+  try {
+    window.addEventListener('storage', function(e) { if (!e || e.key == null || e.key === _CLASH_KEY) _dropClashMem(); });
+    window.addEventListener('cc-ls-removed', function(e) {
+      var keys = e && e.detail && e.detail.keys;
+      if (!keys || keys.indexOf(_CLASH_KEY) !== -1) _dropClashMem();
+    });
+  } catch(e) {}
+  // The in-memory store; callers read it, only _saveClashTrainRecord changes it.
   function _getClashTrainStore() {
-    try { return JSON.parse(localStorage.getItem('cc_clash_training_data')||'{}'); } catch(e) { return {}; }
+    if (_clashMem) return _clashMem.store;
+    var raw;
+    try { raw = localStorage.getItem(_CLASH_KEY); } catch(e) { return {}; }
+    var store;
+    try { store = JSON.parse(raw||'{}'); } catch(e) { store = {}; }
+    if (!store || typeof store !== 'object') store = {};
+    _clashMem = { store: store, count: null };
+    return store;
   }
   function _saveClashTrainRecord(id, fv, label, labelSource, synthetic) {
     try {
@@ -59,35 +91,42 @@
         if ((srcPri[labelSource]||0) < (srcPri[existing.label_source]||0)) return;
         if ((srcPri[labelSource]||0) === (srcPri[existing.label_source]||0) && label <= existing.label) return;
       }
-      store[id] = {fv:fv, label:label, label_source:labelSource, synthetic:!!synthetic, ts:Date.now()};
+      // the record as it reads back from localStorage (undefined dropped,
+      // NaN → null), so the memory copy equals a fresh parse of the store
+      store[id] = JSON.parse(JSON.stringify({fv:fv, label:label, label_source:labelSource, synthetic:!!synthetic, ts:Date.now()}));
       var keys = Object.keys(store);
       if (keys.length > _CLASH_TRAIN_CAP) {
         keys.sort(function(a,b){return (store[a].ts||0)-(store[b].ts||0);});
         while(keys.length > _CLASH_TRAIN_CAP) { delete store[keys.shift()]; }
       }
-      if (typeof window._ccLsSet === 'function') window._ccLsSet('cc_clash_training_data', store);
-      else localStorage.setItem('cc_clash_training_data', JSON.stringify(store));
+      if (_clashMem) _clashMem.count = null;
+      var ok;
+      if (typeof window._ccLsSet === 'function') ok = window._ccLsSet(_CLASH_KEY, store);
+      else { localStorage.setItem(_CLASH_KEY, JSON.stringify(store)); ok = true; }
+      if (ok === false) _dropClashMem(); // not stored: memory must not run ahead of localStorage
       window.dispatchEvent(new Event('cc-training-data-change'));
-    } catch(e) {}
+    } catch(e) { _dropClashMem(); }
   }
   function _clearClashTrainStore() {
-    try { localStorage.removeItem('cc_clash_training_data'); } catch(e) {}
+    try { localStorage.removeItem(_CLASH_KEY); } catch(e) {}
+    _dropClashMem();
     window.dispatchEvent(new Event('cc-training-data-change'));
   }
   function _getClashTrainCount() {
     try {
-      var s = localStorage.getItem('cc_clash_training_data');
-      if (!s) return 0;
-      var store = JSON.parse(s), count = 0;
+      var store = _getClashTrainStore();
+      if (_clashMem && _clashMem.count != null) return _clashMem.count;
+      var count = 0;
       var _countSources = {verdict:1, thumbs_feedback:1, explicit_feedback:1};
-      Object.keys(store).forEach(function(k){ if(_countSources[store[k].label_source]) count++; });
+      Object.keys(store).forEach(function(k){ if(store[k] && _countSources[store[k].label_source]) count++; });
+      if (_clashMem) _clashMem.count = count;
       return count;
     } catch(e) { return 0; }
   }
   function _shareClashTrainStore(onStatus) {
     var store = _getClashTrainStore();
     var keys = Object.keys(store);
-    if (!keys.length) { onStatus('error','No clash training data to share.'); return; }
+    if (!keys.length) { onStatus('error',_i18n('trainingData.noClashTrainingDataTo','No clash training data to share.')); return; }
     var records = keys.map(function(k) { return Object.assign({id:k}, store[k]); });
     var CC_VERSION = window.CC_VERSION || {v:'0.0.0'};
     var payload = {type:'clash_training', version:'1.0', app_version:CC_VERSION.v, count:records.length, records:records};
@@ -198,7 +237,7 @@
 
   function _shareNLTrainingData(models, onStatus) {
     var store = _getNLTrainStore();
-    if(!store.length){onStatus('error','No NL data to share.');return;}
+    if(!store.length){onStatus('error',_i18n('trainingData.noNlDataToShare','No NL data to share.'));return;}
     var records = store.map(function(r){
       return {
         input: _sanitizeNLInput(r.input||'', models),
@@ -312,7 +351,7 @@
 
   function shareAITrainingData(clashes, detectionSettings, models, onStatus, defaultTolerances, issues) {
     var payload = _buildAITrainingPayload(clashes, detectionSettings, models, defaultTolerances, issues);
-    if (!payload) { onStatus('error','No reviewed clashes to share.'); return; }
+    if (!payload) { onStatus('error',_i18n('trainingData.noReviewedClashesToShare','No reviewed clashes to share.')); return; }
     var json = JSON.stringify(payload);
     onStatus('sending', null);
     // AI training share intentionally does not clear the local store on send.

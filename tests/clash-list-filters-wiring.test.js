@@ -22,8 +22,11 @@ test('the status filter pill row includes a Denied option for the clash tab', ()
 test('rawItems only unconditionally strips denied clashes when the Denied filter itself is not selected', () => {
   const start = src.indexOf('var rawItems = React.useMemo(function(){');
   assert.ok(start !== -1);
-  const region = src.slice(start, start + 700);
-  assert.ok(region.includes("f.status==='denied' || f.showHandled || c.status!=='denied'"), 'expected the denied-filter-aware base list guard (also open when the "Show resolved/denied" toggle is on)');
+  const region = src.slice(start, start + 1400);
+  // denied clashes are in the 'handled' review bucket: hidden unless that
+  // bucket is shown (showHandled / bucket bar) or the status pill asks for them
+  assert.ok(region.includes("if (_ccBucketShown(b, s.rules, f)) return true;"), 'expected the bucket-aware base list guard');
+  assert.ok(region.includes("return b === 'handled' && f.status !== 'all' && c.status === f.status;"), 'a status pill lists handled clashes of that status');
   assert.ok(region.includes('f.status'), 'rawItems memo must depend on f.status now that it affects the base list');
 });
 

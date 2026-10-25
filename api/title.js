@@ -11,7 +11,7 @@
 // Cold starts naturally wipe the cache.
 
 var crypto = require('crypto');
-var { cors, llmGuard, fetchWithRetry } = require('./_lib');
+var { cors, llmGuard, fetchWithRetry, normalizeLocale, localeInstruction } = require('./_lib');
 
 // Overridable without a deploy — if the upstream ever 404s the default id
 // (check Vercel logs for 'title API error'), set GEMMA_MODEL in the env.
@@ -32,7 +32,7 @@ var _titleCache = new Map();
 // fields do. Omitting any of them lets one caller's clash metadata (names,
 // model identifiers) leak into another caller's cached response on a warm
 // instance. Hash the full normalized tuple rather than hand-picking fields.
-function _sigForClash(c) {
+function _sigForClash(c, locale) {
   return crypto.createHash('sha256').update(JSON.stringify([
     c.elemAType || '',
     c.elemAName || '',
@@ -42,7 +42,8 @@ function _sigForClash(c) {
     c.modelB || '',
     c.type || '',
     typeof c.distance === 'number' ? c.distance : '',
-    c.storey || ''
+    c.storey || '',
+    locale || ''
   ])).digest('hex');
 }
 
@@ -95,13 +96,16 @@ module.exports = async function handler(req, res) {
   _sweepExpired();
 
   var clashes = body.clashes.slice(0, MAX_CLASHES);
+  // Generated text is cached per language (the locale is part of the signature).
+  var locale = normalizeLocale(body.context && body.context.locale);
+  var langLine = localeInstruction(locale);
 
   var cachedTitles = [];
   var toGenerate = [];
   var sigByIndex = new Array(clashes.length);
   for (var i = 0; i < clashes.length; i++) {
     var c = clashes[i];
-    var sig = _sigForClash(c);
+    var sig = _sigForClash(c, locale);
     sigByIndex[i] = sig;
     var hit = _cacheGet(sig);
     if (hit) {
@@ -145,6 +149,7 @@ module.exports = async function handler(req, res) {
       };
     })),
   ].join('\n');
+  if (langLine) prompt = prompt + '\n\n' + langLine;
 
   try {
     var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(GEMMA_MODEL) + ':generateContent?key=' + encodeURIComponent(key);
@@ -194,7 +199,7 @@ module.exports = async function handler(req, res) {
       var tc = toGenerate[ti];
       var t = byId[String(tc.id)];
       if (!t) continue;
-      _cacheSet(_sigForClash(tc), {
+      _cacheSet(_sigForClash(tc, locale), {
         title: t.title,
         severity: t.severity,
         resolution: t.resolution

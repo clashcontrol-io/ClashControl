@@ -11,6 +11,7 @@ fn main() {
             "clear_meshes",
             "intersect_batch",
             "min_dist_batch",
+            "min_dist_within_batch",
             "engine_info",
         ]),
     ))

@@ -53,6 +53,20 @@ function main() {
   const entry = isLocale
     ? { lang: pack.lang, file: targetFile, name: pack.name, contributor: pack.contributor }
     : { region: pack.region, file: targetFile, name: pack.name, contributor: pack.contributor, verified: pack.verified === true };
+  // Manifest flags the loaders read without fetching every pack: a locale
+  // pack carrying discipline name hints, a country pack carrying
+  // classification tables, and whether a country pack carries accessibility
+  // thresholds (shown next to the pack in the Settings picker).
+  if (isLocale && pack.disciplineHints) entry.disciplineHints = true;
+  // Share of the UI strings the pack translates: locales/loader.js only
+  // auto-activates a pack from the browser language when it is near-complete.
+  if (isLocale) {
+    const cov = require('./locale-coverage.js');
+    const root = path.join(__dirname, '..');
+    entry.coverage = Math.floor(cov.packCoverage(root, entry, cov.collectKeys(root)).coverage * 1000) / 1000;
+  }
+  if (!isLocale && !(pack.engines && pack.engines.accessibility)) entry.thresholds = false;
+  if (!isLocale && Array.isArray(pack.classifications) && pack.classifications.length) entry.classifications = pack.classifications.map((t) => t.name);
   manifest.push(entry);
   manifest.sort((a, b) => (a[idKey] > b[idKey] ? 1 : -1));
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');

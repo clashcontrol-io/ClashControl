@@ -39,13 +39,14 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 
 // ── Real intersection kernel (same extraction as
 // parallel-axis-rejection-removed.test.js) ─────────────────────────────────
-const kernelStart = src.indexOf('function _getWorldVerts(el) {');
+const kernelStart = src.indexOf('// ── Session origin offset (engine frame)');
 assert.notEqual(kernelStart, -1, '_getWorldVerts not found');
 const kernelFnStart = src.indexOf('function _meshesIntersect(elA, elB) {', kernelStart);
 assert.notEqual(kernelFnStart, -1, '_meshesIntersect not found');
-const kernelRet = src.indexOf('return _jsIntersectBVH(_getBVH(elA), _getBVH(elB), elA.box, elB.box);', kernelFnStart);
+const kernelRet = src.indexOf('return _jsIntersectBVH(_getBVH(elA), _getBVH(elB), _ccFrameBox(elA), _ccFrameBox(elB));', kernelFnStart);
 assert.notEqual(kernelRet, -1, '_meshesIntersect body not found');
-const kernelEnd = src.indexOf('\n  }', kernelRet) + '\n  }'.length;
+// through the hit refinement (_ccResolvePair) that _processCandidate calls
+const kernelEnd = src.indexOf('  function _flushGeoCache(models) {', kernelRet);
 const kernelBlock = src.slice(kernelStart, kernelEnd);
 
 // ── _detectClashesCore's preamble through the end of _processCandidate ──
@@ -237,4 +238,69 @@ test('sanity: two genuinely far-apart parallel elements produce NO clash through
 
   const clashes = runProcessCandidate({ hard: true, maxGap: 0, excludeSameDiscipline: false }, elA, modelA, elFar, modelB, false);
   assert.equal(clashes.length, 0);
+});
+
+// ── Accuracy semantics through the REAL _processCandidate (2026-10-22) ──
+const selfAllowedSrc = (() => {
+  const i = src.indexOf('  function _ccSelfClashAllowed(');
+  return src.slice(i, src.indexOf('\n  }', i) + 4);
+})();
+function runWithModels(models, rules, pair) {
+  const body = `
+    ${selfAllowedSrc}
+    function _ccResolveModelScope(models, id) { return models; }
+    function _sweepAndPruneWasm() { return null; }
+    function _sweepAndPrune() { return []; }
+    ${kernelBlock}
+    function uid() { return 'TESTID'; }
+    function _ccElementDiscipline() { return 'other'; }
+    function _ccMatrixSkipsSameDiscipline() { return false; }
+    function _ccNarrowPoolRunStart() {}
+    function _ccStableJSON() { return ''; }
+    function _tpMemoModelsKey() { return ''; }
+    function _tpModelFingerprint() { return ''; }
+    function _tpMemoLoad() { return null; }
+    function _hashElement() { return ''; }
+    function _ccRunSignature() { return ''; }
+    var _ccRunMemo = null;
+    var _CC_RUNMEMO_MAX = 250000;
+    function _pairKey(mA, eA, mB, eB) { return mA.id + ':' + eA.expressId + '|' + mB.id + ':' + eB.expressId; }
+    function _ccRoleOfElement() { return undefined; }
+    function _ccOpeningStatusForPair() { return null; }
+    function _ccChooseWorldOrigin() { return false; } // elements carry pre-built triangle caches (origin 0)
+    ${coreBlock.replace('\n    return _processCandidate;\n  }', '\n    return {processCandidate:_processCandidate, clashes:clashes};\n  }')}
+    return _detectClashesCore;
+  `;
+  const factory = new Function('window', 'Event', 'CustomEvent', 'THREE', 'performance', body);
+  const { processCandidate, clashes } = factory(fakeWindow(), function Event(t) { this.type = t; },
+    function CustomEvent(t, i) { this.type = t; this.detail = i && i.detail; }, { Vector3: Vec3 }, { now: () => Date.now() })(models, rules, null, null);
+  processCandidate(pair);
+  return clashes;
+}
+
+test('single model + duplicates + default excludeSelf: same-model clashes are not dropped (resolved self-allowed)', () => {
+  const m = { id: 'm1', name: 'Combined', discipline: 'structural', elements: [] };
+  const a = makeElement(1, [0, 0, 0], [1, 1, 1]), b = makeElement(2, [0.5, 0.2, 0.2], [2, 0.8, 0.8]);
+  m.elements = [a, b];
+  const clashes = runWithModels([m], { hard: true, maxGap: 0, duplicates: true, excludeSelf: true }, { eA: a, mA: m, eB: b, mB: m, sameModel: true });
+  assert.equal(clashes.length, 1);
+  assert.equal(clashes[0].type, 'hard');
+});
+
+test('touching faces are a contact (not hard, not a 0 mm soft clash); hard-only runs report crossings only', () => {
+  const mA = { id: 'mA', name: 'A', discipline: 'structural', elements: [] }, mB = { id: 'mB', name: 'B', discipline: 'mep', elements: [] };
+  const a = makeElement(1, [0, 0, 0], [1, 1, 1]), b = makeElement(2, [0.25, 0.25, 1], [0.75, 0.75, 2]); // b sits on a
+  mA.elements = [a]; mB.elements = [b];
+  const both = runWithModels([mA, mB], { hard: true, maxGap: 50 }, { eA: a, mA, eB: b, mB, sameModel: false });
+  assert.equal(both.length, 1);
+  assert.equal(both[0].type, 'contact');
+  assert.equal(both[0].distance, 0);
+  const hardOnly = runWithModels([mA, mB], { hard: true, maxGap: 0 }, { eA: a, mA, eB: b, mB, sameModel: false });
+  assert.equal(hardOnly.length, 0);
+  // 2 mm into the block: a real crossing, depth = 2 mm (separating-axis MTD)
+  const c = makeElement(3, [0.25, 0.25, 0.998046875], [0.75, 0.75, 2]);
+  const cross = runWithModels([mA, mB], { hard: true, maxGap: 50 }, { eA: a, mA, eB: c, mB, sameModel: false });
+  assert.equal(cross.length, 1);
+  assert.equal(cross[0].type, 'hard');
+  assert.equal(cross[0].distance, -2);
 });

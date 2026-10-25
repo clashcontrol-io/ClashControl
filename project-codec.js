@@ -11,7 +11,10 @@
       _cc: 'ClashControl', _v: version,
       savedAt: savedAt,
       rules: state.rules,
-      models: state.models.map(function(model) {
+      // Parked models (memory relief, PARK_MODEL) are still part of the
+      // project: their clashes/issues reference them by id, so they are saved
+      // as model stubs exactly like loaded ones.
+      models: state.models.concat(state.parkedModels || []).map(function(model) {
         return {id:model.id,name:model.name,discipline:model.discipline,color:model.color,visible:model.visible,tag:model.tag||''};
       }),
       clashes: state.clashes,
@@ -28,6 +31,20 @@
       assignmentRules: state.assignmentRules || [],
       changelog: state.changelog || [],
       comments: state.comments || [],
+      // clash review: facet filters, search, saved views and the overview/list
+      // choice — per project (autoOpen is per run and never stored)
+      triage: serializeTriage(state),
+    };
+  }
+
+  function serializeTriage(state) {
+    var t = state.triage || {};
+    return {
+      facets: t.facets || {},
+      search: (state.filters && state.filters.search) || '',
+      view: t.view === 'list' || t.view === 'overview' ? t.view : 'auto',
+      savedViews: Array.isArray(t.savedViews) ? t.savedViews : [],
+      activeViewId: t.activeViewId || null
     };
   }
 
@@ -39,7 +56,12 @@
     data.models.forEach(function(model) {
       dispatch({t:actions.ADD_MODEL, v:Object.assign({}, model, {meshes:[],elements:[],_stub:true})});
     });
-    dispatch({t:actions.UPD_RULES, u:data.rules});
+    var rules = data.rules;
+    // 1e-5 m³ was the shipped minOverlapVolM3 default until touches got real
+    // contact classification; it dropped genuine small penetrations, so a
+    // project saved with the old default loads with the new one (0 = off).
+    if (rules && rules.minOverlapVolM3 === 1e-5) rules = Object.assign({}, rules, {minOverlapVolM3: 0});
+    dispatch({t:actions.UPD_RULES, u:rules});
     if (data.clashes) dispatch({t:actions.SET_CLASHES, v:data.clashes});
     if (data.runHistory || data.lastDeltaSummary) dispatch({
       t:actions.LOAD_PROJECT_STATE,
@@ -53,12 +75,18 @@
     if (data.assignmentRules) data.assignmentRules.forEach(function(rule) { dispatch({t:actions.ADD_ASSIGN_RULE, v:rule}); });
     if (data.changelog && data.changelog.length) dispatch({t:actions.MERGE_CHANGELOG, v:data.changelog});
     if (data.comments && data.comments.length && actions.MERGE_COMMENTS) dispatch({t:actions.MERGE_COMMENTS, v:data.comments});
+    if (actions.TRIAGE_STATE) {
+      var tr = data.triage || {};
+      dispatch({t:actions.TRIAGE_STATE, v:{facets: tr.facets || {}, view: tr.view || 'auto', savedViews: Array.isArray(tr.savedViews) ? tr.savedViews : [], activeViewId: tr.activeViewId || null}});
+      if (actions.UPD_FILTERS && tr.search) dispatch({t:actions.UPD_FILTERS, u:{search: String(tr.search)}});
+    }
   }
 
   return Object.freeze({
     contractVersion: 1,
     serializeProject: serializeProject,
     validateProject: validateProject,
-    restoreProject: restoreProject
+    restoreProject: restoreProject,
+    serializeTriage: serializeTriage
   });
 }));

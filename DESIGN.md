@@ -79,6 +79,7 @@ from a token.
 |-----------------------|----------------------------------------|
 | `--scene-bg`          | Three.js viewport background           |
 | `--grid-line` / `--grid-center` | Reference grid colors        |
+| `--measure`           | Measure lines, dots, magnifier ring    |
 | `--overlay-bg`        | Translucent viewer overlay (light)     |
 | `--overlay-bg-strong` | Translucent viewer overlay (strong)    |
 | `--modal-bg`          | Modal backdrop scrim                   |
@@ -94,12 +95,11 @@ from a token.
 
 - **Mark:** a flat green square keyed to `--accent` (`#1a6b4a` dark /
   `#4d9e75` light), matching the favicon and PWA icons.
-- The "CC" wordmark sits on the gradient in white, set in `Syne` (`var
+- The "CC" wordmark sits on the mark in white, set in `Syne` (`var
   (--font-display)`) at weight 800 with `letter-spacing: -.02em`.
-- Drop shadow: `0 4px 12px rgba(124,58,237,.3)` for small marks; bump to
-  `0 8px 24px rgba(124,58,237,.35)` for hero/boot/error-screen marks.
-- Used in: favicon, boot screen, header, left rail, error boundary, welcome
-  popup gradient header.
+- Shadow: none on small marks; `--shadow-md` for the boot/error-screen mark.
+  No coloured glows or gradients.
+- Used in: favicon, boot screen, header, left rail, error boundary.
 
 ---
 
@@ -265,6 +265,69 @@ border (horizontal). Inactive tabs use `var(--text-muted)`; active uses
 `var(--accent)` when on, `var(--text-faint)` when off. Thumb slides over
 `var(--duration-base) var(--ease-standard)`. `role="switch"` with
 `aria-checked` and Enter/Space keyboard support.
+
+### Clash review: bucket bar, filter chips, overview cards
+
+- **Bucket bar** (`BucketBar`): one `--bg-tertiary` row under the clash
+  panel header — "132 to review" in `--text-primary`/semibold, then each
+  other bucket as an underlined text button ("· 79 only touch (contact)",
+  "· 21 adjacent by design (wall–slab, wall–beam …)"). A shown bucket gets
+  `--accent-bg` + a 1px `--accent` border and a ✓, and `aria-pressed`.
+  Never colour-only. Under it, the run's one-line summary ("132 clashes ·
+  132 open · 0 resolved") as a `--text-xs`/`--text-muted` caption; the
+  rest of the run statistics (AI summary, stats/delta chips, model matrix)
+  sit in one native `<details>` "Run details", closed by default.
+- **Sidebar list** while the overview is open: bucket bar, left-out notice,
+  search + `List | Overview N`, then the grouping row — the facets live in
+  the overview only (one filter surface). Rare list actions (Select
+  multiple, Triage focus, Clear all) are behind the grouping row's `⋯`
+  button (`aria-label` "More list actions", `role="menu"` at
+  `--z-dropdown`, arrow keys + Escape).
+- **Filter chips** (`TriageFilterBar`): pill buttons (`--radius-pill`,
+  `--text-xs`, `--bg-secondary` + `--border`; pressed = `--accent-bg-deep` +
+  `--accent` border, `aria-pressed`), each with its live count in
+  `--font-mono`/`--text-2xs`/`--text-muted`. Facet groups are `role="group"`
+  rows with a section-header label. Active filters repeat as removable
+  pills ("Severity: Critical ×", `aria-label` "Remove filter …"); "shown /
+  total" is a `role="status"` live region.
+  - In the sidebar the facet panel is a native `<details>`.
+  - In the overview (`compact`) there is one Suggested chip strip (max 6,
+    then "+N more"; saved views follow), one action row (Filters button,
+    pills, Reset, Save view…, status, Export BCF…) and the facets in a
+    **Filters popover** (`.cc-facet-pop`: `--bg-secondary`, `--border`,
+    `--radius-md`, `--shadow-md`, max 60vh, `--z-dropdown`; `role="dialog"`,
+    the button carries `aria-expanded`/`aria-controls` and a mono count
+    badge). Escape closes the popover (focus back on the button) before it
+    closes the overview. On ≤ 768 px the popover is a bottom sheet above the
+    mobile nav (`bottom: 56px`, `calc(var(--z-panel) + 4)`), the chip strip
+    and the bucket bar scroll sideways, and every control is ≥ 44 px tall
+    (`.cc-tap`).
+- **Overview cards** (`ClashOverview` / `ClashOverviewCard`): CSS grid
+  `repeat(auto-fill, minmax(min(100%, 240px), 1fr))` (one column on
+  phones), `--space-3` gap; each card is one `<button>` (`--bg-secondary`,
+  `--border`, `--radius-md`, `--shadow-sm`) with a 320×200 snapshot, a
+  severity pill (`_ccSeverityPillStyle`: danger/warning/info/neutral bg+fg
+  token pairs — the word carries the meaning), a members pill, title
+  (`--text-sm` semibold, 2 lines, full text in `title`), the extent line
+  ("1 through · 2 partial"), storey (+ model pair only when > 2 models are
+  loaded) and an open/assignee line, all `--text-xs`. While the picture is
+  pending the snapshot area is a `.cc-skeleton` shimmer (`--bg-tertiary` →
+  `--bg-secondary`, 1.2 s, off under reduced motion) with an `sr-only`
+  "Picture pending"; the picture fades in over `--duration-base` with
+  `alt` "Snapshot of …"; a clash with nothing to draw says "No picture —
+  element has no geometry" in `--text-muted`. Roving tabindex; J/K/arrows
+  move, Enter opens, Escape returns to the 3D view (the key hint is an
+  `sr-only` description of the grid and a row in the `?` shortcuts).
+  Empty states: filters matching nothing → "No review items match these
+  filters" + Reset; nothing in review → "Nothing to review — N findings
+  are filed in other buckets" + "show all".
+  `.cc-overview` sits between the floating panels on desktop and is a
+  fixed sheet above the panel on phones.
+- Group headers in the list use the same right-pointing chevron SVG as the
+  model clash matrix (rotated 90° when open), never ▼/▶ glyphs.
+- Snapshot pictures themselves are 3D renders, not chrome: the A/B pair
+  colours match the viewport's clash-focus colours, the context is a fixed
+  light ghost so a BCF/PDF picture looks the same in either theme.
 
 ---
 

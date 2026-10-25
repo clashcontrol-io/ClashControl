@@ -70,7 +70,7 @@ function mockMesh(points, indices, matrix, extra) {
   }, extra || {});
 }
 
-function loadApi() {
+function loadApi(origin) {
   const geoBlock = extract(
     'function _ccGetElementGeometry(el) {',
     '\n  window._ccGetElementGeometry = _ccGetElementGeometry;'
@@ -82,7 +82,8 @@ function loadApi() {
   const wvBlock = extract('function _getWorldVerts(el) {', '\n  function _getWorldTris(el) {');
   const trisBlock = extract('function _getWorldTris(el) {', '\n\n  function _getBVH');
   const three = makeThreeStub();
-  const fn = new Function('THREE', `
+  const fn = new Function('THREE', '_ccOrigin', `
+    function _ccEnsureWorldOrigin(){}
     var _bvhLRU = new Map();
     function _bvhLRUTouch(){}
     function _bvhLRUEvict(){}
@@ -92,7 +93,7 @@ function loadApi() {
     ${trisBlock}
     return { getElementGeometry: _ccGetElementGeometry, elementWorldBox: _ccElementWorldBox, getWorldVerts: _getWorldVerts, getWorldTris: _getWorldTris };
   `);
-  return fn(three);
+  return fn(three, origin || [0, 0, 0]);
 }
 
 // ── _ccGetElementGeometry structural correctness ────────────────────────────
@@ -192,7 +193,7 @@ test('_getWorldVerts and _getWorldTris both read through _ccGetElementGeometry, 
   const wvBody = extract('function _getWorldVerts(el) {', '\n  function _getWorldTris(el) {');
   const trisBody = extract('function _getWorldTris(el) {', '\n\n  function _getBVH');
   assert.match(wvBody, /_ccGetElementGeometry\(el\)\.forEach/);
-  assert.match(trisBody, /_ccGetElementGeometry\(el\)\.forEach/);
+  assert.match(trisBody, /var geos = _ccGetElementGeometry\(el\)/); // iterated with an indexed loop (direct-array fast path)
   assert.doesNotMatch(wvBody, /\(el\.meshes \|\| \[\]\)\.forEach/, 'must no longer iterate el.meshes directly');
   assert.doesNotMatch(trisBody, /\(el\.meshes \|\| \[\]\)\.forEach/, 'must no longer iterate el.meshes directly');
 });
@@ -242,4 +243,40 @@ test('the accessibility-check center(el) helper now routes through _ccElementWor
   const body = source.slice(idx, source.indexOf('\n    }', idx) + 10);
   assert.match(body, /window\._ccElementWorldBox\(el\)/);
   assert.doesNotMatch(body, /setFromObject/, 'must no longer build its own Box3 via setFromObject');
+});
+
+// Session origin offset (E7): world coordinates are stored RELATIVE to one
+// f64 origin, subtracted before the Float32 conversion — a 100 km world
+// coordinate keeps sub-mm precision instead of a 7.8 mm Float32 grid.
+test('engine frame: _getWorldTris/_getWorldVerts subtract the session origin in f64 BEFORE Float32 storage', () => {
+  const api = loadApi([100000, 0, 0]);
+  const m = mockMesh([[0, 0, 0], [0.0501, 0, 0], [0, 1, 0]], [0, 1, 2], translationMatrix(100001, 2, 3));
+  const tris = api.getWorldTris({ meshes: [m] });
+  assert.deepEqual(Array.from(tris), Array.from(new Float32Array([1, 2, 3, 1.0501, 2, 3, 1, 3, 3])));
+  // without the origin the same 50.1 mm edge collapses onto the Float32 grid at 100 km
+  const raw = loadApi([0, 0, 0]).getWorldTris({ meshes: [mockMesh([[0, 0, 0], [0.0501, 0, 0], [0, 1, 0]], [0, 1, 2], translationMatrix(100001, 2, 3))] });
+  assert.notEqual(raw[3] - raw[0], Math.fround(1.0501) - 1);
+  const verts = api.getWorldVerts({ meshes: [m] });
+  assert.equal(verts[0], 1);
+});
+
+// The direct-array fast path (plain BufferAttribute: array[i*itemSize+k]) must
+// produce exactly the triangles of the generic getX/applyMatrix4 path.
+test('_getWorldTris direct-array fast path === generic accessor path (bits), incl. projective matrices and origin', () => {
+  const api = loadApi([64, -128, 0]);
+  let seed = 99; const rnd = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 4294967296);
+  for (let it = 0; it < 200; it++) {
+    const nv = 3 * (1 + Math.floor(rnd() * 10)), pts = [];
+    for (let i = 0; i < nv; i++) pts.push([Math.fround((rnd() - 0.5) * 2000), Math.fround((rnd() - 0.5) * 2000), Math.fround(rnd() * 50)]);
+    const idx = it % 2 ? null : Array.from({ length: 3 * (1 + Math.floor(rnd() * 20)) }, () => Math.floor(rnd() * nv));
+    const e = Array.from({ length: 16 }, () => (rnd() - 0.5) * 4); e[15] = 1 + rnd(); if (it % 3) { e[3] = 0; e[7] = 0; e[11] = 0; e[15] = 1; }
+    const slow = mockMesh(pts, idx, { elements: e });
+    const fast = mockMesh(pts, idx, { elements: e });
+    const pa = new Float32Array(pts.flat());
+    Object.assign(fast.geometry.attributes.position, { isBufferAttribute: true, array: pa, itemSize: 3 });
+    if (idx) Object.assign(fast.geometry.index, { isBufferAttribute: true, array: new Uint32Array(idx), itemSize: 1 });
+    const a = api.getWorldTris({ meshes: [slow] }), b = api.getWorldTris({ meshes: [fast] });
+    assert.equal(a.length, b.length);
+    for (let i = 0; i < a.length; i++) assert.ok(Object.is(a[i], b[i]), `mesh ${it} float ${i}: ${a[i]} vs ${b[i]}`);
+  }
 });

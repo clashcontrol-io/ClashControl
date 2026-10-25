@@ -18,10 +18,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-const start = src.indexOf('  function _sweepAndPrune(grpA, grpB, rules, maxGapM) {');
+const start = src.indexOf('  function _ccSelfClashAllowed(rules, modelId, inA, inB, singleModelScope) {');
 assert.ok(start !== -1, '_sweepAndPrune not found');
-const end = src.indexOf('\n  }', start) + '\n  }'.length;
-const _sweepAndPrune = new Function(src.slice(start, end) + '; return _sweepAndPrune;')();
+const end = src.indexOf('\n  }', src.indexOf('  function _sweepAndPrune(grpA, grpB, rules, margin) {', start)) + '\n  }'.length;
+// The non-physical filter (virtual/annotation/grid never clash) the sweep calls.
+const npStart = src.indexOf('  var _NON_PHYSICAL_TYPES = {');
+const npEnd = src.indexOf('\n  }', src.indexOf('  function _ccIsNonPhysicalEl(el) {', npStart)) + '\n  }'.length;
+assert.ok(npStart !== -1 && npEnd > npStart, '_ccIsNonPhysicalEl not found');
+const _sweepAndPrune = new Function(src.slice(npStart, npEnd) + '\n' + src.slice(start, end) + '; return _sweepAndPrune;')();
 assert.equal(typeof _sweepAndPrune, 'function');
 
 function box(x, y, z, size) {

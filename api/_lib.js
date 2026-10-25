@@ -55,8 +55,19 @@ function rateLimit(ip, limit) {
   return bucket.count > limit;
 }
 
+// On Vercel the platform sets x-forwarded-for itself and the FIRST entry is
+// the real client address. Keying on the whole header string let a caller
+// rotate the value (append junk entries) to get a fresh rate-limit bucket
+// per request, so only the first, trimmed entry is used.
 function clientIp(req) {
-  return req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+  var h = req.headers || {};
+  var xff = h['x-forwarded-for'];
+  if (Array.isArray(xff)) xff = xff[0];
+  var first = typeof xff === 'string' ? xff.split(',')[0].trim() : '';
+  if (first) return first;
+  var real = h['x-real-ip'];
+  if (typeof real === 'string' && real.trim()) return real.trim();
+  return (req.socket && req.socket.remoteAddress) || 'unknown';
 }
 
 // Resolve a Postgres connection string from any of the env var names that
@@ -133,7 +144,33 @@ async function fetchWithRetry(url, options, maxAttempts) {
   throw lastError;
 }
 
-module.exports = { cors, rateLimit, clientIp, dbUrl, llmGuard, fetchWithRetry };
+// ── Reply language ────────────────────────────────────────────────────────
+// The client sends the active UI locale (BCP-47 tag) so the model answers in the
+// user's language. The tag is interpolated into a prompt, so it is validated
+// strictly (never echoed unless it matches) — anything else is ignored.
+var LOCALE_RE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
+
+function normalizeLocale(locale) {
+  if (typeof locale !== 'string' || locale.length > 35 || !LOCALE_RE.test(locale)) return '';
+  return locale;
+}
+
+// Returns '' (no instruction) for a missing/invalid tag or English; otherwise a
+// single instruction line. Tool names, JSON keys and enum values stay English.
+function localeInstruction(locale) {
+  var tag = normalizeLocale(locale);
+  if (!tag || tag.split('-')[0] === 'en') return '';
+  var name = tag;
+  try {
+    if (typeof Intl !== 'undefined' && Intl.DisplayNames) {
+      var n = new Intl.DisplayNames(['en'], { type: 'language' }).of(tag);
+      if (n && n !== tag) name = n;
+    }
+  } catch (_) { /* unknown tag: fall back to the tag itself */ }
+  return 'Reply in ' + name + ' (' + tag + '). Write all human-readable text in that language; keep tool/function names, JSON keys and enumerated values exactly as specified (English).';
+}
+
+module.exports = { cors, rateLimit, clientIp, dbUrl, llmGuard, fetchWithRetry, normalizeLocale, localeInstruction };
 // Test-only introspection — not used by any endpoint, just lets the pruning
 // regression test assert the map actually shrinks instead of only growing.
 module.exports._rateMapSizeForTest = function() { return Object.keys(rateMap).length; };

@@ -16,7 +16,7 @@ browser-differential job).
 
 Why not unconditionally on: every generated-fixture view is pixel-identical
 with culling on and off, but the proof assumes the GPU interpolates depth per
-MSAA sample. SwiftShader evaluates it at the pixel centre, and on real project
+MSAA sample. SwiftShader evaluates it at the pixel centre, and on large model
 geometry that let a few edge pixels differ (section 4). So the match check runs
 on the user's own device instead of only in CI.
 
@@ -225,16 +225,13 @@ Large fixture, 48-frame orbit (mean per frame): 7036 -> ~4500 triangles,
 contended software setup (first use in a view is higher: JIT, adjacency
 build).
 
-## 4. Real-model check (and why the default is verified-auto, not plain on)
+## 4. Large-model check (and why the default is verified-auto, not plain on)
 
-The maintainer's own architecture models (private, not in the repo; figures
-from them are deliberately not recorded here) were run through the same test
-with `CC_PROBE_FILE`:
+Larger models were run through the same test with `CC_PROBE_FILE`:
 
-* Two of them render almost entirely with transparent source materials;
-  nothing qualifies as an occluder, nothing is culled, frames identical. This
-  is the intended outcome.
-* On a large opaque one (BatchedMesh-heavy), with the self-test overridden,
+* Models whose source materials are transparent have no occluders; nothing
+  is culled and frames are identical. This is the intended outcome.
+* On a large opaque, BatchedMesh-heavy model, with the self-test overridden,
   the pass removed a large share of submitted triangles in every interior view
   and from above, but two views first differed in a few edge pixels. Root
   cause, traced pixel by pixel (CPU raycasts, a 16-sample ID pass, per-element

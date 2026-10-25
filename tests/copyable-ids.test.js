@@ -10,6 +10,7 @@ const path = require('node:path');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 
+const _ccT = (k, en, v) => en.replace(/\{(\w+)\}/g, (m, n) => (v && n in v ? v[n] : m));
 function extractCopyFn() {
   const start = src.indexOf('function _ccCopyToClipboard(text, label) {');
   assert.ok(start !== -1, '_ccCopyToClipboard not found');
@@ -23,7 +24,7 @@ test('writes the exact value to the clipboard and shows a toast naming the field
   const fnSrc = extractCopyFn();
   const fakeNavigator = { clipboard: { writeText: (v) => { writes.push(v); return Promise.resolve().then(() => {}); } } };
   const fakeWindow = { _ccToast: (m) => toasts.push(m) };
-  const fn = new Function('navigator', 'window', 'document', fnSrc + '; return _ccCopyToClipboard;')(fakeNavigator, fakeWindow, {});
+  const fn = new Function('navigator', 'window', 'document', '_cc_t', fnSrc + '; return _ccCopyToClipboard;')(fakeNavigator, fakeWindow, {}, _ccT);
   fn('1A2B3C4D-0000-0000-0000-000000000000', 'GlobalId');
   await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(writes, ['1A2B3C4D-0000-0000-0000-000000000000']);
@@ -36,7 +37,7 @@ test('coerces a numeric expressId to a string before copying', async () => {
   const fnSrc = extractCopyFn();
   const fakeNavigator = { clipboard: { writeText: (v) => { writes.push(v); return Promise.resolve(); } } };
   const fakeWindow = { _ccToast: (m) => toasts.push(m) };
-  const fn = new Function('navigator', 'window', 'document', fnSrc + '; return _ccCopyToClipboard;')(fakeNavigator, fakeWindow, {});
+  const fn = new Function('navigator', 'window', 'document', '_cc_t', fnSrc + '; return _ccCopyToClipboard;')(fakeNavigator, fakeWindow, {}, _ccT);
   fn(482910, 'Express ID');
   await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(writes, ['482910']);
@@ -46,7 +47,7 @@ test('coerces a numeric expressId to a string before copying', async () => {
 test('never throws when navigator.clipboard is unavailable and no execCommand fallback exists either', () => {
   const fnSrc = extractCopyFn();
   const fakeWindow = { _ccToast: () => {} };
-  const fn = new Function('navigator', 'window', 'document', fnSrc + '; return _ccCopyToClipboard;')({}, fakeWindow, {});
+  const fn = new Function('navigator', 'window', 'document', '_cc_t', fnSrc + '; return _ccCopyToClipboard;')({}, fakeWindow, {}, _ccT);
   assert.doesNotThrow(() => fn('x', 'GlobalId'));
 });
 

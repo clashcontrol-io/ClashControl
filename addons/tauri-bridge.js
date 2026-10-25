@@ -18,6 +18,8 @@
 // Wire format (little-endian, raw bytes, see engine/src/native.rs `wire`):
 //   register_meshes  body [u32 n][n x (u32 id, u32 nFloats)][f32 data...] -> n
 //   intersect_batch / min_dist_batch  body [u32 a,u32 b]*m -> f64 stream
+//   min_dist_within_batch  body [f64 seedSq][u32 a,u32 b]*m -> same stream
+//        (threshold-seeded clearance; [Infinity] when nothing is within the seed)
 //        [m][k_0, v_0...][k_1, v_1...]...  (k = -1: an id was not registered)
 //   engine_info -> {api, threads, meshes, floats, ...}
 // Core contract consumed: a pool object shaped like the worker pool
@@ -89,6 +91,16 @@
   }
   // pairs: flat array/Uint32Array [a0,b0,a1,b1,...]
   function _encodePairs(pairs) { return new Uint8Array(new Uint32Array(pairs).buffer); }
+  // min_dist_within_batch body: [f64 seedSq][u32 a, u32 b]*m
+  function _encodeSeededPairs(seedSq, pairs) {
+    var b = new Uint8Array(8 + pairs.length * 4);
+    new Float64Array(b.buffer, 0, 1)[0] = seedSq;
+    b.set(new Uint8Array(new Uint32Array(pairs).buffer), 8);
+    return b;
+  }
+  // The engine answers the threshold-seeded command (engine_info.within) and
+  // its answers matched the JS reference in the self-check.
+  var _within = false;
   // -> Array of (Float64Array | null); throws on any structural problem
   function _decodeResults(resp, expected) {
     var buf = _asBuffer(resp);
@@ -239,7 +251,20 @@
           var jd = ref.minDist(a, b);
           if (!dist[i] || !_same(jd, Array.prototype.slice.call(dist[i]))) return 'case ' + i + ' min-distance mismatch';
         }
-        return true;
+        if (!(_info && _info.within) || typeof ref.seedSq !== 'function') return true;
+        // Threshold-seeded command: identical to the JS reference at several radii.
+        var seeds = [ref.seedSq(0.05), ref.seedSq(0.0001), ref.seedSq(0.5), ref.seedSq(2)];
+        return Promise.all(seeds.map(function(sq) { return _invoke('min_dist_within_batch', _encodeSeededPairs(sq, pairs)); })).then(function(ws) {
+          for (var si = 0; si < seeds.length; si++) {
+            var wr = _decodeResults(ws[si], m);
+            if (wr[m - 1] !== null) return 'seeded: unknown id not reported';
+            for (var ci = 0; ci < cases.length; ci++) {
+              if (!wr[ci] || !_same(ref.minDist(cases[ci][0], cases[ci][1], seeds[si]), Array.prototype.slice.call(wr[ci]))) return 'case ' + ci + ' seeded min-distance mismatch';
+            }
+          }
+          _within = true;
+          return true;
+        });
       });
     });
   }
@@ -258,6 +283,9 @@
   // ── Worker-pool-shaped native pool (one per detection run) ──────
   function _createPool(ctx) {
     if (_failed || !ctx || typeof ctx.getWorldTris !== 'function' || typeof ctx.postProcess !== 'function') return null;
+    // Triangles come in the core's engine frame (session origin subtracted),
+    // so the hit filter must use the boxes in that same frame.
+    var _boxOf = function(el) { return typeof ctx.getBox === 'function' ? ctx.getBox(el) : el.box; };
     var t0 = Date.now();
     var pool = {
       dead: false, reason: null, failed: false, ready: true,
@@ -280,9 +308,10 @@
 
     function processWindow(specs) {
       if (pool.dead) return Promise.resolve();
-      var cidx = [], eA = [], eB = [], fl = [];
+      var cidx = [], eA = [], eB = [], fl = [], sd = [];
       specs.forEach(function(sp) {
-        for (var i = 0; i < sp.cidx.length; i++) { cidx.push(sp.cidx[i]); eA.push(sp.eA[i]); eB.push(sp.eB[i]); fl.push(sp.fl[i]); }
+        var hasSd = sp.sd && sp.sd.length === sp.cidx.length;
+        for (var i = 0; i < sp.cidx.length; i++) { cidx.push(sp.cidx[i]); eA.push(sp.eA[i]); eB.push(sp.eB[i]); fl.push(sp.fl[i]); sd.push(hasSd ? sp.sd[i] : ctx.seedSq); }
       });
       var n = cidx.length;
       if (!n) return Promise.resolve();
@@ -309,15 +338,29 @@
               if (!raw) { ok[j] = 0; continue; } // unknown id: leave it to the main thread, never a silent miss
               var rec = recs[j]; rec[0] |= 1;
               if (raw.length) {
-                var pts = ctx.postProcess(raw.subarray(0, raw.length - 1), raw[raw.length - 1], eA[j].box, eB[j].box, ctx.margin);
+                var pts = ctx.postProcess(raw.subarray(0, raw.length - 1), raw[raw.length - 1], _boxOf(eA[j]), _boxOf(eB[j]), ctx.margin);
                 if (pts) { rec[0] |= 2; rec[1] = pts[0]; rec[2] = pts[1]; rec[3] = pts[2]; rec[4] = pts[3]; hitFlag[j] = 1; }
               }
             }
             for (k = 0; k < n; k++) if ((fl[k] & 2) && !hitFlag[k] && ok[k]) softCand.push(k);
             if (!softCand.length) return { ok: ok, soft: [] };
-            var sp = [];
-            softCand.forEach(function(j2) { sp.push(ids[2 * j2], ids[2 * j2 + 1]); });
-            return _invoke('min_dist_batch', _encodePairs(sp)).then(function(r) { return { ok: ok, soft: _decodeResults(r, softCand.length) }; });
+            // Each pair is searched within its OWN clearance seed (the
+            // per-pair radius the web worker pool and the main thread use:
+            // a smaller type-pair tolerance prunes more): one seeded call
+            // per distinct seed, answers put back in softCand order.
+            var groups = new Map();
+            softCand.forEach(function(j2, pos) {
+              var sq = sd[j2];
+              var key = (_within && sq > 0 && sq !== Infinity) ? sq : 'none';
+              var g = groups.get(key); if (!g) { g = { pos: [], pairs: [] }; groups.set(key, g); }
+              g.pos.push(pos); g.pairs.push(ids[2 * j2], ids[2 * j2 + 1]);
+            });
+            var soft = new Array(softCand.length), calls = [];
+            groups.forEach(function(g, key) {
+              var call = key === 'none' ? _invoke('min_dist_batch', _encodePairs(g.pairs)) : _invoke('min_dist_within_batch', _encodeSeededPairs(key, g.pairs));
+              calls.push(call.then(function(r) { var dec = _decodeResults(r, g.pos.length); for (var q = 0; q < g.pos.length; q++) soft[g.pos[q]] = dec[q]; }));
+            });
+            return Promise.all(calls).then(function() { return { ok: ok, soft: soft }; });
           }).then(function(res) {
             if (!res || pool.dead) return;
             for (var s = 0; s < softCand.length; s++) {
@@ -337,7 +380,7 @@
       });
     }
 
-    // specs: [{cidx:[], eA:[], eB:[], fl:[]}] -> window {done, promise}
+    // specs: [{cidx:[], eA:[], eB:[], fl:[], sd:[] (per-pair clearance seed, optional)}] -> window {done, promise}
     pool.addWindow = function(specs) {
       var win = { done: false, resolve: null };
       win.promise = new Promise(function(res) { win.resolve = res; });

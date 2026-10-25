@@ -66,3 +66,9 @@ test('REGRESSION: _highlightRefs actually consults ref.role for clash-pair color
   assert.ok(highlightRefsSite.includes('_highlightRefs = function'), '_PAIR_ROLE_COLOR must be declared right before _highlightRefs');
   assert.ok(highlightRefsSite.includes('_PAIR_ROLE_COLOR[ref.role]'), '_highlightRefs must consult ref.role via _PAIR_ROLE_COLOR');
 });
+
+test('grouped partners of a hub row carry the partner side model (_groupHub)', () => {
+  assert.deepEqual(_itemRefs({elemA: 1, elemB: 2, modelAId: 'mA', modelBId: 'mB', _groupHub: 'A', _groupedElems: [3]}).map((r) => [r.modelId, r.expressId, r.role]),
+    [['mA', 1, 'A'], ['mB', 2, 'B'], ['mB', 3, 'grouped']]);
+  assert.equal(_itemRefs({elemA: 1, elemB: 2, modelAId: 'mA', modelBId: 'mB', _groupHub: 'B', _groupedElems: [4]})[2].modelId, 'mA');
+});

@@ -11,6 +11,10 @@ translate the `strings` values, add yourself to `manifest.json`, open a PR.
 - Do not include HTML tags, `<script`, `javascript:`, or `on*=` attributes in
   any string value — these are rendered as plain text in the UI and will be
   rejected by CI if present.
+- Check labels of a country pack's national data standard (written in that
+  country's language in `regulations/<region>.json`) can be translated here
+  under `country.<region>.<standard id>.<check id>`, e.g.
+  `"country.nl.ils.noName": "No element name"`.
 
 ## Adding a pack
 
@@ -19,7 +23,43 @@ translate the `strings` values, add yourself to `manifest.json`, open a PR.
    primary subtag).
 2. Fill in `name` (the language's own name for itself), your `contributor`
    credit, and as many `strings` entries as you can.
-3. Add an entry to `manifest.json`: `{"lang": "...", "file": "...", "name": "...", "contributor": "..."}`.
+3. Add an entry to `manifest.json`: `{"lang": "...", "file": "...", "name": "...", "contributor": "..."}`,
+   then run `node scripts/locale-coverage.js --write` to fill in its
+   `coverage` (`--missing <lang>` lists what is still untranslated). A pack
+   is offered in Settings at any coverage, but only switched on
+   automatically from the browser language at 95 % or more, so nobody gets
+   a half-translated UI they did not pick.
 4. Open a PR. If you'd rather not use git directly, see the repo's
    "Contribute a translation" issue template instead — attach your file and
    a maintainer will open the PR for you.
+
+## Discipline name hints (optional `disciplineHints` section)
+
+A pack can also teach ClashControl to recognise disciplines, MEP trades and
+element roles from names written in your language — file names
+("Bouwkundig.ifc"), system names ("Zuluft 1.OG"), type and element names
+("Sparing 300x300"). It is data only; the engine (`clash-discipline-core.js`)
+reads stated IFC data first (systems, classification codes, PredefinedType,
+type objects) and uses names only when the file itself says nothing.
+
+```json
+"disciplineHints": {
+  "disciplines":    { "architectural": [], "structural": [], "mep": [], "civil": [] },
+  "subDisciplines": { "ventilation": [], "heating": [], "plumbing": [], "fire": [], "electrical": [] },
+  "roles":          { "provision": [], "zone": [] }
+}
+```
+
+- Every key is optional; each list holds up to 200 lower- or mixed-case tokens
+  of at most 40 characters.
+- A token matches the **start of a word** ("lüftung" matches "Lüftungskanal",
+  "ark" does not match "mark"). A token containing a space, hyphen, dot or
+  underscore — or written in a script without word spacing (Japanese,
+  Chinese, Korean) — matches anywhere in the name.
+- `roles.provision`: reservations / sleeves / provision-for-void volumes;
+  `roles.zone`: fire compartments and other zone volumes. Role names only
+  apply to generic elements (proxies, spatial zones), never to walls or slabs.
+- The hints of **every** installed pack apply, whatever language the UI is in
+  (a German model reviewed on a Dutch UI still matches the German tokens).
+  Flag the pack with `"disciplineHints": true` in `manifest.json` so the app
+  fetches it for its hints (the issue-upload flow does this for you).

@@ -41,7 +41,8 @@ const VALID_MINIMAL =
 test('the pre-parse validator is wired into processFiles before the IFC parser starts', () => {
   const bufThenIdx = html.indexOf("}).then(function(buf) {\n            var _preCheck = _ccValidateIfcPreParse(buf, f.name);");
   assert.ok(bufThenIdx !== -1, 'validator call not found right after reading the file buffer');
-  const parserStartIdx = html.indexOf("_onProg('Starting IFC parser 16%');", bufThenIdx);
+  // (the IFC job factory in processFiles: read -> validate -> parser start)
+  const parserStartIdx = html.indexOf("job.onProg('Starting IFC parser 16%');", bufThenIdx);
   assert.ok(parserStartIdx !== -1);
   assert.ok(parserStartIdx > bufThenIdx, 'the validator must run before the parser starts');
 });

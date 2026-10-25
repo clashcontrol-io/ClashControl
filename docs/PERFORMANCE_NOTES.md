@@ -37,6 +37,16 @@ Analysis of GPU instancing feasibility (prompted by comparison with Fragments .f
 
 ### Worker-based IFC loading
 - Geometry extraction runs off the main thread. Do not change the worker boundary.
+- **Progressive preview + parallel files (2026-10-23, flags `progressivePreview` / `parallelLoad`, default on).** The worker transfers its geometry buffers in ordered batches while it streams; the main thread draws them as a display-only preview and later decodes the model from the same arrays (identical by construction, proven by `tests/browser/model-digest.mjs` in the differential and `progressive-load.mjs`). Several dropped files parse in separate workers under a memory budget; commits stay in file order. Medians of interleaved runs (SwiftShader, 4 shared cores, ms from the drop):
+
+  | set | first pixel | 50 % triangles | all committed | total | peak RSS |
+  |---|---|---|---|---|---|
+  | generated large federation (3 files, 22k elements) | 5609 → 1730 | 8585 → 3149 | 10006 → 6477 | 10253 → 8422 | 1454 → 1471 MB |
+
+  The preview stops growing once a frame costs > 400 ms (software rasteriser); on a GPU it keeps filling in. Total load time of very large files is dominated by the worker's lazy psets phase, which neither change shortens. The first model of a parallel batch commits later (it shares the CPU), every later one much earlier. Streaming removes most of the worker→main `transferGap` on large files.
+- **Sharded single-file load (2026-10-23, flag `shardedLoad`, default on, files ≥ 32 MB, 2 workers):** identical model by construction + tests (docs/INTERNALS.md §7). Measured on synthetic files only, in a sandbox whose 4 cores were shared with other jobs, so the numbers swing with the box's load: web-ifc alone (node, open + stream, 10 MB generated architecture file) 2.1 → 1.6 s with 2 threads, no gain with 3; in the browser (`tests/browser/shard-load.mjs`, 21 MB / 50k elements, first load incl. preview, commit and props) 15.5 → 12.2 s in the quietest run, no gain or slower when the box was saturated (load average 6–8); below ~5 MB the extra worker start + open costs more than it saves. Each shard holds its own model copy in its WASM heap (2 shards = 2× the single worker's heap). Re-measure on an idle multi-core machine before tuning `_ccIfcShard.minBytes` / `maxShards`.
+- Not built (measured reasons in MEMORY.md): packing the geometry table into a few typed arrays, loader-side recentring of far models.
+- Remaining tail: the geo-cache write right after a big commit (serialize + IndexedDB put, seconds of main thread on very large models) delays the first real frame.
 
 ### Ghost material cache
 - `_ghostMatCache` (`index.html:4725`) keyed by `origMat.uuid` — one ghost clone per unique material, reused across all elements sharing that material.

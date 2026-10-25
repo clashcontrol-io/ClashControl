@@ -27,7 +27,16 @@
     // consumed and cleared by the next load.
     { store: 'pending',  db: 'cc-handoff', retention: 'decay', scope: 'global' },
     // shared-project's persisted FileSystem directory handle.
-    { store: 'handles',  db: 'cc_shared', retention: 'source', scope: 'global' }
+    { store: 'handles',  db: 'cc_shared', retention: 'source', scope: 'global' },
+    // shared-project's local copy of the shared folder's change log (records
+    // and the file names already read, per shared project): the folder stays
+    // the source, so a lost cache only means one full read.
+    { store: 'log',      db: 'cc_shared', retention: 'derived', scope: 'per-project' },
+    { store: 'seen',     db: 'cc_shared', retention: 'derived', scope: 'per-project' },
+    // Clash viewpoint snapshots (overview cards, BCF snapshot.png, PDF
+    // report): re-rendered from the loaded geometry on demand, keyed by clash
+    // identity + element geometry hashes, budgeted by planSnapshotGC.
+    { store: 'snapshots', db: 'cc-snapshots', retention: 'derived', scope: 'per-project' }
   ];
 
   var LS_REGISTRY = [
@@ -90,9 +99,32 @@
   // Cheap structural estimate, not exact serialized size: strings are
   // UTF-16 in memory (×2) but usually ASCII-ish in JSON (×1) — we use ×1
   // to approximate the at-rest cost that quota actually charges for.
-  function estimateRecordBytes(v) {
+  //
+  // sizeCache (optional WeakMap): per-object sizes remembered across calls,
+  // for records rebuilt from mostly the same immutable objects (a project
+  // autosave reuses the clone of every unchanged clash) — the walk then costs
+  // what changed, not the whole record. Only objects below the root are
+  // cached; never pass a cache for records whose objects are mutated.
+  /**
+   * @param {any} v
+   * @param {WeakMap<object, number>} [sizeCache]
+   * @returns {number}
+   */
+  function estimateRecordBytes(v, sizeCache) {
     var seen = typeof WeakSet !== 'undefined' ? new WeakSet() : null;
+    var cache = sizeCache || null;
     function walk(x, depth) {
+      if (cache && depth > 0 && x !== null && typeof x === 'object') {
+        if (seen && seen.has(x)) return 0;          // a shared object counts once
+        var hit = cache.get(x);
+        if (hit !== undefined) { if (seen) seen.add(x); return hit; }
+        var n = walk1(x, depth);
+        cache.set(x, n);
+        return n;
+      }
+      return walk1(x, depth);
+    }
+    function walk1(x, depth) {
       if (x == null) return 4;
       var t = typeof x;
       if (t === 'string') return x.length + 2;
@@ -314,6 +346,133 @@
     return { keys: keys, freedBytes: freed };
   }
 
+  // Snapshot cache budget (derived data): keep at most maxCount entries and
+  // maxBytes in total; the least recently used go first, and any entry whose
+  // key is in `drop` (superseded: the clash's geometry changed) goes always.
+  // entries: [{key, bytes, at}] -> keys to delete, deterministic order.
+  var SNAPSHOT_BUDGET = { maxCount: 600, maxBytes: 40 * 1024 * 1024 };
+  function planSnapshotGC(entries, opts) {
+    opts = opts || {};
+    var maxCount = opts.maxCount != null ? opts.maxCount : SNAPSHOT_BUDGET.maxCount;
+    var maxBytes = opts.maxBytes != null ? opts.maxBytes : SNAPSHOT_BUDGET.maxBytes;
+    var drop = opts.drop || {};
+    var del = [], keep = [];
+    (entries || []).forEach(function(e) { if (!e || !e.key) return; if (drop[e.key]) del.push(e.key); else keep.push(e); });
+    keep.sort(function(a, b) { return (b.at || 0) - (a.at || 0) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0); });
+    var bytes = 0, n = 0;
+    keep.forEach(function(e) {
+      n++; bytes += e.bytes || 0;
+      if (n > maxCount || bytes > maxBytes) del.push(e.key);
+    });
+    return del;
+  }
+
+  // ── Project record pages ──────────────────────────────────────────
+  // The project autosave record ('projects' store) is a small header keyed
+  // by the project id plus fixed-size pages of the two long lists, keyed
+  // [projectId, list, pageIndex] ('c' clashes, 'i' issues). Array keys sort
+  // after every string key and never collide with a project id; all pages
+  // of one project lie in projectPagesRange(pid). The autosave clones are
+  // identity-stable (an unchanged clash keeps its clone), so a page whose
+  // clone references are unchanged since the last write is not written
+  // again: one status edit puts one page and the header.
+  var PROJECT_PAGE_SIZE = 128;
+  var PROJECT_PAGE_LISTS = [['c', 'clashes'], ['i', 'issues']];
+
+  /** @param {string} pid */
+  function projectPagesRange(pid) { return { lower: [pid], upper: [pid, []] }; }
+
+  // The project a 'projects' store key belongs to (header: the key itself).
+  /** @param {any} key */
+  function projectKeyOwner(key) { return Array.isArray(key) ? key[0] : key; }
+
+  // Which page records to put / delete for this save.
+  //   pid   — project id
+  //   lists — {clashes: [...clones], issues: [...clones]}
+  //   prev  — the memo returned by the previous plan for what is on disk
+  //           (null: unknown — every page is rewritten and stale pages of
+  //           this project are deleted first)
+  // Returns {full, deletes:[{lower, upper}], puts:[{key, items}],
+  //          header:{v, size, clashes, issues}, memo}.
+  /**
+   * @param {string} pid
+   * @param {{clashes?: any[], issues?: any[]}} lists
+   * @param {any} prev
+   * @param {number} [pageSize]
+   */
+  function planProjectPages(pid, lists, prev, pageSize) {
+    var size = pageSize || PROJECT_PAGE_SIZE;
+    var full = !prev || prev.pid !== pid || prev.size !== size;
+    var out = { full: full, deletes: /** @type {any[]} */ ([]), puts: /** @type {any[]} */ ([]),
+      header: /** @type {any} */ ({ v: 1, size: size }), memo: /** @type {any} */ ({ pid: pid, size: size, pages: {} }) };
+    if (full) out.deletes.push(projectPagesRange(pid));
+    PROJECT_PAGE_LISTS.forEach(function(pl) {
+      var tag = pl[0], arr = (lists && lists[pl[1]]) || [];
+      var n = Math.ceil(arr.length / size), pages = [], old = full ? [] : (prev.pages[tag] || []);
+      for (var p = 0; p < n; p++) {
+        var items = arr.slice(p * size, (p + 1) * size), was = old[p], same = !!was && was.length === items.length;
+        for (var j = 0; same && j < items.length; j++) if (items[j] !== was[j]) same = false;
+        pages.push(same ? was : items);
+        if (!same) out.puts.push({ key: [pid, tag, p], items: items });
+      }
+      if (!full && old.length > n) out.deletes.push({ lower: [pid, tag, n], upper: [pid, tag, Infinity] });
+      out.header[pl[1]] = arr.length;
+      out.memo.pages[tag] = pages;
+    });
+    return out;
+  }
+
+  // Rebuild the stored project data from its header and page records (any
+  // order). A header without `_ccPages` is a single-record project written
+  // before pages existed and is returned as it is. The result has the same
+  // fields as the single record had: header fields, clashes, issues and
+  // bytes (header + pages).
+  /**
+   * @param {any} header
+   * @param {any[]} pageRecords
+   */
+  function assembleProjectRecord(header, pageRecords) {
+    if (!header || !header._ccPages) return header || null;
+    var info = header._ccPages, size = info.size || PROJECT_PAGE_SIZE, bytes = header.bytes || 0;
+    /** @type {any} */
+    var out = {};
+    Object.keys(header).forEach(function(k) { if (k !== '_ccPages' && k !== 'bytes') out[k] = header[k]; });
+    var byList = { c: /** @type {any[]} */ ([]), i: /** @type {any[]} */ ([]) };
+    (pageRecords || []).forEach(function(r) {
+      if (!r || !Array.isArray(r.id) || r.id[0] !== header.id) return;
+      var tag = r.id[1], idx = r.id[2];
+      if (!byList[tag] || typeof idx !== 'number') return;
+      byList[tag][idx] = r.items || [];
+      bytes += r.bytes || 0;
+    });
+    PROJECT_PAGE_LISTS.forEach(function(pl) {
+      var want = info[pl[1]] || 0, pages = byList[pl[0]], list = [];
+      for (var p = 0; p * size < want; p++) {
+        var items = pages[p] || [];
+        for (var j = 0; j < items.length; j++) list.push(items[j]);
+      }
+      if (list.length !== want && typeof console !== 'undefined') console.warn('[storage] project ' + header.id + ': ' + pl[1] + ' pages hold ' + list.length + ' of ' + want);
+      out[pl[1]] = list;
+    });
+    out.bytes = bytes;
+    return out;
+  }
+
+  // Inventory rows of the 'projects' store ({id, bytes}, id = header key or
+  // page key) folded into one row per project.
+  /** @param {{id: any, bytes?: number}[]} rows */
+  function foldProjectRows(rows) {
+    /** @type {Object<string, {id: string, bytes: number}>} */
+    var by = {};
+    var order = [];
+    (rows || []).forEach(function(r) {
+      var id = projectKeyOwner(r.id);
+      if (!by[id]) { by[id] = { id: id, bytes: 0 }; order.push(id); }
+      by[id].bytes += r.bytes || 0;
+    });
+    return order.map(function(id) { return by[id]; });
+  }
+
   function formatBytes(n) {
     if (n == null || isNaN(n)) return '—';
     if (n < 1024) return n + ' B';
@@ -333,6 +492,14 @@
     computeBudget: computeBudget,
     planEviction: planEviction,
     planLocalPrune: planLocalPrune,
+    SNAPSHOT_BUDGET: SNAPSHOT_BUDGET,
+    planSnapshotGC: planSnapshotGC,
+    PROJECT_PAGE_SIZE: PROJECT_PAGE_SIZE,
+    projectPagesRange: projectPagesRange,
+    projectKeyOwner: projectKeyOwner,
+    planProjectPages: planProjectPages,
+    assembleProjectRecord: assembleProjectRecord,
+    foldProjectRows: foldProjectRows,
     formatBytes: formatBytes
   });
 }));

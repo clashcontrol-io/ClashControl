@@ -38,3 +38,9 @@ test('renderer contract helper loads before the app and exposes a runtime snapsh
   assert.ok(helper >= 0 && main > helper);
   assert.match(source, /window\._ccRendererContractSnapshot = window\._ccRendererContract\.snapshot/);
 });
+
+test('shader error checks are off by default (no synchronous compile stall) and opt-in via ?ccDebugShaders', () => {
+  assert.match(source, /renderer\.debug\.checkShaderErrors = \/\[\?&\]ccDebugShaders\\b\/\.test\(location\.search\)/);
+  const at = source.indexOf('renderer.debug.checkShaderErrors');
+  assert.ok(at > source.indexOf('S.renderer = renderer;'), 'set on the main viewer renderer');
+});

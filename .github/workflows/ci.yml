@@ -1,8 +1,8 @@
 name: CI
 
-# Runs the lightweight node:test suite (api/ validation + shared utils).
-# No build step and no dependency install — the tests only touch api/*.js,
-# which depend on nothing outside the standard library.
+# Runs the node:test suite. No build step; the only install is the
+# test-only packages a job needs (three and web-ifc, pinned to the CDN versions; jszip and
+# playwright for the browser checks), never saved to package.json.
 
 on:
   pull_request:
@@ -26,6 +26,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      # Tests that check against the real libraries, pinned to the versions
+      # index.html loads from the CDN: three.js (tests/viewer-*.test.js,
+      # tests/geo-bounds.test.js) and web-ifc (the fixture / stream-order /
+      # non-physical-element tests parse real IFC).
+      - name: Install test-only dependencies
+        run: npm install --no-save three@0.180.0 web-ifc@0.0.77
 
       - name: Run tests
         run: npm test
@@ -87,17 +94,44 @@ jobs:
 
       - name: Install Playwright Chromium
         run: |
-          npm install --no-save playwright@1
+          npm install --no-save playwright@1 jszip@3.10.1
           npx playwright install --with-deps chromium
 
       - name: Run browser smoke test
         run: node tests/browser/smoke.mjs
+
+      - name: Run storage metadata check (sizes from index keys, v3 upgrade)
+        run: node tests/browser/storage-metadata.mjs
+
+      - name: Run project pages check (autosave writes what changed, reloads identical, legacy migrates)
+        run: node tests/browser/project-pages.mjs
+
+      - name: Run shared folder check (per-user change files, idle reads nothing, conflicts shown on both pages, migration)
+        run: node tests/browser/shared-folder.mjs
+
+      - name: Run cloud share check (real api/project.js on an in-memory db, conflicts on both pages, pulls fetch only new records)
+        run: node tests/browser/cloud-share.mjs
+
+      - name: Run exact cache-restore check (restored geometry + clashes identical to a fresh load)
+        run: node tests/browser/cache-restore-exact.mjs
+
+      - name: Run restore heap check (heap after park/restore and project reopen within a small margin of a fresh load)
+        run: node tests/browser/restore-heap.mjs
 
       - name: Run windowed conflict list scroll-memoization check
         run: node tests/browser/windowed-list-scroll-memo.mjs
 
       - name: Run storey-scope truncated-scan check
         run: node tests/browser/storey-scope-truncated.mjs
+
+      - name: Run country-pack resolution check (IFC-neutral vs auto-activated pack)
+        run: node tests/browser/country-packs.mjs
+
+      - name: Run BCF clipping-plane round trip (section box + plane, BCF 2.1 and 3.0)
+        run: node tests/browser/bcf-clipping.mjs
+
+      - name: Run storey units (mm + m federation — plan cut, labels, sheet / DXF in metres)
+        run: node tests/browser/storey-units.mjs
 
   # Path filter for the heavier differential probes below. index.html is the
   # whole single-file app (loader, engine, UI all in one file), so this can't
@@ -108,6 +142,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       app-code: ${{ steps.filter.outputs.app-code }}
+      pressure: ${{ steps.filter.outputs.pressure }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -127,6 +162,13 @@ jobs:
             echo "app-code=true" >> "$GITHUB_OUTPUT"
           else
             echo "app-code=false" >> "$GITHUB_OUTPUT"
+          fi
+          # the pressure harness also depends on the clash-pipeline cores,
+          # the safety flags / storage modules and its own sources
+          if echo "$CHANGED" | grep -qE '^(index\.html|addons/|engine/|cc-runtime\.js|[a-z-]+-core\.js|project-codec\.js|safety-migrations\.js|tests/pressure/|tests/fixtures/generate-building-ifc\.js|tests/_oracle-exact\.js)'; then
+            echo "pressure=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pressure=false" >> "$GITHUB_OUTPUT"
           fi
 
   # Differential correctness probes, promoted from local-only scripts per the
@@ -154,17 +196,81 @@ jobs:
       - name: Run IFC worker vs. main-thread-fallback fingerprint differential
         run: node tests/browser/ifc-worker-fallback-differential.mjs
 
+      - name: Progressive preview + parallel IFC loading (display-only preview, identical models)
+        run: node tests/browser/progressive-load.mjs
+
       - name: Run WASM vs. JS broad-phase sweep differential
         run: node tests/browser/wasm-sweep-differential.mjs
 
       - name: Run office fixture WASM vs. JS narrow-phase differential + known-count lock
         run: node tests/browser/office-clash-parity.mjs
 
+      - name: First-run narrow phase — main / main-js / pool-1 / pool-3 / pool-js give the identical clash list
+        run: node tests/browser/first-run-cost.mjs
+
       - name: Section planes follow a building rotated in plan
         run: node tests/browser/section-plane-alignment.mjs
+
+      - name: Section gizmos — one plane gizmo at the cut, model-fitted outline, screen-constant handles, token colours
+        run: node tests/browser/section-gizmo.mjs
 
       - name: View cube one-click square views; no pivot dot / cube arrows
         run: node tests/browser/viewcube-click.mjs
 
+      - name: Measure snap on BatchedMesh (vertex / edge), never to section-clipped geometry
+        run: node tests/browser/measure-snap.mjs
+
+      - name: IfcSpace rooms load with geometry, hidden by default, never steal picks or clashes
+        run: node tests/browser/spaces.mjs
+
+      - name: IfcGrid lines load (worker = fallback), draw, and locate clashes ("Grid B-1 · Level 0")
+        run: node tests/browser/grid-lines.mjs
+
+      - name: UI follows selection / install / update / panel width by events, no polls
+        run: node tests/browser/event-driven-ui.mjs
+
       - name: Occlusion culling on vs off renders identical pixels (every view)
         run: node tests/browser/occlusion-culling.mjs
+
+  # Randomized pressure test (tests/pressure/): the fast tier — 24 seeded
+  # pairwise combinations of load path, rules, role exclusion, edits, display
+  # filters, engine path, cancel, failure injection, storage knobs and
+  # round-trips over the synthetic federation, each checked against the
+  # exact oracle and the invariants I1–I16. Fixed seed so a PR sees the same
+  # combos every time; the nightly workflow (pressure-nightly.yml) explores
+  # new seeds. Bounded: each combo has its own timeout, the job a hard cap.
+  # A failure uploads the report + replayable repro files
+  # (node tests/pressure/run.mjs --combo <repro.json>).
+  browser-pressure:
+    needs: changes
+    if: needs.changes.outputs.pressure == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CC_PRESSURE_COMBO_TIMEOUT_MS: '300000'
+    steps:
+      - uses: actions/checkout@v4
+
+      # job-level env may not use the runner context: set the report dir here
+      - name: Report directory
+        run: echo "CC_PRESSURE_OUT=${RUNNER_TEMP}/cc-pressure" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Playwright Chromium
+        run: |
+          npm install --no-save playwright@1
+          npx playwright install --with-deps chromium
+
+      - name: Pressure test, fast tier (seed 1)
+        run: node tests/pressure/run.mjs --tier fast --seed 1
+
+      - name: Upload pressure report + repros
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pressure-fast-seed-1
+          path: ${{ runner.temp }}/cc-pressure
+          if-no-files-found: ignore

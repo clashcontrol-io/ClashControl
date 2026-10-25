@@ -504,7 +504,7 @@ try {
         const enc = (rs) => { const o = [rs.length]; rs.forEach((r) => { if (r === undefined) o.push(-1); else { o.push(r.length); for (const x of r) o.push(x); } }); return new Float64Array(o).buffer; };
         window.__natCalls = { register: 0, intersect: 0, mindist: 0 };
         window.__TAURI_INTERNALS__ = { invoke: async (cmd, args) => {
-          if (cmd === 'engine_info') return { api: 1, threads: 4, meshes: 0, floats: 0 };
+          if (cmd === 'engine_info') return { api: 1, threads: 4, meshes: 0, floats: 0, within: true };
           if (cmd === 'register_meshes') {
             window.__natCalls.register++;
             const dv = new DataView(args.buffer, args.byteOffset, args.byteLength), n = dv.getUint32(0, true);
@@ -514,6 +514,13 @@ try {
           }
           if (cmd === 'unregister_mesh') return eng.unregister(args.id);
           if (cmd === 'clear_meshes') { eng.clear(); return null; }
+          if (cmd === 'min_dist_within_batch') {
+            window.__natCalls.within = (window.__natCalls.within || 0) + 1;
+            const seed = new Float64Array(args.buffer.slice(args.byteOffset, args.byteOffset + 8))[0];
+            const u = new Uint32Array(args.buffer.slice(args.byteOffset + 8, args.byteOffset + args.byteLength)), out = [];
+            for (let i = 0; i < u.length; i += 2) out.push(eng.min_distance_within(u[i], u[i + 1], seed));
+            return enc(out);
+          }
           if (cmd === 'intersect_batch' || cmd === 'min_dist_batch') {
             window.__natCalls[cmd === 'intersect_batch' ? 'intersect' : 'mindist']++;
             const u = new Uint32Array(args.buffer.slice(args.byteOffset, args.byteOffset + args.byteLength)), out = [];
@@ -599,8 +606,11 @@ try {
               const geo = new window.THREE.BufferGeometry();
               geo.setAttribute('position', new window.THREE.Float32BufferAttribute(tris, 3));
               el.meshes = [new window.THREE.Mesh(geo)];
-              delete el._triCache; delete el._wvCache; delete el._bvhCache;
-              const wt = window._ccGetWorldTris(el);
+              delete el._triCache; delete el._wvCache; delete el._bvhCache; delete el._topo; delete el._fbox;
+              // World box straight from the tessellation (f64, like the loader's
+              // boxes) — NOT from _ccGetWorldTris, which returns engine-frame
+              // (session-origin-relative) Float32 coordinates.
+              const wt = tris;
               const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
               for (let i = 0; i < wt.length; i += 3) for (let c = 0; c < 3; c++) { if (wt[i + c] < mn[c]) mn[c] = wt[i + c]; if (wt[i + c] > mx[c]) mx[c] = wt[i + c]; }
               el.box = new window.THREE.Box3(new window.THREE.Vector3(mn[0], mn[1], mn[2]), new window.THREE.Vector3(mx[0], mx[1], mx[2]));

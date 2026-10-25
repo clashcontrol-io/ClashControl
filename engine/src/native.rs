@@ -122,6 +122,15 @@ impl NativeEngine {
     }
 }
 
+impl NativeEngine {
+    /// `Engine::min_distance_within` for every pair, in parallel, in input
+    /// order (threshold-seeded clearance search; see `mesh_min_distance_within`).
+    pub fn detect_pairs_within(&self, pairs: &[(u32, u32)], seed_sq: f64) -> Vec<PairResult> {
+        let eng = &self.inner;
+        self.pool.install(|| pairs.par_iter().map(|&(a, b)| eng.min_distance_within(a, b, seed_sq)).collect())
+    }
+}
+
 /// Binary wire format shared with `addons/tauri-bridge.js`. Everything is
 /// little-endian. Layouts are chosen so every typed-array view on the JS side
 /// starts at an offset that is a multiple of its element size.
@@ -192,6 +201,17 @@ pub mod wire {
                 )
             })
             .collect())
+    }
+
+    /// Seeded pair-list body (`min_dist_within_batch`):
+    /// `[f64 seed_sq][u32 a, u32 b] x n`.
+    pub fn parse_seeded_pairs(body: &[u8]) -> Result<(f64, Vec<(u32, u32)>), String> {
+        if body.len() < 8 {
+            return Err("seeded pair payload truncated".into());
+        }
+        let mut b = [0u8; 8];
+        b.copy_from_slice(&body[..8]);
+        Ok((f64::from_le_bytes(b), parse_pairs(&body[8..])?))
     }
 
     /// Result body, all f64: `[n][k_0, v_0..][k_1, v_1..]...` where `k_i` is
@@ -424,6 +444,30 @@ mod tests {
             }
             println!("threads={} register {:.0} ms | hard {:.0} ms | mindist {:.0} ms", eng.threads(), reg, hard_ms, md_ms);
         }
+    }
+
+    #[test]
+    fn within_parallel_equals_free_function() {
+        let mut rng = Lcg(77);
+        let meshes: Vec<Vec<f32>> = (0..24).map(|i| soup(&mut rng, 40, (i % 6) as f32 * 0.4, 1.0, 0.3)).collect();
+        let mut ne = NativeEngine::new(3).unwrap();
+        for (i, m) in meshes.iter().enumerate() {
+            ne.register(i as u32, m);
+        }
+        let pairs: Vec<(u32, u32)> = (0..24u32).flat_map(|a| (0..24u32).map(move |b| (a, b))).collect();
+        for seed in [0.0f64, 1e-8, 0.0025, 0.25, 4.0] {
+            let got = ne.detect_pairs_within(&pairs, seed);
+            for (k, &(a, b)) in pairs.iter().enumerate() {
+                let want = crate::mesh_min_distance_within(&meshes[a as usize], &meshes[b as usize], seed);
+                same_bits(got[k].as_ref().unwrap(), &want, "within");
+            }
+        }
+        let mut body = 0.0025f64.to_le_bytes().to_vec();
+        body.extend_from_slice(&3u32.to_le_bytes());
+        body.extend_from_slice(&5u32.to_le_bytes());
+        assert_eq!(wire::parse_seeded_pairs(&body).unwrap(), (0.0025, vec![(3, 5)]));
+        assert!(wire::parse_seeded_pairs(&[0; 7]).is_err());
+        assert!(wire::parse_seeded_pairs(&[0; 12]).is_err());
     }
 
     #[test]

@@ -14,6 +14,13 @@
 (function() {
   'use strict';
 
+  // i18n passthrough: translated through the core's locale registry (window._cc_t) when it is
+  // present, plain English otherwise, so this addon never depends on the core being newer.
+  function _i18n(key, en, vars) {
+    if (typeof window._cc_t === 'function') return window._cc_t(key, en, vars);
+    return vars ? String(en).replace(/\{(\w+)\}/g, function(m, k) { return Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : m; }) : en;
+  }
+
   // Address candidates tried in order. 127.0.0.1 (IPv4) is direct loopback;
   // Browsers can ONLY reach the bridge over IPv4 127.0.0.1: Chrome's CSP
   // engine rejects IPv6 literals like [::1] in connect-src as "invalid source"
@@ -328,25 +335,47 @@
 
   var handlers = {};
 
-  // Extract a classification code (NL-SfB / Uniclass / assembly / OmniClass) from
-  // an element's nested property sets. Self-contained (no cross-addon import) — the
-  // key list mirrors the data-quality addon. Classification is the join key to
-  // non-model sources (finance/ERP, spec) that GUID can't reach. Returns
-  // { system, code } or null.
+  // Extract a classification code (Uniclass / OmniClass / Uniformat / assembly
+  // code, plus any national system a country pack names) from an element's
+  // nested property sets. Self-contained (no cross-addon import). Classification
+  // is the join key to non-model sources (finance/ERP, spec) that GUID can't
+  // reach. Returns { system, code } or null.
+  // National systems are country-pack data (naming.classificationKeys:
+  // {system, keys[], objectTypePatterns[]}; naming.codeKeys), read from EVERY
+  // registered pack — a model's property names say which system it uses.
+  function _packNaming() {
+    var packs = (typeof window._ccGetCountryPacks === 'function' && window._ccGetCountryPacks()) || [];
+    var systems = [], codeKeys = [];
+    packs.forEach(function(pk) {
+      var n = pk && pk.naming;
+      if (!n) return;
+      (n.classificationKeys || []).forEach(function(c) { systems.push(c); });
+      (n.codeKeys || []).forEach(function(k) { codeKeys.push(String(k).toLowerCase().replace(/[\s_\/-]/g, '')); });
+    });
+    return { systems: systems, codeKeys: codeKeys };
+  }
   function _classSysOf(key) {
     var kl = String(key).toLowerCase().replace(/[\s_\/-]/g, '');
-    return kl.indexOf('nlsfb') >= 0 || kl.indexOf('sfb') >= 0 ? 'NL-SfB'
-         : kl.indexOf('uniclass') >= 0 ? 'Uniclass'
+    var sys = _packNaming().systems;
+    for (var i = 0; i < sys.length; i++) {
+      var keys = sys[i].keys || [];
+      for (var j = 0; j < keys.length; j++) {
+        var pk = String(keys[j]).toLowerCase().replace(/[\s_\/-]/g, '');
+        if (pk && kl.indexOf(pk) >= 0) return sys[i].system;
+      }
+    }
+    return kl.indexOf('uniclass') >= 0 ? 'Uniclass'
          : kl.indexOf('omniclass') >= 0 ? 'OmniClass'
          : kl.indexOf('uniformat') >= 0 ? 'Uniformat'
          : (kl === 'assemblycode' || kl.indexOf('classification') >= 0 || kl === 'classificationcode') ? 'Classification'
          : null;
   }
   // Generic "this field holds the code" key names (used when the SYSTEM is carried
-  // by the pset/group name instead, e.g. a pset "NL-SfB" with a key "Code").
+  // by the pset/group name instead, e.g. a pset named after the system with a key
+  // "Code"); packs add the words their language uses.
   function _isGenericCodeKey(key) {
     var kl = String(key).toLowerCase().replace(/[\s_\/-]/g, '');
-    return kl === 'code' || kl === 'value' || kl === 'elementcode' || kl === 'nummer' || kl === 'number';
+    return kl === 'code' || kl === 'value' || kl === 'elementcode' || kl === 'number' || _packNaming().codeKeys.indexOf(kl) >= 0;
   }
   function _classOf(props) {
     var ps = props && props.psets;
@@ -362,8 +391,8 @@
           Object.keys(grp).forEach(function(k) {
             if (hit) return;
             // System from the key, else from the group name when the key is a
-            // generic code field (mirrors the DQ addon's _extractNLSfB breadth —
-            // catches a "NL-SfB"/"Classification" pset whose key is just "Code").
+            // generic code field (catches a pset named after the system, or
+            // "Classification", whose key is just "Code").
             var sys = _classSysOf(k) || (psetSys && _isGenericCodeKey(k) ? psetSys : null);
             if (!sys) return;
             var v = grp[k];
@@ -376,11 +405,19 @@
         }
       });
     }
-    // Fallback: NL-SfB often lives in ObjectType as "(NN)" or "NN.xx ..." (the DQ
-    // addon does the same). Only used when no explicit classification field found.
+    // Fallback: some national systems are written into ObjectType (e.g. "(21)
+    // Buitenwand"); the pack says how (objectTypePatterns, compiled through the
+    // core's safeRegex). Only used when no explicit classification field found.
     if (!hit && props && props.objectType) {
-      var m = /\((\d{2}(?:\.\d{1,2})*)\)/.exec(props.objectType) || /^(\d{2}(?:\.\d{1,2})*)[\.\-\s]/.exec(props.objectType);
-      if (m) hit = { system: 'NL-SfB', code: m[1] };
+      var core = window._ccCountryPackCore;
+      _packNaming().systems.some(function(sys) {
+        return (sys.objectTypePatterns || []).some(function(src) {
+          var re = core ? core.safeRegex(src) : null;
+          var m = re && re.exec(props.objectType);
+          if (m) hit = { system: sys.system, code: m[1] != null ? m[1] : m[0] };
+          return !!hit;
+        });
+      });
     }
     return hit;
   }
@@ -538,7 +575,7 @@
           revitIdA: c.revitIdA != null ? c.revitIdA : null,
           revitIdB: c.revitIdB != null ? c.revitIdB : null,
           uniqueIdA: c.uniqueIdA || null, uniqueIdB: c.uniqueIdB || null,
-          // Classification (NL-SfB/Uniclass/...) — the join key to finance/spec
+          // Classification (Uniclass / national systems from country packs) — the join key to finance/spec
           // sources that IFC GUID can't reach. storey is the spatial (zone) bucket.
           classificationA: classFor(c.modelAId, c.elemA),
           classificationB: classFor(c.modelBId, c.elemB),
@@ -885,13 +922,14 @@
     var s = _getState();
     var pk = _projectKey(s);
     return { projectKey: pk, source: 'clashcontrol',
-      note: 'elevation = model stored units; elevationM = metres when unitScale known; get_clashes.elevation is scene metres.',
+      note: 'elevation = model stored units; elevationM = metres (the model\'s declared unit, else its storey-spacing heuristic); get_clashes.elevation is scene metres.',
       models: (s.models || []).map(function(m) {
         var us = (m.stats && m.stats.unitScale) || null;
+        var toM = typeof window._ccStoreyElevM === 'function' ? window._ccStoreyElevM : null;
         return { modelId: m.id, modelName: m.name, discipline: m.discipline || 'Unknown', unitScale: us,
           levels: (m.storeyData || []).map(function(sd) {
             return { name: sd.name, id: sd.id || null, elevation: sd.elevation,
-              elevationM: us != null ? sd.elevation * us : null };
+              elevationM: toM ? toM(m, sd, s.prefs) : (us != null ? sd.elevation / us : null) };
           }) };
       }) };
   };
@@ -904,8 +942,8 @@
       (m.gridLines || []).forEach(function(g) { if (g && g.name && !seen[g.name]) { seen[g.name] = 1; names.push(g.name); } });
     });
     return { projectKey: pk, source: 'clashcontrol', total: names.length, grids: names,
-      note: names.length ? 'Structural grids from the Revit bridge. get_clashes.gridBay gives each clash\'s nearest bay (e.g. "A-3").'
-                         : 'No grids loaded. Grids come in via the Revit bridge (Connector) — not from plain IFC loads.' };
+      note: names.length ? 'Grid axes from the loaded models (IfcGrid, or the Revit bridge). get_clashes.gridBay gives each clash\'s nearest grid crossing (e.g. "A-3").'
+                         : 'No grids loaded: none of the models has an IfcGrid (or Revit grids via the Connector).' };
   };
 
   handlers.run_detection = function(p) {
@@ -1280,17 +1318,23 @@
   handlers.walk_mode = function(p) {
     if (p.enabled) {
       _dispatch({ t: 'WALK_MODE', v: true });
-      if (window._ccWalkEnter) { var s = _getState(); var elev = 0; if (s.floorPlan) elev = s.floorPlan.elevation; else { var storeys = (typeof _ccCollectStoreys === 'function') ? _ccCollectStoreys(s.models || []) : []; if (storeys.length) { var gf = (typeof _ccStoreyToGeoFactor === 'function') ? _ccStoreyToGeoFactor(s.models || []) : 1; elev = storeys[0].elevation * gf; } } window._ccWalkEnter(elev); }
+      if (window._ccWalkEnter) { var s = _getState(); var elev = 0; if (s.floorPlan) elev = s.floorPlan.elevation; else { var storeys = _storeysM(s); if (storeys.length) elev = storeys[0].elevation; } window._ccWalkEnter(elev); }
       return 'Walk mode activated.';
     } else { if (window._ccWalkExit) window._ccWalkExit(); _dispatch({ t: 'WALK_MODE', v: false }); return 'Walk mode deactivated.'; }
   };
 
   // ── 2D sheet / floor plan handlers ──────────────────────────────
 
+  // Levels of every model merged in METRES (core _ccCollectStoreys: each
+  // model's own unit). Elevations here, in sheets and floor plans are metres.
+  function _storeysM(s) {
+    return typeof window._ccCollectStoreys === 'function' ? window._ccCollectStoreys(s.models || [], s.prefs) : [];
+  }
+
   handlers.create_2d_sheet = function(p) {
     var s = _getState();
     if (!s.models || !s.models.length) return 'No models loaded.';
-    var storeys = (typeof _ccCollectStoreys === 'function') ? _ccCollectStoreys(s.models) : [];
+    var storeys = _storeysM(s);
     var elevation = null, storeyName = null;
 
     if (p.floorName) {
@@ -1312,11 +1356,10 @@
     if (window._ccMakeSheet) {
       sheet = window._ccMakeSheet(storeyName, elevation);
     } else {
-      var gf = (typeof _ccStoreyToGeoFactor === 'function') ? _ccStoreyToGeoFactor(s.models) : 1;
       var id = 'SH' + Date.now().toString(36).toUpperCase();
       sheet = {
         id: id, name: storeyName + ' Plan', storeyName: storeyName,
-        elevation: elevation * gf, _storeyElevation: elevation, cutHeight: 1.2,
+        elevation: elevation, cutHeight: 1.2, _geoFactor: 1,
         scale: { pxPerMeter: 100 }, paper: { size: 'A3', orient: 'landscape' },
         titleBlock: { project: '', author: '', date: new Date().toLocaleDateString(), revision: '', notes: '' },
         northDeg: 0, createdAt: Date.now(), updatedAt: Date.now()
@@ -1346,7 +1389,7 @@
 
   handlers.list_storeys = function() {
     var s = _getState();
-    var storeys = (typeof _ccCollectStoreys === 'function') ? _ccCollectStoreys(s.models || []) : [];
+    var storeys = _storeysM(s);
     if (!storeys.length) return { storeys: [], note: 'No storey data found. IFC files need IfcBuildingStorey entities.' };
     return { storeys: storeys.map(function(st) { return { name: st.name, elevation: st.elevation }; }) };
   };
@@ -1363,7 +1406,7 @@
     var markups = s.markups || [];
     return {
       sheets: sheets.map(function(sh) {
-        return { id: sh.id, name: sh.name, storeyName: sh.storeyName, elevation: sh._storeyElevation || sh.elevation, annotationCount: markups.filter(function(m) { return m.sheetId === sh.id; }).length };
+        return { id: sh.id, name: sh.name, storeyName: sh.storeyName, elevation: sh.elevation, annotationCount: markups.filter(function(m) { return m.sheetId === sh.id; }).length };
       }),
       activeSheetId: s.activeSheetId || null
     };
@@ -1600,6 +1643,17 @@
     var results = {};
     if (window._ccRunDataQualityChecks) results.general = window._ccRunDataQualityChecks(allElements);
     if (window._ccRunBIMModelChecks) results.bim = window._ccRunBIMModelChecks(allElements);
+    // National data standards from country packs that apply to these models
+    // (active regional code, or the project uses the standard's classification).
+    if (typeof window._ccDataQualityStandards === 'function' && typeof window._ccRunStandard === 'function') {
+      window._ccDataQualityStandards().forEach(function(entry) {
+        var res = window._ccRunStandard(entry, entry.std.scope === 'models' ? s.models : allElements);
+        var app = res && typeof window._ccStandardApplicability === 'function' ? window._ccStandardApplicability(entry, res) : null;
+        if (!res || !app || !app.applicable) return;
+        if (!results.standards) results.standards = {};
+        results.standards[entry.key] = { label: entry.std.label, pack: entry.packName, appliesBecause: app.reason, checks: res };
+      });
+    }
     return results;
   };
 
@@ -1740,7 +1794,7 @@
 
   var _TOOL_MANIFEST = [
     { name:'get_status',          description:'Snapshot of the current session: models (with source, version, lastSync and a coarse revision stamp per model — use to check sync with another live tool), clash/issue counts, detection rules, active tab, walk mode, theme. Includes connector:{state(receiving|ready|disconnected),ingesting,percent,elementCount} — when connector.ingesting is true the Revit model is still streaming in, so DO NOT act on model/clash data until state==="ready". Also detecting/detectionProgress and lastDetectionError.' },
-    { name:'get_clashes',         description:'Detected clash pairs: status, priority, severity, storey, types/names, distance (mm), elevation (m), gridBay (nearest structural-grid bay e.g. "A-3" when grids loaded via the Revit bridge), disciplines (arch×structural vs same-discipline), and stable identity per side — uniqueIdA/B (Revit UniqueId, most reliable cross-doc key; prefer it), globalIdA/B (IFC GlobalId), revitIdA/B (ElementId, doc-local) — plus classificationA/B ({system,code} NL-SfB/Uniclass) and modelAId/B.',
+    { name:'get_clashes',         description:'Detected clash pairs: status, priority, severity, storey, types/names, distance (mm), elevation (m), gridBay (nearest grid crossing e.g. "A-3" when a model has grids), disciplines (arch×structural vs same-discipline), and stable identity per side — uniqueIdA/B (Revit UniqueId, most reliable cross-doc key; prefer it), globalIdA/B (IFC GlobalId), revitIdA/B (ElementId, doc-local) — plus classificationA/B ({system,code} e.g. Uniclass or a national system) and modelAId/B.',
       params:{ status:{type:'string',enum:['all','open','resolved','approved','expected','closed'],opt:1}, category:{type:'string',opt:1}, limit:{type:'number',opt:1}, offset:{type:'number',opt:1} } },
     { name:'get_clash_summary',   description:'Aggregate profile of the WHOLE clash set without paging it: total/open, and counts byStatus, byCategory (AI), byDiscipline (pair), byTypePair (top N), byStorey. Use to find the few root causes behind a large count.',
       params:{ topN:{type:'number',opt:1} } },
@@ -1749,7 +1803,7 @@
     { name:'get_data_quality',    description:'Project-level data-quality summary (the aggregate companion to per-element get_element_quality): overall score (0-100) + grade (A-F), plus per-category sub-scores and raw flagged counts under metrics.{completeness,materials,brokenLinks,naming,classification,geometry} and a flat checks[] ({key,label,sev,cat,bucket,count,rate}). Numeric fields are stable for tracking over time. Computed from the open, auditable rules in the Data Quality engine — no detection round-trip.',
       params:{ modelId:{type:'string',opt:1} } },
     { name:'get_levels',          description:"Per-model level/storey elevations (raw + elevationM when unitScale known) so a consumer can compute floor build-up bands. get_clashes.elevation is scene metres." },
-    { name:'get_grids',           description:'Structural grid axis names (e.g. "A","B","1","2") brought in via the Revit bridge. Pair with get_clashes.gridBay to locate or filter clashes by grid position ("near grid A-3"). Empty for plain IFC loads.' },
+    { name:'get_grids',           description:'Grid axis names (e.g. "A","B","1","2") from the loaded models\' IfcGrid (or the Revit bridge). Pair with get_clashes.gridBay to locate or filter clashes by grid position ("near grid A-3"). Empty when no model has grids.' },
     { name:'get_issues',          description:'Retrieves coordination issues with status, priority, assignee, description, involved element IFC GlobalIds (globalIds[]) and Revit ElementIds (revitIdA/B) for cross-tool joins.',
       params:{ status:{type:'string',enum:['all','open','in_progress','resolved','closed'],opt:1}, limit:{type:'number',opt:1} } },
     { name:'get_element_by_guid',  description:'Resolve loaded element(s) by Revit UniqueId (preferred), IFC GlobalId, or Revit ElementId — the inverse join: turn a key from another tool into the matching CC element with its model, type, storey, material, uniqueId and classification. Accepts single uniqueId/globalId/revitId or arrays uniqueIds[]/globalIds[]/revitIds[].',
@@ -1857,7 +1911,7 @@
       params:{ name:{type:'string'} } },
     { name:'toggle_model',        description:'Shows or hides a model by name.',
       params:{ name:{type:'string'}, visible:{type:'boolean'} } },
-    { name:'run_data_quality',    description:'Runs BIM/ILS data quality checks on all loaded models.' }
+    { name:'run_data_quality',    description:'Runs the general and BIM-basics data quality checks plus any national data standard (country pack) that applies to the loaded models.' }
   ];
 
   // Convert compact schema to JSON Schema object format used by MCP/OpenAPI
@@ -2101,14 +2155,7 @@
           var ok = true;
           try {
             ok = window.confirm(
-              'Enable Smart Bridge?\n\n' +
-              'This will download an executable — ' + fileName + ' — from ' +
-              'GitHub Releases (github.com/clashcontrol-io/ClashControl), ' +
-              'a program that runs on your machine and lets AI assistants ' +
-              '(Claude, ChatGPT, etc.) drive ClashControl over a local ' +
-              'connection. Nothing is installed automatically; you run it ' +
-              'yourself after it downloads.\n\n' +
-              'Continue?'
+              _i18n('smartBridge.enableSmartBridgeThisWill','Enable Smart Bridge?\n\nThis will download an executable — {fileName} — from GitHub Releases (github.com/clashcontrol-io/ClashControl), a program that runs on your machine and lets AI assistants (Claude, ChatGPT, etc.) drive ClashControl over a local connection. Nothing is installed automatically; you run it yourself after it downloads.\n\nContinue?',{fileName:fileName})
             );
           } catch (e) { ok = true; } // no confirm() available — don't block headless/test contexts
           if (!ok) {
@@ -2157,7 +2204,7 @@
             Installer <code style=${{background:'var(--bg-tertiary)',padding:'1px 4px',borderRadius:2,fontSize:'0.57rem'}}>${_installerFile}</code>${' '}can be deleted from your Downloads folder
           </span>
           <button onClick=${_copyInstallerName}
-            style=${{padding:'2px 7px',borderRadius:4,fontSize:'0.57rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--bg-tertiary)',color:'var(--text-muted)',fontFamily:'inherit',flexShrink:0}}>Copy name</button>
+            style=${{padding:'2px 7px',borderRadius:4,fontSize:'0.57rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--bg-tertiary)',color:'var(--text-muted)',fontFamily:'inherit',flexShrink:0}}>${_i18n('smartBridge.copyName','Copy name')}</button>
         </div>`;
 
         // Claude Desktop MCP config snippet — just the block to merge in,
@@ -2213,7 +2260,7 @@
           return html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
             <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
               <div style=${{width:7,height:7,border:'1.5px solid #fbbf24',borderTopColor:'transparent',borderRadius:'50%',animation:'cc-spin .6s linear infinite',flexShrink:0}}></div>
-              <span style=${{fontSize:'0.75rem',color:'#fbbf24',flex:1}}>Updating bridge\u2026</span>
+              <span style=${{fontSize:'0.75rem',color:'#fbbf24',flex:1}}>${_i18n('smartBridge.updatingBridge','Updating bridge…')}</span>
             </div>
             <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.5}}>
               Downloading update and restarting. Reconnecting automatically\u2026
@@ -2226,7 +2273,7 @@
           return html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
             <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
               <div style=${{width:7,height:7,border:'1.5px solid #fbbf24',borderTopColor:'transparent',borderRadius:'50%',animation:'cc-spin .6s linear infinite',flexShrink:0}}></div>
-              <span style=${{fontSize:'0.75rem',color:'#fbbf24',flex:1}}>Reconnecting\u2026</span>
+              <span style=${{fontSize:'0.75rem',color:'#fbbf24',flex:1}}>${_i18n('smartBridge.reconnecting','Reconnecting…')}</span>
             </div>
             <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.5}}>
               Bridge updated and restarted. Reconnecting automatically\u2026
@@ -2253,7 +2300,7 @@
                 Update available${sb.updateVersion ? ': v' + sb.updateVersion : ''}
               </span>
               ${_updateHref && html`<a href=${_updateHref} target="_blank" rel="noopener"
-                style=${{fontSize:'0.63rem',fontWeight:600,color:'#fbbf24',textDecoration:'none',background:'rgba(234,179,8,.15)',padding:'2px 7px',borderRadius:4,flexShrink:0}}>Download</a>`}
+                style=${{fontSize:'0.63rem',fontWeight:600,color:'#fbbf24',textDecoration:'none',background:'rgba(234,179,8,.15)',padding:'2px 7px',borderRadius:4,flexShrink:0}}>${_i18n('smartBridge.download','Download')}</a>`}
             </div>`}
             ${!sb.llmConnected && html`<div style=${{fontSize:'0.63rem',color:'var(--text-faint)',lineHeight:1.6}}>
               Smart Bridge is running. Connect your AI — one click, no API key:
@@ -2268,7 +2315,7 @@
               <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
                 <span style=${{fontSize:'0.69rem',fontWeight:600,color:'#c084fc',flex:1}}>Claude Desktop / Claude Code</span>
                 <button id="cc-sb-claude-btn" onClick=${_autoConfigureClaude}
-                  style=${{..._btnSmall,background:'#7c3aed',color:'#fff',flexShrink:0}}>Configure Claude</button>
+                  style=${{..._btnSmall,background:'#7c3aed',color:'#fff',flexShrink:0}}>${_i18n('smartBridge.configureClaude','Configure Claude')}</button>
               </div>
               <div style=${{fontSize:'0.58rem',color:'var(--text-faint)',lineHeight:1.4}}>
                 ${os === 'win'
@@ -2281,7 +2328,7 @@
                 ${' in the ClashControl folder for all 66 tools.'}
               </div>
               <details>
-                <summary style=${{fontSize:'0.58rem',color:'var(--text-faint)',cursor:'pointer',userSelect:'none'}}>Show block to add</summary>
+                <summary style=${{fontSize:'0.58rem',color:'var(--text-faint)',cursor:'pointer',userSelect:'none'}}>${_i18n('smartBridge.showBlockToAdd','Show block to add')}</summary>
                 <pre style=${{..._codeStyle,margin:'.3rem 0 0',padding:'.35rem .4rem',whiteSpace:'pre-wrap',lineHeight:1.4,fontSize:'0.57rem'}}>${_claudeConfig}</pre>
               </details>
             </div>`}
@@ -2301,7 +2348,7 @@
               </div>
               <code style=${_codeStyle}>POST http://localhost:19803/call/{tool_name}</code>
               <div style=${{fontSize:'0.57rem',color:'var(--text-faint)'}}>
-                <a href="http://localhost:19803/tools" target="_blank" rel="noopener" style=${{color:'var(--accent)',textDecoration:'underline'}}>View all tools</a>
+                <a href="http://localhost:19803/tools" target="_blank" rel="noopener" style=${{color:'var(--accent)',textDecoration:'underline'}}>${_i18n('smartBridge.viewAllTools','View all tools')}</a>
                 ${' · '}
                 <a href="http://localhost:19803/openapi.json" target="_blank" rel="noopener" style=${{color:'var(--accent)',textDecoration:'underline'}}>OpenAPI spec</a>
               </div>
@@ -2384,14 +2431,14 @@
 
               return html`<div style=${{background:'var(--bg-secondary)',borderRadius:6,padding:'.5rem',display:'flex',flexDirection:'column',gap:'.4rem'}}>
                 <div style=${{display:'flex',alignItems:'center',gap:'.4rem'}}>
-                  <span style=${{fontSize:'0.69rem',fontWeight:600,color:'#fb923c',flex:1}}>Use your own AI</span>
+                  <span style=${{fontSize:'0.69rem',fontWeight:600,color:'#fb923c',flex:1}}>${_i18n('smartBridge.useYourOwnAi','Use your own AI')}</span>
                   <span style=${{fontSize:'0.57rem',color:'var(--text-faint)',background:'var(--bg-tertiary)',padding:'1px 5px',borderRadius:3}}>2.1</span>
                 </div>
                 <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.4}}>
                   One click connects the LLM running on your desktop (Ollama, LM Studio, llama.cpp, Jan) — no API key. The bridge runs the agent loop.
                 </div>
                 <button id="cc-sb-detect-btn" onClick=${_detectLocal}
-                  style=${{..._btnSmall,background:'var(--accent)',color:'#fff',alignSelf:'stretch',textAlign:'center',fontWeight:600}}>Connect my desktop LLM</button>
+                  style=${{..._btnSmall,background:'var(--accent)',color:'#fff',alignSelf:'stretch',textAlign:'center',fontWeight:600}}>${_i18n('smartBridge.connectMyDesktopLlm','Connect my desktop LLM')}</button>
 
                 <details style=${{borderRadius:4,overflow:'hidden'}}>
                   <summary style=${{fontSize:'0.6rem',color:'var(--text-faint)',cursor:'pointer',userSelect:'none',padding:'.15rem 0'}}>
@@ -2399,7 +2446,7 @@
                   </summary>
                   <div key=${cfg.provider + cfg.model + cfg.baseUrl} style=${{display:'flex',flexDirection:'column',gap:'.3rem',paddingTop:'.35rem'}}>
                     <div>
-                      <label style=${_labelStyle}>Provider</label>
+                      <label style=${_labelStyle}>${_i18n('smartBridge.provider','Provider')}</label>
                       <select id="cc-sb-llm-provider" onChange=${_onProviderChange}
                         style=${{..._inputStyle,padding:'.2rem .35rem'}}>
                         <option value="ollama" selected=${cfg.provider==='ollama'}>Ollama (local)</option>
@@ -2410,15 +2457,15 @@
                       </select>
                     </div>
                     <div>
-                      <label style=${_labelStyle}>Model</label>
+                      <label style=${_labelStyle}>${_i18n('smartBridge.model','Model')}</label>
                       <input id="cc-sb-llm-model" type="text" placeholder="llama3.2" defaultValue=${cfg.model} style=${_inputStyle} />
                     </div>
                     <div>
-                      <label style=${_labelStyle}>Base URL</label>
+                      <label style=${_labelStyle}>${_i18n('smartBridge.baseUrl','Base URL')}</label>
                       <input id="cc-sb-llm-url" type="text" placeholder="http://localhost:11434" defaultValue=${cfg.baseUrl} style=${_inputStyle} />
                     </div>
                     <button id="cc-sb-llm-save-btn" onClick=${_saveLlmCfg}
-                      style=${{..._btnSmall,background:'var(--bg-tertiary)',color:'var(--text-muted)',alignSelf:'flex-start'}}>Save</button>
+                      style=${{..._btnSmall,background:'var(--bg-tertiary)',color:'var(--text-muted)',alignSelf:'flex-start'}}>${_i18n('smartBridge.save','Save')}</button>
                   </div>
                 </details>
 
@@ -2433,7 +2480,7 @@
                       ${m.content}
                     </div>`;
                   })}
-                  ${sb.chatBusy && html`<div style=${{fontSize:'0.6rem',color:'var(--text-faint)',fontStyle:'italic',alignSelf:'flex-start',padding:'0 .2rem'}}>Thinking\u2026</div>`}
+                  ${sb.chatBusy && html`<div style=${{fontSize:'0.6rem',color:'var(--text-faint)',fontStyle:'italic',alignSelf:'flex-start',padding:'0 .2rem'}}>${_i18n('smartBridge.thinking','Thinking…')}</div>`}
                 </div>`}
 
                 ${sb.chatError && html`<div style=${{fontSize:'0.6rem',color:'#f87171',padding:'.2rem .3rem',background:'rgba(248,113,113,.08)',borderRadius:4}}>${sb.chatError}</div>`}
@@ -2449,7 +2496,7 @@
                   </button>
                 </div>
                 ${msgs.length > 0 && html`<button onClick=${function(){ if(d) d({t:'UPD_SMART_BRIDGE',u:{chatMessages:[],chatError:null}}); }}
-                  style=${{..._btnSmall,background:'transparent',color:'var(--text-faint)',border:'1px solid var(--border)',alignSelf:'flex-start'}}>Clear chat</button>`}
+                  style=${{..._btnSmall,background:'transparent',color:'var(--text-faint)',border:'1px solid var(--border)',alignSelf:'flex-start'}}>${_i18n('smartBridge.clearChat','Clear chat')}</button>`}
               </div>`;
             })()}
 
@@ -2477,16 +2524,16 @@
         // Failed state
         if (sb.failed) {
           return html`<div style=${{display:'flex',flexDirection:'column',gap:'.4rem'}}>
-            <div style=${{fontSize:'0.69rem',color:'#fca5a5'}}>Could not connect to Smart Bridge.</div>
+            <div style=${{fontSize:'0.69rem',color:'#fca5a5'}}>${_i18n('smartBridge.couldNotConnectTo','Could not connect to Smart Bridge.')}</div>
             <div style=${{fontSize:'0.6rem',color:'var(--text-faint)',lineHeight:1.5}}>
               Start the bridge manually:<br/>
               <code style=${{fontSize:'0.57rem',background:'var(--bg-tertiary)',padding:'2px 4px',borderRadius:3,wordBreak:'break-all'}}>${dl.installPath}</code>
             </div>
             <div style=${{display:'flex',gap:'.3rem'}}>
               <button onClick=${function(){ _connectBridge(d); }}
-                style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit'}}>Retry</button>
+                style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit'}}>${_i18n('smartBridge.retry','Retry')}</button>
               <button onClick=${function(){ _triggerDownload(); _connectBridge(d, {installing:true}); }}
-                style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',background:'#1e3a5f',color:'#93c5fd',fontFamily:'inherit'}}>Re-download</button>
+                style=${{padding:'.25rem .6rem',borderRadius:5,fontSize:'0.69rem',fontWeight:600,cursor:'pointer',border:'none',background:'#1e3a5f',color:'#93c5fd',fontFamily:'inherit'}}>${_i18n('smartBridge.reDownload','Re-download')}</button>
             </div>
           </div>`;
         }
@@ -2498,10 +2545,10 @@
           </div>
           ${sb.wasInstalled ?
             html`<button onClick=${function(){ _connectBridge(d); }}
-              style=${{padding:'.3rem .7rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit',width:'100%'}}>Connect to Smart Bridge</button>
+              style=${{padding:'.3rem .7rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit',width:'100%'}}>${_i18n('smartBridge.connectToSmartBridge','Connect to Smart Bridge')}</button>
             ${_cleanupRow}` :
             html`<button onClick=${function(){ _triggerDownload(); _connectBridge(d, {installing:true}); }}
-              style=${{padding:'.3rem .7rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit',width:'100%'}}>Install & Connect</button>`}
+              style=${{padding:'.3rem .7rem',borderRadius:6,fontSize:'0.75rem',fontWeight:600,cursor:'pointer',border:'none',background:'var(--accent)',color:'#fff',fontFamily:'inherit',width:'100%'}}>${_i18n('smartBridge.installConnect','Install & Connect')}</button>`}
           <div style=${{display:'flex',gap:'.3rem',flexWrap:'wrap'}}>
             ${Object.keys(_downloads).map(function(k) {
               var d2 = _downloads[k];

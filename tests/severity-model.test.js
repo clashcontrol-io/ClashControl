@@ -26,8 +26,13 @@ assert.equal(typeof _ccDeterministicSeverity, 'function');
 
 const VALID = ['critical', 'major', 'minor', 'info'];
 
-function hard(disciplines, depthMm) {
-  return { type: 'hard', disciplines: disciplines, distance: -Math.abs(depthMm) };
+// Box sizes (mm): a 100 mm run through a 300 mm host is extent 'through'
+// once the depth reaches 100 mm; without sizes the extent is 'unknown'.
+const RUN = { dx: 3000, dy: 100, dz: 100 }, HOST = { dx: 300, dy: 500, dz: 6000 };
+function hard(disciplines, depthMm, sized) {
+  const c = { type: 'hard', disciplines: disciplines, distance: -Math.abs(depthMm) };
+  if (sized) { c.bboxA = RUN; c.bboxB = HOST; }
+  return c;
 }
 function soft(gapMm) {
   return { type: 'soft', clearanceMm: gapMm };
@@ -66,44 +71,34 @@ test('soft clash with no clearanceMm data defaults to minor (no signal to escala
 });
 
 test('hard clash under the 10mm floor is minor regardless of discipline (tolerance/rounding territory)', () => {
-  assert.equal(_ccDeterministicSeverity(hard(['structural', 'structural'], 5)), 'minor');
+  assert.equal(_ccDeterministicSeverity(hard(['structural', 'mep'], 5, true)), 'minor');
   assert.equal(_ccDeterministicSeverity(hard(['architectural', 'architectural'], 0.5)), 'minor');
 });
 
-test('hard clash ≥10mm between low-weight disciplines is major, not critical', () => {
-  assert.equal(_ccDeterministicSeverity(hard(['architectural', 'architectural'], 15)), 'major');
-  assert.equal(_ccDeterministicSeverity(hard(['architectural', 'other'], 40)), 'major');
+test('pair class x extent: a MEP run through structure is critical, partly into it major', () => {
+  assert.equal(_ccDeterministicSeverity(hard(['structural', 'mep'], 120, true)), 'critical');
+  assert.equal(_ccDeterministicSeverity(hard(['mep', 'structural'], 120, true)), 'critical', 'symmetric');
+  assert.equal(_ccDeterministicSeverity(hard(['structural', 'mep'], 60, true)), 'major');
 });
 
-test('hard clash ≥20mm involving structural is critical', () => {
-  assert.equal(_ccDeterministicSeverity(hard(['structural', 'mep'], 20)), 'critical');
-  assert.equal(_ccDeterministicSeverity(hard(['architectural', 'structural'], 25)), 'critical');
+test('depth alone never makes a clash critical: architecture x structure is major at most', () => {
+  assert.equal(_ccDeterministicSeverity(hard(['architectural', 'structural'], 120, true)), 'major');
+  assert.equal(_ccDeterministicSeverity(hard(['architectural', 'structural'], 60, true)), 'minor');
+  assert.equal(_ccDeterministicSeverity(hard(['architectural', 'other'], 2000, true)), 'major');
+  assert.equal(_ccDeterministicSeverity(hard(['mep', 'architectural'], 120, true)), 'major');
 });
 
-test('a deep hard clash is critical: >=50mm with a MEP run / civil, >=100mm even between low-criticality roles', () => {
-  // Role-aware since the "smarter clashes" pass: architectural/other pairs
-  // need >=100mm; a MEP run (or civil) needs >=50mm.
-  assert.equal(_ccDeterministicSeverity(hard(['architectural', 'other'], 50)), 'major');
-  assert.equal(_ccDeterministicSeverity(hard(['architectural', 'other'], 100)), 'critical');
-  assert.equal(_ccDeterministicSeverity(hard(['mep', 'architectural'], 50)), 'critical');
-  assert.equal(_ccDeterministicSeverity(hard(['civil', 'architectural'], 50)), 'critical');
-});
-
-test('discipline weight uses the MAX of the pair, not an average or the first element', () => {
-  // A structural element clashing with an architectural one is exactly as
-  // urgent as structural-vs-structural at the same depth - the low-weight
-  // side doesn't dilute it.
-  const mixed = _ccDeterministicSeverity(hard(['architectural', 'structural'], 20));
-  const bothStructural = _ccDeterministicSeverity(hard(['structural', 'structural'], 20));
-  assert.equal(mixed, bothStructural);
-  assert.equal(mixed, 'critical');
+test('critical needs a known extent: without box sizes a deep structural penetration is major', () => {
+  assert.equal(_ccDeterministicSeverity(hard(['structural', 'mep'], 400)), 'major');
+  assert.equal(_ccDeterministicSeverity(hard(['structural', 'mep'], 20)), 'major');
 });
 
 test('missing/empty disciplines array does not throw and treats it as low weight', () => {
-  assert.equal(_ccDeterministicSeverity({ type: 'hard', distance: -30 }), 'major');
-  assert.equal(_ccDeterministicSeverity({ type: 'hard', disciplines: [], distance: -30 }), 'major');
+  assert.equal(_ccDeterministicSeverity({ type: 'hard', distance: -30 }), 'minor');
+  assert.equal(_ccDeterministicSeverity({ type: 'hard', disciplines: [], distance: -60 }), 'major');
 });
 
-test('unknown discipline strings fall back to weight 1, same as architectural/other', () => {
-  assert.equal(_ccDeterministicSeverity(hard(['unknown-discipline', 'unknown-discipline'], 20)), 'major');
+test('unknown discipline strings fall back to the "other" pair class (major at most)', () => {
+  assert.equal(_ccDeterministicSeverity(hard(['unknown-discipline', 'unknown-discipline'], 20)), 'minor');
+  assert.equal(_ccDeterministicSeverity(hard(['unknown-discipline', 'unknown-discipline'], 2000, true)), 'major');
 });

@@ -1,7 +1,31 @@
-// ClashControl — Shared project & issues sync endpoint
-// No login required — uses shareable project keys
+// ClashControl — Shared project sync endpoint (docs/INTERNALS.md §21.56)
+// No login required — uses shareable project keys.
+//
+// A shared project is an append-only CHANGE LOG (table shared_changes), the
+// same records and the same conflict rule as the shared folder
+// (shared-log-core.js): every team decision is a record {id, user, ts,
+// target:{kind,key}, field, value, base, resolves?, prev?, resolution?,
+// covers?}. The server never decides who wins — it stores records
+// (idempotent by id), numbers them per project (`seq`, assigned under the
+// project row lock so a reader's cursor never skips a record that commits
+// later) and returns the ones after the cursor a client passes. Clients
+// compute heads / conflicts with the same core, so concurrent edits are a
+// conflict every user sees until a user resolves it.
+//
+// Wire format (v2):
+//   GET  ?id=KEY&v=2&after=<cursor>[&limit=n] → {v, project, changes, names, cursor, more}
+//   PUT  ?id=KEY  body {v:2, user, name, changes:[record]} → {v, accepted, known, invalid:[ids]}
+//   POST (create), DELETE ?scope=project (editKey) — unchanged.
+// Old clients (no v): GET returns the agreed values as the old `issues`
+// shape (read-only view); PUT is refused — nothing is written and every id
+// comes back in `conflicts` with error 'client_outdated', which the old
+// client shows as "your edit was not applied" (a reload updates it).
+// The old per-issue rows (shared_issues) are read once into records the
+// first time a v2 client opens the project (lazy migration).
 
 var { cors, llmGuard, dbUrl: getDbUrl } = require('./_lib');
+var LOG = require('../shared-log-core.js');
+var IDENT = require('../clash-identity-core.js');
 
 var crypto = require('crypto');
 
@@ -50,12 +74,12 @@ function editKeyMatches(provided, stored) {
 // or absent independently depending on which migrations a deployment has run.
 async function loadProjectRow(sql, projectId) {
   try {
-    return await sql`SELECT id, name, created_at, last_activity, edit_key, expires_at FROM shared_projects WHERE id = ${projectId}`;
+    return await sql`/* cc:project-row */ SELECT id, name, created_at, last_activity, edit_key, expires_at FROM shared_projects WHERE id = ${projectId}`;
   } catch (e1) {
     try {
-      return await sql`SELECT id, name, created_at, last_activity, edit_key FROM shared_projects WHERE id = ${projectId}`;
+      return await sql`/* cc:project-row-2 */ SELECT id, name, created_at, last_activity, edit_key FROM shared_projects WHERE id = ${projectId}`;
     } catch (e2) {
-      return await sql`SELECT id, name, created_at, last_activity FROM shared_projects WHERE id = ${projectId}`;
+      return await sql`/* cc:project-row-3 */ SELECT id, name, created_at, last_activity FROM shared_projects WHERE id = ${projectId}`;
     }
   }
 }
@@ -78,6 +102,16 @@ function generateKey(name) {
 // blow up a Postgres text column or the 256KB payload cap via one field.
 var FIELD_CAPS = { id: 200, title: 500, description: 5000, assignee: 200, category: 100, source: 100, globalId: 100 };
 
+// `type` is a short clash-type tag ('hard', 'soft', 'clearance', ...) —
+// restricted to a conservative token charset rather than a closed enum so
+// new client types don't need a server deploy.
+var TYPE_RE = /^[A-Za-z0-9_.:-]{1,40}$/;
+var SHORT_FIELD_CAPS = { priority: 40, status: 40, dueDate: 64, createdAt: 64 };
+
+function isValidPoint(p) {
+  return Array.isArray(p) && p.length === 3 && p.every(function(n) { return typeof n === 'number' && Number.isFinite(n); });
+}
+
 function isValidStr(v, cap) {
   return typeof v === 'string' && v.length <= cap;
 }
@@ -94,6 +128,14 @@ function validateIssue(issue) {
   if (issue.assignee != null && !isValidStr(String(issue.assignee), FIELD_CAPS.assignee)) return false;
   if (issue.globalIdA != null && !isValidStr(String(issue.globalIdA), FIELD_CAPS.globalId)) return false;
   if (issue.globalIdB != null && !isValidStr(String(issue.globalIdB), FIELD_CAPS.globalId)) return false;
+  if (issue.category != null && !isValidStr(issue.category, FIELD_CAPS.category)) return false;
+  if (issue.source != null && !isValidStr(issue.source, FIELD_CAPS.source)) return false;
+  if (issue.type != null && !(typeof issue.type === 'string' && TYPE_RE.test(issue.type))) return false;
+  if (issue.point != null && !isValidPoint(issue.point)) return false;
+  for (var f in SHORT_FIELD_CAPS) {
+    if (issue[f] != null && !isValidStr(issue[f], SHORT_FIELD_CAPS[f])) return false;
+  }
+  if (issue.status.length > SHORT_FIELD_CAPS.status) return false;
   if (issue.distance != null && !Number.isFinite(Number(issue.distance))) return false;
   // _updatedAt, when present, must be a value Date can parse — an invalid
   // one would otherwise blow up as an uncaught 500 in the PUT handler's
@@ -128,7 +170,188 @@ function stripToShared(issue) {
   };
 }
 
-module.exports = async function handler(req, res) {
+// ── Change log ───────────────────────────────────────────────────────────
+var LOG_V = 2;
+var CHANGE_KINDS = { clash: 1, issue: 1, note: 1, viewpoint: 1 };
+// Abuse caps, far above what a client sends (a status edit is ~200 bytes,
+// an issue's `created` record a few KB).
+var CHANGE_CAPS = { perPut: 500, key: 300, value: 16384, prev: 4096, resolves: 64, covers: 2000, pullDefault: 1000, pullMax: 2000, legacyView: 20000 };
+var FIELD_RE = /^[A-Za-z0-9_.:-]{1,160}$/;
+var USER_ID_RE = /^[A-Za-z0-9_.-]{1,120}$/;
+
+function jsonLen(v) { try { return JSON.stringify(v === undefined ? null : v).length; } catch (e) { return Infinity; } }
+
+// One record from a client: the core's normalisation (malformed → null)
+// plus the server's caps. Returns the record or null.
+function validateChange(raw) {
+  var r = LOG.normaliseChange(raw);
+  if (!r) return null;
+  if (!CHANGE_KINDS[r.target.kind] || r.target.key.length > CHANGE_CAPS.key) return null;
+  if (!FIELD_RE.test(r.field) || !USER_ID_RE.test(r.user)) return null;
+  r.ts = Math.round(r.ts);
+  if (!Number.isSafeInteger(r.ts)) return null;
+  if (r.base && r.base.length > 200) return null;
+  if (jsonLen(r.value) > CHANGE_CAPS.value) return null;
+  if (r.prev !== undefined && jsonLen(r.prev) > CHANGE_CAPS.prev) return null;
+  if (r.resolves && (r.resolves.length > CHANGE_CAPS.resolves || r.resolves.some(function(x) { return x.length > 200; }))) return null;
+  if (r.covers && r.covers.length > CHANGE_CAPS.covers) return null;
+  return r;
+}
+
+function changeToRow(r, ord, userName) {
+  var meta = {};
+  if (r.prev !== undefined) meta.prev = r.prev;
+  if (r.resolution) meta.resolution = true;
+  if (r.covers) meta.covers = r.covers;
+  return { ord: ord, id: r.id, user_id: r.user, user_name: userName || null, ts: r.ts, target_kind: r.target.kind, target_key: r.target.key,
+    field: r.field, value: r.value === undefined ? null : r.value, base: r.base || null, resolves: r.resolves || null, meta: meta };
+}
+
+// The driver returns jsonb columns parsed (a jsonb string is a JS string).
+function rowToChange(row) {
+  var meta = (row.meta && typeof row.meta === 'object') ? row.meta : {};
+  var r = { id: row.id, user: row.user_id, ts: Number(row.ts), target: { kind: row.target_kind, key: row.target_key }, field: row.field,
+    value: row.value === undefined ? null : row.value, base: row.base || null };
+  var rs = row.resolves;
+  if (Array.isArray(rs) && rs.length) r.resolves = rs;
+  if (Object.prototype.hasOwnProperty.call(meta, 'prev')) r.prev = meta.prev;
+  if (meta.resolution) r.resolution = true;
+  if (Array.isArray(meta.covers)) r.covers = meta.covers;
+  return r;
+}
+
+// "Run api/schema.sql" errors (table / column missing on a deployment that
+// has not run the migration yet) → a clear 503 instead of a generic 500.
+function isMissingSchema(e) {
+  return !!(e && (e.code === '42P01' || e.code === '42703' || /(relation|column) .* does not exist/i.test(String(e.message || ''))));
+}
+
+// The change log's tables, created by the server itself the first time a
+// request finds them missing — the same statements as api/schema.sql
+// (tests/project-changelog.test.js keeps them identical), all "if not
+// exists", so running them again or concurrently is harmless. Once per
+// function instance; when the database role may not create tables, the
+// request still answers the 503 that says to run api/schema.sql.
+var _schemaEnsured = null;
+function ensureChangeLogSchema(sql) {
+  if (!_schemaEnsured) {
+    _schemaEnsured = (async function() {
+      await sql`/* cc:schema-seq */ ALTER TABLE shared_projects ADD COLUMN IF NOT EXISTS change_seq BIGINT NOT NULL DEFAULT 0`;
+      await sql`/* cc:schema-migrated */ ALTER TABLE shared_projects ADD COLUMN IF NOT EXISTS log_migrated BOOLEAN NOT NULL DEFAULT false`;
+      await sql`/* cc:schema-changes */ CREATE TABLE IF NOT EXISTS shared_changes (
+  project_id  TEXT NOT NULL REFERENCES shared_projects(id) ON DELETE CASCADE,
+  seq         BIGINT NOT NULL,
+  id          TEXT NOT NULL,
+  user_id     TEXT NOT NULL,
+  user_name   TEXT,
+  ts          BIGINT NOT NULL,
+  target_kind TEXT NOT NULL,
+  target_key  TEXT NOT NULL,
+  field       TEXT NOT NULL,
+  value       JSONB,
+  base        TEXT,
+  resolves    JSONB,
+  meta        JSONB NOT NULL DEFAULT '{}',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (project_id, id)
+)`;
+      await sql`/* cc:schema-seq-idx */ CREATE INDEX IF NOT EXISTS shared_changes_seq_idx ON shared_changes (project_id, seq)`;
+    })().catch(function(e) { _schemaEnsured = null; throw e; });
+  }
+  return _schemaEnsured;
+}
+
+// Appends records (already validated, deduped). Sequence numbers come from
+// the project row, bumped in the SAME statement: the row lock orders
+// concurrent appends, so seqs are committed in increasing order and a pull
+// "after N" can never miss a record. Existing ids are skipped (idempotent).
+async function appendChanges(sql, projectId, recs, nameOf) {
+  var inserted = [];
+  for (var i = 0; i < recs.length; i += CHANGE_CAPS.perPut) {
+    var rows = recs.slice(i, i + CHANGE_CAPS.perPut).map(function(r, k) { return changeToRow(r, k, nameOf(r)); });
+    var out = await sql`/* cc:append */
+      WITH incoming AS (
+        SELECT * FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb)
+          AS r(ord int, id text, user_id text, user_name text, ts bigint, target_kind text, target_key text, field text, value jsonb, base text, resolves jsonb, meta jsonb)
+      ),
+      fresh AS (
+        SELECT i.* FROM incoming i
+        WHERE NOT EXISTS (SELECT 1 FROM shared_changes c WHERE c.project_id = ${projectId} AND c.id = i.id)
+      ),
+      bump AS (
+        UPDATE shared_projects SET change_seq = change_seq + (SELECT count(*) FROM fresh), last_activity = now()
+        WHERE id = ${projectId}
+        RETURNING change_seq
+      )
+      INSERT INTO shared_changes (project_id, seq, id, user_id, user_name, ts, target_kind, target_key, field, value, base, resolves, meta)
+      SELECT ${projectId}, (SELECT change_seq FROM bump) - (SELECT count(*) FROM fresh) + row_number() OVER (ORDER BY f.ord),
+             f.id, f.user_id, f.user_name, f.ts, f.target_kind, f.target_key, f.field, f.value, f.base, f.resolves, f.meta
+      FROM fresh f
+      ON CONFLICT (project_id, id) DO NOTHING
+      RETURNING id, seq`;
+    inserted = inserted.concat(out || []);
+  }
+  return inserted;
+}
+
+// First v2 access of a project: its old per-issue rows become records once.
+// Deterministic record ids, so two requests migrating at once insert the
+// same records (the second insert skips them).
+async function ensureLog(sql, projectId) {
+  var st = await sql`/* cc:log-state */ SELECT log_migrated FROM shared_projects WHERE id = ${projectId}`;
+  if (st.length && st[0].log_migrated) return;
+  var rows = await sql`/* cc:legacy-rows */ SELECT id, data, updated_by, updated_at FROM shared_issues WHERE project_id = ${projectId}`;
+  var m = LOG.migrateLegacyRows(rows, { projectId: projectId, identityKey: IDENT.computeClashIdentityKey });
+  if (m.changes.length) await appendChanges(sql, projectId, m.changes, function(r) { return m.names[r.user] || null; });
+  await sql`/* cc:log-migrated */ UPDATE shared_projects SET log_migrated = true WHERE id = ${projectId}`;
+}
+
+async function pullChanges(sql, projectId, after, limit) {
+  var rows = await sql`/* cc:pull */ SELECT seq, id, user_id, user_name, ts, target_kind, target_key, field, value, base, resolves, meta
+    FROM shared_changes WHERE project_id = ${projectId} AND seq > ${after} ORDER BY seq LIMIT ${limit + 1}`;
+  var more = rows.length > limit;
+  if (more) rows = rows.slice(0, limit);
+  var names = {};
+  rows.forEach(function(row) { if (row.user_name) names[row.user_id] = row.user_name; });
+  return { changes: rows.map(rowToChange), names: names, cursor: rows.length ? String(rows[rows.length - 1].seq) : String(after), more: more };
+}
+
+function parseCursor(v) {
+  var n = Number(v);
+  return Number.isSafeInteger(n) && n >= 0 ? n : 0;
+}
+
+// Read-only view for old clients: the agreed value of every shared field in
+// the old one-record-per-issue shape (clashes keyed by their GlobalId pair,
+// which the old client matches on).
+function legacyView(changes) {
+  var log = LOG.createLog();
+  LOG.addChanges(log, changes);
+  var out = [];
+  LOG.targets(log).forEach(function(t) {
+    var ts = LOG.targetState(log, t[0], t[1]), f = ts.fields, latest = 0;
+    Object.keys(f).forEach(function(k) { f[k].heads.forEach(function(h) { if (h.ts > latest) latest = h.ts; }); });
+    function v(name) { var x = f[name]; return x && x.known ? x.value : undefined; }
+    var rec;
+    if (t[0] === 'issue') {
+      if (v('deleted') === true || !v('created')) return;
+      rec = Object.assign({}, v('created'), { id: t[1] });
+      LOG.DECISION_FIELDS.forEach(function(k) { if (v(k) !== undefined) rec[k] = v(k); });
+    } else if (t[0] === 'clash') {
+      var at = t[1].lastIndexOf('@'), pair = (at > 0 ? t[1].slice(0, at) : '').split('|');
+      if (pair.length !== 2 || pair.some(function(g) { return !g || /^(u|eid):/.test(g); })) return;
+      rec = { id: t[1], globalIdA: pair[0], globalIdB: pair[1] };
+      LOG.DECISION_FIELDS.forEach(function(k) { if (v(k) !== undefined) rec[k] = v(k); });
+    } else return;
+    if (!rec.status) rec.status = 'open';
+    var d = stripToShared(rec);
+    d._updatedAt = new Date(latest || 0).toISOString();
+    out.push(d);
+  });
+  return out;
+}
+
+async function handler(req, res) {
   if (cors(req, res, 'GET, POST, PUT, DELETE')) return;
 
   // Rate limit + payload cap — this is the only unauthenticated DB-write
@@ -142,22 +365,41 @@ module.exports = async function handler(req, res) {
   var { neon } = require('@neondatabase/serverless');
   var sql = neon(url);
 
-  var projectId = req.query.id || null;
-
   try {
+    return await serve(sql, req, res);
+  } catch (e) {
+    if (isMissingSchema(e)) {
+      // a deployment whose database predates the change log: set it up once
+      // and answer this request again
+      try { await ensureChangeLogSchema(sql); } catch (e2) {
+        console.error('Shared change log setup failed:', e2);
+        return res.status(503).json({ error: 'Shared change log not set up on this deployment (run api/schema.sql)' });
+      }
+      try { return await serve(sql, req, res); } catch (e3) { e = e3; }
+      if (isMissingSchema(e)) return res.status(503).json({ error: 'Shared change log not set up on this deployment (run api/schema.sql)' });
+    }
+    console.error('Project sync error:', e);
+    return res.status(500).json({ error: 'Database error' });
+  }
+}
+
+async function serve(sql, req, res) {
+  var projectId = req.query.id || null;
+  {
     switch (req.method) {
 
       // POST — Create a new shared project
       case 'POST': {
         var body = req.body || {};
-        var name = (body.name || 'Untitled Project').slice(0, 100);
+        var name = (typeof body.name === 'string' && body.name ? body.name : 'Untitled Project').slice(0, 100);
+        var postUser = isValidStr(body.user, FIELD_CAPS.assignee) && body.user ? body.user : 'anonymous';
 
         // Ensure uniqueness — re-check after every regeneration (the old
         // single retry could still 500 on a second collision).
         var key, taken, tries = 0;
         do {
           key = generateKey(name);
-          taken = await sql`SELECT id FROM shared_projects WHERE id = ${key}`;
+          taken = await sql`/* cc:key-taken */ SELECT id FROM shared_projects WHERE id = ${key}`;
         } while (taken.length > 0 && ++tries < 5);
         if (taken.length > 0) return res.status(503).json({ error: 'Could not allocate a project key, retry' });
 
@@ -182,9 +424,9 @@ module.exports = async function handler(req, res) {
 
         try {
           if (expiresAt) {
-            await sql`INSERT INTO shared_projects (id, name, edit_key, expires_at) VALUES (${key}, ${name}, ${editKeyHash}, ${expiresAt})`;
+            await sql`/* cc:project-insert */ INSERT INTO shared_projects (id, name, edit_key, expires_at) VALUES (${key}, ${name}, ${editKeyHash}, ${expiresAt})`;
           } else {
-            await sql`INSERT INTO shared_projects (id, name, edit_key) VALUES (${key}, ${name}, ${editKeyHash})`;
+            await sql`/* cc:project-insert */ INSERT INTO shared_projects (id, name, edit_key) VALUES (${key}, ${name}, ${editKeyHash})`;
           }
         } catch (colErr) {
           // Only fall back (drop editKey/expiry and insert the bare row) for
@@ -196,7 +438,7 @@ module.exports = async function handler(req, res) {
           // project that masks the actual problem.
           var isMissingColumn = colErr && (colErr.code === '42703' || /column .* does not exist/i.test(String(colErr.message || '')));
           if (!isMissingColumn) throw colErr;
-          await sql`INSERT INTO shared_projects (id, name) VALUES (${key}, ${name})`;
+          await sql`/* cc:project-insert-bare */ INSERT INTO shared_projects (id, name) VALUES (${key}, ${name})`;
           editKey = null;
           expiresAt = null;
         }
@@ -208,44 +450,43 @@ module.exports = async function handler(req, res) {
             return { id: shared.id, data: shared };
           });
           if (initRows.length) {
-            await sql`INSERT INTO shared_issues (id, project_id, data, updated_by)
-              SELECT r.id, ${key}, r.data, ${body.user || 'anonymous'}
+            await sql`/* cc:issues-insert */ INSERT INTO shared_issues (id, project_id, data, updated_by)
+              SELECT r.id, ${key}, r.data, ${postUser}
               FROM jsonb_to_recordset(${JSON.stringify(initRows)}::jsonb) AS r(id text, data jsonb)
               ON CONFLICT (project_id, id) DO NOTHING`;
           }
         }
 
-        return res.status(201).json({ id: key, name: name, editKey: editKey });
+        return res.status(201).json({ id: key, name: name, editKey: editKey, v: LOG_V });
       }
 
-      // GET — Pull all issues for a project
+      // GET — v2: the records after the client's cursor; old clients: the
+      // agreed values in the old issues shape.
       case 'GET': {
         if (!projectId) return res.status(400).json({ error: 'Missing project id' });
 
         var project = await loadProjectRow(sql, projectId);
         if (project.length === 0 || isExpired(project[0])) return res.status(404).json({ error: 'Project not found' });
 
-        var issues = await sql`SELECT id, data, updated_by, updated_at FROM shared_issues WHERE project_id = ${projectId} ORDER BY updated_at DESC`;
-
-        // Update last_activity
-        await sql`UPDATE shared_projects SET last_activity = now() WHERE id = ${projectId}`;
-
         // edit_key (hash or legacy plaintext) must never leave the server.
         var publicProject = {id: project[0].id, name: project[0].name, created_at: project[0].created_at, last_activity: project[0].last_activity};
         if (project[0].expires_at) publicProject.expires_at = project[0].expires_at;
 
-        return res.status(200).json({
-          project: publicProject,
-          issues: issues.map(function(row) {
-            var d = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
-            d._updatedBy = row.updated_by;
-            d._updatedAt = row.updated_at;
-            return d;
-          }),
-        });
+        await ensureLog(sql, projectId);
+
+        if (Number(req.query.v) >= LOG_V) {
+          var limit = Math.min(Math.max(parseCursor(req.query.limit) || CHANGE_CAPS.pullDefault, 1), CHANGE_CAPS.pullMax);
+          var page = await pullChanges(sql, projectId, parseCursor(req.query.after), limit);
+          return res.status(200).json({ v: LOG_V, project: publicProject, changes: page.changes, names: page.names, cursor: page.cursor, more: page.more });
+        }
+
+        var all = await pullChanges(sql, projectId, 0, CHANGE_CAPS.legacyView);
+        await sql`/* cc:activity */ UPDATE shared_projects SET last_activity = now() WHERE id = ${projectId}`;
+        return res.status(200).json({ project: publicProject, issues: legacyView(all.changes) });
       }
 
-      // PUT — Push issue changes (sync)
+      // PUT — v2: append change records. Never rejects an edit for being
+      // concurrent with another: that is a conflict for the clients to show.
       case 'PUT': {
         if (!projectId) return res.status(400).json({ error: 'Missing project id' });
 
@@ -253,80 +494,30 @@ module.exports = async function handler(req, res) {
         if (project.length === 0 || isExpired(project[0])) return res.status(404).json({ error: 'Project not found' });
 
         var body = req.body || {};
-        var issues = (body.issues || []).filter(validateIssue);
-        var user = isValidStr(body.user, FIELD_CAPS.assignee) ? body.user : 'anonymous';
-        var conflicts = [];
-
-        // Dedupe by id (last one wins) — a batch with two entries for the
-        // same id makes the jsonb_to_recordset() UPSERT try to affect the
-        // same row twice in one statement, which Postgres rejects outright
-        // ("ON CONFLICT DO UPDATE command cannot affect row a second time").
-        // The debounced client queue is keyed by id so this shouldn't
-        // normally happen, but a malformed/duplicated batch must degrade to
-        // "last wins", not a 500.
-        var dedupedById = {};
-        var dedupedOrder = [];
-        issues.forEach(function(issue) {
-          if (!(issue.id in dedupedById)) dedupedOrder.push(issue.id);
-          dedupedById[issue.id] = issue;
-        });
-        issues = dedupedOrder.map(function(id) { return dedupedById[id]; });
-
-        // Atomic compare-and-swap in a SINGLE statement — no read-then-write
-        // window. The previous version did SELECT updated_at, then compared in
-        // JS, then upserted unconditionally: two writers could both read the
-        // same baseline, both pass the JS check, and both overwrite (a lost
-        // update). Here the timestamp guard lives inside the ON CONFLICT DO
-        // UPDATE, so Postgres decides per-row under the row lock it already
-        // takes for the upsert. A row is written iff it's new OR the DB's
-        // current updated_at has not advanced past what this client last saw
-        // (`_updatedAt`); otherwise it's skipped and reported as a conflict for
-        // the client to merge. `expected` is null for an issue the client has
-        // never synced — a new id inserts (no conflict), and an already-present
-        // id with a null expectation is treated as a conflict (updated_at <=
-        // null is UNKNOWN → not updated).
-        var rows = issues.map(function(issue) {
-          var shared = stripToShared(issue);
-          return {
-            id: shared.id,
-            data: shared,
-            expected: (issue._updatedAt != null ? new Date(issue._updatedAt).toISOString() : null),
-          };
-        });
-        var ids = rows.map(function(r) { return r.id; });
-
-        var written = [];
-        if (rows.length) {
-          written = await sql`
-            WITH incoming AS (
-              SELECT * FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb)
-                AS r(id text, data jsonb, expected timestamptz)
-            )
-            INSERT INTO shared_issues (id, project_id, data, updated_by)
-            SELECT i.id, ${projectId}, i.data, ${user} FROM incoming i
-            ON CONFLICT (project_id, id)
-            DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = now()
-            WHERE shared_issues.updated_at <= (
-              SELECT i2.expected FROM incoming i2 WHERE i2.id = shared_issues.id
-            )
-            RETURNING id, updated_at`;
+        if (Number(body.v) !== LOG_V) {
+          // An old client (one record per issue, compare-and-swap). Its write
+          // is refused as a whole — nothing is stored — and reported in the
+          // shape it already shows ("not applied"); reloading updates it.
+          var oldIds = Array.isArray(body.issues) ? body.issues.map(function(it) { return it && typeof it.id === 'string' ? it.id : null; }).filter(Boolean).slice(0, 1000) : [];
+          return res.status(200).json({ synced: 0, conflicts: oldIds, updatedAt: {}, v: LOG_V, error: 'client_outdated',
+            message: 'This shared project now keeps a change log. Reload ClashControl to keep sharing; this edit was not saved.' });
         }
+        if (!Array.isArray(body.changes)) return res.status(400).json({ error: 'Missing changes' });
+        if (body.changes.length > CHANGE_CAPS.perPut) return res.status(413).json({ error: 'Too many changes in one request', max: CHANGE_CAPS.perPut });
+        var userName = isValidStr(body.name, 120) ? body.name.trim() : '';
 
-        var writtenIds = {};
-        // updatedAt lets the client remember exactly what server timestamp
-        // each successfully-written record now has, so its NEXT push sends
-        // that as `_updatedAt` instead of its own write-time clock — see
-        // client _sharedLastSeen. Without this the client's own next edit
-        // races the compare-and-swap above using a stale expectation.
-        var updatedAt = {};
-        written.forEach(function(row) { writtenIds[row.id] = true; updatedAt[row.id] = row.updated_at; });
-        // Anything attempted but not written back existed with a newer (or
-        // unknown-to-this-client) server version — a conflict to merge.
-        conflicts = ids.filter(function(id) { return !writtenIds[id]; });
+        var valid = [], invalid = [], seen = {};
+        body.changes.forEach(function(raw) {
+          var r = validateChange(raw);
+          if (!r) { if (raw && typeof raw.id === 'string' && raw.id.length <= 200) invalid.push(raw.id); return; }
+          if (seen[r.id]) return;
+          seen[r.id] = true;
+          valid.push(r);
+        });
 
-        await sql`UPDATE shared_projects SET last_activity = now() WHERE id = ${projectId}`;
-
-        return res.status(200).json({ synced: written.length, conflicts: conflicts, updatedAt: updatedAt });
+        await ensureLog(sql, projectId);
+        var inserted = valid.length ? await appendChanges(sql, projectId, valid, function() { return userName || null; }) : [];
+        return res.status(200).json({ v: LOG_V, accepted: inserted.length, known: valid.length - inserted.length, invalid: invalid });
       }
 
       // DELETE — Remove a single issue, or (scope=project) the whole shared
@@ -351,23 +542,27 @@ module.exports = async function handler(req, res) {
         }
 
         if (wholeProject) {
-          await sql`DELETE FROM shared_issues WHERE project_id = ${projectId}`;
-          await sql`DELETE FROM shared_projects WHERE id = ${projectId}`;
+          await sql`/* cc:delete-issues */ DELETE FROM shared_issues WHERE project_id = ${projectId}`;
+          try { await sql`/* cc:delete-changes */ DELETE FROM shared_changes WHERE project_id = ${projectId}`; }
+          catch (e) { if (!isMissingSchema(e)) throw e; }
+          await sql`/* cc:delete-project */ DELETE FROM shared_projects WHERE id = ${projectId}`;
           return res.status(200).json({ ok: true, deletedProject: true });
         }
 
-        await sql`DELETE FROM shared_issues WHERE project_id = ${projectId} AND id = ${issueId}`;
+        // Old clients only: v2 clients share a delete as a change record
+        // (everyone sees it in the history; an edit made at the same time is
+        // a conflict, resolved by keeping or deleting).
+        await sql`/* cc:delete-issue */ DELETE FROM shared_issues WHERE project_id = ${projectId} AND id = ${issueId}`;
         return res.status(200).json({ ok: true });
       }
 
       default:
         return res.status(405).json({ error: 'Method not allowed' });
     }
-  } catch (e) {
-    console.error('Project sync error:', e);
-    return res.status(500).json({ error: 'Database error' });
   }
-};
+}
+
+module.exports = handler;
 
 // Exposed for direct unit testing (this file has no DOM/browser dependency,
 // unlike the addons/*.js IIFEs, so plain CommonJS exports work here).
@@ -377,3 +572,7 @@ module.exports.isExpired = isExpired;
 module.exports.generateKey = generateKey;
 module.exports.validateIssue = validateIssue;
 module.exports.stripToShared = stripToShared;
+module.exports.validateChange = validateChange;
+module.exports.legacyView = legacyView;
+module.exports.LOG_V = LOG_V;
+module.exports.CHANGE_CAPS = CHANGE_CAPS;

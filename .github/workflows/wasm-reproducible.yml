@@ -1,0 +1,33 @@
+name: WASM reproducible
+
+# Rebuilds addons/wasm-engine-pkg/ from engine/ with the pinned toolchain
+# (engine/rust-toolchain.toml, engine/Cargo.lock, wasm-pack in
+# scripts/build-wasm-engine.sh) and fails if the committed pkg differs —
+# so the shipped WASM always matches its source.
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['engine/**', 'addons/wasm-engine-pkg/**', 'scripts/build-wasm-engine.sh', '.github/workflows/wasm-reproducible.yml']
+  push:
+    branches: [main]
+    paths: ['engine/**', 'addons/wasm-engine-pkg/**', 'scripts/build-wasm-engine.sh', '.github/workflows/wasm-reproducible.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/wasm-pack
+            ~/.cargo/registry
+            engine/target
+          key: wasm-${{ runner.os }}-${{ hashFiles('engine/Cargo.lock', 'engine/rust-toolchain.toml', 'scripts/build-wasm-engine.sh') }}
+      - name: Rebuild and compare
+        run: ./scripts/build-wasm-engine.sh --check

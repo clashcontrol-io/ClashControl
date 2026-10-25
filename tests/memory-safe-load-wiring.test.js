@@ -51,7 +51,7 @@ test('this slice does NOT touch the IFC worker termination or construction seque
   // 'result'. If a future change moves worker.terminate() to fire on
   // 'result', that's the fuller (riskier) P6.3 ask and needs its own
   // explicit, live-browser-verified pass — not a silent expansion of this one.
-  const idx = html.indexOf("function loadIFCWorker(buffer, fallbackColor, onProgress, onProps, scope) {");
+  const idx = html.indexOf("function loadIFCWorker(buffer, fallbackColor, onProgress, onProps, scope, opts) {");
   assert.ok(idx !== -1);
   const body = html.slice(idx, html.indexOf("if (msg.type === 'result') {", idx));
   assert.match(body, /if \(msg\.type === 'props'\) \{/);

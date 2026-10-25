@@ -22,17 +22,17 @@ function extractFn(name) {
   return src.slice(start, end);
 }
 
-// The autosave-gate memo lives in two module-level vars next to the
-// function — extract them too so the bundle is self-contained.
+// The autosave-gate memo, its slice list and the modelMeta helpers live
+// next to the function — extract them too so the bundle is self-contained.
 function extractGateDecls() {
   const start = src.indexOf('  var _ccAutosaveMemo');
   assert.ok(start !== -1, '_ccAutosaveMemo declaration not found');
-  const end = src.indexOf('];', start) + 2;
+  const end = src.indexOf('  function _saveCurrentProjectData(', start);
   return src.slice(start, end);
 }
 
 function makeRunner(windowStub) {
-  const bundle = extractGateDecls() + '\n' + extractFn('_cloneSafe') + '\n' + extractFn('_saveCurrentProjectData');
+  const bundle = extractGateDecls() + '\n' + extractFn('_cloneSafe') + '\nvar _ccSaveCloneCache = new WeakMap();\n' + extractFn('_ccCloneListCached') + '\n' + extractFn('_saveCurrentProjectData');
   const calls = [];
   const idbSaveProjectData = (pid, data) => { calls.push({ pid, data }); return Promise.resolve(); };
   const save = new Function('idbSaveProjectData', 'window', bundle + '; return _saveCurrentProjectData;')(
@@ -136,4 +136,60 @@ test('gate OFF (default) and no window: every save writes, as before', async () 
   await r.save(s);
   await r.save(s);
   assert.equal(r.calls.length, 2);
+});
+
+test('autosave clones each unchanged clash once and reuses it on the next save', () => {
+  const r = makeRunner(undefined);
+  const clashes = [{ id: 'a', status: 'open', point: [1, 2, 3] }, { id: 'b', status: 'open' }];
+  r.save(baseState({ clashes }));
+  const edited = [clashes[0], Object.assign({}, clashes[1], { status: 'resolved' })];
+  r.save(baseState({ clashes: edited }));
+  const [first, second] = r.calls.map((c) => c.data.clashes);
+  assert.deepStrictEqual(second, [{ id: 'a', status: 'open', point: [1, 2, 3] }, { id: 'b', status: 'resolved' }]);
+  assert.strictEqual(second[0], first[0], 'the unchanged clash reuses its clone');
+  assert.notStrictEqual(second[1], first[1], 'the edited clash is cloned again');
+  assert.notStrictEqual(second[0], clashes[0], 'a clone, never the state object itself');
+});
+
+// ── models persist only as modelMeta ───────────────────────────────
+
+test('gate ON: a new models array with the same persisted metadata (storey hide, load progress) skips the write', async () => {
+  const r = makeRunner(GATE_ON_WINDOW);
+  const m = { id: 'm1', name: 'Arch', discipline: 'architectural', color: '#fff', visible: true, tag: '', elements: [] };
+  const s = baseState({ models: [m] });
+  await r.save(s);
+  const verdict = await r.save(Object.assign({}, s, { models: [Object.assign({}, m, { hiddenStoreys: ['L1'], elements: [{}] })] }));
+  assert.equal(verdict, 'unchanged');
+  assert.equal(r.calls.length, 1);
+});
+
+test('gate ON: a model visibility toggle or rename (persisted modelMeta) writes', async () => {
+  const r = makeRunner(GATE_ON_WINDOW);
+  const m = { id: 'm1', name: 'Arch', discipline: 'architectural', color: '#fff', visible: true };
+  const s = baseState({ models: [m] });
+  await r.save(s);
+  await r.save(Object.assign({}, s, { models: [Object.assign({}, m, { visible: false })] }));
+  await r.save(Object.assign({}, s, { models: [Object.assign({}, m, { visible: false, name: 'Arch 2' })] }));
+  assert.equal(r.calls.length, 3);
+  assert.equal(r.calls[1].data.modelMeta[0].visible, false);
+  assert.equal(r.calls[2].data.modelMeta[0].name, 'Arch 2');
+});
+
+test('gate ON: a failed write does not record the memo (the next save is not skipped)', async () => {
+  const bundle = extractGateDecls() + '\n' + extractFn('_cloneSafe') + '\nvar _ccSaveCloneCache = new WeakMap();\n' + extractFn('_ccCloneListCached') + '\n' + extractFn('_saveCurrentProjectData');
+  let n = 0;
+  const save = new Function('idbSaveProjectData', 'window', bundle + '; return _saveCurrentProjectData;')(
+    () => { n++; return Promise.resolve(n === 1 ? 'failed' : undefined); }, GATE_ON_WINDOW);
+  const s = baseState({});
+  await save(s);
+  await save(s);
+  assert.equal(n, 2, 'after a failed write the same state is written again');
+});
+
+test('the autosave effect is keyed on the modelMeta signature, not on s.models identity', () => {
+  const i = src.indexOf('function run(){ idle = 0; if(_hasProjectData(s)) _saveCurrentProjectData(s); }');
+  assert.ok(i !== -1);
+  const deps = src.slice(i, src.indexOf(']);', i) + 3);
+  assert.match(deps, /_ccModelMetaSig\(s\.models\)/);
+  assert.doesNotMatch(deps, /s\.rules, s\.models,/);
 });

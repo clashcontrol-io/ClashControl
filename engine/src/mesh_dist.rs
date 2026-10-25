@@ -13,7 +13,6 @@
 //! of its real (small) distance.
 
 use crate::bvh::{BvhKind, BvhNode};
-use crate::point_in_mesh::point_in_mesh_bvh;
 use crate::tri_tri::tri_tri_test;
 
 #[inline(always)]
@@ -172,6 +171,16 @@ fn seg_seg_dist_sq(
 /// checks + 9 edge-edge checks, "first strictly smaller wins" — same fixed
 /// order as the JS reference's `_triTriDistSq`. Returns (dist_sq, pt_a, pt_b).
 pub fn tri_tri_dist_sq(tris_a: &[f32], oa9: usize, tris_b: &[f32], ob9: usize) -> (f64, [f64; 3], [f64; 3]) {
+    tri_tri_dist_sq_ex(tris_a, oa9, tris_b, ob9, false)
+}
+
+/// `tri_tri_dist_sq` with JS `_triTriDistSq`'s `skipEE`: when the caller has
+/// proven (`ee_lower_sq`) that no edge-edge sub-test can come out below its
+/// running best, those 9 are not evaluated. The result then only serves the
+/// caller's strict `d < best` test, which it decides exactly like the full
+/// minimum (every skipped value is >= best, so a vertex test below best is
+/// also the full minimum's first achiever; otherwise neither updates).
+pub fn tri_tri_dist_sq_ex(tris_a: &[f32], oa9: usize, tris_b: &[f32], ob9: usize, skip_ee: bool) -> (f64, [f64; 3], [f64; 3]) {
     // Intersecting triangles (e.g. an edge of one piercing the other's
     // face) have true distance 0 — the 15-subtest point/edge distance
     // below is only valid for NON-intersecting triangles and otherwise
@@ -215,6 +224,9 @@ pub fn tri_tri_dist_sq(tris_a: &[f32], oa9: usize, tris_b: &[f32], ob9: usize) -
     try_vert_tri!(b0, tris_a, oa9, false);
     try_vert_tri!(b1, tris_a, oa9, false);
     try_vert_tri!(b2, tris_a, oa9, false);
+    if skip_ee {
+        return (best, out_a, out_b);
+    }
 
     macro_rules! try_edge_edge {
         ($ea0:expr, $ea1:expr, $eb0:expr, $eb1:expr) => {
@@ -237,6 +249,74 @@ pub fn tri_tri_dist_sq(tris_a: &[f32], oa9: usize, tris_b: &[f32], ob9: usize) -
     try_edge_edge!(a2, a0, b2, b0);
 
     (best, out_a, out_b)
+}
+
+/// A triangle's AABB as f64 `[mnx,mny,mnz,mxx,mxy,mxz, M]` where M is the
+/// largest |coordinate| (Infinity when any coordinate is NaN/Infinity).
+/// Mirrors JS `_ccTriBoxInto` comparison for comparison.
+#[inline(always)]
+fn tri_box(tris: &[f32], o9: usize) -> [f64; 7] {
+    let mut mnx = tris[o9] as f64;
+    let mut mny = tris[o9 + 1] as f64;
+    let mut mnz = tris[o9 + 2] as f64;
+    let (mut mxx, mut mxy, mut mxz) = (mnx, mny, mnz);
+    let mut v = 3;
+    while v < 9 {
+        let x = tris[o9 + v] as f64;
+        let y = tris[o9 + v + 1] as f64;
+        let z = tris[o9 + v + 2] as f64;
+        if x < mnx { mnx = x; }
+        if x > mxx { mxx = x; }
+        if y < mny { mny = y; }
+        if y > mxy { mxy = y; }
+        if z < mnz { mnz = z; }
+        if z > mxz { mxz = z; }
+        v += 3;
+    }
+    let mut m = 0.0f64;
+    for q in 0..9 {
+        let a = (tris[o9 + q] as f64).abs();
+        if a > m {
+            m = a;
+        } else if a.is_nan() {
+            m = f64::INFINITY;
+        }
+    }
+    [mnx, mny, mnz, mxx, mxy, mxz, m]
+}
+
+/// JS `Math.max(a, b, 0)` for the finite values `ee_lower_sq` passes.
+#[inline(always)]
+fn gap3(a: f64, b: f64) -> f64 {
+    let g = if a > b { a } else { b };
+    if g > 0.0 { g } else { 0.0 }
+}
+
+/// Lower bound (squared) on any edge-edge sub-test of a triangle pair, from
+/// the two triangles' `tri_box`es — 0 when nothing useful can be proven.
+/// Sound in floating point: `seg_seg_dist_sq` clamps both parameters to
+/// [0,1] (or yields NaN, which never wins), so each closest point lies on its
+/// edge up to ~8 ulp of the largest coordinate M; the per-axis gaps are shrunk
+/// by a relative 1e-12 plus 1e-12*M (+1e-290 for underflow) and the sum by a
+/// relative 1e-12, far above every rounding involved. Mirrors JS
+/// `_ccEELowerSq` operation for operation.
+#[inline(always)]
+fn ee_lower_sq(a: &[f64; 7], b: &[f64; 7]) -> f64 {
+    let m_abs = if a[6] > b[6] { a[6] } else { b[6] };
+    if !(m_abs < 1e300) {
+        return 0.0;
+    }
+    let m = 1e-12 * m_abs + 1e-290;
+    let mut s = 0.0f64;
+    for c in 0..3 {
+        let mut g = gap3(a[c] - b[c + 3], b[c] - a[c + 3]);
+        g = g - g * 1e-12 - m;
+        if g > 0.0 {
+            s += g * g;
+        }
+    }
+    s *= 1.0 - 1e-12;
+    if s > 1e-200 { s } else { 0.0 }
 }
 
 /// Squared lower-bound distance between two BVH node AABBs (0 when they
@@ -269,15 +349,34 @@ pub fn traverse_min_dist(
     let b_leaf = matches!(nb.kind, BvhKind::Leaf { .. });
 
     if a_leaf && b_leaf {
-        let idx_a = match &na.kind { BvhKind::Leaf { indices } => indices, _ => unreachable!() };
-        let idx_b = match &nb.kind { BvhKind::Leaf { indices } => indices, _ => unreachable!() };
+        let idx_a = match &na.kind { BvhKind::Leaf { indices } => indices.as_slice(), _ => unreachable!() };
+        let idx_b = match &nb.kind { BvhKind::Leaf { indices } => indices.as_slice(), _ => unreachable!() };
+        // Mirrors the JS leaf loop: same pairs, order and strict update; the
+        // edge-edge sub-tests are skipped only where `ee_lower_sq` proves
+        // they cannot beat best, and nothing runs once best reaches 0.
+        let mut boxes_b = [[0.0f64; 7]; 4];
+        let mut heap_b: Vec<[f64; 7]> = Vec::new();
+        let bx: &mut [[f64; 7]] = if idx_b.len() <= 4 {
+            &mut boxes_b[..idx_b.len()]
+        } else {
+            heap_b.resize(idx_b.len(), [0.0f64; 7]);
+            &mut heap_b[..]
+        };
+        for (k, &ib) in idx_b.iter().enumerate() {
+            bx[k] = tri_box(tris_b, ib * 9);
+        }
         for &ia in idx_a {
-            for &ib in idx_b {
-                let (d, pa, pb) = tri_tri_dist_sq(tris_a, ia * 9, tris_b, ib * 9);
+            let ba = tri_box(tris_a, ia * 9);
+            for (k, &ib) in idx_b.iter().enumerate() {
+                let skip = ee_lower_sq(&ba, &bx[k]) >= *best;
+                let (d, pa, pb) = tri_tri_dist_sq_ex(tris_a, ia * 9, tris_b, ib * 9, skip);
                 if d < *best {
                     *best = d;
                     *out_a = pa;
                     *out_b = pb;
+                    if d == 0.0 {
+                        return;
+                    }
                 }
             }
         }
@@ -288,55 +387,13 @@ pub fn traverse_min_dist(
     let count_b = match &nb.kind { BvhKind::Inner { count, .. } => *count, _ => 1 };
 
     if b_leaf || (!a_leaf && count_a >= count_b) {
-        let (la, ra) = match &na.kind { BvhKind::Inner { left, right, .. } => (left, right), _ => unreachable!() };
+        let (la, ra) = match &na.kind { BvhKind::Inner { children, .. } => (&children[0], &children[1]), _ => unreachable!() };
         traverse_min_dist(la, tris_a, nb, tris_b, best, out_a, out_b);
         traverse_min_dist(ra, tris_a, nb, tris_b, best, out_a, out_b);
     } else {
-        let (lb, rb) = match &nb.kind { BvhKind::Inner { left, right, .. } => (left, right), _ => unreachable!() };
+        let (lb, rb) = match &nb.kind { BvhKind::Inner { children, .. } => (&children[0], &children[1]), _ => unreachable!() };
         traverse_min_dist(na, tris_a, lb, tris_b, best, out_a, out_b);
         traverse_min_dist(na, tris_a, rb, tris_b, best, out_a, out_b);
-    }
-}
-
-/// Post-traversal containment fix: when the BVH-pruned dual-tree walk
-/// (`traverse_min_dist`) found a strictly positive surface distance, check
-/// whether one mesh is fully enclosed inside the other with no triangle
-/// pair actually crossing — e.g. a pipe segment fully inside a column, no
-/// edge pierces a face so `tri_tri_dist_sq`'s intersection short-circuit
-/// above never fires, but the solids still overlap volumetrically. A
-/// closed (manifold) mesh fully inside another has EVERY vertex inside it,
-/// so testing just each side's first triangle's first vertex is enough —
-/// stays O(1) extra work per pair. Same ray-parity point-in-mesh test as
-/// index.html's `_estimatePenetrationDepthM` (`point_in_mesh::point_in_mesh_bvh`).
-/// Mirrors JS `_meshMinDistContainmentFix` exactly.
-pub fn containment_fix(
-    root_a: &BvhNode,
-    tris_a: &[f32],
-    root_b: &BvhNode,
-    tris_b: &[f32],
-    best: &mut f64,
-    out_a: &mut [f64; 3],
-    out_b: &mut [f64; 3],
-) {
-    if *best <= 0.0 {
-        return;
-    }
-    let ax = tris_a[0] as f64;
-    let ay = tris_a[1] as f64;
-    let az = tris_a[2] as f64;
-    if point_in_mesh_bvh(ax, ay, az, root_b, tris_b) {
-        *best = 0.0;
-        *out_a = [ax, ay, az];
-        *out_b = [ax, ay, az];
-        return;
-    }
-    let bx = tris_b[0] as f64;
-    let by = tris_b[1] as f64;
-    let bz = tris_b[2] as f64;
-    if point_in_mesh_bvh(bx, by, bz, root_a, tris_a) {
-        *best = 0.0;
-        *out_a = [bx, by, bz];
-        *out_b = [bx, by, bz];
     }
 }
 

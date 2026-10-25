@@ -47,6 +47,7 @@
         throw new Error('Malformed locale pack: ' + lang);
       }
       if (typeof window._ccRegisterLocalePack === 'function') window._ccRegisterLocalePack(pack);
+      registerPackHints(pack);
       return pack;
     });
   };
@@ -78,6 +79,17 @@
   // at all, auto-detect from navigator.languages and activate WITHOUT
   // persisting (the user never chose it). '' saved = user explicitly picked
   // English — never override that.
+  // A pack is auto-activated from the browser language only when it covers
+  // at least AUTO_MIN of the UI strings (manifest `coverage`, kept honest by
+  // scripts/locale-coverage.js + tests/locale-coverage.test.js): a partial
+  // pack would give a mixed-language UI. Partial packs are still offered in
+  // Settings, and a saved (explicit) choice always loads.
+  var AUTO_MIN = 0.95;
+  function autoEligible(entry) {
+    return !!entry && typeof entry.coverage === 'number' && entry.coverage >= AUTO_MIN;
+  }
+  window._ccLocaleAutoMin = AUTO_MIN;
+
   function restoreOrDetect() {
     var saved = null;
     try { saved = window.localStorage.getItem('cc_locale'); } catch (e) {}
@@ -88,7 +100,8 @@
       if (saved) pick = langs.indexOf(saved) >= 0 ? saved : null;
       else {
         var nav = window.navigator || {};
-        pick = matchBrowserLanguage(langs, (nav.languages && nav.languages.length) ? nav.languages : [nav.language]);
+        var complete = (list || []).filter(autoEligible).map(function (p) { return p.lang; });
+        pick = matchBrowserLanguage(complete, (nav.languages && nav.languages.length) ? nav.languages : [nav.language]);
       }
       if (!pick) return;
       return window._ccLoadLocalePack(pick).then(function () {
@@ -97,6 +110,33 @@
     }).catch(function (e) { console.warn('[Locales] startup locale not applied', e); });
   }
   restoreOrDetect();
+
+  // Discipline name hints: EVERY pack that carries a `disciplineHints`
+  // section (flagged in the manifest, so no other pack is fetched) teaches
+  // the discipline engine its language, whatever the active UI language —
+  // a German model on a Dutch UI still matches the German hints. Only the
+  // hint section is registered here; the pack's UI strings are untouched.
+  function registerPackHints(pack) {
+    var core = window._ccClashDisciplineCore;
+    if (!core || typeof core.registerHints !== 'function' || !pack || !pack.lang || !pack.disciplineHints) return false;
+    return core.registerHints('locale:' + pack.lang, pack.disciplineHints);
+  }
+  loadManifest().then(function (list) {
+    var withHints = (list || []).filter(function (p) { return p && p.disciplineHints && p.file; });
+    return Promise.all(withHints.map(function (entry) {
+      return fetch('locales/' + entry.file).then(function (r) {
+        if (!r.ok) throw new Error('locale pack fetch failed: ' + r.status);
+        return r.json();
+      }).then(function (pack) {
+        if (!pack || pack.lang !== entry.lang) throw new Error('Malformed locale pack: ' + entry.lang);
+        return registerPackHints(pack) ? entry.lang : null;
+      }).catch(function (e) { console.warn('[Locales] discipline hints not loaded for ' + entry.lang, e); return null; });
+    }));
+  }).then(function (langs) {
+    langs = (langs || []).filter(Boolean);
+    if (langs.length && typeof window._ccReclassifyModels === 'function') window._ccReclassifyModels('locale-hints');
+    return langs;
+  });
 
   if (typeof window._ccRegisterAddon === 'function') {
     window._ccRegisterAddon({

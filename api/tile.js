@@ -46,7 +46,10 @@ function _rateLimited(ip) {
 }
 
 export default async function handler(req) {
-  const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown';
+  // First x-forwarded-for entry only (the platform-set client IP) — keying on
+  // the whole header lets a caller rotate it to evade the limiter.
+  const ip = (req.headers.get('x-forwarded-for') || '').split(',')[0].trim()
+    || (req.headers.get('x-real-ip') || '').trim() || 'unknown';
   if (_rateLimited(ip)) {
     return new Response('too many requests', { status: 429, headers: { 'Retry-After': '60' } });
   }

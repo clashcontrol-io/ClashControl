@@ -54,77 +54,58 @@ function makeHookEnv() {
 }
 
 // Builds `d` for a given render's `s`, using the SAME hookEnv/refs across
-// calls (simulating React re-rendering the same component instance).
+// calls (simulating React re-rendering the same component instance). The
+// shared-session registry (shared-session-core.js) is faked on `window`: it
+// records what the wrapper hands every active sharing session.
 function renderAndGetDispatch(hookEnv, s, collab) {
   hookEnv.resetRenderCycle();
   const factory = new Function(
     's', 'useRef', 'useCallback', '_rawD', 'A', '_buildChangelogEntry',
-    '_sharedEnqueue', '_sharedProjectId', '_saveClashTrainRecord',
+    '_saveClashTrainRecord', '_ccBatchIdSet', 'window',
     block + '\nreturn d;'
   );
   return factory(
     s, hookEnv.useRef, hookEnv.useCallback, collab._rawD, collab.A,
-    collab._buildChangelogEntry, collab._sharedEnqueue, collab._sharedProjectId,
-    collab._saveClashTrainRecord
+    collab._buildChangelogEntry, collab._saveClashTrainRecord,
+    (a) => { const o = {}; (a.ids || []).forEach((id) => { o[id] = true; }); return o; },
+    collab.window
   );
 }
+function fakeWindow(noted) {
+  return { _ccSharedSessionCore: { sessions: () => [{}], noteAll: (a, prev, ids) => noted.push({ a, prev, ids }) } };
+}
 
-test('dispatch wrapper reads s.selected/s.issues via refs updated every render, not the stale mount-time s', () => {
-  const A = { BATCH_UPD_CLASH: 'BATCH_UPD_CLASH', UPD_ISSUE: 'UPD_ISSUE', APPEND_CHANGELOG: 'APPEND_CHANGELOG', MERGE_CHANGELOG: 'MERGE_CHANGELOG' };
-  const rawDActions = [];
-  const enqueued = [];
-  const collab = {
-    _rawD: (a) => rawDActions.push(a),
-    A,
-    _buildChangelogEntry: () => null, // not under test here
-    _sharedEnqueue: (rec) => enqueued.push(rec),
-    _sharedProjectId: () => 'PROJ-abc123',
-    _saveClashTrainRecord: () => {},
-  };
+test('dispatch wrapper hands the sharing sessions the CURRENT state and selection (refs), not the stale mount-time s', () => {
+  const A = { BATCH_UPD_CLASH: 'BATCH_UPD_CLASH', BATCH_UPD_ISSUE: 'BATCH_UPD_ISSUE', UPD_ISSUE: 'UPD_ISSUE', APPEND_CHANGELOG: 'APPEND_CHANGELOG', MERGE_CHANGELOG: 'MERGE_CHANGELOG' };
+  const noted = [];
+  const collab = { _rawD: () => {}, A, _buildChangelogEntry: () => null, _saveClashTrainRecord: () => {}, window: fakeWindow(noted) };
   const hookEnv = makeHookEnv();
-
-  // Render 1 (mount): empty state, matching a fresh app with nothing loaded.
   const s1 = { clashes: [], issues: [], selected: {}, trainingMode: true };
   renderAndGetDispatch(hookEnv, s1, collab);
-
-  // Render 2: real data has arrived — a clash exists and is selected.
   const clash = { id: 'c1', status: 'open' };
   const s2 = { clashes: [clash], issues: [], selected: { c1: true }, trainingMode: true };
   const d = renderAndGetDispatch(hookEnv, s2, collab);
-
-  // Dispatch a BATCH_UPD_CLASH — this must see render 2's selection (c1
-  // selected), not render 1's (nothing selected). Before the fix, `d` was
-  // memoized at render 1 and its closure's `s` was permanently {selected:{}}.
   d({ t: A.BATCH_UPD_CLASH, u: { status: 'resolved' } });
-
-  assert.equal(enqueued.length, 1, 'BATCH_UPD_CLASH must enqueue a shared-sync push for the currently-selected clash');
-  assert.equal(enqueued[0].id, 'c1');
-  assert.equal(enqueued[0].status, 'resolved');
+  assert.equal(noted.length, 1);
+  assert.equal(noted[0].prev, s2, 'the state the action was dispatched on');
+  assert.deepEqual(noted[0].ids, { c1: true }, 'the current selection');
+  d({ t: A.BATCH_UPD_CLASH, ids: ['x9'], u: { status: 'closed' } });
+  assert.deepEqual(noted[1].ids, { x9: true }, 'explicit ids win over the selection');
 });
 
-test('dispatch wrapper picks up newly-added issues via a ref, not the mount-time s.issues', () => {
+test('dispatch wrapper picks up newly-added issues via a ref; sync actions are never handed to the sessions', () => {
   const A = { UPD_ISSUE: 'UPD_ISSUE', APPEND_CHANGELOG: 'APPEND_CHANGELOG', MERGE_CHANGELOG: 'MERGE_CHANGELOG' };
-  const enqueued = [];
-  const collab = {
-    _rawD: () => {},
-    A,
-    _buildChangelogEntry: () => null,
-    _sharedEnqueue: (rec) => enqueued.push(rec),
-    _sharedProjectId: () => 'PROJ-abc123',
-    _saveClashTrainRecord: () => {},
-  };
+  const noted = [];
+  const collab = { _rawD: () => {}, A, _buildChangelogEntry: () => null, _saveClashTrainRecord: () => {}, window: fakeWindow(noted) };
   const hookEnv = makeHookEnv();
-
-  const s1 = { clashes: [], issues: [], selected: {}, trainingMode: true };
-  renderAndGetDispatch(hookEnv, s1, collab);
-
+  renderAndGetDispatch(hookEnv, { clashes: [], issues: [], selected: {}, trainingMode: true }, collab);
   const issue = { id: 'i1', title: 'Leak' };
   const s2 = { clashes: [], issues: [issue], selected: {}, trainingMode: true };
   const d = renderAndGetDispatch(hookEnv, s2, collab);
-
   d({ t: A.UPD_ISSUE, id: 'i1', u: { status: 'closed' } });
-
-  assert.equal(enqueued.length, 1, 'UPD_ISSUE must find the issue via the latest s.issues, not the mount-time (empty) one');
-  assert.equal(enqueued[0].id, 'i1');
-  assert.equal(enqueued[0].status, 'closed');
+  assert.equal(noted.length, 1);
+  assert.equal(noted[0].prev.issues[0], issue);
+  assert.equal(noted[0].ids, null);
+  d({ t: A.UPD_ISSUE, id: 'i1', u: { status: 'open' }, _fromSync: true });
+  assert.equal(noted.length, 1, 'a teammate\'s change applied locally is not re-published');
 });

@@ -35,7 +35,8 @@ import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { join, dirname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { generateSyntheticIfc } from '../fixtures/generate-synthetic-ifc.js';
+import { generateSyntheticIfc, generateSemanticIfc, generateShardIfc } from '../fixtures/generate-synthetic-ifc.js';
+import { deepModelDigest, diffDigests } from './model-digest.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const offline = process.env.CC_BROWSER_OFFLINE_DEPS === '1';
@@ -68,9 +69,41 @@ const CASES = [
       mapConversion: { eastings: 150000, northings: 450000, epsg: 'RD_New' },
     },
   },
+  // IfcPostalAddress.Country (IfcSite.SiteAddress + IfcBuilding.BuildingAddress):
+  // the country-pack resolver's strongest signal — both paths must read it.
+  {
+    name: 'postal address (IfcPostalAddress.Country)',
+    generate: { storeyCount: 1, wallsPerStorey: 2, postalAddress: { site: 'Nederland', building: 'Netherlands' } },
+    expectAddress: ['Nederland', 'Netherlands'],
+  },
   {
     name: 'degenerate record (null-valued property)',
     generate: { storeyCount: 1, wallsPerStorey: 2, withPsets: true },
+  },
+  // IfcSpace rooms: web-ifc's StreamAllMeshes never yields them, so both
+  // paths stream them in a separate by-id pass — fingerprint covers their
+  // boxes and mesh counts.
+  {
+    name: 'spaces (IfcSpace rooms)',
+    generate: { storeyCount: 2, wallsPerStorey: 2, withSpaces: true },
+    expectSpaces: 2,
+  },
+  // Discipline/role evidence (IfcRelDefinesByType type objects,
+  // IfcRelAssignsToGroup systems, classification references) on an IFC2X3
+  // MEP export, and IfcRelSpaceBoundary records written with a systematic
+  // offset: both paths must extract identical records and reach identical
+  // classifications and boundary placement.
+  { name: 'semantics (IFC2X3 MEP: types, systems, classification)', generateSemantic: { kind: 'vent' }, expectSemantics: true },
+  { name: 'space boundaries (offset frame)', generateSemantic: { kind: 'arch', boundaryOffset: [-13374.845, -13743.122, 0] }, expectBoundaries: 12 },
+  // Non-physical elements (docs/INTERNALS.md §21.49): IfcVirtualElement /
+  // IfcAnnotation / IfcGrid with box bodies OVERLAPPING the walls. Both paths
+  // must keep them as identical stub elements (no meshes, same order, props,
+  // not-drawn report) and detection must never pair them — also when a
+  // source hands them geometry (checked by grafting a wall's meshes on).
+  {
+    name: 'non-physical (IfcVirtualElement / IfcAnnotation / IfcGrid)',
+    generate: { storeyCount: 2, wallsPerStorey: 2, withSpaces: true, nonPhysical: { perStorey: 6 } },
+    expectNonPhysical: 12, clashCheck: true,
   },
 ];
 
@@ -100,7 +133,8 @@ const port = server.address().port;
 const browser = await chromium.launch({ executablePath: process.env.CC_CHROMIUM_EXECUTABLE });
 const errors = [];
 
-async function loadAndFingerprint(forceFallback, fixtureUrl) {
+const NP_TYPES = ['IfcVirtualElement', 'IfcAnnotation', 'IfcGrid'];
+async function loadAndFingerprint(forceFallback, fixtureUrl, clashCheck) {
   const page = await browser.newPage();
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
@@ -127,7 +161,7 @@ async function loadAndFingerprint(forceFallback, fixtureUrl) {
   }
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 60_000 });
-  const result = await page.evaluate(async ({ forceFallbackInner, fixtureUrlInner }) => {
+  const result = await page.evaluate(async ({ forceFallbackInner, fixtureUrlInner, clashCheckInner, npTypes }) => {
     if (forceFallbackInner) {
       window.Worker = class BrokenWorker { constructor() { throw new Error('forced fallback for differential test'); } };
     }
@@ -157,10 +191,56 @@ async function loadAndFingerprint(forceFallback, fixtureUrl) {
       unitScale: (model.stats || {}).unitScale != null ? model.stats.unitScale : null,
       georef: (model.spatialHierarchy && model.spatialHierarchy.sites && model.spatialHierarchy.sites[0] && model.spatialHierarchy.sites[0].georef) || null,
       mapConversion: (model.spatialHierarchy && model.spatialHierarchy.mapConversion) || null,
+      addresses: model.spatialHierarchy ? [].concat(model.spatialHierarchy.sites || [], model.spatialHierarchy.buildings || [])
+        .map((x) => (x.address && x.address.country) || null) : null,
       openings: model.elements.filter((e) => e.props && e.props.openings && e.props.openings.length)
         .map((e) => [e.expressId, e.props.openings]).sort((a, b) => a[0] - b[0]),
+      semantics: model.elements.map((e) => {
+        const p = e.props || {};
+        return [e.expressId, p.predefinedType || null, p.typeObject || null, p.groups || null, p.classification || null, e._ccCls || null];
+      }).filter((r) => r[1] || r[2] || r[3] || r[4]).sort((a, b) => a[0] - b[0]),
+      disciplineInfo: model.disciplineInfo ? Object.assign({}, model.disciplineInfo, { sig: undefined }) : null,
+      boundaries: model._ccBoundaries ? { total: model._ccBoundaries.total, placed: model._ccBoundaries.placed, frame: model._ccBoundaries.frame,
+        offset: model._ccBoundaries.offset, spaceToEls: model._ccBoundaries.spaceToEls,
+        geometry: model._ccBoundaries.geometry ? Array.from(model._ccBoundaries.geometry).map((v) => Math.round(v * 1e4)) : null } : null,
+      // element order, the stub elements (no meshes) with their identity
+      // props, and the loader's not-drawn report
+      order: model.elements.map((e) => e.expressId),
+      // every element's identity props, key-order independent (psets and
+      // quantities arrive lazily on the worker path; compared elsewhere)
+      props: model.elements.map((e) => JSON.stringify(Object.keys(e.props || {}).filter((k) => k !== 'psets' && k !== 'quantities').sort().map((k) => [k, e.props[k]]))),
+      stubs: model.elements.filter((e) => !(e.meshes || []).length).map((e) => {
+        const p = e.props || {};
+        return [e.expressId, p.ifcType, p.storey, p.name, p.globalId, p.description, p.objectType, p.material, p.typeId == null ? null : p.typeId, p.predefinedType || null, !!(e.box && e.box.isEmpty())];
+      }),
+      notDrawn: (model.stats && model.stats.notDrawn) || null,
+      clashes: clashCheckInner ? await (async () => {
+        const typeOf = new Map(model.elements.map((e) => [e.expressId, e.props && e.props.ifcType]));
+        const run = async () => {
+          const res = await window.ClashControl.runDetection({ fullRerun: true, hard: true, maxGap: 50 });
+          return (res || []).map((c) => [typeOf.get(c.elemA), typeOf.get(c.elemB)]);
+        };
+        const loaded = await run();
+        // A source that DOES give them geometry (GLB / Revit / an old cache):
+        // graft a wall's meshes onto every non-physical stub — the broad
+        // phase must still never pair them.
+        const wall = model.elements.find((e) => e.props && e.props.ifcType === 'IfcWall' && e.meshes.length);
+        const np = model.elements.filter((e) => npTypes.includes(e.props && e.props.ifcType));
+        const saved = np.map((e) => [e.meshes, e.box]);
+        np.forEach((e) => { e.meshes = wall.meshes.slice(); e.box = wall.box.clone(); });
+        const grafted = await run();
+        // control: the same grafted element relabelled as a physical type
+        // DOES clash — the overlap is real, only the type keeps it out
+        const p0 = np[0].props;
+        np[0].props = Object.assign({}, p0, { ifcType: 'IfcBuildingElementProxy' });
+        typeOf.set(np[0].expressId, 'IfcBuildingElementProxy');
+        const control = (await run()).filter((t) => t[0] === 'IfcBuildingElementProxy' || t[1] === 'IfcBuildingElementProxy').length;
+        np[0].props = p0;
+        np.forEach((e, i) => { e.meshes = saved[i][0]; e.box = saved[i][1]; });
+        return { loaded, grafted, control, npCount: np.length };
+      })() : null,
     };
-  }, { forceFallbackInner: forceFallback, fixtureUrlInner: fixtureUrl });
+  }, { forceFallbackInner: forceFallback, fixtureUrlInner: fixtureUrl, clashCheckInner: !!clashCheck, npTypes: NP_TYPES });
   await page.close();
   return result;
 }
@@ -249,29 +329,96 @@ async function loadCancelReloadAndFingerprint(fixtureUrl) {
   return result;
 }
 
+// Parallel / progressive-preview equivalence: the SAME set of files dropped
+// in ONE loadFiles call, once with the default loader (files one after
+// another, no preview) and once with ?ccSafety=progressivePreview,parallelLoad
+// (several workers at once, geometry streamed to the main thread in batches
+// and drawn as a display-only preview). Every model must be identical
+// element-for-element: order, triangle/index/normal bytes, mesh matrices,
+// props (after the lazy psets merge) and float64 volume/area.
+async function loadSetDeep(query, urls, shardKnob) {
+  const page = await browser.newPage();
+  page.on('dialog', (d) => d.accept()); // duplicate-model overlap prompts between fixtures
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  if (offline) {
+    const local = async (route, file, ct) => route.fulfill({
+      status: 200, body: await readFile(join(root, 'node_modules', file)),
+      headers: { 'content-type': ct || 'text/javascript', 'access-control-allow-origin': '*' },
+    });
+    await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js', (r) => local(r, 'react/umd/react.production.min.js'));
+    await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js', (r) => local(r, 'react-dom/umd/react-dom.production.min.js'));
+    await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js', (r) => local(r, 'jszip/dist/jszip.min.js'));
+    await page.context().route('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', (r) => local(r, 'pdfjs-dist/build/pdf.min.js'));
+    await page.context().route('https://cdn.jsdelivr.net/npm/three@0.180.0/**', async (route) => {
+      const suffix = new URL(route.request().url()).pathname.split('/three@0.180.0/')[1];
+      await local(route, 'three/' + suffix);
+    });
+    await page.context().route('https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/**', async (route) => {
+      const suffix = new URL(route.request().url()).pathname.split('/web-ifc@0.0.77/')[1];
+      await local(route, 'web-ifc/' + suffix, suffix.endsWith('.wasm') ? 'application/wasm' : 'text/javascript');
+    });
+    await page.context().route('https://fonts.googleapis.com/**', (route) => route.fulfill({ status: 200, body: '', contentType: 'text/css' }));
+    await page.context().route('https://fonts.gstatic.com/**', (route) => route.abort());
+    await page.context().route('https://gc.zgo.at/**', (route) => route.fulfill({ status: 200, body: '', contentType: 'text/javascript' }));
+  }
+  await page.goto(`http://127.0.0.1:${port}/${query}`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 60_000 });
+  if (shardKnob) await page.evaluate((n) => { window._ccIfcShard.minBytes = 0; window._ccIfcShard.maxShards = n; }, shardKnob);
+  const meta = await page.evaluate(async (list) => {
+    const files = [];
+    for (let i = 0; i < list.length; i++) files.push(new File([await (await fetch(list[i])).arrayBuffer()], 'set' + i + '-' + list[i].split('/').pop()));
+    let previewBatches = 0;
+    const iv = setInterval(() => { const pi = window._ccLoadPreview && window._ccLoadPreview.info(); if (pi && pi.batches > previewBatches) previewBatches = pi.batches; }, 5);
+    window.ClashControl.loadFiles(files);
+    await new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const w = setInterval(() => {
+        const s = window._ccLatestState;
+        const ms = s ? s.models.filter((m) => m.name.indexOf('set') === 0) : [];
+        if (ms.length === list.length && window._ccModelLoading === false && ms.every((m) => m._propsVersion)) { clearInterval(w); resolve(); }
+        if (Date.now() - t0 > 120000) { clearInterval(w); reject(new Error('timed out waiting for the file set: ' + JSON.stringify(ms.map((m) => [m.name, !!m._propsVersion])) + ' loading=' + window._ccModelLoading)); }
+      }, 50);
+    });
+    clearInterval(iv);
+    const pi = window._ccLoadPreview.info();
+    return { order: window._ccLatestState.models.map((m) => m.name), previewBatches,
+      shards: window._ccLatestState.models.map((m) => (m.stats && m.stats.shards ? m.stats.shards.n : 1)), parallelPeak: window._ccLoadPreview.parallelPeak(),
+      previewLeft: pi.live, previewInScene: pi.inScene,
+      previewInState: window._ccLatestState.models.some((m) => (m.meshes || []).some((x) => x.userData && x.userData._ccLoadPreview)) };
+  }, urls);
+  const digest = await page.evaluate(deepModelDigest, 'set');
+  await page.close();
+  return { meta, digest };
+}
+
 let allOk = true;
 try {
   await mkdir(generatedDir, { recursive: true });
   const resolvedCases = [];
   for (const c of CASES) {
-    if (c.url) { resolvedCases.push({ name: c.name, url: c.url }); continue; }
+    if (c.url) { resolvedCases.push({ name: c.name, url: c.url, expectOpenings: c.expectOpenings }); continue; }
     const fileName = c.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '.ifc';
     const filePath = join(generatedDir, fileName);
-    await writeFile(filePath, generateSyntheticIfc(c.generate));
-    resolvedCases.push({ name: c.name, url: '/tests/fixtures/_generated-differential/' + fileName });
+    await writeFile(filePath, c.generateSemantic ? generateSemanticIfc(c.generateSemantic) : generateSyntheticIfc(c.generate));
+    resolvedCases.push({ name: c.name, url: '/tests/fixtures/_generated-differential/' + fileName, expectSpaces: c.expectSpaces,
+      expectSemantics: c.expectSemantics, expectBoundaries: c.expectBoundaries, expectAddress: c.expectAddress,
+      expectNonPhysical: c.expectNonPhysical, clashCheck: c.clashCheck });
   }
 
   for (const c of resolvedCases) {
-    const workerResult = await loadAndFingerprint(false, c.url);
-    const fallbackResult = await loadAndFingerprint(true, c.url);
+    const workerResult = await loadAndFingerprint(false, c.url, c.clashCheck);
+    const fallbackResult = await loadAndFingerprint(true, c.url, c.clashCheck);
     // modelFingerprint() itself only covers box/mesh/type per element — it
     // does NOT include unit scale, georeferencing or map-conversion data,
     // so a worker/fallback divergence limited to those fields would pass
     // silently if only the fingerprint were compared. Extend parity to the
     // full result payload for the fields those extra fixture cases exist
     // to exercise.
-    const workerComparable = { fingerprint: workerResult.fingerprint, unitScale: workerResult.unitScale, georef: workerResult.georef, mapConversion: workerResult.mapConversion, openings: workerResult.openings };
-    const fallbackComparable = { fingerprint: fallbackResult.fingerprint, unitScale: fallbackResult.unitScale, georef: fallbackResult.georef, mapConversion: fallbackResult.mapConversion, openings: fallbackResult.openings };
+    const pickCmp = (r) => ({ fingerprint: r.fingerprint, unitScale: r.unitScale, georef: r.georef, mapConversion: r.mapConversion, addresses: r.addresses, openings: r.openings,
+      semantics: r.semantics, disciplineInfo: r.disciplineInfo, boundaries: r.boundaries, order: r.order, props: r.props, stubs: r.stubs, notDrawn: r.notDrawn });
+    const workerComparable = pickCmp(workerResult);
+    const fallbackComparable = pickCmp(fallbackResult);
     const same = JSON.stringify(workerComparable) === JSON.stringify(fallbackComparable);
     if (!same) {
       console.error('Worker result:', JSON.stringify(workerComparable, null, 1));
@@ -290,6 +437,49 @@ try {
       allOk = false;
       continue;
     }
+    if (c.expectAddress && JSON.stringify(workerResult.addresses) !== JSON.stringify(c.expectAddress)) {
+      fail('[' + c.name + '] expected IfcPostalAddress countries ' + JSON.stringify(c.expectAddress) + ', got ' + JSON.stringify(workerResult.addresses));
+      allOk = false;
+      continue;
+    }
+    if (c.expectSemantics && !(workerResult.semantics.length && workerResult.semantics.every((r) => r[2] && r[3] && r[4] && r[5]))) {
+      fail('[' + c.name + '] expected type objects, systems, classifications and a classification on every MEP element');
+      allOk = false;
+      continue;
+    }
+    if (c.expectBoundaries != null && !(workerResult.boundaries && workerResult.boundaries.placed === c.expectBoundaries)) {
+      fail('[' + c.name + '] expected ' + c.expectBoundaries + ' placed space boundaries, got ' + JSON.stringify(workerResult.boundaries && workerResult.boundaries.placed));
+      allOk = false;
+      continue;
+    }
+    if (c.expectNonPhysical != null) {
+      const np = workerResult.fingerprint.filter((r) => NP_TYPES.includes(r.ifcType));
+      const stubNp = workerResult.stubs.filter((r) => NP_TYPES.includes(r[1]) && r[10]);
+      const nr = (workerResult.notDrawn && workerResult.notDrawn.byReason && workerResult.notDrawn.byReason.nonRenderable) || 0;
+      if (np.length !== c.expectNonPhysical || np.some((r) => r.meshCount !== 0) || stubNp.length !== c.expectNonPhysical || nr !== c.expectNonPhysical) {
+        fail('[' + c.name + '] expected ' + c.expectNonPhysical + ' non-physical stub elements (no meshes, empty box, reported nonRenderable), got ' +
+          JSON.stringify({ elements: np.length, withMeshes: np.filter((r) => r.meshCount).length, stubs: stubNp.length, nonRenderable: nr }));
+        allOk = false;
+        continue;
+      }
+    }
+    if (c.clashCheck) {
+      let bad = null;
+      for (const [label, r] of [['worker', workerResult], ['fallback', fallbackResult]]) {
+        const cl = r.clashes;
+        const hits = [].concat(cl.loaded, cl.grafted).filter((p) => NP_TYPES.includes(p[0]) || NP_TYPES.includes(p[1]));
+        if (hits.length || cl.npCount !== c.expectNonPhysical || !(cl.control > 0)) { bad = label + ': ' + JSON.stringify({ npPairs: hits.slice(0, 5), npCount: cl.npCount, control: cl.control }); break; }
+      }
+      if (bad) { fail('[' + c.name + '] non-physical elements took part in clash detection (or the run found nothing to compare) — ' + bad); allOk = false; continue; }
+    }
+    if (c.expectSpaces != null) {
+      const spacesWithGeo = workerResult.fingerprint.filter((r) => r.ifcType === 'IfcSpace' && r.meshCount > 0).length;
+      if (spacesWithGeo !== c.expectSpaces) {
+        fail('[' + c.name + '] expected ' + c.expectSpaces + ' IfcSpace elements with geometry, got ' + spacesWithGeo);
+        allOk = false;
+        continue;
+      }
+    }
     console.log('DIFFERENTIAL OK — [' + c.name + '] worker and fallback are fingerprint-identical (' +
       workerResult.elementCount + ' elements' +
       (workerResult.unitScale != null ? ', unitScale=' + workerResult.unitScale : '') +
@@ -297,6 +487,47 @@ try {
       (workerResult.georef ? ', georef=' + JSON.stringify(workerResult.georef) : '') +
       (workerResult.mapConversion ? ', mapConversion=' + JSON.stringify(workerResult.mapConversion) : '') +
       ')');
+  }
+
+  // Parallel + progressive preview == default sequential load.
+  {
+    const setUrls = ['/tests/fixtures/office-architecture.ifc', '/tests/fixtures/office-mep.ifc', '/tests/fixtures/multi-storey-smoke.ifc']
+      .concat(resolvedCases.filter((c) => /spaces|semantics|space boundaries|unit conversion|non-physical/.test(c.name)).map((c) => c.url));
+    const seq = await loadSetDeep('?ccSafety=-progressivePreview,-parallelLoad', setUrls);
+    const par = await loadSetDeep('?ccSafety=progressivePreview,parallelLoad', setUrls);
+    const diffs = diffDigests(seq.digest, par.digest);
+    const orderSame = JSON.stringify(seq.meta.order) === JSON.stringify(par.meta.order);
+    if (diffs.length || !orderSame) {
+      console.error('order', seq.meta.order, par.meta.order); console.error(diffs.join('\n'));
+      fail('[parallel+preview] a parallel, progressively previewed load differs from the sequential load');
+      allOk = false;
+    } else if (!(par.meta.previewBatches > 0) || !(par.meta.parallelPeak > 1)) {
+      fail('[parallel+preview] the flagged path did not actually run (preview batches ' + par.meta.previewBatches + ', parallel peak ' + par.meta.parallelPeak + ')');
+      allOk = false;
+    } else if (par.meta.previewLeft || par.meta.previewInScene || par.meta.previewInState || seq.meta.previewBatches) {
+      fail('[parallel+preview] preview not torn down / leaked into state: ' + JSON.stringify(par.meta) + ' / sequential batches ' + seq.meta.previewBatches);
+      allOk = false;
+    } else {
+      const n = Object.values(seq.digest).reduce((t, m) => t + m.elements, 0);
+      console.log('DIFFERENTIAL OK — [parallel+preview] ' + setUrls.length + ' files, ' + n + ' elements identical (triangles, matrices, props, volume/area; ' +
+        par.meta.previewBatches + ' preview batches, ' + par.meta.parallelPeak + ' parses at once)');
+    }
+  }
+
+  // Sharded single-file load (shardedLoad, threshold lowered through the
+  // _ccIfcShard knob): one file over 2 workers == the one-worker load, deep
+  // digest (order, bytes, colours, instancing, not-drawn, props). Full
+  // matrix incl. cancel / failing shard: tests/browser/shard-load.mjs.
+  {
+    const shardFile = join(generatedDir, 'sharded-load.ifc');
+    await writeFile(shardFile, generateShardIfc({ storeys: 3, perStorey: 200, seed: 21, nonPhysical: 15 }));
+    const urls = ['/tests/fixtures/_generated-differential/sharded-load.ifc'];
+    const one = await loadSetDeep('?ccSafety=-shardedLoad', urls);
+    const sh = await loadSetDeep('?ccSafety=shardedLoad', urls, 2);
+    const diffs = diffDigests(one.digest, sh.digest);
+    if (sh.meta.shards[0] !== 2) { fail('[sharded] the sharded path did not run (' + JSON.stringify(sh.meta.shards) + ')'); allOk = false; }
+    else if (diffs.length) { console.error(diffs.join('\n')); fail('[sharded] a 2-worker load differs from the one-worker load'); allOk = false; }
+    else console.log('DIFFERENTIAL OK — [sharded] one file over 2 workers is identical to the one-worker load (' + Object.values(one.digest)[0].elements + ' elements)');
   }
 
   // Cancellation case, run against the baseline fixture: a cancel-then-

@@ -7,7 +7,7 @@
 // to a handful of LLM calls. Cold starts wipe the cache.
 
 var crypto = require('crypto');
-var { cors, llmGuard, fetchWithRetry } = require('./_lib');
+var { cors, llmGuard, fetchWithRetry, localeInstruction } = require('./_lib');
 
 // Overridable without a deploy — if the upstream ever 404s the default id
 // (check Vercel logs for 'Gemma triage API error'), set GEMMA_MODEL in the env.
@@ -57,6 +57,11 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({ error: 'Missing context object' });
   }
   var ctx = body.context;
+  // ctx.locale only steers the reply language: it is kept in the cache signature
+  // (per-language cache) but stripped from the CLASH GROUP block the model sees.
+  var langLine = localeInstruction(ctx.locale);
+  var promptCtx = Object.assign({}, ctx);
+  delete promptCtx.locale;
 
   var sig = _sigForContext(ctx);
   var cached = _cacheGet(sig);
@@ -81,12 +86,13 @@ module.exports = async function handler(req, res) {
     'You are the ClashControl Coordinator — a senior BIM coordinator reviewing one cluster of clash-detection results.',
     'Treat the CLASH GROUP block as ground truth. Do not invent dimensions, materials, codes, standards, or disciplines that are not stated.',
     'Reply ONLY with the JSON object specified — no prose, no markdown fences.',
+    langLine,
     '',
     stdsLine,
     discLine,
     '',
     'CLASH GROUP:',
-    JSON.stringify(ctx, null, 2),
+    JSON.stringify(promptCtx, null, 2),
     '',
     'Return JSON of the form:',
     '{',
@@ -124,8 +130,9 @@ module.exports = async function handler(req, res) {
     });
 
     if (!resp.ok) {
+      // Upstream status stays server-side only; the client gets a generic error.
       console.error('Gemma triage API error:', resp.status);
-      return res.status(502).json({ error: 'AI request failed', status: resp.status });
+      return res.status(502).json({ error: 'AI request failed' });
     }
 
     var data = await resp.json();

@@ -3,6 +3,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const core = require('../clash-discipline-core');
+// The Dutch file-name tokens (bouwkundig, installatie, constructie, …) are
+// no longer hard-coded in the module: they ship as DATA in the Dutch locale
+// pack's `disciplineHints` (every installed pack's hints apply, whatever the
+// UI language). Register it the way locales/loader.js does in the app.
+core.registerHints('locale:nl', require('../locales/nl.json').disciplineHints);
 
 // Frozen reference oracle — this IS the inline implementation that used to
 // live in index.html before disciplineCoreV2 graduated to the sole
@@ -82,7 +87,7 @@ function el(type) { return { props: { ifcType: type } }; }
 function mdl(id, discipline) { return { id, discipline }; }
 
 test('module exposes one immutable, side-effect-free contract', () => {
-  assert.equal(core.contractVersion, 1);
+  assert.equal(core.contractVersion, 2);
   assert.equal(Object.isFrozen(core), true);
   assert.equal(Object.isFrozen(core.typeMap), true);
   assert.equal(typeof core.elementDiscipline, 'function');

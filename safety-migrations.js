@@ -80,10 +80,54 @@
     // self-test; the verdict is stored per GPU + app version + core hash and a
     // refusal is never retried for that key. Until verified nothing changes.
     // Why not unconditional: on SwiftShader (MSAA depth evaluated at the pixel
-    // centre) real project geometry produced a few differing edge pixels.
+    // centre) large model geometry produced a few differing edge pixels.
     // Kill switch ?ccSafety=-occlusionCulling; fallback = draw everything that
     // passes the frustum/LOD cull, as before.
-    occlusionCulling: Object.freeze({ fallback: 'draw-all', defaultEnabled: true })
+    occlusionCulling: Object.freeze({ fallback: 'draw-all', defaultEnabled: true }),
+    // IFC loading: display-only progressive preview. The worker transfers its
+    // geometry buffers in ordered batches while it streams and the main
+    // thread draws them into a separate, non-model preview group (never in
+    // state, not pickable/clashable/cached/exported), torn down when the
+    // real model commits — decoded from the very same typed arrays, so the
+    // model is identical (tests/browser/progressive-load.mjs and the
+    // differential harness compare triangles, matrices, props, volumes).
+    // Fallback = the model appears only when fully parsed.
+    // Promoted (defaultEnabled:true) 2026-10-23: every loader gate green with
+    // it on (differential incl. the parallel+preview digest case, progressive-
+    // load, office-clash-parity, accuracy-federation, spaces, smart-import,
+    // park/restore, cancel loops, storey scope); kill switch
+    // ?ccSafety=-progressivePreview.
+    progressivePreview: Object.freeze({ fallback: 'whole-model', defaultEnabled: true }),
+    // IFC loading: parse several dropped files at once in separate workers
+    // under a memory budget (_ccIfcLoadPlan in index.html); models still
+    // commit in the user's file order. Fallback = one file after another.
+    // Promoted with progressivePreview (same gates); ?ccSafety=-parallelLoad.
+    parallelLoad: Object.freeze({ fallback: 'sequential', defaultEnabled: true }),
+    // IFC loading: ONE large file parsed by several web-ifc workers at once
+    // (loadIFCWorkerSharded / _ccMergeIfcShards in index.html). Each shard
+    // streams a block-cyclic slice of StreamAllMeshes' element order (read
+    // from the running web-ifc, _ccIfcStreamOrder); the main thread merges
+    // them back and decodes with the single-worker decoder, so the model is
+    // identical. Only for files >= _ccIfcShard.minBytes, >= 4 cores, within
+    // the memory budget (every shard holds its own copy of the model), never
+    // while other files of the batch parse; any shard failure → one worker.
+    // Fallback = one worker per file. Promoted (defaultEnabled:true)
+    // 2026-10-23: tests/browser/shard-load.mjs (2/3 shards deep-digest
+    // identical to one worker on every synthetic fixture, fingerprint ==
+    // fallback, failing shard, cancel), the differential harness's sharded
+    // case and tests/ifc-shard-order.test.js green; every other loader gate
+    // green with it on (small fixtures stay below the size threshold).
+    // Kill switch ?ccSafety=-shardedLoad.
+    shardedLoad: Object.freeze({ fallback: 'one-worker', defaultEnabled: true }),
+    // Memory: remove duplicate / provably unneeded data without changing any
+    // result — batched geometry keeps ONE CPU copy (the off-scene source
+    // geometry reads the batch's arrays through views; a geometry shared by
+    // several meshes is added to its batch once), detection caches are capped
+    // by bytes from the heap headroom, and IFC parses are scheduled by
+    // memory headroom (serial under pressure). Identity gate:
+    // tests/browser/memory-federation.mjs (deep model digest + clash list
+    // identical to ?ccSafety=-leanMemory). Kill switch ?ccSafety=-leanMemory.
+    leanMemory: Object.freeze({ fallback: 'duplicate-copies', defaultEnabled: true })
   });
   var diagnostics = [];
 
@@ -296,9 +340,25 @@
     });
   }
 
+  // A stub element (no geometry: rooms without a body, non-physical
+  // elements, np:1) keeps three's empty box: min +Infinity, max -Infinity.
+  function _emptyBox(box) {
+    return Array.isArray(box) && box.length === 6 &&
+      box[0] === Infinity && box[1] === Infinity && box[2] === Infinity &&
+      box[3] === -Infinity && box[4] === -Infinity && box[5] === -Infinity;
+  }
+
   function _buffer(value) {
     return typeof ArrayBuffer !== 'undefined' &&
       (value instanceof ArrayBuffer || (ArrayBuffer.isView && ArrayBuffer.isView(value)));
+  }
+
+  // A stored geometry: exact (xp:1: Float32 positions + Int8 or Float32
+  // normals + index) or the older quantised form (qpos + qnrm + index).
+  function _geometryBuffers(rec) {
+    if (!rec || !_buffer(rec.idx)) return false;
+    if (_buffer(rec.pos)) return _buffer(rec.n8) || _buffer(rec.nrm);
+    return _buffer(rec.qpos) && _buffer(rec.qnrm);
   }
 
   function validateGeoCachePayload(payload) {
@@ -310,10 +370,20 @@
     var elementIds = {};
     for (var ei = 0; ei < payload.elData.length; ei++) {
       var element = payload.elData[ei];
-      if (!element || element.eid == null || !_finiteTuple(element.box, 6)) {
+      if (!element || element.eid == null || !(_finiteTuple(element.box, 6) || _emptyBox(element.box))) {
         return { valid:false, reason:'invalid-element-' + ei };
       }
       elementIds[String(element.eid)] = true;
+    }
+    // gs:1 — geometry buffers live once per shared geometry in geoData and
+    // every mesh references one by index (md.g); older payloads carry the
+    // buffers on each mesh record.
+    var shared = payload.gs === 1;
+    if (shared) {
+      if (!Array.isArray(payload.geoData)) return { valid:false, reason:'missing-geometries' };
+      for (var gi = 0; gi < payload.geoData.length; gi++) {
+        if (!_geometryBuffers(payload.geoData[gi])) return { valid:false, reason:'invalid-geometry-buffer-' + gi };
+      }
     }
     for (var mi = 0; mi < payload.meshData.length; mi++) {
       var mesh = payload.meshData[mi];
@@ -323,7 +393,8 @@
       if (!_finiteTuple(mesh.bbox, 6) || !_finiteTuple(mesh.mtx, 16) || !_finiteTuple(mesh.col, 4)) {
         return { valid:false, reason:'invalid-mesh-metadata-' + mi };
       }
-      if (!_buffer(mesh.qpos) || !_buffer(mesh.qnrm) || !_buffer(mesh.idx)) {
+      if (shared ? !(typeof mesh.g === 'number' && mesh.g >= 0 && mesh.g < payload.geoData.length && Math.floor(mesh.g) === mesh.g)
+        : !_geometryBuffers(mesh)) {
         return { valid:false, reason:'invalid-mesh-buffer-' + mi };
       }
     }
