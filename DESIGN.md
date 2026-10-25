@@ -314,10 +314,22 @@ text; mono only for counts, IDs, keys and measured values.
   other bucket as an underlined text button ("· 79 only touch (contact)",
   "· 21 adjacent by design (wall–slab, wall–beam …)"). A shown bucket gets
   `--accent-bg` + a 1px `--accent` border and a ✓, and `aria-pressed`.
-  Never colour-only. Under it, the run's one-line summary ("132 clashes ·
+  Never colour-only. Each entry is set as unbreakable parts ("· 21
+  adjacent by design" + "(wall–slab, wall–beam …)"): the row wraps
+  left-aligned between entries, or at most before an entry's parenthesis,
+  never mid-phrase; "Show all" / "Review only" follows in the same row.
+  Under it, the run's one-line summary ("132 clashes ·
   132 open · 0 resolved") as a `--text-xs`/`--text-muted` caption; the
   rest of the run statistics (AI summary, stats/delta chips, model matrix)
   sit in one native `<details>` "Run details", closed by default.
+- **Sidebar layout**: everything above the grouping row (bucket bar, run
+  caption, left-out notice, Run details, search + `List | Overview N`,
+  suggested views) is one region (`[data-cc-clash-head]`) that scrolls on
+  its own once taller than its share; the grouping row and the list below
+  it always stay in view (the list keeps ≥ 35 % of the panel). The search
+  takes the full width when the panel is too narrow for it and the view
+  toggle on one line, with a short placeholder ("Filter clashes…"; the
+  example query is its tooltip).
 - **Sidebar list** while the overview is open: bucket bar, left-out notice,
   search + `List | Overview N`, then the grouping row — the facets live in
   the overview only (one filter surface). Rare list actions (Select
@@ -330,7 +342,8 @@ text; mono only for counts, IDs, keys and measured values.
   `--font-mono`/`--text-2xs`/`--text-muted`. Facet groups are `role="group"`
   rows with a section-header label. Active filters repeat as removable
   pills ("Severity: Critical ×", `aria-label` "Remove filter …"); "shown /
-  total" is a `role="status"` live region.
+  total" is a `role="status"` live region set as a plain `--text-xs` /
+  `--text-muted` caption (body font, tabular numerals — not mono).
   - In the sidebar the facet panel is a native `<details>`.
   - In the overview (`compact`) there is one Suggested chip strip (max 6,
     then "+N more"; saved views follow), one action row (Filters button,
@@ -365,7 +378,17 @@ text; mono only for counts, IDs, keys and measured values.
   `.cc-overview` sits between the floating panels on desktop and is a
   fixed sheet above the panel on phones.
 - Group headers in the list use the same right-pointing chevron SVG as the
-  model clash matrix (rotated 90° when open), never ▼/▶ glyphs.
+  model clash matrix (rotated 90° when open), never ▼/▶ glyphs. A
+  root-cause header is the toggle (chevron, title + member count, then a
+  `--text-xs` meta line: severity pill, extent, storey, open count) with
+  the group actions (Accept all, Set status…) on their own row under it,
+  left-aligned with the title; controls wrap rather than cut a label.
+- **Clash rows**: title `--text-sm`/`--weight-medium` (two lines max) with
+  the status pill (label from the status table, translated) on its first
+  line; under it one `--text-xs`/`--text-muted` meta line with the clash
+  number and the markers (New, Auto, AI, note) — no line of its own for a
+  lone marker. Expand / collapse buttons are the same chevron SVG with an
+  `aria-label`.
 - Snapshot pictures themselves are 3D renders, not chrome: the A/B pair
   colours match the viewport's clash-focus colours, the context is a fixed
   light ghost so a BCF/PDF picture looks the same in either theme.
