@@ -1401,7 +1401,11 @@ function startApp() {
 
   window._ccUid = uid;
   window._ccDISC = DISC;
-  window._ccRunDetection = function(rulesOverride) {
+  // opts.auto: an automatic re-check after a model change (_ccScheduleAutoRerun,
+  // its reason 'replaced' | 'loaded'): stays on the current tab, and the
+  // commit is tagged so the app says in one toast that it re-checked.
+  window._ccRunDetection = function(rulesOverride, opts) {
+    var _auto = (opts && opts.auto) || null;
     var s = window._ccLatestState;
     var d = window._ccDispatch;
     if (!s || !d || !s.models || !s.models.length) return false;
@@ -1415,7 +1419,7 @@ function startApp() {
     // specific models. Apply the override here so the run always uses the
     // intended scope, regardless of when the state re-render lands.
     var runRules = rulesOverride ? Object.assign({}, s.rules, rulesOverride) : s.rules;
-    d({t:'DETECTING'}); d({t:'TAB',v:'clashes'});
+    d({t:'DETECTING'}); if (!_auto) d({t:'TAB',v:'clashes'});
     // Stall watchdog: if the engine makes no progress for 90s, abort so the UI
     // (and the orchestrator's get_status) don't sit on detecting:true forever.
     // A genuinely slow run keeps advancing window._ccDetectProgress.done and
@@ -1438,7 +1442,7 @@ function startApp() {
     detectClashesAsync(s.models, runRules).then(function(result) {
       clearInterval(_wdTimer);
       var _runDs = {coverageModelIds: _ccCoverageModelIds(runRules, s.models)};
-      if (!_ccCommitDetectionResult(result, d, _runDs)) return;
+      if (!_ccCommitDetectionResult(result, d, _runDs, _auto ? {auto:_auto} : undefined)) return;
       // Same-discipline 0-clash trap: a federation whose models share a
       // discipline returns 0 because every cross-model pair is skipped by the
       // excludeSameDiscipline default. Don't fail silently — say why + how.
@@ -1462,7 +1466,7 @@ function startApp() {
         window.dispatchEvent(new CustomEvent('cc-detection-complete', { detail: {
           ok: true, total: (result||[]).length, open: _open, excluded: (result && result._ccExcluded) || null,
           modelA: (runRules&&runRules.modelA)||'all', modelB: (runRules&&runRules.modelB)||'all',
-          ts: Date.now()
+          auto: _auto, ts: Date.now()
         }}));
       } catch(e) {}
     }).catch(function(err) {
@@ -1485,6 +1489,93 @@ function startApp() {
       } catch(e) {}
       if (window._ccToast) window._ccToast(_cc_t('toast.detectionFailed','Detection failed: {msg}{v1}',{msg:msg,v1:(msg.indexOf('string length') >= 0 ? ' — a very large model overflowed serialization; exclude it from sync and retry.' : '')}));
     });
+    return true;
+  };
+
+  // ── Automatic re-check on model change (docs/INTERNALS.md §21.59) ──
+  // A same-name reload / Revit re-sync (reason 'replaced'), or with the pref
+  // 'any' every model load batch ('loaded'), schedules one silent
+  // _ccRunDetection with the saved rules — a smart re-run, so it costs about
+  // the pairs of the changed elements. Debounced: the run waits until the
+  // load batch has settled (the loader calls this after the lazy props have
+  // landed), no load / restore / detection is in flight, and a quiet
+  // settleMs has passed; several reasons in one window collapse into one run
+  // ('replaced' wins). Never runs without a previous run (the user has not
+  // asked for clashes yet), on a project restore, after a partial (storey-
+  // scoped) load, after the memory watchdog stopped the last run, or when a
+  // run finished after it was scheduled (that run already covered the
+  // change). Knobs + last decision on window._ccAutoRerun (tests).
+  var _ccAutoRerunCfg = window._ccAutoRerun = { settleMs: 600, pollMs: 250, waitMaxMs: 600000, timer: null, pending: null, last: null, runs: 0 };
+  // Reasons that mean "not yet" (the tick waits) rather than "no".
+  var _CC_AUTORR_WAIT = { detecting: 1, loading: 1, restoring: 1, 'pre-run': 1 };
+  // Why an automatic re-check must not run now (null = it may run).
+  // env: {detecting, loading, restoring, memoryStopped} — the live flags,
+  // passed in so the rule is testable on its own.
+  function _ccAutoRerunGate(s, reason, env) {
+    env = env || {};
+    var pref = (s && s.prefs && s.prefs.autoRerun) || 'replaced';
+    if (pref === 'off') return 'off';
+    if (pref !== 'any' && reason !== 'replaced') return 'pref';
+    if (!s || !s.models || !s.models.length) return 'no-models';
+    if (!s.runHistory || !s.runHistory.length) return 'no-previous-run';
+    if (s.switchingProject) return 'restore';
+    for (var i = 0; i < s.models.length; i++) {
+      var m = s.models[i];
+      if (!m) continue;
+      if (m._stub === true) return 'restore';
+      if (m.stats && m.stats.loadedScope) return 'partial';
+    }
+    if (env.memoryStopped) return 'memory';
+    if (s.detecting || env.detecting) return 'detecting';
+    if (env.loading) return 'loading';
+    if (env.restoring) return 'restoring';
+    if (s.preRun || s.runModalOpen) return 'pre-run';
+    return null;
+  }
+  window._ccAutoRerunGate = _ccAutoRerunGate;
+  function _ccAutoRerunEnv() {
+    var last = _ccDetectMemCfg && _ccDetectMemCfg.last;
+    return {
+      detecting: typeof window._ccDetectionActive === 'function' && window._ccDetectionActive(),
+      loading: !!window._ccModelLoading,
+      restoring: Object.keys(_ccRestoringModels).length > 0,
+      memoryStopped: !!(last && last.stopped)
+    };
+  }
+  function _ccAutoRerunTick() {
+    var c = _ccAutoRerunCfg;
+    c.timer = null;
+    var p = c.pending;
+    if (!p) return;
+    var s = window._ccLatestState;
+    var why = _ccAutoRerunGate(s, p.reason, _ccAutoRerunEnv());
+    if (why && _CC_AUTORR_WAIT[why] && Date.now() - p.since < c.waitMaxMs) { c.timer = setTimeout(_ccAutoRerunTick, c.pollMs); return; }
+    c.pending = null;
+    if (!why && s.activeProject !== p.project) why = 'project-changed';
+    // A run that STARTED after the change and committed already covered it.
+    if (!why) { var h = s.runHistory, lastTs = h[h.length - 1] && h[h.length - 1].ts; if (_ccDetectLastStart >= p.since && typeof lastTs === 'number' && lastTs >= _ccDetectLastStart) why = 'covered'; }
+    if (why) { c.last = { ran: false, reason: p.reason, skipped: why, ts: Date.now() }; return; }
+    var ok = window._ccRunDetection(null, { auto: p.reason });
+    c.last = { ran: !!ok, reason: p.reason, skipped: ok ? null : 'refused', ts: Date.now() };
+    if (ok) c.runs++;
+  }
+  // reason: 'replaced' (a model was reloaded / re-synced) or 'loaded' (any
+  // other model load). Returns false when the pref rules it out, true when a
+  // re-check is pending (the tick may still skip it, see the gate).
+  window._ccScheduleAutoRerun = function(reason) {
+    var c = _ccAutoRerunCfg, s = window._ccLatestState;
+    var r = reason === 'replaced' ? 'replaced' : 'loaded';
+    // Only the pref is decided now: the models / run history of a batch that
+    // just committed may not have reached _ccLatestState yet (the tick decides).
+    var why = _ccAutoRerunGate(s, r, {});
+    if (why === 'off' || why === 'pref') {
+      if (!c.pending) c.last = { ran: false, reason: r, skipped: why, ts: Date.now() };
+      return false;
+    }
+    if (!c.pending) c.pending = { reason: r, since: Date.now(), project: s && s.activeProject };
+    else if (r === 'replaced') c.pending.reason = 'replaced';
+    if (c.timer) clearTimeout(c.timer);
+    c.timer = setTimeout(_ccAutoRerunTick, c.settleMs);
     return true;
   };
 
@@ -1686,6 +1777,8 @@ function startApp() {
     showSpaces:_ccLoadPref('showSpaces',false),
     showGridLines:_ccLoadPref('showGridLines',true),
     preRunDontAsk:_ccLoadPref('preRunDontAsk',false), // pre-run suggestions panel: don't ask again
+    // Re-check clashes automatically after a model changes (_ccScheduleAutoRerun): 'off' | 'replaced' (a same-name reload / Revit re-sync) | 'any' (every model load batch)
+    autoRerun:(function(){ var v=null; try{ v=localStorage.getItem('cc_autoRerun'); }catch(e){} /* _ccPersistUI stores strings raw (not JSON) */ if(v&&v.charAt(0)==='"'){ try{ v=JSON.parse(v); }catch(e){} } return v==='off'||v==='any'||v==='replaced' ? v : 'replaced'; })(),
   };
   // Restore section state persisted from previous session
   var _savedSection=(function(){try{return JSON.parse(localStorage.getItem('cc_section')||'null');}catch(e){return null;}})();
@@ -1742,6 +1835,7 @@ function startApp() {
     changelog: [],       // [{id, ts, user, type, targetId, field, value, prev}]
     deniedPairs: {},     // denied memory: clash identity key → {pair, point, ts, reason, by} (docs/INTERNALS.md §21.58)
     lastIssueLifecycle: null, // the last run's linked-issue changes {ts, resolved, reopened, changes} (toast + sharing)
+    lastAutoRerun: null, // the last AUTOMATIC re-check {reason, ts, delta} (its toast); not saved with the project
     showShare: false,
     shareTab: 'overview', // 'overview' | 'comments'
     comments: [],         // [{id, anchor:{point:[x,y,z], globalId, modelId}, author, text, ts, resolved, replies:[{id,author,text,ts}]}]
@@ -1810,7 +1904,7 @@ function startApp() {
   // action's `u` payload. Was an inline array literal recreated on every
   // UPD_PREFS dispatch; named here so it can't silently drift from what it
   // actually does.
-  var PERSISTED_PREF_KEYS = ['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView','zoomSens','navInputMode','showSpaces','showGridLines','preRunDontAsk'];
+  var PERSISTED_PREF_KEYS = ['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView','zoomSens','navInputMode','showSpaces','showGridLines','preRunDontAsk','autoRerun'];
   var A = {
     ADD_MODEL:'ADD_MODEL', DEL_MODEL:'DEL_MODEL', REPLACE_MODEL:'REPLACE_MODEL', UPD_MODEL:'UPD_MODEL',
     PARK_MODEL:'PARK_MODEL', UNPARK_MODEL:'UNPARK_MODEL', SET_AUTOPARK:'SET_AUTOPARK',
@@ -2629,11 +2723,15 @@ function startApp() {
       // UNPARK_MODEL — drop the stub once the model has been re-added via
       // ADD_MODEL (the restore orchestration dispatches ADD_MODEL then this).
       case A.UNPARK_MODEL: return Object.assign({},s,{parkedModels:(s.parkedModels||[]).filter(function(pm){return pm.id!==a.id;})});
-      case A.REPLACE_MODEL: _clearElCaches(s.models.find(function(m){return m.id===a.id})); return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?a.v:m})});
+      // A replace that keeps the model id (file reload, Revit re-sync) keeps
+      // the smart re-run memo: the next run re-hashes every element
+      // (identity, box, transforms, vertex sample, clash props) and recomputes
+      // only the pairs of new / changed ones — §21.59. Its BVHs still go.
+      case A.REPLACE_MODEL: var _rplOld=s.models.find(function(m){return m.id===a.id}); if(a.v&&a.v.id===a.id){ _bvhLRURemoveModel(_rplOld); } else _clearElCaches(_rplOld); return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?a.v:m})});
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
-      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[], a.coverageModelIds, s.deniedPairs); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); /* Linked issues follow their clash: resolved when the run no longer finds it, reopened when it comes back (never one a person resolved / closed) — one undo step, §21.58. */ var _lc=a.t===A.MERGE_CLASHES?_ccIssueLifecycle(_mr.clashes, s.issues, a):null; if(_lc&&(_lc.resolved||_lc.reopened)){ _mr.clashes=_lc.clashes; _mr.deltaSummary=Object.assign({},_mr.deltaSummary,{issuesResolved:_lc.resolved||undefined,issuesReopened:_lc.reopened||undefined}); } var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary, lastRunExcluded:a.excluded||null}; if(_lc&&(_lc.resolved||_lc.reopened)){ _st.issues=_lc.issues; _st.lastIssueLifecycle=_lc.record; _st.changelog=(s.changelog||[]).concat(_lc.changelog); } var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* The bucket bar's "show" choices are per run, whatever the reset pref says: a new result starts on its review set. */ _st.filters=Object.assign({},_st.filters||s.filters,{showBuckets:[],hideBuckets:[]}); /* Grouped by root-cause element ("one row = one thing to fix", see _ccRootCauseKeyFor) whenever the user has nothing chosen — at any size: big sets render through the windowed list (VirtualList). Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0) { _st.clashGroupBy=['element']; }
+      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[], a.coverageModelIds, s.deniedPairs); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); /* Linked issues follow their clash: resolved when the run no longer finds it, reopened when it comes back (never one a person resolved / closed) — one undo step, §21.58. */ var _lc=a.t===A.MERGE_CLASHES?_ccIssueLifecycle(_mr.clashes, s.issues, a):null; if(_lc&&(_lc.resolved||_lc.reopened)){ _mr.clashes=_lc.clashes; _mr.deltaSummary=Object.assign({},_mr.deltaSummary,{issuesResolved:_lc.resolved||undefined,issuesReopened:_lc.reopened||undefined}); } var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary, lastRunExcluded:a.excluded||null, lastAutoRerun:a.auto?{reason:a.auto,ts:_mr.deltaSummary.ts,delta:_mr.deltaSummary}:null}; if(_lc&&(_lc.resolved||_lc.reopened)){ _st.issues=_lc.issues; /* an automatic re-check says it in its own toast (lastAutoRerun) */ _st.lastIssueLifecycle=a.auto?Object.assign({},_lc.record,{auto:a.auto}):_lc.record; _st.changelog=(s.changelog||[]).concat(_lc.changelog); } var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* The bucket bar's "show" choices are per run, whatever the reset pref says: a new result starts on its review set. */ _st.filters=Object.assign({},_st.filters||s.filters,{showBuckets:[],hideBuckets:[]}); /* Grouped by root-cause element ("one row = one thing to fix", see _ccRootCauseKeyFor) whenever the user has nothing chosen — at any size: big sets render through the windowed list (VirtualList). Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0) { _st.clashGroupBy=['element']; }
         return Object.assign({},s,_st);
       case A.ADD_CLASHES: { /* additive, non-destructive append (does NOT auto-resolve existing clashes like MERGE_CLASHES). Used by the accessibility panel. */
         var _addc=(a.v||[]).filter(Boolean); if(!_addc.length) return s;
@@ -12553,6 +12651,7 @@ function startApp() {
       var action = {t:A.MERGE_CLASHES, v:result};
       action.excluded = result._ccExcluded || null;
       if (detectionSettings !== undefined) action.detectionSettings = detectionSettings;
+      if (opts && opts.auto) action.auto = opts.auto; // automatic re-check (MERGE_CLASHES → lastAutoRerun)
       // Run-scope coverage (CLAUDE.md Item 2) — threaded through whichever
       // of the two existing params the caller used to carry it, so no call
       // site needs a new positional argument.
@@ -12585,8 +12684,10 @@ function startApp() {
     var st = window._ccLatestState;
     return _ccDetectInFlight > 0 || !!(st && st.detecting);
   };
+  var _ccDetectLastStart = 0; // when the last run started (an automatic re-check skips when a newer run covered the change)
   function detectClashesAsync(models, rules, onProgress) {
     _ccDetectInFlight++;
+    _ccDetectLastStart = Date.now();
     var settled = false, done = function() { if (!settled) { settled = true; _ccDetectInFlight = Math.max(0, _ccDetectInFlight - 1); } };
     var p;
     try { p = _detectClashesAsyncRun(models, rules, onProgress); } catch (e) { done(); throw e; }
@@ -25862,7 +25963,7 @@ function startApp() {
     _cc2DOutlines = null;
     d({t:A.LOAD_PROJECT_STATE, data:{
       models:[], parkedModels:[], clashes:[], issues:[], activeId:null, detecting:false,
-      switchingProject:true, lastDeltaSummary:null,
+      switchingProject:true, lastDeltaSummary:null, lastAutoRerun:null,
       sectionAxis:null, sectionPos:0.5, sectionCustom:null, sectionBox:null, sectionStorey:null,
       filters:Object.assign({},INIT_FILTERS), floors:[],
       measurements:[], measureMode:null, viewpoints:[],
@@ -27755,6 +27856,10 @@ function startApp() {
       }
       if (!files.length) return;
       var errors = [];
+      // What this batch committed, for the automatic re-check (_ccScheduleAutoRerun):
+      // replaced / loaded model counts, a storey-scoped (partial) load, and
+      // one promise per IFC model that settles when its lazy props landed.
+      var _autoRr = {replaced:0, loaded:0, partial:false, props:[]};
       var chain = Promise.resolve();
       var totalIfc = 0, doneIfc = 0;
       var _batchMeta = {files:files.length, delayMs:0};
@@ -27893,6 +27998,7 @@ function startApp() {
                     meshes:result.meshes, elements:result.elements, storeys:result.storeys||[],
                     storeyData:result.storeyData||[], spatialHierarchy:result.spatialHierarchy||{},
                     relatedPairs:result.relatedPairs||{}, stats:result.stats}, _ccSemanticModelFields(result))});
+                  _autoRr.loaded++;
                   _gcEvent('glb-ifc-paired', base);
                   _onProg('Model ready (' + result.stats.loadTime + 'ms)');
                 });
@@ -27941,6 +28047,7 @@ function startApp() {
                   meshes:glbResult.meshes, elements:elements, storeys:[], storeyData:[], spatialHierarchy:{}, relatedPairs:{},
                   stats:{loadTime:Math.round(performance.now()-t0), fileSize:grp.glb.size, elementCount:elements.length, meshCount:glbResult.meshes.length}}});
                 consoleElementProfile(base, 'GLB', elements);
+                _autoRr.loaded++;
                 errors.push(base + '.glb loaded without metadata — clash detection type rules, storey grouping, and element properties are unavailable. For full support, drop the matching .ifcmeta or .ifcprops file alongside the GLB.');
                 _gcEvent('glb-standalone', base);
               });
@@ -28182,6 +28289,7 @@ function startApp() {
                 relatedPairs:result.relatedPairs||{},
                 stats:Object.assign({}, _existingModel.stats||{}, result.stats, {loadType:(_existingModel.stats&&_existingModel.stats.loadType?_existingModel.stats.loadType:'GLB')+'+'+ext})
               })});
+              _autoRr.replaced++;
               console.log('%c[Sidecar Attach] ' + f.name + ' attached to model "' + base + '"', 'color:#22c55e;font-weight:bold');
               // Persist sidecar in IndexedDB alongside the model's file record
               _openIDB().then(function(db) {
@@ -28334,6 +28442,9 @@ function startApp() {
                 d({t:A.ADD_MODEL, v:Object.assign({id:modelId, name:baseName, discipline:disc, color:col, visible:true, _version:1, meshes:result.meshes, elements:result.elements, storeys:result.storeys||[], storeyData:result.storeyData||[], spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, stats:result.stats||{fileSize:fSize}}, _ccSemanticModelFields(result))});
               }
               job.committed(modelId, result.elements);
+              if (existing) _autoRr.replaced++; else _autoRr.loaded++;
+              if (result.stats && result.stats.loadedScope) _autoRr.partial = true;
+              _autoRr.props.push(new Promise(function(res) { job.afterProps(res); }));
               consoleElementProfile(baseName, (result.stats&&result.stats.loadType)||'IFC', result.elements);
               var _verMeta = existing ? {_version:(existing._version||1)+1, _versionDiff:versionDiff} : {_version:1};
               // `buf` is detached (transferred to the worker) by this point —
@@ -28405,6 +28516,13 @@ function startApp() {
         } catch(_) {}
         _batchPreviews.forEach(function(pv) { pv.commit(pv.modelId); }); // any preview not yet torn down goes after its grace period
         if (_memTimer) { clearInterval(_memTimer); _memTimer = null; }
+        // Automatic re-check once every model of the batch has its props
+        // (never for a cancelled or storey-scoped batch).
+        if ((_autoRr.replaced || _autoRr.loaded) && !_autoRr.partial && _batchGen === _ccLoadGeneration && typeof window._ccScheduleAutoRerun === 'function') {
+          Promise.all(_autoRr.props).then(function() {
+            if (_batchGen === _ccLoadGeneration) window._ccScheduleAutoRerun(_autoRr.replaced ? 'replaced' : 'loaded');
+          });
+        }
         if (_loadBatch) _loadBatch.markChainDone();
         else _finishLoadingStrip(0);
       }, function(error) {
@@ -40625,6 +40743,21 @@ function startApp() {
           </select>
         </div>
 
+        <div style=${SEC}>${_cc_t('settings.detection','Detection')}</div>
+        <div style=${TROW}>
+          <div>
+            <div style=${TLBL}>${_cc_t('settings.autoRerun','Re-check clashes automatically')}</div>
+            <div style=${TSUB}>${_cc_t('settings.autoRerunSub','After a model changes, run the last detection again with the saved rules. Only changed elements are checked again.')}</div>
+          </div>
+          <select value=${p.autoRerun||'replaced'} aria-label=${_cc_t('settings.autoRerun','Re-check clashes automatically')}
+            onChange=${function(e){d({t:A.UPD_PREFS,u:{autoRerun:e.target.value}});}}
+            style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-sm)',maxWidth:'100%'}}>
+            <option value="off">${_cc_t('settings.autoRerunOff','Off')}</option>
+            <option value="replaced">${_cc_t('settings.autoRerunReplaced','When a model is replaced or re-synced')}</option>
+            <option value="any">${_cc_t('settings.autoRerunAny','After any model load')}</option>
+          </select>
+        </div>
+
         <div style=${SEC}>${_cc_t('settings.languageRegion','Language & Region')}</div>
         <div style=${TROW}>
           <div>
@@ -51228,7 +51361,7 @@ function startApp() {
       var parts = [];
       if (lc.resolved) parts.push(lc.resolved === 1 ? _cc_t('lifecycle.toastResolvedOne', '1 issue resolved by this run') : _cc_t('lifecycle.toastResolved', '{n} issues resolved by this run', {n: lc.resolved}));
       if (lc.reopened) parts.push(lc.reopened === 1 ? _cc_t('lifecycle.toastReopenedOne', '1 issue reopened: its clash was found again') : _cc_t('lifecycle.toastReopened', '{n} issues reopened: their clashes were found again', {n: lc.reopened}));
-      if (parts.length && typeof window._ccToast === 'function') window._ccToast(parts.join(' · '));
+      if (parts.length && !lc.auto && typeof window._ccToast === 'function') window._ccToast(parts.join(' · ')); // an automatic re-check says it in its own toast (below)
       try {
         var SSC = window._ccSharedSessionCore;
         if (SSC && SSC.sessions().length) (lc.changes || []).forEach(function(ch){
@@ -51236,6 +51369,24 @@ function startApp() {
         });
       } catch(e) {}
     }, [s.lastIssueLifecycle]);
+    // An automatic re-check after a model change (_ccScheduleAutoRerun →
+    // MERGE_CLASHES {auto} → lastAutoRerun): one short toast that says it was
+    // automatic and what changed, linked issues included.
+    var _autoRrSeenRef = useRef(null);
+    useEffect(function(){
+      var ar = s.lastAutoRerun;
+      if (!ar || _autoRrSeenRef.current === ar) return;
+      _autoRrSeenRef.current = ar;
+      var ds = ar.delta || {}, parts = [];
+      if (ds.newCount) parts.push(_cc_t('autoRerun.nNew', '{n} new', {n: ds.newCount}));
+      if (ds.autoResolved) parts.push(_cc_t('autoRerun.nGone', '{n} no longer found', {n: ds.autoResolved}));
+      if (ds.issuesResolved) parts.push(_cc_t('autoRerun.nIssuesResolved', '{n} issues resolved', {n: ds.issuesResolved}));
+      if (ds.issuesReopened) parts.push(_cc_t('autoRerun.nIssuesReopened', '{n} issues reopened', {n: ds.issuesReopened}));
+      var msg = parts.length
+        ? _cc_t('autoRerun.toast', 'Re-checked after model update: {changes}', {changes: parts.join(' · ')})
+        : _cc_t('autoRerun.toastNoChange', 'Re-checked after model update: no changes');
+      if (typeof window._ccToast === 'function') window._ccToast(msg, 'info');
+    }, [s.lastAutoRerun]);
     // Country pack follows the loaded models (address / CRS / site location);
     // activated without being saved — see window._ccAutoRegion.
     useEffect(function(){

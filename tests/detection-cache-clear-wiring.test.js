@@ -51,7 +51,8 @@ test('existing detection call sites are unaffected -- none pass a 4th arg, so cl
     .filter((m) => !m[1]) // exclude the function DEFINITION line itself
     .map((m) => m[2]);
   assert.ok(calls.length >= 6, 'expected multiple call sites to check');
-  const nonDefault = calls.filter((argsStr) => argsStr.split(',').length > 3 && !argsStr.includes('undefined, opts'));
+  // (_ccRunDetection's automatic re-check passes only {auto} — never clearCachesAfter)
+  const nonDefault = calls.filter((argsStr) => argsStr.split(',').length > 3 && !argsStr.includes('undefined, opts') && !/, _auto \? \{auto:_auto\} : undefined$/.test(argsStr));
   assert.deepEqual(nonDefault, [], 'no pre-existing call site may pass a 4th positional arg');
 });
 
