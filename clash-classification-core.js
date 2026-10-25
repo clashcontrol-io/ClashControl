@@ -10,7 +10,13 @@
   // old all-pairs O(n²) scan was the detection wall on large federations).
   // Severity for hard/soft clashes comes from deterministicSeverity() below
   // (penetration depth / clearance x element role).
-  function classifyClashes(clashes) {
+  // ctx (optional): { ruleSeverity(c) -> 'minor'|'major'|'critical'|null } —
+  // a user rule's severity for the clash (index.html: the coordination-matrix
+  // cell of its discipline pair). When it answers, it is the clash's severity
+  // (still _sevSource 'rule': a re-run re-derives it from the current rules).
+  /** @param {any[]} clashes @param {{ruleSeverity?: function(any): (string|null)}} [ctx] */
+  function classifyClashes(clashes, ctx) {
+    var ruleSev = ctx && typeof ctx.ruleSeverity === 'function' ? ctx.ruleSeverity : null;
     var FP_TYPES = ['IfcOpeningElement','IfcOpeningStandardCase','IfcSpace','IfcVirtualElement'];
     var STRUCTURAL_DISC = 'structural';
     var INSULATION_MAT = 'insulation';
@@ -92,6 +98,10 @@
         }
       }
 
+      if (ruleSev) {
+        var rs = ruleSev(c);
+        if (rs === 'minor' || rs === 'major' || rs === 'critical') sev = rs;
+      }
       c.aiSeverity = sev;
       c.aiCategory = cat;
       c.aiReason = reason;

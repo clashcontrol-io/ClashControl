@@ -948,6 +948,22 @@ clashcontrol-engine --install</pre>
         }
       }
     }
+    // Coordination-matrix cells (rules.matrixRules) are per-pair gaps too:
+    // a 'clearance' cell wider than maxGap is out of the engine's reach, same
+    // as a wider per-type tolerance. Narrower cells and 'hard' cells are
+    // tightened client-side (_applyClientSideRuleFilters), 'off' cells are
+    // dropped by the shared matrix skip. Fails closed when the core helper
+    // is missing (the gap cannot be checked).
+    var _mr = rules.matrixRules;
+    if (_mr && typeof _mr === 'object' && Object.keys(_mr).length) {
+      var _dcG = (typeof window !== 'undefined' && window._ccClashDisciplineCore) || null;
+      if (!_dcG || typeof _dcG.maxCellGapMm !== 'function') {
+        return {ok:false, reason:'Discipline-pair rules need the discipline core, which is not loaded.'};
+      }
+      if (_dcG.maxCellGapMm(rules) > _maxGap) {
+        return {ok:false, reason:'A discipline-pair clearance wider than the global max gap can’t be reproduced locally.'};
+      }
+    }
     // Model scope: only 'all' or a single exact model id is expressible engine-side.
     var _resolve = (typeof window !== 'undefined' && window._ccResolveModelScope) || null;
     var _sa = _normalizeModelScope(models, rules.modelA, _resolve);
@@ -1037,6 +1053,11 @@ clashcontrol-engine --install</pre>
       }
     })();
     var toleranceByTypePair = rules.toleranceByTypePair || null;
+    // Coordination-matrix cell gaps, tighten-only like the type-pair
+    // tolerance (wider ones fail the capability gate). Same precedence as the
+    // browser's _pairGapMFor: type-pair tolerance > cell > maxGap.
+    var _dcF = (typeof window !== 'undefined' && window._ccClashDisciplineCore) || null;
+    var cellGaps = !!(_dcF && typeof _dcF.matrixSetsGaps === 'function' && _dcF.matrixSetsGaps(rules));
     var minGapMm = rules.minGap||0; // rules.minGap is already mm, same convention as maxGap
     var maxGapMm = rules.maxGap||0;
     var _widerPairWarned = false;
@@ -1081,6 +1102,9 @@ clashcontrol-engine --install</pre>
               'never evaluated distances beyond the global maxGap, so soft clashes for that pair ' +
               'between ' + maxGapMm + 'mm and ' + pairTolMm + 'mm cannot be recovered client-side.');
           }
+        } else if (cellGaps && cl.trades && cl.trades.length === 2) {
+          var cellMm = _dcF.pairGapMm(cl.trades[0], cl.trades[1], rules);
+          if (cellMm != null && cellMm < maxGapMm && !(Math.abs(cl.distance) <= cellMm && cellMm > 0)) return false;
         }
       }
       return true;

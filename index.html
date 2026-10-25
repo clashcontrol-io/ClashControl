@@ -1612,16 +1612,33 @@ function startApp() {
   function _getStandardDefaultClearance(){try{var v=localStorage.getItem('cc_standard_default_clearance');return v!==null?Number(v):null;}catch(e){return null;}}
   function _setStandardDefaultClearance(v){try{if(v===null||v===''||v===undefined)localStorage.removeItem('cc_standard_default_clearance');else localStorage.setItem('cc_standard_default_clearance',String(Number(v)));}catch(e){}}
   function _getStandardPairRules(){try{var v=localStorage.getItem('cc_standard_pair_rules');return v?JSON.parse(v):[];}catch(e){return [];}}
-  function _setStandardPairRules(rules){try{localStorage.setItem('cc_standard_pair_rules',JSON.stringify(rules));}catch(e){}}
-  function _lookupPairRule(discA,discB){
-    var rules=_getStandardPairRules();
-    if(!discA||!discB)return null;
-    var a=discA.toLowerCase(),b=discB.toLowerCase();
-    for(var i=0;i<rules.length;i++){
-      var r=rules[i];
-      if((r.discipline_a===a&&r.discipline_b===b)||(r.discipline_a===b&&r.discipline_b===a))return r;
-    }
-    return null;
+  // The saved coordination-matrix cell (rules.matrixRules) deciding a
+  // clash's discipline pair, or null when no saved rule applies.
+  // {a, b, key, mode, gapMm, severity}. Reads the live rules.
+  function _ccMatrixCellForClash(clash){
+    try {
+      var core=window._ccClashDisciplineCore, st=window._ccLatestState;
+      var t=clash&&clash.trades;
+      if(!core||!st||!t||t.length<2||!t[0]||!t[1])return null;
+      var c=core.cellRule(t[0],t[1],st.rules);
+      if(c.level==='default'||!(st.rules.matrixRules&&st.rules.matrixRules[c.key]))return null;
+      return {a:t[0],b:t[1],key:c.key,mode:c.mode,gapMm:c.gapMm,severity:c.severity};
+    } catch(e){ return null; }
+  }
+  // One-time move of the Standards panel's discipline-pair rules into the
+  // coordination matrix (rules.matrixRules). Returns the cells to set, or
+  // null when there is nothing (left) to migrate. The old list stays in
+  // localStorage (read-only), the flag makes it happen once per browser.
+  function _ccMigrateStandardPairRulesOnce(){
+    try {
+      if (localStorage.getItem('cc_standard_pair_rules_migrated') === '1') return null;
+      var list = _getStandardPairRules();
+      localStorage.setItem('cc_standard_pair_rules_migrated', '1');
+      var core = window._ccClashDisciplineCore;
+      if (!core || !Array.isArray(list) || !list.length) return null;
+      var mr = core.matrixRulesFromStandardPairRules(list);
+      return Object.keys(mr).length ? mr : null;
+    } catch(e) { return null; }
   }
   function _getStandardTypePairRules(){try{var v=localStorage.getItem('cc_standard_type_pair_rules');return v?JSON.parse(v):[];}catch(e){return [];}}
   function _setStandardTypePairRules(rules){try{localStorage.setItem('cc_standard_type_pair_rules',JSON.stringify(rules));}catch(e){}}
@@ -1640,10 +1657,8 @@ function startApp() {
       var typeRule=_lookupTypePairRule(clash.elemAType,clash.elemBType);
       if(typeRule&&typeRule.clearance_mm!=null&&typeRule.clearance_mm!=='')return typeRule.clearance_mm;
     }
-    if(clash.disciplines&&clash.disciplines.length>=2){
-      var discRule=_lookupPairRule(clash.disciplines[0],clash.disciplines[1]);
-      if(discRule&&discRule.clearance_mm!=null&&discRule.clearance_mm!=='')return discRule.clearance_mm;
-    }
+    var cell=_ccMatrixCellForClash(clash);
+    if(cell&&cell.mode==='clearance'&&cell.gapMm!=null)return cell.gapMm;
     return _getStandardDefaultClearance();
   }
 
@@ -8801,6 +8816,8 @@ function startApp() {
       var r = {};
       Object.keys(rules || {}).sort().forEach(function(k) {
         if (k === 'fullRerun' || k === 'changeAware' || k === 'hideProvidedOpenings' || k === 'hideContacts' || k === 'hideBuckets' || k === 'roleChoicesRemembered') return;
+        // an absent / empty coordination matrix is the same run (old projects)
+        if (rules[k] === undefined || (k === 'matrixRules' && (!rules[k] || !Object.keys(rules[k]).length))) return;
         r[k] = rules[k];
       });
       var ms = (models || []).map(function(m) {
@@ -12581,6 +12598,11 @@ function startApp() {
       // a mid-run stop) instead of overwriting it with 'complete'.
       var outcome = (result && result._ccOutcome && result._ccOutcome !== 'complete') ? result._ccOutcome : 'complete';
       if (result && _runExcluded) { try { result._ccExcluded = _runExcluded; } catch (e) {} }
+      // Matrix cell severities (rules.matrixRules): classifyClashes reads the
+      // run's rules from here (both engines), see _ccMatrixSeverityCtx.
+      if (result && typeof _ccDisciplineCore === 'object' && _ccDisciplineCore && _ccDisciplineCore.matrixSetsSeverity(rules)) {
+        try { result._ccSevRules = { matrixRules: rules.matrixRules, disciplineMatrix: rules.disciplineMatrix, excludeSameDiscipline: rules.excludeSameDiscipline }; } catch (e) {}
+      }
       return _ccTagDetectionResult(result, gen, outcome);
     }
     if (coordinated) {
@@ -12825,6 +12847,13 @@ function startApp() {
       var tv = +rules.toleranceByTypePair[k] / 1000;
       if (tv > runGapM) runGapM = tv;
     });
+    // Coordination matrix cells (rules.matrixRules) are another per-pair
+    // gap: a 'clearance' cell's gap widens the margin exactly like a larger
+    // type-pair tolerance (same mm / 1000 as _pairGapMFor), or its pairs
+    // would never be candidates.
+    var _dcRun = (typeof _ccDisciplineCore === 'object' && _ccDisciplineCore) ? _ccDisciplineCore : null;
+    var _mrGaps = !!(_dcRun && _dcRun.matrixSetsGaps(rules));
+    if (_mrGaps) { var _cgv = _dcRun.maxCellGapMm(rules) / 1000; if (_cgv > runGapM) runGapM = _cgv; }
     // The sweeps reject a pair when the f64 world boxes are more than
     // 2*margin apart. The engine measures on Float32 engine-frame triangles,
     // which can sit up to ~1 ulp (2^-24 relative to the frame coordinate) per
@@ -13105,15 +13134,24 @@ function startApp() {
 
     // ── Shared per-pair helpers (also used by the worker-pool prefilter) ──
     var _wantsSoftRule = (!rules.hard) || runGapM > 0;
-    // Per-type-pair tolerance override of the soft gap (metres).
-    function _pairGapMFor(eA, eB) {
+    // The pair's soft gap (metres). Precedence: a per-type-pair tolerance
+    // (rules.toleranceByTypePair) > the pair's coordination-matrix cell
+    // ('clearance' = its gapMm, 'hard' = 0; clash-discipline-core.js
+    // pairGapMm) > the run's maxGap. A per-pair input like the tolerance it
+    // sits beside: the kernel, BVH, refinement and worker payload are
+    // unchanged (the pool gets the pair's seed from here, see _npBuildWindow).
+    function _pairGapMFor(eA, eB, mA, mB) {
       var g = maxGapM;
       if (rules.toleranceByTypePair) {
         var _pA2 = eA.props, _pB2 = eB.props;
         if (_pA2 && _pB2 && _pA2.ifcType && _pB2.ifcType) {
           var tpKey = _pA2.ifcType < _pB2.ifcType ? _pA2.ifcType+':'+_pB2.ifcType : _pB2.ifcType+':'+_pA2.ifcType;
-          if (rules.toleranceByTypePair[tpKey] !== undefined) g = rules.toleranceByTypePair[tpKey] / 1000;
+          if (rules.toleranceByTypePair[tpKey] !== undefined) return rules.toleranceByTypePair[tpKey] / 1000;
         }
+      }
+      if (_mrGaps && mA && mB) {
+        var _cg = _dcRun.pairGapMm(_dcRun.elementMatrixKey(eA, mA.discipline), _dcRun.elementMatrixKey(eB, mB.discipline), rules);
+        if (_cg != null) g = _cg / 1000;
       }
       return g;
     }
@@ -13332,7 +13370,7 @@ function startApp() {
       // models heavy with those, not a correctness regression.
 
       // ── L1+L2: BVH dual-tree + Möller tri-tri ──────────────────
-      var pairGapM = _pairGapMFor(eA, eB);
+      var pairGapM = _pairGapMFor(eA, eB, mA, mB);
       var _semanticSkipHard = false;
       if (sameModel && _modelRelPairs[mA.id]) {
         // By-design hosted relationship (opening↔host wall, hosted family, fill) →
@@ -13854,7 +13892,7 @@ function startApp() {
           var c = _candidateAt(candidates, i);
           if (_narrowPrefilterSkips(c)) continue;
           if (!c.eA.box || !c.eB.box) continue;
-          var _pg = _pairGapMFor(c.eA, c.eB);
+          var _pg = _pairGapMFor(c.eA, c.eB, c.mA, c.mB);
           var fl = (rules.hard ? 1 : 0) | ((_pg > 0 && _wantsSoftRule) ? 2 : 0);
           if (!fl) continue;
           // known without the kernel (exact, see _ccPairDismissed): main decides it in _processCandidate
@@ -14262,6 +14300,20 @@ function startApp() {
   var _ccClassificationCore = window._ccClashClassificationCore;
   // Every field classifyClashes (clash-classification-core.js) sets on a row.
   var _CC_CLASSIFY_FIELDS = ['extent', 'aiSeverity', 'aiCategory', 'aiReason', '_sevSource', '_clusterGroup', '_clusterSize'];
+  // Severity hook for classifyClashes: a coordination-matrix cell with a
+  // severity (rules.matrixRules) sets the severity of its pair's clashes,
+  // looked up by the clash's matrix keys (c.trades, stamped by both engines).
+  // Stamped _sevSource 'rule' like every derived verdict, so a re-run with a
+  // changed cell re-derives it. Contacts / duplicates / open-inside findings
+  // keep their own severity (they are not the pair's clash).
+  function _ccMatrixSeverityCtx(sevRules) {
+    if (!sevRules || typeof _ccDisciplineCore !== 'object' || !_ccDisciplineCore) return undefined;
+    return { ruleSeverity: function(c) {
+      if (!c || !c.trades || c.trades.length < 2 || !c.trades[0] || !c.trades[1]) return null;
+      if (c.type !== 'hard' && c.type !== 'soft') return null;
+      return _ccDisciplineCore.pairSeverity(c.trades[0], c.trades[1], sevRules);
+    } };
+  }
   function classifyClashes(clashes) {
     // A browser-engine result carries _ccClassifyMemo (see _finalize): its
     // run memo, and — when the run recomputed nothing and emitted exactly the
@@ -14286,7 +14338,7 @@ function startApp() {
     }
     var fresh = !!cm;
     if (fresh) for (var k = 0; k < clashes.length; k++) { if (clashes[k].aiSeverity) { fresh = false; break; } }
-    var r = _ccClassificationCore.classifyClashes(clashes);
+    var r = _ccClassificationCore.classifyClashes(clashes, _ccMatrixSeverityCtx(clashes && clashes._ccSevRules));
     if (fresh) {
       var recs = new Array(clashes.length);
       for (var q = 0; q < clashes.length; q++) {
@@ -30207,52 +30259,117 @@ function startApp() {
     </div>`;
   }
 
-  // ── Discipline matrix: N×N grid, lower triangle only (structural×MEP and
-  // MEP×structural are the same cell) ──  See _ccDisciplinePairEnabled for
-  // the state precedence this mirrors exactly, so the UI can never disagree
-  // with the engine about whether a pair is tested.
-  function _renderDisciplineMatrix(rules, d) {
-    function cellKey(a, b) { return a < b ? a+':'+b : b+':'+a; }
-    function toggle(discA, discB) {
-      var on = _ccDisciplinePairEnabled(discA, discB, rules);
-      var dm = Object.assign({}, rules.disciplineMatrix||{});
-      dm[cellKey(discA, discB)] = !on;
-      d({t:A.UPD_RULES, u:{disciplineMatrix:dm}});
-    }
-    var hasOverrides = rules.disciplineMatrix && Object.keys(rules.disciplineMatrix).length > 0;
-    var cell = {width:20,height:20,borderRadius:'var(--radius-xs)',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'};
-    var dot = {width:8,height:8,borderRadius:'var(--radius-xs)'};
-    // Rows: the top-level disciplines, then the MEP trades (sub-disciplines
-    // detected on import). A trade cell overrides the MEP cell for that pair.
+  // ── Coordination matrix: N×N grid, lower triangle only (structural×MEP and
+  // MEP×structural are the same cell). One cell = one rule
+  // (rules.matrixRules, clash-discipline-core.js cellRule): off / on (run
+  // settings) / hard only / clearance in mm, plus an optional severity and a
+  // note. A cell shows its state as text (on = dot as before, a clearance as
+  // its mm, hard as a short letter); clicking it opens the cell editor
+  // below the grid. The resolution (exact trade cell > top-level cell >
+  // default) is the engine's own, so the UI never disagrees with a run.
+  function _ccMatrixRows() {
     var mepC = (DISC.find(function(x){return x.id==='mep';})||DISC[0]).c;
-    var ROWS = DISC.map(function(x){ return {id:x.id, label:_cc_t('disc.'+x.id, x.label), short:_cc_t('disc.'+x.id, x.label).slice(0,3), c:x.c}; })
+    return DISC.map(function(x){ return {id:x.id, label:_cc_t('disc.'+x.id, x.label), short:_cc_t('disc.'+x.id, x.label).slice(0,3), c:x.c}; })
       .concat(['ventilation','heating','plumbing','fire','electrical'].map(function(sub){
         var l = _ccSubDisciplineLabel(sub);
         return {id:'mep.'+sub, label:l, short:l.slice(0,3), c:mepC, sub:true};
       }));
+  }
+  function _ccMatrixModeLabel(mode) {
+    return mode === 'on' ? _cc_t('matrix.mode.on','On (run settings)')
+      : mode === 'off' ? _cc_t('matrix.mode.off','Off')
+      : mode === 'hard' ? _cc_t('matrix.mode.hard','Hard clashes only')
+      : _cc_t('matrix.mode.clearance','Clearance');
+  }
+  function _ccMatrixCellText(c, maxGap) {
+    var t = c.mode === 'clearance' ? _cc_t('matrix.cell.clearanceTip','clearance {mm} mm',{mm:c.gapMm!=null?c.gapMm:(maxGap||0)})
+      : c.mode === 'hard' ? _cc_t('matrix.cell.hardTip','hard clashes only')
+      : c.mode === 'on' ? _cc_t('matrix.cell.onTip','tested') : _cc_t('matrix.cell.offTip','skipped');
+    if (c.severity) t += ', ' + _cc_t('matrix.cell.severityTip','severity {sev}',{sev:_cc_t('sev.'+c.severity, c.severity.charAt(0).toUpperCase()+c.severity.slice(1))});
+    return t;
+  }
+  function DisciplineMatrixEditor(props) {
+    var rules = props.rules || {}, d = props.d;
+    var core = window._ccClashDisciplineCore;
+    var selSt = useState(null), sel = selSt[0], setSel = selSt[1];
+    var errSt = useState(''), err = errSt[0], setErr = errSt[1];
+    var fileRef = useRef(null);
+    var ROWS = _ccMatrixRows();
+    var mr = rules.matrixRules || {}, dm = rules.disciplineMatrix || {};
+    var hasOverrides = Object.keys(mr).length > 0 || Object.keys(dm).length > 0;
+    var cellKey = core.matrixCellKey;
+    function rulesWithout(key) {
+      var m2 = Object.assign({}, mr), d2 = Object.assign({}, dm); delete m2[key]; delete d2[key];
+      return Object.assign({}, rules, {matrixRules:m2, disciplineMatrix:d2});
+    }
+    // Write one cell: a rule, or null = back to what the cell inherits.
+    function setCell(key, rule) {
+      var m2 = Object.assign({}, mr), d2 = Object.assign({}, dm);
+      delete d2[key];
+      if (rule) m2[key] = core.normalizeCellRule(rule); else delete m2[key];
+      d({t:A.UPD_RULES, u:{matrixRules:m2, disciplineMatrix:d2}});
+    }
+    function exportTemplate() {
+      try {
+        var blob = new Blob([JSON.stringify(core.matrixTemplate(rules), null, 2)], {type:'application/json'});
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a'); a.href = url; a.download = 'clash-matrix.json'; a.click();
+        setTimeout(function(){ URL.revokeObjectURL(url); }, 0);
+      } catch(e) { /* download not available */ }
+    }
+    function onImport(e) {
+      var file = e.target.files && e.target.files[0]; if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function(ev) {
+        var t = null;
+        try { t = core.readMatrixTemplate(JSON.parse(ev.target.result)); } catch(x) { t = null; }
+        if (!t) setErr(_cc_t('matrix.importInvalid','This file is not a matrix template (clash-matrix.json).'));
+        else { setErr(''); setSel(null); d({t:A.UPD_RULES, u:{matrixRules:t.matrixRules, disciplineMatrix:t.disciplineMatrix}}); }
+        e.target.value = '';
+      };
+      reader.readAsText(file);
+    }
+    var cellBox = {minWidth:24,height:20,padding:'0 2px',boxSizing:'border-box',borderRadius:'var(--radius-xs)',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',
+      fontSize:'var(--text-2xs)',fontFamily:'inherit',lineHeight:1,fontVariantNumeric:'tabular-nums'};
+    var dot = {width:8,height:8,borderRadius:'var(--radius-xs)'};
+    var selRow = sel && ROWS.find(function(r){return r.id===sel.a;}), selCol = sel && ROWS.find(function(r){return r.id===sel.b;});
     return html`<div>
-      <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'var(--space-1)'}}>
+      <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'var(--space-1)',flexWrap:'wrap',marginBottom:'var(--space-1)'}}>
         <span style=${{fontSize:'var(--text-xs)',fontWeight:600,color:'var(--text-primary)'}}>${_cc_t('bulkAction.disciplineMatrix','Discipline matrix')}</span>
-        ${hasOverrides && html`<button onClick=${function(){d({t:A.UPD_RULES,u:{disciplineMatrix:{}}})}}
-          style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'0 var(--space-1)',background:'none',color:'var(--text-faint)'}}>${_cc_t('bulkAction.resetOverrides','Reset overrides')}</button>`}
+        <span style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap'}}>
+          <button onClick=${exportTemplate} style=${S_BTN_GHOST_SM}>${_cc_t('matrix.exportTemplate','Export template')}</button>
+          <button onClick=${function(){ if (fileRef.current) fileRef.current.click(); }} style=${S_BTN_GHOST_SM}>${_cc_t('matrix.importTemplate','Import template')}</button>
+          ${hasOverrides && html`<button onClick=${function(){ setSel(null); d({t:A.UPD_RULES,u:{disciplineMatrix:{}, matrixRules:{}}}); }}
+            style=${S_BTN_GHOST_SM}>${_cc_t('bulkAction.resetOverrides','Reset overrides')}</button>`}
+        </span>
+        <input ref=${fileRef} type="file" accept=".json,application/json" style=${{display:'none'}} onChange=${onImport} />
       </div>
-      <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginBottom:'var(--space-1)'}}>${_cc_t('matrix.help','Which discipline pairs get tested. Same-discipline pairs (the diagonal) are off by default — the single biggest source of clash noise. MEP trades detected on import (ventilation, heating, plumbing, fire, electrical) are tested against each other automatically.')}</div>
-      <table style=${{borderCollapse:'collapse'}}>
+      <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginBottom:'var(--space-1)'}}>${_cc_t('matrix.help','Which discipline pairs get tested. Same-discipline pairs (the diagonal) are off by default — the single biggest source of clash noise. MEP trades detected on import (ventilation, heating, plumbing, fire, electrical) are tested against each other automatically.')} ${_cc_t('matrix.helpRules','Click a cell to give that pair its own rule: hard clashes only, a clearance in mm, a severity.')}</div>
+      ${err && html`<div style=${{...S_NOTE,marginBottom:'var(--space-1)'}}>${err}</div>`}
+      <div style=${{overflowX:'auto',maxWidth:'100%'}}>
+      <table style=${{borderCollapse:'collapse'}} data-cc-matrix="1">
         <tbody>
           ${ROWS.map(function(rowDisc, i){
             return html`<tr key=${rowDisc.id}>
               <td style=${{padding:'1px var(--space-1) 1px 0',fontSize:'var(--text-2xs)',color:rowDisc.c,fontWeight:rowDisc.sub?500:600,whiteSpace:'nowrap',textAlign:'right'}}>${rowDisc.sub ? '↳ ' : ''}${rowDisc.label}</td>
               ${ROWS.map(function(colDisc, j){
                 if (j > i) return html`<td key=${colDisc.id}></td>`; // upper triangle: same cell as [j][i], shown once
-                var on = _ccDisciplinePairEnabled(rowDisc.id, colDisc.id, rules);
-                var same = rowDisc.id === colDisc.id;
-                var label = same ? rowDisc.label+' self-clash' : rowDisc.label+' ↔ '+colDisc.label;
+                var c = core.cellRule(rowDisc.id, colDisc.id, rules);
+                var on = c.mode !== 'off';
+                var key = cellKey(rowDisc.id, colDisc.id);
+                var own = c.level === 'exact' && c.key === key && mr[key] !== undefined;
+                var isSel = !!(sel && sel.key === key);
+                var label = (rowDisc.id === colDisc.id ? _cc_t('matrix.selfPair','{a} within itself',{a:rowDisc.label}) : rowDisc.label+' ↔ '+colDisc.label) + ': ' + _ccMatrixCellText(c, rules.maxGap);
+                var txt = c.mode === 'clearance' ? String(c.gapMm != null ? c.gapMm : (rules.maxGap||0))
+                  : c.mode === 'hard' ? _cc_t('matrix.cell.hardShort','H') : null;
                 return html`<td key=${colDisc.id} style=${{padding:'1px'}}>
-                  <div onClick=${function(){toggle(rowDisc.id, colDisc.id)}} role="switch" aria-checked=${on}
-                    title=${label+': '+(on?'tested':'skipped')}
-                    style=${{...cell, background:on?'var(--accent-bg)':'var(--bg-tertiary)', border:'1px solid '+(on?'var(--accent-subtle)':'var(--border-subtle)')}}>
-                    ${on && html`<div style=${{...dot, background:'var(--accent)'}}></div>`}
-                  </div>
+                  <button type="button" data-cc-cell=${key} onClick=${function(){ setSel(isSel ? null : {key:key, a:rowDisc.id, b:colDisc.id}); }}
+                    aria-pressed=${isSel} title=${label} aria-label=${label}
+                    style=${{...cellBox, background:on?'var(--accent-bg)':'var(--bg-tertiary)', color:'var(--accent-subtle)', fontWeight:(own||c.severity)?700:400,
+                      border:(isSel?'2px solid var(--accent)':'1px solid '+(on?'var(--accent-subtle)':'var(--border-subtle)')),
+                      textDecoration:c.severity?'underline':'none'}}>
+                    ${txt != null ? txt : (on && html`<span style=${{...dot, background:'var(--accent)'}}></span>`)}
+                  </button>
                 </td>`;
               })}
             </tr>`;
@@ -30267,6 +30384,49 @@ function startApp() {
           </tr>
         </tbody>
       </table>
+      </div>
+      ${sel && selRow && selCol && (function(){
+        var key = sel.key;
+        var saved = mr[key] ? core.normalizeCellRule(mr[key]) : null;
+        var legacy = !saved && dm[key] !== undefined ? (dm[key] !== false ? 'on' : 'off') : null;
+        var inherited = core.cellRule(sel.a, sel.b, rulesWithout(key));
+        var cur = saved || {mode: legacy || 'default', gapMm:null, severity:null, note:''};
+        var title = sel.a === sel.b ? _cc_t('matrix.selfPair','{a} within itself',{a:selRow.label}) : selRow.label + ' ↔ ' + selCol.label;
+        function put(patch) {
+          var base = saved || {mode: legacy || inherited.mode, gapMm:null, severity:null, note:''};
+          var next = Object.assign({}, base, patch);
+          if (next.mode === 'default') { setCell(key, null); return; }
+          setCell(key, next);
+        }
+        return html`<div data-cc-matrix-editor="1" style=${{marginTop:'var(--space-2)',padding:'var(--space-2)',background:'var(--bg-secondary)',border:'1px solid var(--border-subtle)',borderRadius:'var(--radius-sm)',display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
+          <div style=${{fontSize:'var(--text-xs)',fontWeight:600,color:'var(--text-primary)'}}>${title}</div>
+          <div style=${{display:'flex',gap:'var(--space-1)',alignItems:'center',flexWrap:'wrap'}}>
+            <select aria-label=${_cc_t('matrix.modeLabel','Rule for this pair')} value=${cur.mode} data-cc-matrix-mode="1"
+              onChange=${function(e){ var m = e.target.value; put(m === 'clearance' ? {mode:m, gapMm: cur.gapMm != null ? cur.gapMm : (rules.maxGap || 50)} : {mode:m, gapMm:null}); }}
+              style=${{...S_INPUT,fontSize:'var(--text-xs)',width:'auto',flex:'0 1 auto'}}>
+              <option value="default">${_cc_t('matrix.mode.default','Default ({state})',{state:_ccMatrixModeLabel(inherited.mode)})}</option>
+              ${['on','off','hard','clearance'].map(function(m){ return html`<option key=${m} value=${m}>${_ccMatrixModeLabel(m)}</option>`; })}
+            </select>
+            ${cur.mode === 'clearance' && html`<span style=${{display:'flex',alignItems:'center',gap:'var(--space-1)'}}>
+              <input type="number" min="0" max="5000" step="5" data-cc-matrix-gap="1" aria-label=${_cc_t('matrix.gapLabel','Clearance (mm)')}
+                value=${cur.gapMm != null ? cur.gapMm : ''}
+                onInput=${function(e){ var v = e.target.value === '' ? null : Math.max(0, +e.target.value); if (v === null || isFinite(v)) put({gapMm:v}); }}
+                style=${{...S_INPUT,fontSize:'var(--text-xs)',width:72,textAlign:'right'}} />
+              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>mm</span>
+            </span>`}
+            ${cur.mode !== 'off' && html`<select aria-label=${_cc_t('facet.severity','Severity')} value=${cur.severity || ''} data-cc-matrix-sev="1"
+              onChange=${function(e){ put({severity: e.target.value || null}); }}
+              style=${{...S_INPUT,fontSize:'var(--text-xs)',width:'auto',flex:'0 1 auto'}}>
+              <option value="">${_cc_t('matrix.severityAuto','Severity: automatic')}</option>
+              ${core.matrixSeverities.map(function(v){ return html`<option key=${v} value=${v}>${_cc_t('sev.'+v, v.charAt(0).toUpperCase()+v.slice(1))}</option>`; })}
+            </select>`}
+          </div>
+          ${cur.mode !== 'default' && html`<input type="text" maxLength="500" aria-label=${_cc_t('matrix.noteLabel','Note')} placeholder=${_cc_t('matrix.notePlaceholder','Note, e.g. where this clearance comes from')}
+            value=${cur.note || ''} onChange=${function(e){ put({note: e.target.value}); }}
+            style=${{...S_INPUT,fontSize:'var(--text-xs)',width:'100%'}} />`}
+          <div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${_cc_t('matrix.precedence','A tolerance per IFC type pair wins over this cell; a trade cell wins over its MEP cell.')}</div>
+        </div>`;
+      })()}
     </div>`;
   }
 
@@ -30963,7 +31123,7 @@ function startApp() {
           </div>`}
 
           <!-- Discipline matrix -->
-          <div style=${{marginBottom:'var(--space-2)'}}>${_renderDisciplineMatrix(rules, d)}</div>
+          <div style=${{marginBottom:'var(--space-2)'}}><${DisciplineMatrixEditor} rules=${rules} d=${d} /></div>
 
           <!-- Type-pair tolerances -->
           ${_renderTypePairTolerances(rules, models, tpState, setTPState, d)}
@@ -34507,11 +34667,10 @@ function startApp() {
   var STANDARD_DISCIPLINES = ['mechanical','electrical','structural','architectural','civil','other'];
   function StandardsPanel(props) {
     var s = props && props.s, d = props && props.d;
-    var st=useState(function(){return {defaultClearance:_getStandardDefaultClearance(),rules:_getStandardPairRules(),typeRules:_getStandardTypePairRules()};}),
+    var st=useState(function(){return {defaultClearance:_getStandardDefaultClearance(),typeRules:_getStandardTypePairRules()};}),
       data=st[0],setData=st[1];
     var importRef = useRef(null);
     var importTypeRef = useRef(null);
-    var importDiscRef = useRef(null);
     var importErr = useState(''), importErrMsg=importErr[0], setImportErr=importErr[1];
 
     function _dlJson(payload, filename) {
@@ -34521,13 +34680,10 @@ function startApp() {
       URL.revokeObjectURL(url);
     }
     function exportRules() {
-      _dlJson({version:1, defaultClearance:data.defaultClearance, typeRules:data.typeRules, rules:data.rules}, 'clash-rules.json');
+      _dlJson({version:1, defaultClearance:data.defaultClearance, typeRules:data.typeRules}, 'clash-rules.json');
     }
     function exportTypeRules() {
       _dlJson({version:1, typeRules:data.typeRules}, 'ifc-type-pair-rules.json');
-    }
-    function exportDiscRules() {
-      _dlJson({version:1, rules:data.rules}, 'discipline-pair-rules.json');
     }
     function onImportFile(e) {
       var file = e.target.files[0]; if(!file) return;
@@ -34537,13 +34693,17 @@ function startApp() {
           var p = JSON.parse(ev.target.result);
           var newData = {
             defaultClearance: p.defaultClearance!=null ? p.defaultClearance : data.defaultClearance,
-            typeRules: Array.isArray(p.typeRules) ? p.typeRules : data.typeRules,
-            rules: Array.isArray(p.rules) ? p.rules : data.rules
+            typeRules: Array.isArray(p.typeRules) ? p.typeRules : data.typeRules
           };
           _setStandardDefaultClearance(newData.defaultClearance);
           _setStandardTypePairRules(newData.typeRules);
-          _setStandardPairRules(newData.rules);
           setData(newData);
+          // an older file's discipline-pair rules go into the coordination
+          // matrix (saved cells win)
+          if (Array.isArray(p.rules) && d && s && window._ccClashDisciplineCore) {
+            var mig = window._ccClashDisciplineCore.matrixRulesFromStandardPairRules(p.rules);
+            if (Object.keys(mig).length) d({t:A.UPD_RULES,u:{matrixRules:Object.assign(mig, (s.rules&&s.rules.matrixRules)||{})}});
+          }
           setImportErr('');
         } catch(err) { setImportErr('Invalid file — could not parse clash-rules.json'); }
         e.target.value='';
@@ -34564,41 +34724,11 @@ function startApp() {
       };
       reader.readAsText(file);
     }
-    function onImportDiscFile(e) {
-      var file = e.target.files[0]; if(!file) return;
-      var reader = new FileReader();
-      reader.onload = function(ev) {
-        try {
-          var p = JSON.parse(ev.target.result);
-          if (!Array.isArray(p.rules)) throw new Error('missing rules');
-          updateRules(p.rules);
-          setImportErr('');
-        } catch(err) { setImportErr('Invalid file — expected discipline-pair-rules.json'); }
-        e.target.value='';
-      };
-      reader.readAsText(file);
-    }
 
     function updateDefault(val){
       var v=val===''?null:Number(val);
       _setStandardDefaultClearance(v);
       setData(function(p){return Object.assign({},p,{defaultClearance:v});});
-    }
-    function updateRules(newRules){
-      _setStandardPairRules(newRules);
-      setData(function(p){return Object.assign({},p,{rules:newRules});});
-    }
-    function addRow(){updateRules(data.rules.concat([{discipline_a:'',discipline_b:'',clearance_mm:'',hard_always_flagged:true}]));}
-    function delRow(i){var r=data.rules.slice();r.splice(i,1);updateRules(r);}
-    function updRow(i,field,val){var r=data.rules.slice();r[i]=Object.assign({},r[i]);r[i][field]=val;updateRules(r);}
-    function isDuplicate(idx){
-      var r=data.rules[idx];if(!r||!r.discipline_a||!r.discipline_b)return false;
-      var a=r.discipline_a,b=r.discipline_b;
-      for(var i=0;i<data.rules.length;i++){
-        if(i===idx)continue;var o=data.rules[i];
-        if((o.discipline_a===a&&o.discipline_b===b)||(o.discipline_a===b&&o.discipline_b===a))return true;
-      }
-      return false;
     }
     function updateTypeRules(newRules){
       _setStandardTypePairRules(newRules);
@@ -34621,7 +34751,6 @@ function startApp() {
     var rowInputStyle={fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-1)',background:'var(--bg-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',color:'var(--text-primary)',width:'100%',boxSizing:'border-box'};
     var knownIfcTypes = ['IfcBeam','IfcBuildingElementProxy','IfcColumn','IfcCovering','IfcCurtainWall','IfcDoor','IfcDuctFitting','IfcDuctSegment','IfcElectricDistributionBoard','IfcFlowSegment','IfcFlowFitting','IfcFlowTerminal','IfcFooting','IfcFurnishingElement','IfcMember','IfcOpeningElement','IfcPipeFitting','IfcPipeSegment','IfcPlate','IfcRailing','IfcRamp','IfcRoof','IfcSlab','IfcStair','IfcStairFlight','IfcWall','IfcWallStandardCase','IfcWindow'];
     var dupeTypeCount = data.typeRules.filter(function(_,i){return isTypeDuplicate(i);}).length;
-    var dupeDiscCount = data.rules.filter(function(_,i){return isDuplicate(i);}).length;
     return html`<div style=${{flex:1,overflowY:'auto',padding:'var(--space-2)'}}>
       <div style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-bold)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:'var(--space-2)',paddingBottom:'var(--space-2)',borderBottom:'1px solid var(--border-subtle)'}}>${_cc_t('standards.detectionRules','Detection Rules')}</div>
       ${s && d && html`<div style=${{marginBottom:'var(--space-4)',paddingBottom:'var(--space-3)',borderBottom:'2px solid var(--border)'}}>
@@ -34630,7 +34759,6 @@ function startApp() {
 
       <input ref=${importRef} type="file" accept=".json" style=${{display:'none'}} onChange=${onImportFile} />
       <input ref=${importTypeRef} type="file" accept=".json" style=${{display:'none'}} onChange=${onImportTypeFile} />
-      <input ref=${importDiscRef} type="file" accept=".json" style=${{display:'none'}} onChange=${onImportDiscFile} />
       <datalist id="cc-ifc-types">${knownIfcTypes.map(function(t){return html`<option value=${t} />`})}</datalist>
       <div style=${{display:'flex',gap:'var(--space-2)',marginBottom:'var(--space-3)'}}>
         <button onClick=${exportRules}
@@ -34720,56 +34848,7 @@ function startApp() {
       </div>
 
       <div style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-bold)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:'var(--space-1)'}}>${_cc_t('standards.disciplinePairRules','Discipline-pair rules')}</div>
-      <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',display:'block',marginBottom:'var(--space-1)'}}>${_cc_t('standards.disciplinePairRulesSub','Fallback when no IFC type rule matches')}</span>
-
-      ${data.rules.length===0 && html`<div style=${{padding:'var(--space-2)',background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',fontSize:'var(--text-2xs)',color:'var(--text-faint)',textAlign:'center',marginBottom:'var(--space-2)'}}>
-        ${_cc_t('standards.noDisciplineRules','No discipline-pair rules configured yet. Rules you set here will pre-fill clash cards automatically.')}
-      </div>`}
-
-      ${data.rules.map(function(r,i){
-        var dup=isDuplicate(i);
-        return html`<div key=${'d'+i} style=${{padding:'var(--space-2)',background:dup?'var(--color-danger-bg)':'var(--bg-secondary)',borderRadius:'var(--radius-sm)',marginBottom:'var(--space-1)',border:dup?'1px solid var(--color-danger-border)':'1px solid var(--border-subtle)'}}>
-          ${dup && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--color-danger-fg)',marginBottom:'var(--space-1)',fontWeight:600}}>${_cc_t('standards.duplicatePair','⚠ Duplicate pair — overridden by earlier rule')}</div>`}
-          <div style=${{display:'flex',gap:'var(--space-1)',alignItems:'center',marginBottom:'var(--space-1)'}}>
-            <select value=${r.discipline_a} onChange=${function(e){updRow(i,'discipline_a',e.target.value);}}
-              style=${selStyle}>
-              <option value="">${_cc_t('standards.disciplineA','Discipline A')}</option>
-              ${STANDARD_DISCIPLINES.map(function(dd){return html`<option key=${dd} value=${dd}>${dd.charAt(0).toUpperCase()+dd.slice(1)}</option>`})}
-            </select>
-            <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${_cc_t('standards.vs','vs')}</span>
-            <select value=${r.discipline_b} onChange=${function(e){updRow(i,'discipline_b',e.target.value);}}
-              style=${selStyle}>
-              <option value="">${_cc_t('standards.disciplineB','Discipline B')}</option>
-              ${STANDARD_DISCIPLINES.map(function(dd){return html`<option key=${dd} value=${dd}>${dd.charAt(0).toUpperCase()+dd.slice(1)}</option>`})}
-            </select>
-            <button onClick=${function(){delRow(i);}} title=${_cc_t('standards.removeRule','Remove rule')}
-              style=${{background:'none',border:'none',color:'var(--color-danger-fg)',cursor:'pointer',fontSize:'var(--text-base)',padding:'0 var(--space-1)',lineHeight:1}}>×</button>
-          </div>
-          <div style=${{display:'flex',gap:'var(--space-2)',alignItems:'center'}}>
-            <div style=${{flex:1}}>
-              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${_cc_t('standards.minClearance','Min clearance (mm)')}</span>
-              <input type="number" min="0" step="1" value=${r.clearance_mm!=null&&r.clearance_mm!==''?r.clearance_mm:''}
-                onInput=${function(e){updRow(i,'clearance_mm',e.target.value===''?'':Number(e.target.value));}}
-                style=${rowInputStyle} />
-            </div>
-            <label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',fontSize:'var(--text-2xs)',color:'var(--text-muted)',cursor:'pointer',whiteSpace:'nowrap'}}
-              title=${_cc_t('standards.alwaysHardTitle','When checked, clashes of this type are always marked as hard clashes regardless of distance')}>
-              <input type="checkbox" checked=${r.hard_always_flagged!==false}
-                onChange=${function(e){updRow(i,'hard_always_flagged',e.target.checked);}}
-                style=${{accentColor:'var(--accent)'}} />
-              ${_cc_t('standards.alwaysHard','Always treat as hard clash')}
-            </label>
-          </div>
-        </div>`})}
-
-      <div style=${{display:'flex',gap:'var(--space-1)',marginBottom:'var(--space-6)'}}>
-        <button onClick=${addRow}
-          style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600,flex:1}}>+ ${_cc_t('standards.addDisciplineRule','Add discipline rule')}</button>
-        <button onClick=${exportDiscRules} title=${_cc_t('standards.exportDisciplineRules','Export discipline-pair rules')}
-          style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>↓</button>
-        <button onClick=${function(){importDiscRef.current&&importDiscRef.current.click();}} title=${_cc_t('standards.importDisciplineRules','Import discipline-pair rules')}
-          style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-faint)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer'}}>↑</button>
-      </div>
+      <div style=${{...S_NOTE,marginBottom:'var(--space-6)'}}>${_cc_t('standards.disciplinePairRulesMoved','Set tolerances per discipline pair in the matrix (Run detection, Show advanced, Discipline matrix). Each cell holds one rule: off, hard, or a clearance in mm, with an optional severity.')}</div>
 
       ${(function(){
         var arules = s.assignmentRules||[];
@@ -35187,16 +35266,9 @@ function startApp() {
     var stds = null;
     try {
       var defClear  = (typeof _getStandardDefaultClearance==='function') ? _getStandardDefaultClearance() : null;
-      var pairRules = (typeof _getStandardPairRules==='function') ? _getStandardPairRules() : [];
       var typeRules = (typeof _getStandardTypePairRules==='function') ? _getStandardTypePairRules() : [];
-      var dA = (A.discipline||'').toLowerCase(), dB = (B.discipline||'').toLowerCase();
-      var relPair = null;
-      if (dA && dB) {
-        for (var pi=0; pi<pairRules.length; pi++) {
-          var pr = pairRules[pi];
-          if ((pr.discipline_a===dA && pr.discipline_b===dB) || (pr.discipline_a===dB && pr.discipline_b===dA)) { relPair = pr; break; }
-        }
-      }
+      // discipline pair: the coordination-matrix cell of the clash's trades
+      var relPair = _ccMatrixCellForClash(c0);
       var relType = null;
       var tA = (A.ifcType||''), tB = (B.ifcType||'');
       if (tA && tB) {
@@ -35208,7 +35280,7 @@ function startApp() {
       if (defClear != null || relPair || relType) {
         stds = {};
         if (defClear != null) stds.default_clearance_mm = defClear;
-        if (relPair) stds.discipline_pair = { a: relPair.discipline_a, b: relPair.discipline_b, clearance_mm: relPair.clearance_mm, hard_always_flagged: relPair.hard_always_flagged !== false };
+        if (relPair) stds.discipline_pair = { a: relPair.a, b: relPair.b, mode: relPair.mode, clearance_mm: relPair.gapMm, severity: relPair.severity || null };
         if (relType) stds.ifc_type_pair    = { a: relType.ifc_type_a,   b: relType.ifc_type_b,   clearance_mm: relType.clearance_mm, hard_always_flagged: relType.hard_always_flagged !== false };
       }
     } catch(e) { /* standards are best-effort */ }
@@ -37134,11 +37206,12 @@ function startApp() {
             for(var i=0;i<tRules.length;i++){if((tRules[i].ifc_type_a===typeA&&tRules[i].ifc_type_b===typeB)||(tRules[i].ifc_type_a===typeB&&tRules[i].ifc_type_b===typeA)){tRules[i]=Object.assign({},tRules[i],{clearance_mm:Number(curVal)});found=true;break;}}
             if(!found)tRules.push({ifc_type_a:typeA,ifc_type_b:typeB,clearance_mm:Number(curVal),hard_always_flagged:true});
             _setStandardTypePairRules(tRules);
-          } else if(discA!=='?'&&discB!=='?'){
-            var dRules=_getStandardPairRules();var found2=false;
-            for(var j=0;j<dRules.length;j++){if((dRules[j].discipline_a===discA&&dRules[j].discipline_b===discB)||(dRules[j].discipline_a===discB&&dRules[j].discipline_b===discA)){dRules[j]=Object.assign({},dRules[j],{clearance_mm:Number(curVal)});found2=true;break;}}
-            if(!found2)dRules.push({discipline_a:discA,discipline_b:discB,clearance_mm:Number(curVal),hard_always_flagged:true});
-            _setStandardPairRules(dRules);
+          } else if(it.trades&&it.trades[0]&&it.trades[1]&&window._ccClashDisciplineCore){
+            // discipline pair -> its coordination-matrix cell (a clearance rule)
+            var _mrNow=Object.assign({},(window._ccLatestState&&window._ccLatestState.rules&&window._ccLatestState.rules.matrixRules)||{});
+            var _ck=window._ccClashDisciplineCore.matrixCellKey(it.trades[0],it.trades[1]);
+            _mrNow[_ck]=Object.assign({mode:'clearance',gapMm:null,severity:null,note:''},_mrNow[_ck]||{},{mode:'clearance',gapMm:Number(curVal)});
+            d({t:A.UPD_RULES,u:{matrixRules:_mrNow}});
           }
           setTolState(function(p){return Object.assign({},p,{promptAction:'updated'});});
         }}
@@ -51041,6 +51114,18 @@ function startApp() {
       if (SSC && SSC.sessions().length) SSC.observeAll(s);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only the issues array matters
     }, [s.issues]);
+    // The former Standards panel's discipline-pair rules (localStorage) never
+    // reached the engine; they move once into the coordination matrix of the
+    // first project opened with models and no matrix rules of its own.
+    useEffect(function(){
+      if (!s.models.length || (s.rules && s.rules.matrixRules !== undefined)) return;
+      var mr = _ccMigrateStandardPairRulesOnce();
+      if (mr) {
+        d({t:A.UPD_RULES, u:{matrixRules:mr}});
+        if (window._ccToast) window._ccToast(_cc_t('toast.pairRulesMoved','Your discipline-pair rules from Standards are now cells in the discipline matrix ({n}).',{n:Object.keys(mr).length}), 'info');
+      }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- d is the stable dispatch; only the model count and the matrix field matter
+    }, [s.models.length, s.rules && s.rules.matrixRules]);
     // Country pack follows the loaded models (address / CRS / site location);
     // activated without being saved — see window._ccAutoRegion.
     useEffect(function(){
