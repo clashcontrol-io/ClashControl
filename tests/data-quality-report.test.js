@@ -125,7 +125,7 @@ test('omits the Accessibility section entirely when that engine is not loaded', 
 
 test('a zero-count check renders a checkmark, not "0"', () => {
   const html = run({ models: [model('m1', 3)] });
-  assert.ok(/Geen NL\/SfB classificatie<\/td><td[^>]*>✓/.test(html));
+  assert.ok(/Geen NL\/SfB classificatie<\/td><td[^>]*><svg role="img" aria-label="0"[^>]*><path d="M5 12.5l4.5 4.5L19 7.5"\/><\/svg>/.test(html));
 });
 
 test('escapes a project name containing HTML-special characters', () => {
