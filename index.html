@@ -9776,10 +9776,10 @@ function startApp() {
   // TypedArray#sort is stable), ~2x faster on big elements: no comparator
   // call per comparison, keys copied next to the indices, insertion-sorted
   // runs of 16 then bottom-up merges taking the left run on ties. Keys with a
-  // NaN (comparator answers inconsistent) keep the original comparator sort.
+  // NaN go through the comparator sort with NaN last (_ccNanLastCmp).
   function _bvhStableSort(indices, lo, hi, keys, axis) {
     if (keys.nan) {
-      indices.subarray(lo, hi).sort(function(a,b){ return keys[a*3+axis] - keys[b*3+axis]; });
+      indices.subarray(lo, hi).sort(function(a,b){ return _ccNanLastCmp(keys[a*3+axis], keys[b*3+axis]); });
       return;
     }
     var n = hi - lo, i, j, k, sc = _bvhStableSort._s;
@@ -9814,6 +9814,12 @@ function startApp() {
       t = si; si = di; di = t; t = sk; sk = dk; dk = t;
     }
     for (i = 0; i < n; i++) indices[lo+i] = si[i];
+  }
+  // Ascending, NaN last, NaN == NaN, -0 == +0: a total preorder, so a stable
+  // sort gives one permutation — the same as the Rust engine's `nan_last`
+  // (engine/src/bvh.rs). On keys without NaN it orders exactly like a - b.
+  function _ccNanLastCmp(ka, kb) {
+    return ka < kb ? -1 : ka > kb ? 1 : ka === kb ? 0 : (ka !== ka ? (kb !== kb ? 0 : 1) : (kb !== kb ? -1 : 0));
   }
   function _buildBVHNode(tris, indices, lo, hi, keys) {
     if (!keys) {
@@ -10573,7 +10579,7 @@ function startApp() {
   var _NP_REC = 17; // floats per worker pair record (layout: _ccNarrowWorkerMain)
   function _ccBuildNarrowWorkerSource() {
     var fns = [
-      _triTriTest, _bvhStableSort, _buildBVHNode, _buildBVHForTris, _bvhTraverseAll,
+      _triTriTest, _ccNanLastCmp, _bvhStableSort, _buildBVHNode, _buildBVHForTris, _bvhTraverseAll,
       _pointInBothBoxes, _postProcessIntersectPoints, _jsIntersectBVH,
       _closestPtOnTri, _segSegDistSq, _triTriDistSq, _aabbAabbDistSq, _ccTriBoxInto, _ccEELowerSq, _bvhMinDistTraverse,
       _jsMinDistBVH,
@@ -11668,7 +11674,7 @@ function startApp() {
     var axis3 = axis==='z' ? 'y' : 'z';
 
     items.sort(function(a,b){
-      return (a.el.box.min[axis]-margin)-(b.el.box.min[axis]-margin);
+      return _ccNanLastCmp(a.el.box.min[axis]-margin, b.el.box.min[axis]-margin);
     });
 
     var pairs = [], active = [];

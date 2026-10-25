@@ -75,12 +75,14 @@ pub fn sweep_and_prune(
     // ── Sort item indices by (box.min[axis] - margin), stable ──
     // Rust's slice::sort_by is a stable sort (like JS's Array.sort since
     // ES2019) — ties preserve the input order, matching JS exactly, given
-    // both receive items in the same original order.
+    // both receive items in the same original order. NaN keys sort last
+    // (`nan_last`, mirrored by the JS comparator) — a total preorder, so the
+    // sort never panics on a NaN coordinate.
     let mut order: Vec<u32> = (0..n as u32).collect();
     order.sort_by(|&a, &b| {
         let ka = box_min[a as usize * 3 + axis] - margin;
         let kb = box_min[b as usize * 3 + axis] - margin;
-        ka.partial_cmp(&kb).unwrap_or(std::cmp::Ordering::Equal)
+        crate::bvh::nan_last(ka, kb)
     });
 
     // ── Sliding-window active-list scan ──
@@ -153,6 +155,30 @@ pub fn sweep_and_prune(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A NaN box coordinate used to make the sweep sort panic. NaN keys sort
+    // last; finite overlapping boxes are still paired.
+    #[test]
+    fn nan_box_coordinates_never_panic() {
+        let mut s = 0x2545f4914f6cdd1du64;
+        let mut r = || { s ^= s << 13; s ^= s >> 7; s ^= s << 17; (s >> 11) as f64 / (1u64 << 53) as f64 };
+        for &n in &[7usize, 20, 33, 100, 257, 1000, 4000] {
+            for round in 0..20 {
+                let mut box_min = Vec::with_capacity(n * 3);
+                let mut box_max = Vec::with_capacity(n * 3);
+                for _ in 0..n * 3 { let v = r() * 100.0; box_min.push(v); box_max.push(v + 1.0); }
+                // a NaN coordinate on a random share of the boxes, on every axis
+                let share = 0.05 + 0.4 * r();
+                for i in 2..n { if r() < share { box_min[i * 3 + (round % 3)] = f64::NAN; } }
+                // items 0 and 1: a known overlapping pair
+                box_min[0..6].copy_from_slice(&[50.0, 50.0, 50.0, 50.5, 50.5, 50.5]);
+                box_max[0..6].copy_from_slice(&[51.0, 51.0, 51.0, 51.5, 51.5, 51.5]);
+                let model_idx = vec![0u32; n];
+                let pairs = sweep_and_prune(&box_min, &box_max, &model_idx, &[1u8], &[0u8], &[1u8], 0.0);
+                assert!(pairs.chunks(3).any(|p| (p[0] == 0 && p[1] == 1) || (p[0] == 1 && p[1] == 0)), "n={} round={}", n, round);
+            }
+        }
+    }
 
     // Two boxes overlapping in all axes, same model, self-clash allowed.
     #[test]

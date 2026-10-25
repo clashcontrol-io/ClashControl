@@ -149,7 +149,7 @@ function models() {
 
 test('JS broad phase: non-physical elements never become candidates (geometry or not, any rules)', () => {
   const window = {};
-  const f = new Function('window', np + '\n' + sweeps + '\nreturn _sweepAndPrune;')(window);
+  const f = new Function('window', np + '\n' + extractFn('_ccNanLastCmp') + '\n' + sweeps + '\nreturn _sweepAndPrune;')(window);
   for (const rules of [{}, { includeSpaces: true, duplicates: true, excludeSelf: false }]) {
     const ms = models();
     const pairs = f(ms, ms, rules, 0.1);
