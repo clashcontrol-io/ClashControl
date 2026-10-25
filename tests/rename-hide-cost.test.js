@@ -215,7 +215,7 @@ test('reducer wrapper migrates name-valued model pairs in the facets and saved v
   assert.equal(out.triage.savedViews[1], legacy.savedViews[1], 'untouched view kept');
   assert.equal(out.triage.activeViewId, 'v1');
   assert.equal(migrate(out), out, 'migrated: a no-op (same object)');
-  assert.match(src, /function _ccAppReducer\(s, a\) \{ return _ccMigrateTriageModelPairs\(reducer\(s, a\)\); \}/);
+  assert.match(src, /function _ccAppReducer\(s, a\) \{ return _ccFollowDeniedMemory\(s, _ccMigrateTriageModelPairs\(reducer\(s, a\)\), a\); \}/);
   assert.match(src, /useReducer\(_ccAppReducer, INIT\)/);
 });
 

@@ -155,8 +155,12 @@ test('a single clash status edit is undoable: undo restores the previous fields 
 });
 
 test('undoing a deny forgets the denied pair so the next run does not drop it again', () => {
-  const i = html.indexOf('case A.CLASH_BATCH_RESTORE:');
-  const block = html.slice(i, i + 700);
-  assert.match(block, /c\.status==='denied' && 'status' in _cbr\[c\.id\] && _cbr\[c\.id\]\.status!=='denied'\) _forgetDeniedClash\(c\)/);
-  assert.match(html, /function _forgetDeniedClash\(clash\) \{[\s\S]{0,300}delete store\[pair\];/);
+  // The denied memory is project state kept in step with the clash list by
+  // _ccAppReducer for every status change (deny, reopen, undo, sync) —
+  // clash-reconciliation-core.js updateDeniedMemory (tests/denied-memory.test.js).
+  assert.match(html, /function _ccAppReducer\(s, a\) \{ return _ccFollowDeniedMemory\(s, /);
+  const i = html.indexOf('var _CC_DENY_FOLLOW =');
+  assert.match(html.slice(i, i + 120), /CLASH_BATCH_RESTORE:1/);
+  // the undo entry captures the deny's who / when / why so undo clears them
+  assert.match(html, /concat\(\['linkedIssueId', 'aiSignals', 'deniedReason', 'deniedBy', 'deniedAt'\]\)/);
 });

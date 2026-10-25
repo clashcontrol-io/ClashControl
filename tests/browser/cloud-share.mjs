@@ -213,6 +213,42 @@ try {
     'after a reload, page B pulled from its cached cursor: only the 1 new record', JSON.stringify(gets));
   await B2.close();
 
+  // ── deny with a reason (§21.58): A denies (like the D key: no reason),
+  //    adds the reason in the row detail; B sees who / when / why as text,
+  //    and B's next run keeps it denied (project-state denied memory) ──
+  {
+    const showAll = (P) => P.evaluate(() => {
+      const core = window._ccClashClassificationCore;
+      window._ccDispatch({ t: 'TAB', v: 'clashes' });
+      window._ccDispatch({ t: 'UPD_FILTERS', u: { showHandled: true, showBuckets: (core && core.REVIEW_BUCKETS) || [] } });
+    });
+    await setStatus(A, K[1], 'denied');
+    const aId = byKey(await clashes(A), K[1]).id;
+    await showAll(A);
+    await A.evaluate((cid) => window._ccDispatch({ t: 'ACTIVE', id: cid }), aId);
+    await A.waitForSelector(`[data-cc-denial="${aId}"] [data-cc-denial-edit]`, { timeout: 10_000 });
+    check(/^Add reason$/.test((await A.textContent(`[data-cc-denial="${aId}"] [data-cc-denial-edit]`)).trim()), 'page A: a denied clash offers "Add reason"');
+    await A.click(`[data-cc-denial="${aId}"] [data-cc-denial-edit]`);
+    await A.fill(`[data-cc-denial="${aId}"] [data-cc-denial-input]`, 'Sleeve provided on site');
+    await A.click(`[data-cc-denial="${aId}"] [data-cc-denial-save]`);
+    await settle(A); await pull(B);
+    const bDen = await B.evaluate((k) => { const s = window._ccLatestState, c = s.clashes.find((x) => x._identityKey === k); return { st: c.status, reason: c.deniedReason, by: c.deniedBy, at: c.deniedAt, id: c.id, mem: s.deniedPairs[k] || null }; }, K[1]);
+    check(bDen.st === 'denied' && bDen.reason === 'Sleeve provided on site' && bDen.by === 'Alice' && bDen.at > 0, 'page B: the clash is denied with A\'s reason, by Alice', JSON.stringify(bDen));
+    check(!!bDen.mem && bDen.mem.reason === 'Sleeve provided on site', 'page B: the deny is in B\'s denied memory (project state)', JSON.stringify(bDen.mem));
+    await showAll(B);
+    await B.evaluate((cid) => window._ccDispatch({ t: 'ACTIVE', id: cid }), bDen.id);
+    const txt = await B.waitForSelector(`[data-cc-denial="${bDen.id}"] [data-cc-denial-text]`, { timeout: 10_000 }).then((el) => el.textContent(), () => '');
+    check(/^Denied by Alice on .+ — Sleeve provided on site$/.test(txt.trim()), 'page B: row detail says "Denied by Alice on <date> — reason"', txt);
+    // B re-runs: the pair stays denied — dropped from the result, memory kept
+    const runTs = await B.evaluate(() => { const ts = window._ccLatestState.lastDeltaSummary.ts; window._ccRunDetection(); return ts; });
+    await B.waitForFunction((t0) => !window._ccLatestState.detecting && window._ccLatestState.lastDeltaSummary.ts > t0, runTs, { timeout: 120_000, polling: 200 });
+    await pull(B);
+    const bAfter = await B.evaluate((k) => { const s = window._ccLatestState; return { open: s.clashes.filter((x) => x._identityKey === k && x.status !== 'denied').length, mem: !!s.deniedPairs[k] }; }, K[1]);
+    check(bAfter.open === 0 && bAfter.mem, 'page B: after B\'s own run the clash is still denied (not back as open)', JSON.stringify(bAfter));
+    await A.evaluate(() => window._ccDispatch({ t: 'ACTIVE', id: null }));
+    await B.evaluate(() => window._ccDispatch({ t: 'ACTIVE', id: null }));
+  }
+
   // ── delete vs edit, then Keep: the issue's viewpoint (dropped by the
   //    deleter's reducer together with the issue) comes back on both pages ──
   await A.evaluate(() => {

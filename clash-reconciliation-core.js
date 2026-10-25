@@ -143,7 +143,10 @@
           _runCount: (prev._runCount || 1) + 1,
           _prevDepth: prev.distance,
           _prevPoint: prev.point,
-          status: prev.status === 'auto_resolved' ? 'open' : prev.status,
+          // A clash that comes back after an auto-resolve reopens; one that was
+          // confirmed (it has an issue) is confirmed again — its issue is
+          // reopened by applyIssueLifecycle.
+          status: prev.status === 'auto_resolved' ? (prev._preAutoStatus === 'confirmed' && prev.linkedIssueId ? 'confirmed' : 'open') : prev.status,
           assignee: prev.assignee,
           priority: prev.priority,
           aiSignals: prev.aiSignals,
@@ -177,7 +180,10 @@
         merged.push({...c, _identityKey:key, _delta:'not_checked'});
         return;
       }
-      if (!(c.status==='open' || c.status==='in_progress')) return;
+      // A confirmed clash with an issue is followed too: when the geometry
+      // no longer has it, the run auto-resolves it and applyIssueLifecycle
+      // resolves its issue. (It used to be dropped from the list here.)
+      if (!(c.status==='open' || c.status==='in_progress' || (c.status==='confirmed' && c.linkedIssueId))) return;
       if (arCount >= AUTO_RESOLVE_CAP) {
         // Cap how many auto-resolve per run, but never drop the record --
         // it keeps its prior status (assignee/comments/history intact) and
@@ -194,7 +200,7 @@
         merged.push({...c, _identityKey:key, _delta:'auto_resolve_capped'});
         return;
       }
-      merged.push({...c, _identityKey:key, _delta:'auto_resolved', _lastSeen:now, status:'auto_resolved'});
+      merged.push({...c, _identityKey:key, _delta:'auto_resolved', _lastSeen:now, status:'auto_resolved', _preAutoStatus:c.status});
       arCount++;
     });
 
@@ -237,6 +243,181 @@
     return {clashes:merged, deltaSummary:{newCount:newCount,persisting:persisting,autoResolved:autoResolved,autoResolvedTruncated:arOverflow||undefined,notChecked:notChecked||undefined,ts:now}};
   }
 
+  // ── Linked issues follow their clash (docs/INTERNALS.md §21.58) ─────
+  // After a merge: an issue linked to a clash the run auto-resolved is
+  // resolved (only while it is open / in progress — an issue a person
+  // resolved, closed or set to anything else is never touched), with a
+  // comment saying so and an `autoResolved` marker {ts, prevStatus, clashKey}.
+  // When a later run finds that clash again (persisting, or new under the
+  // same identity once the auto-resolved record has left the list) and the
+  // issue is still resolved with the marker, it is reopened to its previous
+  // status with a comment. Pure: returns the new arrays plus the per-issue /
+  // per-clash before → after values the caller needs for undo.
+  //   opts.now, opts.author, opts.resolvedText(ts), opts.reopenedText(ts),
+  //   opts.commentId(issueId, kind)
+  var LIFECYCLE_CLOSABLE = { open: true, in_progress: true };
+  /** @param {any[]} clashes @param {any[]} issues @param {any} [opts] */
+  function applyIssueLifecycle(clashes, issues, opts) {
+    opts = opts || {};
+    var now = opts.now != null ? opts.now : Date.now();
+    /** @type {{clashes:any[], issues:any[], issueChanges:any[], clashChanges:any[], resolved:number, reopened:number}} */
+    var out = { clashes: clashes, issues: issues, issueChanges: [], clashChanges: [], resolved: 0, reopened: 0 };
+    if (!Array.isArray(clashes) || !Array.isArray(issues) || !issues.length) return out;
+    var byId = Object.create(null), byAutoKey = Object.create(null);
+    issues.forEach(function(it) {
+      if (!it || !it.id) return;
+      byId[it.id] = it;
+      if (it.autoResolved && it.autoResolved.clashKey && it.status === 'resolved') byAutoKey[it.autoResolved.clashKey] = it;
+    });
+    var linkedNow = Object.create(null);
+    clashes.forEach(function(c) { if (c && c.linkedIssueId) linkedNow[c.linkedIssueId] = true; });
+    var patch = Object.create(null), clashPatch = Object.create(null);
+    function comment(it, kind) {
+      var text = kind === 'resolved'
+        ? (opts.resolvedText ? opts.resolvedText(now) : 'Resolved by re-check')
+        : (opts.reopenedText ? opts.reopenedText(now) : 'Reopened: found again by re-check');
+      var id = opts.commentId ? opts.commentId(it.id, kind) : ('rc_' + kind + '_' + it.id + '_' + now);
+      return { id: id, author: opts.author || 'ClashControl', text: text, ts: now, system: 'recheck' };
+    }
+    function resolve(it, c) {
+      if (patch[it.id] || !LIFECYCLE_CLOSABLE[it.status]) return;
+      patch[it.id] = { kind: 'resolved', u: {
+        status: 'resolved',
+        autoResolved: { ts: now, prevStatus: it.status, clashKey: c._identityKey || null },
+        comments: (it.comments || []).concat([comment(it, 'resolved')])
+      } };
+      out.resolved++;
+    }
+    function reopen(it) {
+      if (patch[it.id] || it.status !== 'resolved' || !it.autoResolved) return;
+      patch[it.id] = { kind: 'reopened', u: {
+        status: LIFECYCLE_CLOSABLE[it.autoResolved.prevStatus] ? it.autoResolved.prevStatus : 'open',
+        autoResolved: null,
+        comments: (it.comments || []).concat([comment(it, 'reopened')])
+      } };
+      out.reopened++;
+    }
+    clashes.forEach(function(c) {
+      if (!c) return;
+      if (c.linkedIssueId) {
+        var it = byId[c.linkedIssueId];
+        if (!it) return;
+        if (c._delta === 'auto_resolved') resolve(it, c);
+        else if (c._delta === 'persisting' || c._delta === 'new') reopen(it);
+        return;
+      }
+      // found again after its auto-resolved record left the list: same identity
+      if (c._delta === 'new' && c._identityKey && byAutoKey[c._identityKey]) {
+        var it2 = byAutoKey[c._identityKey];
+        if (linkedNow[it2.id] || patch[it2.id]) return;
+        reopen(it2);
+        if (patch[it2.id]) { clashPatch[c.id] = { linkedIssueId: it2.id }; linkedNow[it2.id] = true; }
+      }
+    });
+    if (!Object.keys(patch).length) return out;
+    out.issues = issues.map(function(it) {
+      var p = it && patch[it.id];
+      if (!p) return it;
+      /** @type {any} */
+      var before = {};
+      Object.keys(p.u).forEach(function(f) { before[f] = it[f] === undefined ? null : it[f]; });
+      out.issueChanges.push({ id: it.id, kind: p.kind, prev: before, next: p.u });
+      return Object.assign({}, it, p.u);
+    });
+    if (Object.keys(clashPatch).length) {
+      out.clashes = clashes.map(function(c) {
+        var p = c && clashPatch[c.id];
+        if (!p) return c;
+        out.clashChanges.push({ id: c.id, prev: { linkedIssueId: c.linkedIssueId == null ? null : c.linkedIssueId }, next: p });
+        return Object.assign({}, c, p);
+      });
+    }
+    return out;
+  }
+
+  // ── Denied memory (project state, docs/INTERNALS.md §21.58) ─────────
+  // `deniedPairs`: { [clash identity key]: {pair, point, ts, reason, by} }.
+  // A detected clash is dropped when a denied entry has the same element
+  // pair within DENIED_RADIUS_MM of its point (the rule of the old
+  // per-browser `cc_denied_clashes` store, which kept one point per pair).
+  var DENIED_RADIUS_MM = 150;
+  var DENIED_CAP = 5000;
+  /** @param {any} p @param {any} q */
+  function _dist2Mm(p, q) {
+    p = p || [0, 0, 0]; q = q || [0, 0, 0];
+    var dx = (p[0] - q[0]) * 1000, dy = (p[1] - q[1]) * 1000, dz = (p[2] - q[2]) * 1000;
+    return dx * dx + dy * dy + dz * dz;
+  }
+  // isDeniedClash for mergeDetectionResults, indexed once per call.
+  /** @param {any} memory @param {(c:any)=>string} clashPair @returns {(c:any)=>boolean} */
+  function makeDeniedMatcher(memory, clashPair) {
+    var byPair = Object.create(null), any = false;
+    Object.keys(memory || {}).forEach(function(k) {
+      var e = memory[k];
+      if (!e || !e.pair) return;
+      (byPair[e.pair] = byPair[e.pair] || []).push(e);
+      any = true;
+    });
+    var r2 = DENIED_RADIUS_MM * DENIED_RADIUS_MM;
+    return function(c) {
+      if (!any || !c) return false;
+      var list = byPair[clashPair(c)];
+      if (!list) return false;
+      for (var i = 0; i < list.length; i++) if (_dist2Mm(c.point, list[i].point) <= r2) return true;
+      return false;
+    };
+  }
+  /** @param {any} c @param {any} deps */
+  function deniedEntryFor(c, deps) {
+    var p = c.point || [0, 0, 0];
+    return { pair: deps.computeClashPair(c), point: [p[0], p[1], p[2]], ts: c.deniedAt || deps.now || Date.now(),
+      reason: c.deniedReason || '', by: c.deniedBy || '' };
+  }
+  // Keeps the memory in step with a clash-list change made by an action
+  // (deny, reopen, undo, a teammate's record): compares `before` and `after`
+  // item by item (the reducer keeps order and object identity of untouched
+  // clashes). Returns the same memory object when nothing changed.
+  /** @param {any} memory @param {any[]} before @param {any[]} after @param {any} deps */
+  function updateDeniedMemory(memory, before, after, deps) {
+    memory = memory || {};
+    if (!before || !after || before === after) return memory;
+    /** @type {any} */
+    var prevById = null;
+    /** @type {any} */
+    var next = null;
+    function prevOf(c, i) {
+      var b = before[i];
+      if (b && b.id === c.id) return b;
+      if (!prevById) { prevById = Object.create(null); before.forEach(function(x) { if (x) prevById[x.id] = x; }); }
+      return prevById[c.id] || null;
+    }
+    after.forEach(function(c, i) {
+      if (!c || c === before[i]) return;
+      var b = prevOf(c, i);
+      var wasDenied = !!(b && b.status === 'denied'), isDenied = c.status === 'denied';
+      if (!wasDenied && !isDenied) return;
+      var key = c._identityKey || deps.computeClashIdentityKey(c);
+      if (!key) return;
+      if (isDenied) {
+        var cur = memory[key], e = deniedEntryFor(c, deps);
+        if (cur && cur.pair === e.pair && cur.reason === e.reason && cur.by === e.by && _dist2Mm(cur.point, e.point) === 0) return;
+        if (cur && wasDenied) e.ts = cur.ts;
+        next = next || Object.assign({}, memory);
+        next[key] = e;
+      } else if (memory[key] || (next && next[key])) {
+        next = next || Object.assign({}, memory);
+        delete next[key];
+      }
+    });
+    if (!next) return memory;
+    var keys = Object.keys(next);
+    if (keys.length > DENIED_CAP) {
+      keys.sort(function(a, b) { return (next[a].ts || 0) - (next[b].ts || 0); });
+      keys.slice(0, keys.length - DENIED_CAP).forEach(function(k) { delete next[k]; });
+    }
+    return next;
+  }
+
   return Object.freeze({
     // v2 (CLAUDE.md Item 2): added options.coverage (run-scope awareness --
     // a prior clash outside this run's scope is preserved as 'not_checked'
@@ -245,6 +426,10 @@
     // flipping to auto_resolved.
     contractVersion: 2,
     autoResolveCap: AUTO_RESOLVE_CAP,
-    mergeDetectionResults: mergeDetectionResults
+    mergeDetectionResults: mergeDetectionResults,
+    applyIssueLifecycle: applyIssueLifecycle,
+    deniedRadiusMm: DENIED_RADIUS_MM,
+    makeDeniedMatcher: makeDeniedMatcher,
+    updateDeniedMemory: updateDeniedMemory
   });
 }));

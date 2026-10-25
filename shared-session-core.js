@@ -31,6 +31,11 @@
   }
 
   var NOTE_FIELDS = ['text', 'resolved'];
+  // A clash's shared fields: the decision fields plus the deny reason
+  // (docs/INTERNALS.md §21.58). Who denied and when come from the status
+  // record itself (author, ts), so two people denying is never a conflict;
+  // two different reasons are.
+  var CLASH_EXTRA_FIELDS = ['deniedReason'];
   var VIEWPOINT_FIELDS = ['name'];
   var hasOwn = function(o, k) { return Object.prototype.hasOwnProperty.call(o, k); };
   /** @param {any} v */
@@ -176,11 +181,13 @@
     // for batch actions, the id set it applies to.
     function note(a, prev, batchIds) {
       if (!a || !prev) return false;
-      var F = C.DECISION_FIELDS, conflictedTargets = [];
+      var F = C.DECISION_FIELDS, CF = F.concat(CLASH_EXTRA_FIELDS), conflictedTargets = [];
       recorded = false;
       function clashEdit(c, u) {
         var key = clashKey(c);
-        F.forEach(function(f) { if (u && hasOwn(u, f)) { record('clash', key, f, u[f], c[f]); if ((c._sharedConflict || []).length) conflictedTargets.push(C.targetKey('clash', key)); } });
+        CF.forEach(function(f) { if (u && hasOwn(u, f)) { record('clash', key, f, u[f], c[f]); if ((c._sharedConflict || []).length) conflictedTargets.push(C.targetKey('clash', key)); } });
+        // reopening a denied clash clears its reason (the reducer does the same)
+        if (u && hasOwn(u, 'status') && u.status !== 'denied' && c.status === 'denied' && !hasOwn(u, 'deniedReason') && c.deniedReason) record('clash', key, 'deniedReason', '', c.deniedReason);
       }
       function issueEdit(it, u) {
         F.forEach(function(f) { if (u && hasOwn(u, f)) record('issue', it.id, f, u[f], it[f]); });
@@ -198,6 +205,8 @@
         if (a.u.status === 'confirmed') pendingScan.push(prev.issues || []);
       } else if (t === 'CLASH_BATCH_RESTORE' && a.prev) {
         (prev.clashes || []).forEach(function(x) { if (a.prev[x.id]) clashEdit(x, a.prev[x.id]); });
+        // undo / redo of a run's linked-issue changes (status, re-check comment)
+        if (a.issuePrev) (prev.issues || []).forEach(function(x) { if (a.issuePrev[x.id]) issueEdit(x, a.issuePrev[x.id]); });
       } else if (t === 'UPD_ISSUE' && a.u) {
         var it = (prev.issues || []).find(function(x) { return x.id === a.id; });
         if (it) issueEdit(it, a.u);
@@ -295,6 +304,7 @@
           if (v == null || DEF[f].indexOf(v) !== -1) return;
           seedOne('clash', key, f, v, DEF[f][0]);
         });
+        if (c.status === 'denied' && c.deniedReason) seedOne('clash', key, 'deniedReason', c.deniedReason, '');
       });
       (st.issues || []).forEach(function(it) {
         if (!it || !it.id || C.fieldState(log, C.groupKey('issue', it.id, 'created'))) return;
@@ -408,7 +418,7 @@
     function project(tks, st) {
       if (!st || !tks || !tks.size) return 0;
       tks = withIssueViewpoints(tks);
-      var F = C.DECISION_FIELDS, restore = {}, nRestore = 0, cnt = 0;
+      var F = C.DECISION_FIELDS, CF = F.concat(CLASH_EXTRA_FIELDS), restore = {}, nRestore = 0, cnt = 0;
       var issues = new Map(); (st.issues || []).forEach(function(i) { issues.set(i.id, i); });
       var notes = new Map(); (st.comments || []).forEach(function(c) { notes.set(c.id, c); });
       var vps = new Map(); (st.viewpoints || []).forEach(function(v) { vps.set(v.id, v); });
@@ -423,12 +433,17 @@
             var mk0 = clashKey(c), al = aliasOf(c);
             var tsMain = mk0 === key ? ts : C.targetState(log, 'clash', mk0);
             var tsAl = al ? (al === key ? ts : C.targetState(log, 'clash', al)) : null;
-            F.forEach(function(f) {
+            CF.forEach(function(f) {
               var fs = tsMain.fields[f];
               if ((!fs || !fs.known) && tsAl) fs = tsAl.fields[f];
               if (!fs || !fs.known) return;
               if (f === 'status' && c.status === 'auto_resolved') return; // the geometry says it is gone
               if (!C.same(c[f], fs.value)) { patch[f] = fs.value; any = true; }
+              // a teammate's deny: who and when are the status record's own
+              if (f === 'status' && fs.value === 'denied' && !fs.conflicted && fs.heads && fs.heads.length) {
+                var h = fs.heads[fs.heads.length - 1];
+                if (h.user !== env.userId && c.deniedAt !== h.ts) { patch.deniedBy = who(h); patch.deniedAt = h.ts; any = true; }
+              }
             });
             var cmk = tsAl ? (markers(tsMain) || []).concat(markers(tsAl) || []) : markers(tsMain);
             if (cmk && !cmk.length) cmk = undefined;
@@ -638,6 +653,7 @@
   return Object.freeze({
     contractVersion: 1,
     NOTE_FIELDS: NOTE_FIELDS,
+    CLASH_EXTRA_FIELDS: CLASH_EXTRA_FIELDS,
     VIEWPOINT_FIELDS: VIEWPOINT_FIELDS,
     createSession: createSession,
     register: register,

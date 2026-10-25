@@ -23,8 +23,10 @@ function loadAdapter(candidate) {
   const end = source.indexOf('\n\n', source.indexOf('function _ccRestoreProject(data, dispatch)', start));
   assert.ok(start >= 0 && end > start, 'project codec wiring block not found');
   const window = { _ccProjectCodec: candidate };
-  const api = new Function('window', 'A', source.slice(start, end) +
-    ';return {_ccSerializeProject,_ccValidateProject,_ccRestoreProject};')(window, A);
+  // _getDeniedClashStore: the old per-browser denied store the restore hands
+  // to the codec (legacy import for files saved before deniedPairs).
+  const api = new Function('window', 'A', '_getDeniedClashStore', source.slice(start, end) +
+    ';return {_ccSerializeProject,_ccValidateProject,_ccRestoreProject};')(window, A, () => ({}));
   return { window, api };
 }
 
