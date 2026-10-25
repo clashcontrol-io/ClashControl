@@ -289,7 +289,6 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 **Found 2026-10-25 (one-sharing-mode), not fixed:**
 - The Share modal's "Copy share link" (`?p=KEY`) is never read on load — opening the link does nothing; only pasting it into "Join with a key…" works.
-- `tests/browser/shared-folder.mjs` crashes the cloud sandbox's Chromium browser process (two pages in one context, page B's first dispatch) on main too; CI's Chromium runs it green.
 
 **Found 2026-10-24 (geoshare), not fixed:**
 - `tests/browser/memory-federation.mjs` fails on the base commit too: the 14k-element `fed-shared` model never gets `_propsVersion` (lazy props never merge), the load wait runs into its 25-min timeout (its 15-s "props never merged" guard sets `idleAt` on the interval id, a number, so it never fires).
@@ -335,6 +334,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- ~~2026-10-25: shared-folder snapshots cost what they compact (branch `one-sharing-mode`): `compacts` head first in the file — readers that have everything skip the body; trigger 200 files AND ⅛ of all seen (cap 2000); cleanup after 7 d AND a teammate file ≥ 1 h after the snapshot; guarantees in INTERNALS §21.55. `shared-folder.mjs` runs in the cloud sandbox again (it crashed Chromium restoring an OPFS root handle from IndexedDB; the test no longer persists that handle).~~ (2026-10-25)
 - ~~2026-10-25: old cloud rows migrate exactly (branch `one-sharing-mode`): clash vs issue from the row's `source` (old heuristic filed every detected clash as an issue), clash rows without a GlobalId pair counted not keyed, UniqueId clashes find GlobalId-keyed records via the session alias (`computeGlobalIdKey`). INTERNALS §21.56.~~ (2026-10-25)
 - ~~2026-10-25: delete-then-Keep restores the issue's viewpoints, and a deleted issue's viewpoints are no longer re-added as orphans by a full sync (branch `one-sharing-mode`, shared-session-core `issueGone` / `withIssueViewpoints`). INTERNALS §21.56.~~ (2026-10-25)
 - ~~2026-10-25: cloud records the server refuses are reported (branch `one-sharing-mode`): `/api/project` PUT returns `rejected: [{id, reason}]`; session `reject` / `rejected` / `dismissRejected`; toast + Share-panel notice naming the change and why, survives a reload; issue records no longer silently drop text over 4000 chars. INTERNALS §21.56.~~ (2026-10-25)

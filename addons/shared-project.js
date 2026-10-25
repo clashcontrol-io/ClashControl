@@ -44,8 +44,26 @@
   var CFG = {
     tickMs: 15000,          // folder check (names + metadata only when idle)
     flushDelayMs: 3000,     // local edits are batched this long into one file
-    snapshotAt: 200,        // uncovered change files before someone compacts
-    graceMs: 6 * 3600000    // a snapshot's covered files are removed this long after it
+    // Compaction (docs/INTERNALS.md §21.55 "Snapshots + cleanup" has the
+    // reasoning): a snapshot holds the whole log, so it is written when the
+    // change files no snapshot covers reach snapshotAt AND 1/snapshotShare of
+    // every change file seen (total snapshot bytes stay within a fixed multiple
+    // of the change bytes), or snapshotMax whatever the log size (bounds what
+    // a newcomer reads file by file).
+    snapshotAt: 200,
+    snapshotShare: 8,
+    snapshotMax: 2000,
+    // Cleanup: covered files are removed by the snapshot's author only after
+    // graceMs AND after a teammate's file reached the author onlineMs after
+    // the snapshot (its sync client was connected since). Keeping covered
+    // files longer costs a name in each listing, nothing more.
+    graceMs: 7 * 24 * 3600000,
+    onlineMs: 3600000,
+    // A snapshot's head (what it covers) is read from its first headBytes;
+    // missing covered files (up to readAheadMax) are read themselves rather
+    // than the whole snapshot.
+    headBytes: 65536,
+    readAheadMax: 50
   };
 
   // ── Session state ───────────────────────────────────────────────
@@ -55,13 +73,14 @@
   var _sess = null;         // shared-session-core session (owns the log + outbox)
   var _log = null;          // its shared-log-core log
   var _applied = new Set(); // change files ('changes/<u>/<f>') + snapshots already in the log
+  var _seenAt = new Map();  // applied name → when this client first had it (0 = before this was kept)
   var _broken = new Map();  // file → {size, lastModified} of a copy that did not parse (half-synced)
   var _snapMeta = new Map();// snapshot name → {name, by, ts, files, snapshots}
   var _flushTimer = null, _tickTimer = null, _busy = false, _again = false;
   var _writer = null, _seq = 0;
   var _cachePending = { recs: [], seen: [] };
   var _userId = null;
-  var _stats = { ticks: 0, idleTicks: 0, listings: 0, filesRead: 0, bytesRead: 0, filesWritten: 0, bytesWritten: 0, deleted: 0, dispatches: 0, snapshotsWritten: 0 };
+  var _stats = { ticks: 0, idleTicks: 0, listings: 0, filesRead: 0, bytesRead: 0, filesWritten: 0, bytesWritten: 0, deleted: 0, dispatches: 0, snapshotsWritten: 0, snapshotsSkipped: 0 };
 
   function _rand(n) { return core().randomId(n); }
   function _uid() {
@@ -219,12 +238,30 @@
         var tx = db.transaction(['log', 'seen'], 'readwrite'), lg = tx.objectStore('log'), sn = tx.objectStore('seen');
         p.recs.forEach(function(r) { lg.put(r, [pk, r.id]); });
         if (_log) lg.put({names: _log.names}, [pk, '~names']);
-        p.seen.forEach(function(n) { sn.put(n, [pk, n]); });
+        p.seen.forEach(function(n) { sn.put(n, [pk, n.name]); });
         if (tx.commit) tx.commit();
       } catch (e) { /* a cache only — the folder stays the source */ }
     });
   }
-  function _noteApplied(name) { if (!_applied.has(name)) { _applied.add(name); _cachePending.seen.push(name); } }
+  function _noteApplied(name) {
+    if (_applied.has(name)) return;
+    var at = Date.now();
+    _applied.add(name); _seenAt.set(name, at);
+    _cachePending.seen.push({name: name, at: at});
+  }
+  // Who wrote an applied file: 'changes/<user>/…' or a snapshot's author.
+  function _authorOf(name) {
+    var m = /^changes\/([^/]+)\//.exec(name);
+    if (m) return m[1];
+    var sn = core().parseSnapshotName(name);
+    return sn ? sn.by : null;
+  }
+  // The latest time a teammate's file first reached this client.
+  function _teammateSeenAt() {
+    var t = 0;
+    _seenAt.forEach(function(at, name) { if (at > t && _authorOf(name) !== _userId) t = at; });
+    return t;
+  }
   function _cacheRecs(recs) { recs.forEach(function(r) { _cachePending.recs.push(r); }); }
 
   // ── Folder access ───────────────────────────────────────────────
@@ -314,13 +351,18 @@
       ids = [idName];
     }
     _root = dirHandle; _proj = proj; _projKey = ids[0];
-    _applied = new Set(); _broken = new Map(); _snapMeta = new Map();
+    _applied = new Set(); _seenAt = new Map(); _broken = new Map(); _snapMeta = new Map();
     _cachePending = {recs:[], seen:[]};
     _sess = _newSession();
     _log = _sess.log;
     var cache = await _cacheLoad(_projKey);
     _sess.ingest(cache.recs, cache.names);
-    cache.seen.forEach(function(n) { _applied.add(n); });
+    // seen rows: {name, at}; plain names from before first-seen times were kept
+    cache.seen.forEach(function(n) {
+      var nm = typeof n === 'string' ? n : (n && n.name);
+      if (!nm) return;
+      _applied.add(nm); _seenAt.set(nm, (n && n.at) || 0);
+    });
     if (_sess.adoptOutboxes()) _scheduleFlush();
     if (legacy) { try { await _migrate(legacy); } catch (e) { console.warn('[shared-project] migration of the old project file failed:', e); } }
     _saveSharedHandle(dirHandle, proj.name);
@@ -401,7 +443,7 @@
     if (!_proj || !_log) return;
     if (_busy) { _again = true; return; }
     _busy = true;
-    var C = core(), changed = false, touched = new Set(), remote = [];
+    var C = core(), changed = false, noted = false, touched = new Set(), remote = [];
     _stats.ticks++;
     try {
       if (_sess.adoptOutboxes()) _scheduleFlush();
@@ -409,9 +451,43 @@
       var listing = await _list();
       // snapshots first (newest first): what they cover need not be read
       var snaps = listing.snapshots.filter(function(s) { return !_applied.has(s.name); }).sort(function(a, b) { return a.name < b.name ? 1 : -1; });
+      var byFile = new Map();
+      listing.files.forEach(function(f) { byFile.set(f.name, f); });
+      var ingestFile = async function(f) {
+        var parsedF = await _readParsed(f, 'changes');
+        if (!parsedF) return false;
+        var addF = _sess.ingest(parsedF.changes, parsedF.names);
+        _cacheRecs(addF.added);
+        addF.touched.forEach(function(t) { touched.add(t); });
+        addF.added.forEach(function(r) { remote.push(r); });
+        _noteApplied(f.name);
+        changed = true;
+        return true;
+      };
       for (var i = 0; i < snaps.length; i++) {
         var s = snaps[i];
         if (_applied.has(s.name)) continue;
+        // A snapshot that covers only what this client has (once it reads
+        // the few covered files it is missing) is not read: its head says
+        // what it covers. Every change of it is in what it covers (a file or
+        // snapshot is removed only once a present snapshot holds it), so
+        // nothing is skipped that this client does not hold.
+        var head = await _readSnapshotHead(s);
+        if (head) {
+          var missing = head.files.concat(head.snapshots).filter(function(n) { return !_applied.has(n); });
+          if (missing.length && missing.length <= CFG.readAheadMax && missing.every(function(n) { return byFile.has(n); })) {
+            for (var mi = 0; mi < missing.length; mi++) await ingestFile(byFile.get(missing[mi]));
+            missing = missing.filter(function(n) { return !_applied.has(n); });
+          }
+          if (!missing.length) {
+            var nmh = C.parseSnapshotName(s.name);
+            _snapMeta.set(s.name, {name:s.name, by:nmh ? nmh.by : head.by, ts:nmh ? nmh.ts : head.ts, files:head.files, snapshots:head.snapshots});
+            _noteApplied(s.name);
+            _stats.snapshotsSkipped++;
+            noted = true;   // bookkeeping only: nothing new for the app
+            continue;
+          }
+        }
         var parsed = await _readParsed(s, 'snapshot');
         if (!parsed) continue;
         var add = _sess.ingest(parsed.changes, parsed.names);
@@ -426,19 +502,11 @@
         changed = true;
       }
       var files = listing.files.filter(function(f) { return !_applied.has(f.name); });
-      for (var j = 0; j < files.length; j++) {
-        var parsedF = await _readParsed(files[j], 'changes');
-        if (!parsedF) continue;
-        var addF = _sess.ingest(parsedF.changes, parsedF.names);
-        _cacheRecs(addF.added);
-        addF.touched.forEach(function(t) { touched.add(t); });
-        addF.added.forEach(function(r) { remote.push(r); });
-        _noteApplied(files[j].name);
-        changed = true;
-      }
+      for (var j = 0; j < files.length; j++) await ingestFile(files[j]);
       // what changed in the log, plus every target of a kind whose local
       // array was replaced (a detection run, a project load)
       var projected = _sess.sync({touched: touched, remote: remote, full: !!opts.full});
+      if (noted && !changed) _cacheFlush();
       if (changed) {
         _cacheFlush();
         _d({t:A_UPD, u:{lastSync:Date.now(), conflicts:C.conflictCount(_log)}});
@@ -480,6 +548,15 @@
       }
     }
     return out;
+  }
+  // The head of a snapshot from its first bytes (null → read it whole).
+  async function _readSnapshotHead(ent) {
+    try {
+      var f = await ent.handle.getFile();
+      var txt = await f.slice(0, CFG.headBytes).text();
+      _stats.bytesRead += txt.length;
+      return core().parseSnapshotHead(txt);
+    } catch (e) { return null; }
   }
   // A file that fails to parse (a cloud client still downloading it) is
   // retried only once its size or date changes — metadata, not contents.
@@ -544,11 +621,14 @@
     var covered = new Set();
     _snapMeta.forEach(function(m) { (m.files || []).forEach(function(f) { covered.add(f); }); });
     var loose = listing.files.filter(function(f) { return !covered.has(f.name); });
-    if (loose.length < CFG.snapshotAt || _sess.pending() || Math.random() < 0.5) return;
+    var seenFiles = 0;
+    _applied.forEach(function(n) { if (n.indexOf('changes/') === 0) seenFiles++; });
+    var due = loose.length >= CFG.snapshotMax || (loose.length >= CFG.snapshotAt && loose.length * CFG.snapshotShare >= seenFiles);
+    if (!due || _sess.pending() || Math.random() < 0.5) return;
     var files = listing.files.filter(function(f) { return _applied.has(f.name); }).map(function(f) { return f.name; });
     var snaps = listing.snapshots.filter(function(s) { return _applied.has(s.name); }).map(function(s) { return s.name; });
     var ts = Date.now(), name = C.snapshotName(_userId, ts);
-    await _writeNew(_proj, name, C.buildSnapshot(_log, {by:_userId, ts:ts, files:files, snapshots:snaps}));
+    await _writeNew(_proj, name, C.buildSnapshot(_log, {by:_userId, ts:ts, files:files, snapshots:snaps, compacts:true}));
     _stats.snapshotsWritten++;
     _snapMeta.set(name, {name:name, by:_userId, ts:ts, files:files, snapshots:snaps});
     _noteApplied(name);
@@ -561,7 +641,7 @@
     var C = core(), mine = [];
     _snapMeta.forEach(function(m) { if (m.by === _userId) mine.push(m); });
     if (!mine.length) return;
-    var plan = C.planCleanup({me:_userId, now:Date.now(), graceMs:CFG.graceMs, snapshots:mine,
+    var plan = C.planCleanup({me:_userId, now:Date.now(), graceMs:CFG.graceMs, onlineMs:CFG.onlineMs, teammateSeenAt:_teammateSeenAt(), snapshots:mine,
       presentFiles: listing.files.map(function(f) { return f.name; }), presentSnapshots: listing.snapshots.map(function(s) { return s.name; })});
     var byName = new Map();
     listing.files.forEach(function(f) { byName.set(f.name, f); });
