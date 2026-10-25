@@ -9387,11 +9387,18 @@ function startApp() {
     if (!L.fn) L.fn = function(id) { return map[id] || id || '?'; };
     return L.fn;
   }
+  // A pair's label depends only on the pair and the names: one per pair
+  // and name map (a search reads it for every clash on every keystroke).
+  var _ccPairLabelMemo = { names: null, map: new Map() };
   function _ccModelPairLabel(v, names) {
     var tcore = window._ccClashTriageCore;
     if (!names) names = _ccModelNameMap((window._ccLatestState && window._ccLatestState.models) || []);
     if (!tcore || !tcore.modelPairLabel) return String(v == null ? '' : v);
-    return tcore.modelPairLabel(v, function(id) { return names[id]; });
+    var M = _ccPairLabelMemo;
+    if (M.names !== names) { M.names = names; M.map = new Map(); }
+    var hit = M.map.get(v);
+    if (hit === undefined) { hit = tcore.modelPairLabel(v, function(id) { return names[id]; }); M.map.set(v, hit); }
+    return hit;
   }
   // Saved views / the active facets written before the model pair was keyed
   // by ids carry the old label: move them to the id keys while the names
@@ -13832,6 +13839,21 @@ function startApp() {
   // fNew differs from fOld only in its search, and that search can only
   // narrow: the items passing fNew are a subset of those passing fOld, so a
   // filter of the previous result (same order) equals a filter of the whole.
+  // One step of typing: does fNew only narrow fOld, and which of its tokens
+  // are new (the query to test a clash that passed fOld against)?
+  var _ccSearchStepLast = { a: null, b: null, out: null };
+  function _ccSearchStep(fOld, fNew) {
+    var M = _ccSearchStepLast;
+    if (M.a === fOld && M.b === fNew) return M.out;
+    var out = { narrows: _ccSearchNarrows(fOld, fNew), prevEmpty: !(fOld.search && _ccFilterTokens(fOld.search).length), extraQ: '' };
+    if (out.narrows && fNew.search) {
+      var old = {};
+      if (!out.prevEmpty) _ccFilterTokens(fOld.search).forEach(function(t) { old[t] = true; });
+      out.extraQ = _ccFilterTokens(fNew.search).filter(function(t) { return !old[t]; }).join(' ');
+    }
+    _ccSearchStepLast = { a: fOld, b: fNew, out: out };
+    return out;
+  }
   function _ccSearchNarrows(fOld, fNew) {
     if (!fOld || !fNew || fOld === fNew) return false;
     var k;
@@ -31489,7 +31511,14 @@ function startApp() {
     var row = isClashTab && triage && f.search ? triage.rowById.get(it.id) : null; // the only triage input (search text)
     if (!row) names = null;
     if (hit && hit.f === f && hit.clash === isClashTab && hit.row === row && hit.names === names && hit.rules === rules) return hit.pass;
-    var pass = _ccListItemPasses1(it, f, isClashTab, triage, rules, names);
+    var pass, step = hit && hit.pass && hit.f !== f && hit.clash === isClashTab && hit.rules === rules ? _ccSearchStep(hit.f, f) : null;
+    // A search that only narrows the previous one, for a clash that passed
+    // it (every other filter identical): only the tokens the previous search
+    // did not have are tested — the others matched this clash's text then
+    // (the same text: same facet row and names, or no search before).
+    if (step && step.narrows && (step.prevEmpty || (hit.row === row && hit.names === names))) {
+      pass = !step.extraQ || _ccFilterTextMatches(step.extraQ, _ccSearchHay(it, isClashTab, row, names), it.number);
+    } else pass = _ccListItemPasses1(it, f, isClashTab, triage, rules, names);
     if (it && typeof it === 'object') _ccPassCache.set(it, { f: f, clash: isClashTab, row: row, names: names, rules: rules, pass: pass });
     return pass;
   }
@@ -35316,6 +35345,17 @@ function startApp() {
     _ccGroupSummaryCache.set(g, { storey: storeyFn, locale: window._ccGetLocale && window._ccGetLocale(), sum: sum });
     return sum;
   }
+  // The clashes of the 'review' bucket in s.clashes order, once per (clashes,
+  // buckets): a search that does not narrow the previous one filters these
+  // (a third of the result in a typical run) without a bucket lookup each.
+  var _ccReviewBucketLast = { clashes: null, bucketOf: null, list: null };
+  function _ccReviewBucketList(clashes, bucketOf) {
+    var R = _ccReviewBucketLast;
+    if (R.clashes === clashes && R.bucketOf === bucketOf) return R.list;
+    var list = (clashes || []).filter(function(c) { return bucketOf.get(c.id) === 'review'; });
+    _ccReviewBucketLast = { clashes: clashes, bucketOf: bucketOf, list: list };
+    return list;
+  }
   function _ccReviewModel(s) {
     var facets = (s.triage && s.triage.facets) || {};
     var L = _ccReviewLast;
@@ -35335,8 +35375,8 @@ function startApp() {
     if (sameRest && L.filters === s.filters) preAll = L.preAll;
     else {
       var narrow = sameRest && _ccSearchNarrows(L.filters || INIT_FILTERS, f);
-      preAll = (narrow ? L.preAll : (s.clashes || [])).filter(function(c) {
-        return tm.bucketOf.get(c.id) === 'review' && _ccListItemPassesRest(c, f, true, tm, s.rules, names);
+      preAll = (narrow ? L.preAll : _ccReviewBucketList(s.clashes, tm.bucketOf)).filter(function(c) {
+        return _ccListItemPassesRest(c, f, true, tm, s.rules, names);
       });
     }
     var pre = preAll.filter(function(c) { return _ccListItemVisible(c, true, tm.visibleModels); });
@@ -49992,10 +50032,20 @@ function startApp() {
 
   // ── Mobile Bottom Nav ─────────────────────────────────────────
 
+  // Badge counts once per clashes / issues array (the nav renders on every
+  // App render: a keystroke must not count every clash again).
+  var _ccNavCounts = new WeakMap();
+  function _ccNavCount(list, open) {
+    var n = _ccNavCounts.get(list);
+    if (n === undefined) { n = list.filter(open).length; _ccNavCounts.set(list, n); }
+    return n;
+  }
+  function _ccNavClashOpen(c){var st=c.status||'new';return st!=='resolved'&&st!=='denied';}
+  function _ccNavIssueOpen(i){var st=i.status||'open';return st!=='resolved'&&st!=='closed';}
   function MobileNav(props) {
     var s=props.s, d=props.d;
-    var clashN=s.clashes.filter(function(c){var st=c.status||'new';return st!=='resolved'&&st!=='denied';}).length;
-    var issueN=s.issues.filter(function(i){var st=i.status||'open';return st!=='resolved'&&st!=='closed';}).length;
+    var clashN=_ccNavCount(s.clashes, _ccNavClashOpen);
+    var issueN=_ccNavCount(s.issues, _ccNavIssueOpen);
     function navBtn(id, svgPath, label, badge) {
       var active = id==='ai' ? !!s.chatOpen : s.tab===id;
       return html`<button class=${active?'active':''} aria-label=${label} onClick=${function(){

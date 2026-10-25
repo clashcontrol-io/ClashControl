@@ -160,7 +160,7 @@ test('render-style type lookup is per model (expressIds repeat across models)', 
 
 // ── search narrowing ─────────────────────────────────────────────────────
 const searchSrc = between('  var _CC_FILTER_FILLER = {', '  function deriveFloors(clashes) {');
-const search = new Function(searchSrc + '; return { narrows: _ccSearchNarrows, matches: _ccFilterTextMatches };')();
+const search = new Function(searchSrc + '; return { narrows: _ccSearchNarrows, matches: _ccFilterTextMatches, step: _ccSearchStep };')();
 
 test('search narrowing is sound: every accepted pair only removes items (fuzz)', () => {
   const r = rng(3);
@@ -185,6 +185,29 @@ test('search narrowing is sound: every accepted pair only removes items (fuzz)',
   assert.ok(!search.narrows({ search: '12' }, { search: '123' }), 'a number can match the item number alone');
   assert.ok(!search.narrows({ search: 'wall' }, { search: 'wal' }), 'deleting widens');
   assert.ok(!search.narrows({ search: 'wa', status: 'all' }, { search: 'wal', status: 'open' }), 'another filter changed');
+});
+
+test('a narrowing step tests only the new tokens: same answer as the full query for every clash that passed the old one (fuzz)', () => {
+  const r = rng(5);
+  const alpha = ['wa', 'll', 'w', 's', 'beam', 'floor', 'floo', 'level', 'lev', '1', '12', '#', '#1', ' ', 'a', 'on', 'pipes', 'pipe', 'x', 'the'];
+  const word = () => { let w = ''; const n = 1 + Math.floor(r() * 3); for (let i = 0; i < n; i++) w += alpha[Math.floor(r() * alpha.length)]; return w; };
+  const hays = []; for (let i = 0; i < 300; i++) { let h = ''; for (let k = 0; k < 4; k++) h += word() + ' '; hays.push({ hay: h.toLowerCase(), n: Math.floor(r() * 200) }); }
+  let checked = 0;
+  for (let t = 0; t < 4000; t++) {
+    const qa = r() < 0.15 ? '' : word() + (r() < 0.4 ? ' ' + word() : '');
+    const qb = r() < 0.5 ? qa + alpha[Math.floor(r() * alpha.length)] : (r() < 0.5 ? qa + ' ' + word() : word());
+    const fa = { search: qa, status: 'all' }, fb = { search: qb, status: 'all' };
+    const st = search.step(fa, fb);
+    assert.equal(st.narrows, search.narrows(fa, fb));
+    if (!st.narrows) continue;
+    for (const h of hays) {
+      if (!search.matches(qa, h.hay, h.n)) continue;
+      checked++;
+      assert.equal(st.extraQ ? search.matches(st.extraQ, h.hay, h.n) : true, search.matches(qb, h.hay, h.n), JSON.stringify({ qa, qb, extra: st.extraQ, h }));
+    }
+  }
+  assert.ok(checked > 5000, 'the fuzz exercised the step path (' + checked + ')');
+  assert.equal(search.step({ search: 'wall d' }, { search: 'wall du' }).extraQ, 'du', 'typing on: only the changed token');
 });
 
 // ── clash markers ────────────────────────────────────────────────────────
