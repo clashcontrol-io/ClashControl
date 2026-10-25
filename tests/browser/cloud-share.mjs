@@ -261,6 +261,22 @@ try {
   check((await A2.evaluate(() => window._ccCloudShare.status().rejected.length)) === 0, 'Dismiss clears the notice');
   await A2.close();
 
+  // ── the Share panel's link (?p=KEY): a teammate who opens it is in the
+  //    project, and the key leaves the address bar ──
+  {
+    const ctxC = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    await ctxC.addInitScript(() => { try { localStorage.setItem('cc_consent_banner_seen', '1'); localStorage.setItem('cc_data_consent', 'denied'); localStorage.setItem('cc_data_consent_explicit', '1'); } catch (e) {} window.__ccSharedTestUser = 'ucarol0000003'; });
+    if (offlineDepsEnabled()) await routeOfflineDeps(ctxC, root);
+    await routeApi(ctxC, 'ucarol0000003');
+    const C = await ctxC.newPage();
+    C.on('pageerror', (e) => pageErrors.push('C: ' + e.message));
+    await C.goto(url + '?p=' + encodeURIComponent(pid), { waitUntil: 'domcontentloaded' });
+    const joined = await C.waitForFunction((k) => window._ccCloudShare && window._ccCloudShare.status().pid === k && !/[?&]p=/.test(location.search), pid, { timeout: 60_000 }).then(() => true, () => false);
+    const savedKey = await C.evaluate(() => localStorage.getItem('cc_sharedProjectId'));
+    check(joined && savedKey === pid, 'share link: opening ?p=KEY joins the project and clears the key from the address bar');
+    await ctxC.close();
+  }
+
   // ── one sharing mode at a time (shared-session-core claimLink) ──
   // With a project key linked, a shared folder cannot be linked (each mode
   // keeps its own log; both at once would overwrite each other's values and

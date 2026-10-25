@@ -51661,7 +51661,8 @@ function startApp() {
     var q = new URLSearchParams(location.search);
     var wantLoad = q.has('load');
     var wantRevit = q.get('connect') === 'revit';
-    if (!wantLoad && !wantRevit) return;
+    var wantKey = (q.get('p') || '').trim();   // the Share panel's "Copy share link"
+    if (!wantLoad && !wantRevit && !wantKey) return;
 
     function clearParams() { try { history.replaceState(null, '', location.pathname); } catch (e) {} }
     function whenReady(test, cb, tries) {
@@ -51676,6 +51677,33 @@ function startApp() {
         try { window._ccRevitAutoConnect = true; } catch (e) {}
         try { if (window._ccActivateAddon) window._ccActivateAddon('revit-bridge'); } catch (e) {}
         try { window._ccDispatch({ t: 'REVIT_BRIDGE', v: true }); } catch (e) {}
+      });
+    }
+
+    // A share link (?p=KEY) joins that shared project: once, then the key
+    // leaves the address bar. Already in it → nothing; in another project →
+    // asked first; a linked shared folder (one sharing mode at a time) or a
+    // wrong / unreachable key → said in a message.
+    if (wantKey) {
+      whenReady(function () { return typeof window._ccSharedJoin === 'function' && typeof window._ccDispatch === 'function'; }, function () {
+        var t = typeof window._cc_t === 'function' ? window._cc_t : function (k, en, v) { return String(en).replace(/\{(\w+)\}/g, function (m, n) { return v && v[n] != null ? v[n] : m; }); };
+        var toast = function (m, kind) { if (typeof window._ccToast === 'function') window._ccToast(m, kind); };
+        var dropKey = function () { try { var u = new URL(location.href); u.searchParams.delete('p'); history.replaceState(null, '', u.pathname + u.search + u.hash); } catch (e) {} };
+        var cur = null;
+        try { cur = localStorage.getItem('cc_sharedProjectId'); } catch (e) {}
+        if (cur === wantKey) { dropKey(); return; }
+        if (cur && !window.confirm(t('share.linkSwitch', 'This browser is in the shared project {cur}. Switch to {key}?', { cur: cur, key: wantKey }))) { dropKey(); return; }
+        window._ccSharedJoin(wantKey).then(function (data) {
+          toast(t('share.joinedFromLink', 'Joined the shared project “{name}”.', { name: (data && data.project && data.project.name) || wantKey }), 'success');
+          try { window._ccDispatch({ t: 'UPD_PREFS', u: { _sharedRefresh: Date.now() } }); } catch (e) {}
+          dropKey();
+        }, function (err) {
+          var h = err && err.holder;
+          toast(err && err.code === 'other_mode'
+            ? t('share.otherModeFolder', 'This project is shared through the folder {folder}. Only one sharing mode works at a time — unlink the folder to use a project key instead.', { folder: (h && h.label) || '—' })
+            : (err && err.status ? t('share.projectNotFound', 'Project not found. Check the key and try again.') : t('share.joinNetworkError', 'Could not reach the server — check your connection and try again.')), 'error');
+          dropKey();
+        });
       });
     }
 
