@@ -126,9 +126,9 @@ test('geo caches written before stubs on both paths (np !== 1) re-parse once whe
   const fn = new Function(extractFn('_ccGeoCacheLacksSpaces') + '\n' + extractFn('_ccIfcHasBytes') + '\nreturn _ccGeoCacheLacksSpaces;')();
   const buf = { buffer: new ArrayBuffer(4) };
   assert.equal(fn({ sp: 2, sem: 1, xp: 1 }, buf), true);
-  assert.equal(fn({ sp: 2, sem: 1, xp: 1, np: 1 }, buf), false);
+  assert.equal(fn({ sp: 2, sem: 1, xp: 1, np: 1, st: 1 }, buf), false);
   assert.equal(fn({ sp: 2, sem: 1, xp: 1 }, {}), false, 'no source bytes: keep the old cache');
-  assert.match(html, /sp:2, sem:1, xp:1, np:1, hasPsets:hasPsets/);
+  assert.match(html, /sp:2, sem:1, xp:1, np:1, st:1, hasPsets:hasPsets/);
   // a stub's empty box (+/-Infinity) survives the v8 restore validation
   const match = new Function(extractFn('_ccRestoredGeoMatchesCache') + '\nreturn _ccRestoredGeoMatchesCache;')();
   const empty = { min: { x: Infinity, y: Infinity, z: Infinity }, max: { x: -Infinity, y: -Infinity, z: -Infinity } };

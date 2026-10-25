@@ -627,21 +627,23 @@
     .cc-tv{--cc-tv-indent:1.25rem;--cc-tv-row-pad-y:.3rem;--cc-tv-row-pad-x:var(--space-3);--cc-tv-icon-size:14px;--cc-tv-toggle-size:14px;list-style:none;margin:0;padding:0;font-size:var(--text-sm);color:var(--text-primary)}
     .cc-tv ul{list-style:none;margin:0;padding:0}
     .cc-tv__item{position:relative}
-    .cc-tv__content{display:flex;align-items:center;gap:var(--space-2);padding:var(--cc-tv-row-pad-y) var(--cc-tv-row-pad-x);cursor:pointer;color:var(--text-primary);border:none;background:none;width:100%;text-align:left;font:inherit;line-height:var(--leading-base);transition:background var(--duration-fast) var(--ease-standard),color var(--duration-fast) var(--ease-standard);border-radius:var(--radius-xs);min-height:28px}
+    .cc-tv__content{display:flex;align-items:center;gap:var(--space-2);padding:var(--cc-tv-row-pad-y) var(--cc-tv-row-pad-x);cursor:pointer;color:var(--text-primary);border:none;background:none;width:100%;box-sizing:border-box;text-align:left;font:inherit;line-height:var(--leading-base);transition:background var(--duration-fast) var(--ease-standard),color var(--duration-fast) var(--ease-standard);border-radius:var(--radius-xs);min-height:28px}
     .cc-tv__content:hover{background:var(--bg-secondary)}
     .cc-tv__content.cc-tv-current{background:var(--accent-bg);color:var(--text-primary);font-weight:var(--weight-medium)}
-    .cc-tv__content.cc-tv-multi-sel{background:rgba(96,165,250,.12);color:var(--text-primary)}
+    .cc-tv__content.cc-tv-multi-sel{background:var(--accent-bg);color:var(--text-primary)}
     .cc-tv__content.cc-tv-current::before{content:'';position:absolute;left:0;top:4px;bottom:4px;width:3px;background:var(--accent);border-radius:0 var(--radius-xs) var(--radius-xs) 0}
     .cc-tv__content:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-    .cc-tv__toggle{flex-shrink:0;width:var(--cc-tv-toggle-size);height:var(--cc-tv-toggle-size);display:inline-flex;align-items:center;justify-content:center;color:var(--text-muted);background:none;border:none;padding:0;cursor:pointer;border-radius:var(--radius-xs);transition:transform var(--duration-base) var(--ease-standard),color var(--duration-fast) var(--ease-standard);font-size:9px;line-height:1}
+    .cc-tv__toggle{flex-shrink:0;width:var(--cc-tv-toggle-size);height:var(--cc-tv-toggle-size);display:inline-flex;align-items:center;justify-content:center;color:var(--text-muted);background:none;border:none;padding:0;cursor:pointer;border-radius:var(--radius-xs);transition:color var(--duration-fast) var(--ease-standard);line-height:1}
     .cc-tv__toggle:hover{color:var(--text-primary)}
-    .cc-tv__toggle.cc-tv-expanded{transform:rotate(90deg)}
     .cc-tv__toggle-spacer{flex-shrink:0;width:var(--cc-tv-toggle-size);height:var(--cc-tv-toggle-size);display:inline-block}
     .cc-tv__icon{flex-shrink:0;width:var(--cc-tv-icon-size);height:var(--cc-tv-icon-size);display:inline-flex;align-items:center;justify-content:center;color:var(--accent-subtle);font-size:11px;line-height:1}
     .cc-tv__icon svg{width:100%;height:100%;fill:currentColor}
     .cc-tv__text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .cc-tv__text-secondary{color:var(--text-muted);font-size:var(--text-xs);margin-left:var(--space-1)}
-    .cc-tv__count{flex-shrink:0;font-family:var(--font-mono);font-size:var(--text-2xs);color:var(--text-muted);background:var(--bg-secondary);padding:.05rem var(--space-2);border-radius:var(--radius-pill);font-weight:var(--weight-medium);min-width:1.5rem;text-align:center}
+    .cc-tv__vis{flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;width:var(--space-5);height:var(--space-5);margin:calc(-1 * var(--space-1)) 0;background:none;border:none;padding:0;cursor:pointer;color:var(--text-muted);border-radius:var(--radius-xs)}
+    .cc-tv__vis:hover{color:var(--text-primary)}
+    .cc-tv__vis.cc-tv-vis-off{color:var(--text-faint)}
+    .cc-tv__count{flex-shrink:0;font-family:var(--font-mono);font-size:var(--text-2xs);color:var(--text-muted);background:var(--bg-secondary);padding:0 var(--space-2);border-radius:var(--radius-pill);font-weight:var(--weight-medium);min-width:1.5rem;text-align:center}
     .cc-tv__content:hover .cc-tv__count,.cc-tv__content.cc-tv-current .cc-tv__count{background:var(--bg-tertiary)}
     .cc-tv__list--guides{position:relative}
     .cc-tv__list--guides::before{content:'';position:absolute;top:0;bottom:.5rem;left:calc(var(--cc-tv-toggle-size)/2);width:1px;background:var(--border-subtle)}
@@ -3127,7 +3129,7 @@ function startApp() {
   // cold-parse fallback — a current cache restores without reading the file.
   function _ccRestoreModelGeometry(id, cached, getEntry) {
     function cold() { return getEntry().then(_ccColdParseParkedEntry); }
-    var check = cached && (cached.sp !== 2 || cached.sem !== 1 || cached.xp !== 1 || cached.np !== 1 || cached.gr !== 1);
+    var check = cached && (cached.sp !== 2 || cached.sem !== 1 || cached.xp !== 1 || cached.np !== 1 || cached.st !== 1 || cached.gr !== 1);
     var pre = check ? getEntry().then(function(entry) { return _ccGeoCacheLacksSpaces(cached, entry); }) : Promise.resolve(false);
     return pre.then(function(lacks) {
       if (lacks) return cold();
@@ -4250,7 +4252,7 @@ function startApp() {
     // refreshed once the same way (docs/INTERNALS.md §21.49).
     // gs:1 — shared geometries stored once (geoData + md.g, see above);
     // caches without it hold pos/n8/nrm/idx on every mesh and still restore.
-    return {v:_ccGeoCacheV8Enabled()?8:7, sp:2, sem:1, xp:1, np:1, hasPsets:hasPsets, pp:propsComplete ? 1 : 0, gs:1, geoData:geoData, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, spaceBoundaries:result.spaceBoundaries||null, gr:1, gridAxes:result.gridAxes||null, stats:result.stats};
+    return {v:_ccGeoCacheV8Enabled()?8:7, sp:2, sem:1, xp:1, np:1, st:1, hasPsets:hasPsets, pp:propsComplete ? 1 : 0, gs:1, geoData:geoData, meshData:meshData, elData:elData, storeys:result.storeys, storeyData:result.storeyData, spatialHierarchy:result.spatialHierarchy||{}, relatedPairs:result.relatedPairs||{}, spaceBoundaries:result.spaceBoundaries||null, gr:1, gridAxes:result.gridAxes||null, stats:result.stats};
   }
 
 
@@ -4472,12 +4474,14 @@ function startApp() {
   // current cache; with no source bytes the old cache is still the best we have.
   // The same applies to caches without exact geometry (xp !== 1) and to
   // caches written before non-physical elements were stubs on both loader
-  // paths (np !== 1). A cache written before grids were kept (gr !== 1) is
+  // paths (np !== 1), and to caches whose storeys were extracted before
+  // aggregate parts inherited their parent's storey (st !== 1). A cache
+  // written before grids were kept (gr !== 1) is
   // only stale when its IFC actually has grid axes — one byte scan instead
   // of re-parsing every older cache.
   function _ccGeoCacheLacksSpaces(cached, entry) {
     if (!cached || !entry || !entry.buffer) return false;
-    if (cached.sp !== 2 || cached.sem !== 1 || cached.xp !== 1 || cached.np !== 1) return true;
+    if (cached.sp !== 2 || cached.sem !== 1 || cached.xp !== 1 || cached.np !== 1 || cached.st !== 1) return true;
     return cached.gr !== 1 && _ccIfcHasBytes(entry.buffer, 'IFCGRIDAXIS(');
   }
   // Whether an IFC-SPF buffer contains `word` (ASCII), scanned as bytes.
@@ -5604,37 +5608,60 @@ function startApp() {
           storeyData.push({name:name, elevation:Number(elev)||0, hasElevation:hasElev, id:sid});
         } catch(e) { storeys[sid] = 'Storey #'+sid; }
       }
+      // id -> the parent it is decomposed from, or the non-storey spatial
+      // element it is contained in (resolved to a storey below)
+      var upOf = {};
       var relIds = api.GetLineIDsWithType(modelID, IFC.IFCRELCONTAINEDINSPATIALSTRUCTURE);
       for (var i = 0; i < relIds.size(); i++) {
         try {
           var rel = api.GetLine(modelID, relIds.get(i));
           var structId = rel.RelatingStructure ? (rel.RelatingStructure.value||rel.RelatingStructure) : null;
           var storeyName = storeys[structId] || '';
-          if (storeyName && rel.RelatedElements) {
+          if (structId != null && rel.RelatedElements) {
             var els = rel.RelatedElements;
             for (var j = 0; j < els.length; j++) {
               var eid = els[j].value != null ? els[j].value : els[j];
-              storeyMap[eid] = storeyName;
+              if (storeyName) storeyMap[eid] = storeyName;
+              else if (upOf[eid] == null) upOf[eid] = structId;
             }
           }
         } catch(e) {}
       }
-      // Rooms (IfcSpace) are decomposed from their storey via IfcRelAggregates,
-      // not contained in it, so they'd otherwise get no storey (navigator
-      // grouping, storey hiding, storey-scoped loads). Containment wins.
+      // Decomposition (IfcRelAggregates) and containment in a spatial element
+      // below a storey (an IfcSpace) carry the storey down: rooms aggregated
+      // into their storey, and the parts of an aggregate element — the slabs
+      // of an IfcRoof, the flights / landings of an IfcStair, curtain-wall
+      // plates, assembly members — whose PARENT is the one contained in the
+      // storey. Without this they all landed in "(No storey)" (navigator
+      // grouping, storey hiding, storey-scoped loads). Direct containment in
+      // a storey wins; an element contained in the site / building has no
+      // storey and keeps none.
       var aggIds = api.GetLineIDsWithType(modelID, IFC.IFCRELAGGREGATES);
       for (var ai = 0; ai < aggIds.size(); ai++) {
         try {
           var agg = api.GetLine(modelID, aggIds.get(ai));
-          var relObj = agg.RelatingObject ? (agg.RelatingObject.value||agg.RelatingObject) : null;
-          var aggStorey = storeys[relObj] || '';
-          if (aggStorey && agg.RelatedObjects) {
+          var relObj = agg.RelatingObject ? (agg.RelatingObject.value != null ? agg.RelatingObject.value : agg.RelatingObject) : null;
+          if (relObj != null && agg.RelatedObjects) {
             for (var aj = 0; aj < agg.RelatedObjects.length; aj++) {
               var aeid = agg.RelatedObjects[aj].value != null ? agg.RelatedObjects[aj].value : agg.RelatedObjects[aj];
-              if (storeyMap[aeid] == null) storeyMap[aeid] = aggStorey;
+              if (upOf[aeid] == null) upOf[aeid] = relObj;
             }
           }
         } catch(e) {}
+      }
+      // walk each element up (parent / containing space) to the first storey
+      // or element with one; the depth cap also ends a malformed cycle
+      var upIds = Object.keys(upOf);
+      for (var ui = 0; ui < upIds.length; ui++) {
+        var uid = +upIds[ui];
+        if (storeyMap[uid] != null || storeys[uid] != null) continue;
+        var cur = upOf[uid], found = '';
+        for (var depth = 0; cur != null && depth < 64; depth++) {
+          if (storeys[cur] != null) { found = storeys[cur]; break; }
+          if (storeyMap[cur] != null) { found = storeyMap[cur]; break; }
+          cur = upOf[cur];
+        }
+        if (found) storeyMap[uid] = found;
       }
     } catch(e) { console.warn('Storey extraction failed:', e.message||e); }
     storeyData.sort(function(a,b){return a.elevation-b.elevation;});
@@ -25179,7 +25206,7 @@ function startApp() {
   var S_PANEL   = {background:'var(--bg-primary)',borderRight:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',flexShrink:0,overflow:'hidden'};
   var S_PANELR  = {background:'var(--bg-primary)',borderLeft:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',flexShrink:0};
   var S_BTN     = {border:'none',cursor:'pointer',fontFamily:'inherit',fontSize:'var(--text-base)',borderRadius:'var(--radius-sm)',padding:'var(--space-2) var(--space-4)',lineHeight:'var(--leading-tight)',transition:'background var(--duration-fast) var(--ease-standard),color var(--duration-fast) var(--ease-standard),border-color var(--duration-fast) var(--ease-standard),transform var(--duration-fast) var(--ease-standard)'};
-  var S_INPUT   = {width:'100%',background:'var(--bg-tertiary)',color:'var(--text-primary)',fontSize:'var(--text-md)',borderRadius:'var(--radius-md)',padding:'var(--space-2) var(--space-3)',border:'1px solid var(--border)',outline:'none',transition:'border-color var(--duration-fast) var(--ease-standard),box-shadow var(--duration-fast) var(--ease-standard)'};
+  var S_INPUT   = {width:'100%',boxSizing:'border-box',background:'var(--bg-tertiary)',color:'var(--text-primary)',fontSize:'var(--text-md)',borderRadius:'var(--radius-md)',padding:'var(--space-2) var(--space-3)',border:'1px solid var(--border)',outline:'none',transition:'border-color var(--duration-fast) var(--ease-standard),box-shadow var(--duration-fast) var(--ease-standard)'};
   var S_BACKDROP = {position:'fixed',inset:0,background:'var(--modal-bg)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:'var(--z-modal)',overflow:'hidden',padding:'var(--space-6) 0'};
   var S_MODAL_CARD = {background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-lg)',maxWidth:'95vw',maxHeight:'85vh',overflowY:'auto',WebkitOverflowScrolling:'touch',boxShadow:'var(--shadow-lg)',flexShrink:0};
   var S_MODAL_HEADER = {display:'flex',alignItems:'center',justifyContent:'space-between',padding:'var(--space-4) var(--space-5)',borderBottom:'1px solid var(--border-subtle)',gap:'var(--space-3)'};
@@ -28921,17 +28948,19 @@ function startApp() {
           onDblClick=${opts.onDblClick}
           title=${opts.title||null}>
           ${hasChildren
-            ? html`<button type="button" class=${'cc-tv__toggle'+(expanded?' cc-tv-expanded':'')}
+            ? html`<button type="button" class="cc-tv__toggle"
                 aria-label=${expanded?_cc_t('nav.collapse','Collapse'):_cc_t('nav.expand','Expand')}
-                onClick=${function(e){e.stopPropagation();opts.onToggle&&opts.onToggle();}}>▶</button>`
+                onClick=${function(e){e.stopPropagation();opts.onToggle&&opts.onToggle();}}>${_ccChevron(expanded)}</button>`
             : html`<span class="cc-tv__toggle-spacer"></span>`}
           ${opts.icon!=null && html`<span class="cc-tv__icon" style=${opts.iconColor?{color:opts.iconColor}:null}>${opts.icon}</span>`}
           <span class="cc-tv__text">${opts.label}${opts.secondary!=null && html`<span class="cc-tv__text-secondary">${opts.secondary}</span>`}</span>
           ${opts.count!=null && html`<span class="cc-tv__count">${opts.count}</span>`}
-          ${opts.onToggleVis && html`<button type="button" onClick=${function(e){e.stopPropagation();opts.onToggleVis();}}
-            title=${opts.visHidden?'Show in 3D':'Hide from 3D'}
-            style=${{background:'none',border:'none',cursor:'pointer',padding:'0 var(--space-1)',color:opts.visHidden?'var(--text-faint)':'var(--text-muted)',fontSize:'var(--text-xs)',lineHeight:1,opacity:opts.visHidden?0.7:0.6}}>
-            ${opts.visHidden?'⊘':'◉'}
+          ${opts.onToggleVis && html`<button type="button" class=${'cc-tv__vis'+(opts.visHidden?' cc-tv-vis-off':'')} onClick=${function(e){e.stopPropagation();opts.onToggleVis();}}
+            title=${opts.visHidden?_cc_t('nav.showIn3d','Show in 3D'):_cc_t('nav.hideFrom3d','Hide from 3D')} aria-pressed=${opts.visHidden?'true':'false'}
+            aria-label=${opts.visHidden?_cc_t('nav.showIn3d','Show in 3D'):_cc_t('nav.hideFrom3d','Hide from 3D')}>
+            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+              ${opts.visHidden?html`<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>`:html`<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>`}
+            </svg>
           </button>`}
         </div>
         ${hasChildren && expanded && html`<ul role="group" class="cc-tv__list--nested cc-tv__list--guides">${opts.children}</ul>`}
@@ -28946,7 +28975,7 @@ function startApp() {
             style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:viewMode===v.id?'var(--accent)':'var(--bg-secondary)',color:viewMode===v.id?'var(--accent-contrast)':'var(--text-secondary)',fontWeight:viewMode===v.id?'var(--weight-semibold)':'var(--weight-medium)'}}>${v.label}</button>`})}
         </div>
         <div style=${{display:'flex',flexDirection:'column',gap:'var(--space-2)'}}>
-          <input type="text" placeholder=${classView ? 'Filter groups…' : 'Search elements…'} value=${treeSearch}
+          <input type="text" placeholder=${classView ? _cc_t('nav.filterGroups','Filter groups…') : _cc_t('nav.searchElements','Search elements…')} value=${treeSearch}
             onInput=${function(e){setTreeSearch(e.target.value);}}
             style=${{...S_INPUT,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)'}} />
           ${(viewMode==='tree'||viewMode==='spatial') && html`<div style=${{display:'flex',gap:'var(--space-1)'}}>
@@ -28987,9 +29016,8 @@ function startApp() {
             var eKey='e_'+model.id+'_'+el.expressId;
             return tvNode({
               key:eKey, level:level,
-              icon:'▪', iconColor:'#c084fc',
               label:p.name||('#'+el.expressId),
-              secondary:p.ifcType||'Element',
+              secondary:p.ifcType||_cc_t('nav.element','Element'),
               hasChildren:false,
               selected:explorerFocus===eKey,
               multiSelected:multiSel.some(function(r){return r.expressId===el.expressId && r.modelId===model.id;}),
@@ -28999,7 +29027,6 @@ function startApp() {
           }
           return tvNode({
             key:pKey, level:1,
-            icon:'⌂', iconColor:'var(--color-info-fg)',
             label:projName, secondary:_cc_t('nav.project','Project'),
             hasChildren:true, expanded:!!expanded[pKey],
             selected:explorerFocus===pKey,
@@ -29009,7 +29036,6 @@ function startApp() {
               var siKey='ss_'+model.id+'_'+si;
               return tvNode({
                 key:siKey, level:2,
-                icon:'◉', iconColor:'#22d3ee',
                 label:site.name, secondary:_cc_t('nav.site','Site'),
                 hasChildren:true, expanded:!!expanded[siKey],
                 selected:explorerFocus===siKey,
@@ -29019,7 +29045,6 @@ function startApp() {
                   var bKey='sb_'+model.id+'_'+bi;
                   return tvNode({
                     key:bKey, level:3,
-                    icon:'▤', iconColor:'var(--color-warning-fg)',
                     label:bld.name, secondary:_cc_t('nav.building','Building'),
                     hasChildren:true, expanded:!!expanded[bKey],
                     selected:explorerFocus===bKey,
@@ -29040,7 +29065,6 @@ function startApp() {
                         var _stCap = q ? 1000 : 200;
                         return tvNode({
                           key:stKey, level:4,
-                          icon:'▬', iconColor:'var(--color-success-fg)',
                           label:sd.name, secondary:_ccFormatElev(_ccStoreyElevM(model, sd)),
                           count:stEls.length,
                           hasChildren:stEls.length>0, expanded:stIsOpen,
@@ -29051,7 +29075,7 @@ function startApp() {
                           onToggle:function(){toggle(stKey);setExplorerFocus(stKey);},
                           children:stIsOpen ? [].concat(
                             stEls.slice(0,_stCap).map(function(el){return _elNode(el, 5);}),
-                            stEls.length>_stCap ? [html`<li class="cc-tv__truncate" key="trunc">+${stEls.length-_stCap} more…</li>`] : []
+                            stEls.length>_stCap ? [html`<li class="cc-tv__truncate" key="trunc">${_cc_t('nav.moreN','+{n} more…',{n:stEls.length-_stCap})}</li>`] : []
                           ) : null
                         });
                       }),
@@ -29063,7 +29087,7 @@ function startApp() {
                         var _nsCap = q ? 500 : 100;
                         return [tvNode({
                           key:nsKey, level:4,
-                          label:'(No storey)',
+                          label:_cc_t('nav.noStorey','No storey'),
                           count:noSt.length, italic:true,
                           hasChildren:true, expanded:nsIsOpen,
                           selected:explorerFocus===nsKey,
@@ -29098,9 +29122,8 @@ function startApp() {
             var hasChildren=elChildren.length>0;
             return tvNode({
               key:eKey, level:level,
-              icon:'▪', iconColor:'#c084fc',
               label:p.name||('#'+el.expressId),
-              secondary:p.ifcType||'Element',
+              secondary:p.ifcType||_cc_t('nav.element','Element'),
               count:hasChildren?elChildren.length:undefined,
               hasChildren:hasChildren, expanded:!!expanded[cKey],
               selected:explorerFocus===eKey,
@@ -29113,9 +29136,8 @@ function startApp() {
                 var ceKey='e_'+model.id+'_'+child.expressId;
                 return tvNode({
                   key:ceKey, level:level+1,
-                  icon:'▫', iconColor:'var(--text-muted)',
                   label:cp.name||('#'+child.expressId),
-                  secondary:cp.ifcType||'El',
+                  secondary:cp.ifcType||_cc_t('nav.element','Element'),
                   hasChildren:false,
                   selected:explorerFocus===ceKey,
                   multiSelected:multiSel.some(function(r){return r.expressId===child.expressId && r.modelId===model.id;}),
@@ -29141,7 +29163,6 @@ function startApp() {
               var _sCap = q ? 1000 : 200;
               storeyChildren.push(tvNode({
                 key:sKey, level:2,
-                icon:'▬', iconColor:'var(--color-success-fg)',
                 label:st, count:filtered.length,
                 hasChildren:filtered.length>0, expanded:sIsOpen,
                 selected:explorerFocus===sKey,
@@ -29151,7 +29172,7 @@ function startApp() {
                 onToggle:function(){toggle(sKey);setExplorerFocus(sKey);},
                 children:sIsOpen ? [].concat(
                   topLevel.slice(0,_sCap).map(function(el){return _elNode(el, 3);}),
-                  topLevel.length>_sCap ? [html`<li class="cc-tv__truncate" key="trunc">+${topLevel.length-_sCap} more…</li>`] : []
+                  topLevel.length>_sCap ? [html`<li class="cc-tv__truncate" key="trunc">${_cc_t('nav.moreN','+{n} more…',{n:topLevel.length-_sCap})}</li>`] : []
                 ) : null
               }));
             });
@@ -29163,7 +29184,7 @@ function startApp() {
                 var _nsCap = q ? 500 : 100;
                 storeyChildren.push(tvNode({
                   key:nsKey, level:2,
-                  label:'(No storey)', count:nsFiltered.length, italic:true,
+                  label:_cc_t('nav.noStorey','No storey'), count:nsFiltered.length, italic:true,
                   hasChildren:true, expanded:nsIsOpen,
                   selected:explorerFocus===nsKey,
                   onClick:function(){toggle(nsKey);setExplorerFocus(nsKey);},
@@ -29227,7 +29248,7 @@ function startApp() {
             d({t:'ADD_SELSET', v:{id:uid(), name:name, refs:refs}});
           }}
             style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>
-            + Save
+            + ${_cc_t('common.save','Save')}
           </button>
         </div>
         ${(s.selectionSets||[]).length === 0

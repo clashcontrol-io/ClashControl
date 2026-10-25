@@ -100,14 +100,14 @@ test('pre-spaces cache (no sp marker) cold-parses once when the source IFC is st
   // drawn, stub elements missing) too.
   assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, { v: 7, sp: 2, sem: 1, xp: 1, hasPsets: true }), 'cold');
   assert.equal(h.coldParses, 5);
-  assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, { v: 7, sp: 2, sem: 1, xp: 1, np: 1, hasPsets: true }), 'legacy');
+  assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, { v: 7, sp: 2, sem: 1, xp: 1, np: 1, st: 1, hasPsets: true }), 'legacy');
   // No source bytes: the old cache is still the only geometry there is.
   assert.equal(await h.context.restore({ id: 'm' }, { v: 7, hasPsets: true }), 'legacy');
   assert.equal(h.coldParses, 5);
 });
 
 test('the serializer stamps sp:2 and both restore policies check it first', () => {
-  assert.match(source, /return \{v:_ccGeoCacheV8Enabled\(\)\?8:7, sp:2, sem:1, xp:1, np:1, hasPsets:hasPsets/);
+  assert.match(source, /return \{v:_ccGeoCacheV8Enabled\(\)\?8:7, sp:2, sem:1, xp:1, np:1, st:1, hasPsets:hasPsets/);
   // parked-model restore: the stored file is fetched only for this check (see park-restore-io.test.js)
   assert.match(source, /getEntry\(\)\.then\(function\(entry\) \{ return _ccGeoCacheLacksSpaces\(cached, entry\); \}\)/);
   assert.match(source, /if \(lacks\) return cold\(\);/);
@@ -133,7 +133,7 @@ test('candidate serialization is schema 8 while flag-off serialization stays sch
 // psets at all restores from it; a cache written before the props landed
 // (no pp, no psets) still re-parses.
 test('a props-complete cache (pp:1) restores even when the model has no psets', async () => {
-  const markers = { v: 7, sp: 2, sem: 1, xp: 1, np: 1 };
+  const markers = { v: 7, sp: 2, sem: 1, xp: 1, np: 1, st: 1 };
   const h = restoreDecisionHarness({ _ccGeoCacheV8Enabled: () => false, _ccGeoCacheLacksSpaces: realLacksSpaces(), _geoDeserialize: () => 'legacy' });
   assert.equal(await h.context.restore({ id: 'm', buffer: new ArrayBuffer(8) }, Object.assign({ hasPsets: false, pp: 1 }, markers)), 'legacy');
   assert.equal(h.coldParses, 0);
@@ -147,7 +147,7 @@ test('a props-complete cache (pp:1) restores even when the model has no psets', 
 // the stored IFC has grid axes; other older caches restore as they are.
 test('pre-grid cache (no gr marker) re-parses only when the IFC has IfcGridAxis', () => {
   const lacks = realLacksSpaces();
-  const current = { sp: 2, sem: 1, xp: 1, np: 1 };
+  const current = { sp: 2, sem: 1, xp: 1, np: 1, st: 1 };
   const enc = (t) => new TextEncoder().encode(t).buffer;
   const withGrid = enc("ISO-10303-21;\nDATA;\n#45=IFCGRIDAXIS('A',#44,.T.);\nENDSEC;");
   const noGrid = enc("ISO-10303-21;\nDATA;\n#45=IFCGRID('x',$,$,$,$,#1,$,(),(),$,$);\nENDSEC;");

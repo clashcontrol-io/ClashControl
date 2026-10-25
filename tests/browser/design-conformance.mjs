@@ -3,7 +3,8 @@
 // (tests/fixtures/generate-building-ifc.js — architecture + structure + MEP,
 // IfcSite in NL), opens every main surface in light, dark and a 390 px phone,
 // and asserts on the RENDERED page (computed styles, not source text):
-//   clipped        text cut off by its own box or a clipping ancestor
+//   clipped        text cut off by its own box or a clipping ancestor, or a
+//                  control / count badge running past its panel's edge
 //                  (ellipsis is allowed only with a title, and never on a
 //                  control — see truncated-label)
 //   truncated-label  a button/tab/link whose label is cut off with an
@@ -234,6 +235,15 @@ function inPageChecker() {
             else if (cs.textOverflow !== 'ellipsis' && (tr.right > ar.right + 2 || tr.left < ar.left - 2) && getComputedStyle(anc).textOverflow !== 'ellipsis') add('clipped', el, 'text outside its clipping box horizontally');
           }
         }
+        // a control or field cut off by a clipping ancestor (a row or input
+        // wider than its panel: width 100% plus padding without border-box)
+        if (el.matches('input:not([type=checkbox]):not([type=radio]),select,textarea,button,.cc-tv__count')) {
+          // nearest ancestor that clips or scrolls: a vertical list that
+          // scrolls sideways hides the row end just the same
+          let anc = null;
+          for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) { const ac = getComputedStyle(a); if (!/^visible/.test(ac.overflowX)) { anc = a; break; } }
+          if (anc) { const r = el.getBoundingClientRect(), ar = anc.getBoundingClientRect(); if (r.width > 0 && r.right > ar.right + 1 && r.left < ar.right) add('clipped', el, 'cut off at the right edge by ' + Math.round(r.right - ar.right) + ' px'); }
+        }
         if (el.matches(CONTROL)) {
           const lab = (el.innerText || '').trim();
           if (/^[^\s…]{1,8}…$/.test(lab)) add('truncated-label', el, 'label reads like a fragment');
@@ -419,6 +429,10 @@ async function runVariant(variant, viewport, theme, mobile) {
   });
   await page.evaluate(() => { const g = document.querySelector('[data-cc-geo]') || [...document.querySelectorAll('span')].find((x) => /^(geo placement|geo-plaatsing|locatie)$/i.test(x.textContent.trim())); if (g) g.scrollIntoView(); });
   await surface(page, variant, 'geo-default-site', MODELS, o);
+  // navigator: hierarchy expanded (count badges + eye buttons at the row end)
+  await page.evaluate(() => window._ccDispatch({ t: 'TAB', v: 'navigator' }));
+  await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => /^(expand all|alles uitklappen)$/i.test(x.textContent.trim())); if (b) b.click(); });
+  await surface(page, variant, 'navigator', mobile ? LEFT : LEFT.concat(['.cc-ai-panel']), o);
   // pre-run panel
   await page.evaluate(() => { window._ccDispatch({ t: 'UPD_PREFS', u: { preRunDontAsk: false } }); window._ccRunDetectionInteractive(); });
   const pre = await page.waitForSelector('[data-cc-prerun]', { timeout: 15_000 }).catch(() => null);

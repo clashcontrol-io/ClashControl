@@ -35,7 +35,7 @@ function harness(overrides) {
   return { restore: (cached) => ctx.restore('m', cached, getEntry), calls };
 }
 
-const CURRENT = { v: 8, hasPsets: true, sp: 2, sem: 1, xp: 1, np: 1, gr: 1 };
+const CURRENT = { v: 8, hasPsets: true, sp: 2, sem: 1, xp: 1, np: 1, st: 1, gr: 1 };
 
 test('a current geometry cache restores without reading the stored file', async () => {
   const h = harness();

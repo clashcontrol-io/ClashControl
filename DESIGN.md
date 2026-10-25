@@ -189,6 +189,7 @@ translate-Y micro-interaction.
 ```js
 S_INPUT = {
   width: '100%',
+  boxSizing: 'border-box',   // padding + border inside the 100%, never wider than its column
   background: 'var(--bg-tertiary)',
   color: 'var(--text-primary)',
   fontSize: 'var(--text-md)',
