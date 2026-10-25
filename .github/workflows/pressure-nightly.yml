@@ -41,10 +41,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
-      CC_PRESSURE_OUT: ${{ runner.temp }}/cc-pressure
       CC_PRESSURE_COMBO_TIMEOUT_MS: '600000'
     steps:
       - uses: actions/checkout@v4
+
+      # job-level env may not use the runner context: set the report dir here
+      - name: Report directory
+        run: echo "CC_PRESSURE_OUT=${RUNNER_TEMP}/cc-pressure" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:
