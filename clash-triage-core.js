@@ -276,8 +276,8 @@
   // own scale, storey by the normaliser's order, the rest by count.
   var ORDER = {
     severity: ['critical', 'major', 'minor', 'info'],
-    extent: ['through', 'through-thin', 'partial', 'graze', 'unknown', 'clearance', 'contact', 'duplicate', 'visibility', 'other'],
-    bucket: ['review', 'contact', 'provided', 'provision', 'zone', 'twice', 'embedded', 'finish', 'graze', 'adjacent', 'handled'],
+    extent: ['through', 'through-thin', 'partial', 'graze', 'unknown', 'clearance', 'contact', 'open-inside', 'duplicate', 'visibility', 'other'],
+    bucket: ['review', 'contact', 'openshape', 'provided', 'provision', 'zone', 'twice', 'embedded', 'finish', 'graze', 'adjacent', 'handled'],
     status: ['open', 'in_progress', 'accepted_needs_check', 'confirmed', 'resolved', 'closed', 'denied']
   };
   // labelOf (optional): the display label — ties in count are broken by it

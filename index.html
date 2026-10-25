@@ -10781,14 +10781,14 @@ function startApp() {
           if (t === 'crossing') { rf |= 2; wantDepth = true; }
         } else {
           c = _ccContainment(A, B); rf |= 4;
-          if (c) { rf |= 8; wantDepth = true; }
+          if (c) { rf |= 8; if (!c.open) wantDepth = true; }
         }
       } else if ((fl & 2) && !(g <= 0)) {
         c = _ccContainment(A, B); rf |= 4;
         if (c) rf |= 8;
       }
-      if (c) { res[o + 14] = c.pt[0]; res[o + 15] = c.pt[1]; res[o + 16] = c.pt[2]; }
-      if ((fl & 2) && !hit && !c && g === 0) {
+      if (c) { res[o + 14] = c.pt[0]; res[o + 15] = c.pt[1]; res[o + 16] = c.pt[2]; if (c.open) { rf |= 32; if (c.inner === 'B') rf |= 64; } }
+      if ((fl & 2) && !hit && (!c || c.open) && g === 0) {
         t = _ccTouchVerdict(A, B); rf |= 1;
         if (t === 'crossing') { rf |= 2; if (fl & 1) wantDepth = true; }
       }
@@ -11398,18 +11398,21 @@ function startApp() {
   // A mesh nested inside a CLOSED mesh with no surface contact (E1): the
   // kernel sees no hit at all. AABB nesting is the cheap precondition; then a
   // few vertices of the inner mesh by ray parity, each more than tau from the
-  // outer surface. Open containers have no inside (E5). Returns
-  // {pt:[x,y,z] engine frame} or null.
+  // outer surface. An open container has no defined inside (E5): the same
+  // test there is only an indication, returned as {open:true} — reported as
+  // an 'open-inside' finding to check, never as a hard clash. A closed
+  // container wins over an open one. Returns {pt:[x,y,z] engine frame,
+  // open?:true} or null.
   function _ccContainment(elA, elB) {
     var A = elA.box, B = elB.box;
     if (!A || !B) return null;
-    var order = [];
+    var order = [], openHit = null;
     if (_ccBoxIn(A, B, 1e-3)) order.push([elA, elB]);
     if (_ccBoxIn(B, A, 1e-3)) order.push([elB, elA]);
     for (var k = 0; k < order.length; k++) {
       var inner = order[k][0], outer = order[k][1];
-      var tO = _ccMeshTopo(outer);
-      if (!tO.closed) continue;
+      var closed = _ccMeshTopo(outer).closed;
+      if (!closed && openHit) continue;
       var bO = _getBVH(outer), v = _getWorldTris(inner);
       if (!bO || !v.length) continue;
       var tau = _ccContactTol(bO.root, bO.root), nc = v.length / 3;
@@ -11420,11 +11423,14 @@ function startApp() {
         var i = picks[p] * 3;
         if (_pointInMeshBVH(v[i], v[i+1], v[i+2], bO) && _ccFartherThan(v[i], v[i+1], v[i+2], bO, tau)) {
           var fb = _ccFrameBox(inner);
-          return { pt: [(fb.min.x+fb.max.x)/2, (fb.min.y+fb.max.y)/2, (fb.min.z+fb.max.z)/2] };
+          var pt = [(fb.min.x+fb.max.x)/2, (fb.min.y+fb.max.y)/2, (fb.min.z+fb.max.z)/2];
+          if (closed) return { pt: pt };
+          openHit = { pt: pt, open: true, inner: inner === elA ? 'A' : 'B' };
+          break;
         }
       }
     }
-    return null;
+    return openHit;
   }
   // ── Penetration depth (E6) ──────────────────────────────────────────
   // Separating-axis estimate of the minimum translation distance: over the
@@ -11490,7 +11496,9 @@ function startApp() {
   //            may return Infinity for any distance above both gapM and the
   //            contact tolerance (threshold-seeded search, _ccMinDistSeedSq)
   //   o      — {hard, soft, gapM, minGapM, minOverlapVolM3, overlapVol}
-  // Returns {kind:'hard'|'contact'|'soft'|null, pt, depthM, distM, contained}.
+  // Returns {kind:'hard'|'contact'|'soft'|'open-inside'|null, pt, depthM, distM, contained}.
+  // 'open-inside': nested in an OPEN (non-closed) mesh by the parity test —
+  // no defined inside, so a finding to check (its own review bucket).
   // 'contact' (surfaces meet or are < 0.1 mm apart, interiors disjoint) is
   // reported only by runs that include clearance (o.soft) — a hard-only run
   // never computes distances, so it reports crossings only — and never as a
@@ -11503,8 +11511,22 @@ function startApp() {
     var res = { kind: null, pt: null, depthM: 0, distM: Infinity, contained: false, demoted: false };
     var rf = pre ? pre[12] : 0;
     function touchVerdict() { return (rf & 1) ? ((rf & 2) ? 'crossing' : 'contact') : _ccTouchVerdict(eA, eB); }
-    function containment() { return (rf & 4) ? ((rf & 8) ? { pt: [pre[14], pre[15], pre[16]] } : null) : _ccContainment(eA, eB); }
+    function containment() {
+      if (!(rf & 4)) return _ccContainment(eA, eB);
+      if (!(rf & 8)) return null;
+      var c = { pt: [pre[14], pre[15], pre[16]] };
+      if (rf & 32) { c.open = true; c.inner = (rf & 64) ? 'B' : 'A'; }
+      return c;
+    }
     function depth() { if (rf & 16) { var v = pre[13]; return v !== v ? null : v; } return _estimatePenetrationDepthM(eA, eB); }
+    // Nested in an OPEN shape: no defined inside, so only an indication to
+    // check — reported as 'open-inside' when nothing definite (a crossing,
+    // a contact, a clearance within the window) was found for the pair.
+    var openC = null;
+    function withOpen(r) {
+      if (!r.kind && openC) { r.kind = 'open-inside'; r.pt = openC.pt; r.inner = openC.inner; r.contained = true; }
+      return r;
+    }
     if (o.hard) {
       var touched = false;
       if (hit) {
@@ -11512,7 +11534,8 @@ function startApp() {
         else { touched = true; if (!o.soft) return res; } // hard-only run: a touch is not in scope
       } else {
         var c = containment();
-        if (c) { res.kind = 'hard'; res.pt = c.pt; res.contained = true; }
+        if (c && c.open) openC = c;  // never a hard clash
+        else if (c) { res.kind = 'hard'; res.pt = c.pt; res.contained = true; }
       }
       // Optional user filter (rules.minOverlapVolM3, default 0 = off): a hard
       // clash whose AABB overlap volume is below it is demoted to the
@@ -11529,7 +11552,7 @@ function startApp() {
         return res;
       }
     }
-    if (!o.soft) return res;
+    if (!o.soft) return withOpen(res);
     var g = distFn(pairBuf);
     // g === Infinity: no surface within the seeded search radius (or an empty
     // mesh, for which _ccContainment finds nothing) — a nested solid can still
@@ -11539,7 +11562,8 @@ function startApp() {
     // vanish because its surfaces happen to be further apart than the gap.
     if ((!o.hard || res.demoted) && !(g <= 0)) {
       var c2 = containment();
-      if (c2) { g = 0; for (var k = 0; k < 3; k++) { pairBuf[k] = c2.pt[k]; pairBuf[k+3] = c2.pt[k]; } res.contained = true; }
+      if (c2 && c2.open) openC = c2;  // its surfaces stay g apart (a real clearance still counts)
+      else if (c2) { g = 0; for (var k = 0; k < 3; k++) { pairBuf[k] = c2.pt[k]; pairBuf[k+3] = c2.pt[k]; } res.contained = true; }
     }
     res.distM = g;
     // Touching within the contact tolerance (a gap below 0.1 mm is as much
@@ -11560,7 +11584,7 @@ function startApp() {
       g = 0;
     }
     if (g <= o.gapM + _CC_GAP_SLACK_M && g >= o.minGapM - _CC_GAP_SLACK_M) res.kind = 'soft';
-    return res;
+    return withOpen(res);
   }
 
 
@@ -13318,20 +13342,21 @@ function startApp() {
           // translation distance, see _estimatePenetrationDepthM); a crossing
           // is at least the contact tolerance deep, so never below 1 mm.
           dist = -Math.max(1, Math.round(_rp2.depthM * 1000));
-        } else if (kind === 'contact') {
+        } else if (kind === 'contact' || kind === 'open-inside') {
           dist = 0;
         } else {
           dist = Math.round(geoDist*1000);
         }
         var b=_buildClashBase(eA, eB, mA, mB, [cpx,cpy,cpz], sameModel);
         var clrMm=isSoft?Math.round(geoDist*1000):(kind === 'contact' ? 0 : null);
+        var _ccNotClash = kind === 'contact' || kind === 'open-inside'; // findings, not clashes: no opening / provision status
         // Provision for void: does the passing element sit inside an IFC
         // opening of the other one? 'provided' | 'partial' | (absent).
         // Classification only — hard/soft detection above is untouched.
         var _openStatus = null;
-        if (kind !== 'contact') { try { _openStatus = _ccOpeningStatusForPair(eA, eB, hardPt ? 'hard' : 'soft'); } catch (_opErr) { _openStatus = null; } }
+        if (!_ccNotClash) { try { _openStatus = _ccOpeningStatusForPair(eA, eB, hardPt ? 'hard' : 'soft'); } catch (_opErr) { _openStatus = null; } }
         if (_openStatus) b.obj.opening = _openStatus;
-        if (kind !== 'contact') {
+        if (!_ccNotClash) {
           var _provStatus = null;
           try { _provStatus = _ccProvisionStatusForPair(eA, mA, eB, mB, hardPt ? 'hard' : 'soft', _provIdx, _roleIdx); } catch (_pvErr) { _provStatus = null; }
           if (_provStatus) b.obj.provision = _provStatus;
@@ -13342,6 +13367,7 @@ function startApp() {
         try { _rGroup = _roleIdx ? _ccClashRoleGroup(eA, eB, _roleIdx) : null; } catch (_rgErr) { _rGroup = null; }
         if (_rGroup) b.obj.roleGroup = _rGroup;
         if (isSoft) b.obj.requiredClearanceMm = Math.round(pairGapM*1000);
+        if (kind === 'open-inside') b.obj.insideOpen = _rp2.inner; // which side sits inside the open one
         clashes.push({ ...b.obj, // fast-mode object, see the duplicate case above
           type:kind, distance:dist,
           title:_niceClashTitle(b.tA, b.tB, sameModel), // placeholder: replaced by _ccApplyDefaultTitle right after the push
@@ -30916,6 +30942,7 @@ function startApp() {
     var L = {
       review: _cc_t('bucket.review', '{n} to review', {n:n}),
       contact: n + ' ' + _cc_t('contact.only', 'only touch (contact)'),
+      openshape: _cc_t('bucket.openshape', '{n} inside an open shape — check', {n:n}),
       provided: n + ' ' + _cc_t('opening.passThrough', 'pass through provided openings'),
       provision: n + ' ' + _cc_t('provision.passThrough', 'inside provisions / reservations'),
       zone: _cc_t('bucket.zone', '{n} in classified groups', {n:n}),
@@ -30931,6 +30958,7 @@ function startApp() {
   function _ccBucketHint(b) {
     var H = {
       contact: _cc_t('contact.title', 'Surfaces meet but nothing interpenetrates (flush faces, an element resting on another) — not a clash'),
+      openshape: _cc_t('bucket.openshapeHint', 'One element sits inside another whose shape is not closed (a gap, a missing face), so "inside" is not defined — check the model; never counted as a hard clash'),
       provided: _cc_t('bucket.providedHint', 'The element passes through an IFC opening made for it'),
       provision: _cc_t('provision.insideTitle', 'The element sits in or passes through a provision / reservation volume made for it'),
       zone: _cc_t('roles.classifiedTitle', 'Clashes with elements whose suggestion group is set to "classify only" (Detection rules → Suggestion groups)'),
@@ -30996,12 +31024,12 @@ function startApp() {
   function _ccFacetValueLabel(k, v, names) {
     if (k === 'modelPair') return _ccModelPairLabel(v, names);
     if (k === 'severity') return ({critical:_cc_t('sev.critical','Critical'),major:_cc_t('sev.major','Major'),minor:_cc_t('sev.minor','Minor'),info:_cc_t('sev.info','Info')})[v] || v;
-    if (k === 'extent') return ({through:_cc_t('extent.through','Through'),'through-thin':_cc_t('extent.throughThin','Through (thin)'),partial:_cc_t('extent.partial','Partial'),graze:_cc_t('extent.graze','Graze'),unknown:_cc_t('extent.unknown','Depth unknown'),clearance:_cc_t('extent.clearance','Clearance'),contact:_cc_t('extent.contact','Contact'),duplicate:_cc_t('extent.duplicate','Duplicate')})[v] || v;
+    if (k === 'extent') return ({through:_cc_t('extent.through','Through'),'through-thin':_cc_t('extent.throughThin','Through (thin)'),partial:_cc_t('extent.partial','Partial'),graze:_cc_t('extent.graze','Graze'),unknown:_cc_t('extent.unknown','Depth unknown'),clearance:_cc_t('extent.clearance','Clearance'),contact:_cc_t('extent.contact','Contact'),'open-inside':_cc_t('extent.openInside','Inside an open shape'),duplicate:_cc_t('extent.duplicate','Duplicate')})[v] || v;
     if (k === 'storey') return v || _cc_t('facet.noStorey','No storey');
     if (k === 'trade') return String(v).split(' × ').map(function(x){ return _ccDisciplineLabel(x); }).join(' × ');
     if (k === 'status') return (STAT[v] && STAT[v].label) || v;
     if (k === 'assignee') return v || _cc_t('facet.unassigned','Unassigned');
-    if (k === 'bucket') return ({review:_cc_t('bucket.name.review','To review'),contact:_cc_t('bucket.name.contact','Contact'),provided:_cc_t('bucket.name.provided','Provided opening'),provision:_cc_t('bucket.name.provision','Provision'),zone:_cc_t('bucket.name.zone','Classified group'),twice:_cc_t('bucket.name.twice','Reported twice'),embedded:_cc_t('bucket.name.embedded','Embedded'),finish:_cc_t('bucket.name.finish','Finish'),graze:_cc_t('bucket.name.graze','Graze'),adjacent:_cc_t('bucket.name.adjacent','Adjacent'),handled:_cc_t('bucket.name.handled','Handled')})[v] || v;
+    if (k === 'bucket') return ({review:_cc_t('bucket.name.review','To review'),contact:_cc_t('bucket.name.contact','Contact'),openshape:_cc_t('bucket.name.openshape','Inside an open shape'),provided:_cc_t('bucket.name.provided','Provided opening'),provision:_cc_t('bucket.name.provision','Provision'),zone:_cc_t('bucket.name.zone','Classified group'),twice:_cc_t('bucket.name.twice','Reported twice'),embedded:_cc_t('bucket.name.embedded','Embedded'),finish:_cc_t('bucket.name.finish','Finish'),graze:_cc_t('bucket.name.graze','Graze'),adjacent:_cc_t('bucket.name.adjacent','Adjacent'),handled:_cc_t('bucket.name.handled','Handled')})[v] || v;
     if (k === 'tag') { var sv = ((window._ccClashTriageCore && window._ccClashTriageCore.SUGGESTED) || []).find(function(x){ return x.facets.tag[0] === v; }); return sv ? _ccSuggestedLabel(sv.id, sv.label) : v; }
     return v;
   }

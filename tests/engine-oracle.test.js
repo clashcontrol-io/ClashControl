@@ -133,7 +133,15 @@ function runEngine(js, trisA, trisB) {
   const nanRaw = raw.some((v) => Number.isNaN(v)) || Number.isNaN(dep[0]);
   return { rawHit: raw.length > 0, kernelHit: !!hit, hitPt: hit || null, dist, surfDist, pen: depthM, appDepthM: depthM, overlapVol: vol, nan, nanRaw, rawPts: raw.length / 3, outcomes };
 }
-function engineOutcome(e, key) { return e.outcomes[key]; }
+// 'open-inside' (nested in a mesh that is not closed — no defined inside) is
+// a finding to check, not a clash: for clash correctness it is 'none'. Where
+// it may appear is checked separately (openInsideOk below).
+function engineOutcome(e, key) { const k = e.outcomes[key]; return k === 'open-inside' ? 'none' : k; }
+function openInsideOk(o, e) {
+  const flagged = Object.keys(e.outcomes).some((k) => e.outcomes[k] === 'open-inside');
+  // only where a side really is open and the pair neither crosses nor nests in a closed solid
+  return !flagged || ((!o.closedA || !o.closedB) && o.category !== 'crossing' && o.category !== 'contained');
+}
 // Truth: crossing/contained -> hard (or a 0 mm soft in a clearance-only run);
 // contact -> 'contact' whenever the run reports anything; clearance within
 // the window -> soft. o.microContact marks a crossing shallower than the
@@ -474,6 +482,8 @@ function evaluate(js, fx, opts) {
   out.distErrM = Number.isFinite(e.dist) ? Math.abs(e.dist - exactD) : Infinity;
   if (!(out.distErrM <= DIST_EPS_M)) out.disagree.push('distance');
   if (e.nan) out.disagree.push('nan');
+  out.openInside = Object.keys(e.outcomes).some((k) => e.outcomes[k] === 'open-inside');
+  if (!openInsideOk(o, e)) out.disagree.push('openInside');
   if (fx.mtd != null) out.penErrM = e.appDepthM == null ? null : Math.abs(e.appDepthM - fx.mtd);
   if (fx.mtd != null) out.mtdM = fx.mtd;
   // the app reports whole millimetres, at least 1 mm for a crossing
@@ -619,6 +629,10 @@ test('engine vs exact oracle: analytic fixtures (strict outside the known-discre
   if (unexpected.length) console.log('\n  UNEXPECTED disagreements (not in KNOWN_DISCREPANCIES):\n   ' + unexpected.join('\n   '));
   writeReport();
   assert.deepStrictEqual(unexpected, [], 'engine disagrees with ground truth on fixtures not listed in KNOWN_DISCREPANCIES');
+  // a box inside an open box / a box with a slit: flagged to check (option B), never a clash
+  const flagged = rows.filter((r) => r.openInside).map((r) => r.name).sort();
+  console.log('  open-inside findings: ' + flagged.join(', '));
+  assert.deepStrictEqual(flagged.filter((n) => /inside-(open|slit)/.test(n)), ['box-inside-open-box', 'box-inside-slit-box-3mm']);
 });
 
 test('engine vs exact oracle: seeded random mesh pairs (recorded, not asserted)', () => {

@@ -55,6 +55,11 @@
         // resting on another): reported for completeness, not a clash.
         sev = 'info'; cat = 'contact';
         reason = 'Surfaces touch — no interpenetration';
+      } else if (c.type === 'open-inside') {
+        // Nested in a shape that is not closed: it has no defined inside, so
+        // this is an indication to check, not a clash.
+        sev = 'minor'; cat = 'open_inside';
+        reason = 'Inside a shape that is not closed — check the model';
       } else if (c.type === 'soft') {
         // Severity comes from the shared deterministic model (gap vs the
         // required clearance, weighted by element role) — see
@@ -77,7 +82,7 @@
         if (typeof c.distance === 'number' && c.distance < 0) reason += ' — ' + Math.round(-c.distance) + 'mm deep';
       }
 
-      if (cat !== 'false_positive' && cat !== 'duplicate' && cat !== 'contact') {
+      if (cat !== 'false_positive' && cat !== 'duplicate' && cat !== 'contact' && cat !== 'open_inside') {
         var matA = fv.mat_cat_a || '';
         var matB = fv.mat_cat_b || '';
         if (matA === INSULATION_MAT || matB === INSULATION_MAT) {
@@ -378,6 +383,7 @@
   function deterministicSeverity(c) {
     if (!c) return 'info';
     if (c.type === 'duplicate' || c.type === 'contact') return 'info';
+    if (c.type === 'open-inside') return 'minor'; // an indication to check (no defined inside)
     if (c.type === 'visibility') return 'major';
     var crit = pairCriticality(c);
     if (c.type !== 'hard') {
@@ -615,7 +621,13 @@
     if (a.mep !== b.mep) { if (b.mep) { first = b; second = a; } }
     else if (b.text.toLowerCase() < a.text.toLowerCase()) { first = b; second = a; }
     var directed = a.mep !== b.mep;
-    if (c.type === 'duplicate') verb = 'duplicates';
+    if (c.type === 'open-inside' && (c.insideOpen === 'A' || c.insideOpen === 'B')) {
+      // the nested element first: "Valve inside open Housing — check"
+      first = c.insideOpen === 'A' ? a : b; second = c.insideOpen === 'A' ? b : a;
+      verb = 'inside open';
+    }
+    else if (c.type === 'open-inside') verb = 'nested in open shape with';
+    else if (c.type === 'duplicate') verb = 'duplicates';
     else if (c.type === 'contact') verb = 'touches';
     else if (opening === 'partial') verb = directed ? 'through' : 'in';
     else if (opening === 'provided') verb = directed ? 'through' : 'in';
@@ -623,7 +635,8 @@
     else if (c.type === 'soft') verb = 'too close to';
     else verb = directed ? 'crosses' : 'clashes with';
     var title = first.text + ' ' + verb + ' ' + second.text;
-    if (opening === 'partial') title += ' — opening too small';
+    if (c.type === 'open-inside') title += ' — check';
+    else if (opening === 'partial') title += ' — opening too small';
     else if (opening === 'provided') title += ' — provided opening';
     else if (provision === 'inside') title += ' — inside provision';
     else if (provision === 'partial') title += ' — provision too small';
@@ -672,6 +685,8 @@
   // show"). Pure: reads only clash fields + rules (+ an optional context).
   //   handled    status resolved / closed / denied (a person already decided)
   //   contact    surfaces only touch (type 'contact')
+  //   openshape  nested in a shape that is not closed (type 'open-inside'):
+  //              no defined inside — an indication to check, not a clash
   //   provided   passes through an IFC opening made for it
   //   provision  MEP inside a provision / reservation volume (role group
   //              'provision' set to classify, the default)
@@ -690,7 +705,7 @@
   //              (wall-slab, wall-beam). Near misses (gap <= 30 % of the
   //              required clearance) stay in review.
   //   review     everything else — the list a coordinator works through
-  var REVIEW_BUCKETS = ['review', 'contact', 'provided', 'provision', 'zone', 'twice', 'embedded', 'finish', 'graze', 'adjacent', 'handled'];
+  var REVIEW_BUCKETS = ['review', 'contact', 'openshape', 'provided', 'provision', 'zone', 'twice', 'embedded', 'finish', 'graze', 'adjacent', 'handled'];
   var DEFAULT_HIDDEN_BUCKETS = REVIEW_BUCKETS.filter(function(b) { return b !== 'review'; });
   var ROLE_CHOICE_DEFAULTS = { provision: 'classify', zone: 'classify', space: 'exclude', duplicate: 'include', proxy: 'include' };
   var EMBEDDED_TYPES = { IfcReinforcingBar:1, IfcReinforcingMesh:1, IfcReinforcingElement:1, IfcTendon:1, IfcTendonAnchor:1,
@@ -731,6 +746,7 @@
     var st = c.status;
     if (st === 'resolved' || st === 'closed' || st === 'denied') return 'handled';
     if (c.type === 'contact') return 'contact';
+    if (c.type === 'open-inside') return 'openshape';
     if (c.opening === 'provided') return 'provided';
     if (c.provision === 'inside' && _roleChoice('provision', rules, ctx) === 'classify') return 'provision';
     if (c.roleGroup && c.roleGroup !== 'provision' && _roleChoice(c.roleGroup, rules, ctx) === 'classify') return 'zone';

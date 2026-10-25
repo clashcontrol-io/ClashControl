@@ -174,3 +174,19 @@ test('twice: one conflict against two copies of an element is reviewed once, det
   const notCopy = Object.assign({}, copy, { bboxB: bb(400, 2000, 400) });
   assert.deepEqual(core.findTwice([notCopy, p1, p2]), {});
 });
+
+test('inside an open shape (type open-inside): its own bucket, minor, a "check" title — never a hard clash', () => {
+  const c = { id: 'o1', type: 'open-inside', insideOpen: 'A', distance: 0, elemAType: 'IfcValve', elemAName: 'Valve V1', elemBType: 'IfcFlowFitting', elemBName: 'Housing H2',
+    roleA: 'mep-main', roleB: 'mep-main', modelAId: 'M', modelBId: 'M2', elemA: 1, elemB: 2, status: 'open' };
+  assert.equal(core.reviewBucket(c, {}), 'openshape');
+  assert.ok(core.REVIEW_BUCKETS.includes('openshape') && core.hiddenBuckets({}).includes('openshape'), 'filed behind the bucket bar like the other buckets');
+  assert.equal(core.reviewBucket(Object.assign({}, c, { status: 'resolved' }), {}), 'handled', 'a decision still wins');
+  assert.equal(core.deterministicSeverity(c), 'minor');
+  assert.equal(core.clashExtent(c), null, 'no hard-clash extent');
+  const t = core.clashTitle(c);
+  assert.match(t, /^Valve.*inside open .*Housing.* — check/, t);
+  const tB = core.clashTitle(Object.assign({}, c, { insideOpen: 'B' }));
+  assert.match(tB, /^Housing.*inside open .*Valve/, tB);
+  const counts = core.bucketCounts([c, hard(5, bb(100, 100, 100), bb(200, 3000, 3000))], {});
+  assert.equal(Object.values(counts).reduce((a, b) => a + b, 0), 2, 'counts still add up to the raw total');
+});

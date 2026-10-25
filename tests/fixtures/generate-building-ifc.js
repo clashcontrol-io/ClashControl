@@ -652,6 +652,17 @@ function generateBuilding(opts) {
       a: vb('M', 'IFCFLOWTERMINAL', 'P cabinet x-gap', x + 1.0501, x + 1.5, 0.5, 1.0, 0, 1.2), b: vb('A', 'IFCWALL', 'P wall x-gap', x + 0.8, x + 1, 0, 2, 0, 3) }));
     plant((x) => ({ name: 'parallel rectangular pipes 49.9 mm apart', category: 'clearance', distanceM: 0.0499, toleranceRelation: 'below',
       a: hr('M', 'IFCPIPESEGMENT', 'P pipe parallel A', 'x', x, 1, 1.5, 2, 0.1, 0.1), b: hr('S', 'IFCMEMBER', 'P member parallel', 'x', x, 1 + 0.1 + 0.0499, 1.5, 2, 0.1, 0.1) }));
+    // Opt-in (opts.openShell; the default output is unchanged): a box nested
+    // in a housing whose top is missing — a shape that is not closed, so it
+    // has no defined inside: an 'open-inside' finding to check, never a clash.
+    if (opts.openShell) {
+      plant((x) => {
+        const T = BOXT.filter((t, i) => i !== 2 && i !== 3); // drop the two top triangles
+        return { name: 'fitting inside an open-topped housing (no defined inside)', category: 'separate', openInside: true,
+          a: vb('M', 'IFCPIPEFITTING', 'P fitting in open housing', x + 0.8, x + 1.2, 0.8, 1.2, 0.8, 1.2),
+          b: tri('A', 'IFCBUILDINGELEMENTPROXY', 'P open-topped housing', boxV(x, x + 2, 0, 2, 0, 2), T) };
+      });
+    }
   }
 
   if (planted && roles) {
