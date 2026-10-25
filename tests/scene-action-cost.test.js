@@ -273,7 +273,9 @@ test('scene effects key on what they read, not on s.models identity', () => {
   assert.match(html, /if \(!_planeOn && !S\._sectionPlaneWasOn\) \{ window\._ccCurrentSection = null; return; \}/);
   assert.doesNotMatch(html, /\}, \[s\.prefs\.renderStyle, s\.prefs\.theme, s\.models, s\.prefs\.lightSettings, !!s\.floorPlan\]\);/);
   // markers: one effect per kind
-  assert.match(html, /\}, \[s\.clashes, s\.prefs\.showMarkers\]\);/);
+  assert.match(html, /\}, \[markerClashes, s\.prefs\.showMarkers\]\);/);
+  // markers show what the list shows: hidden models' and handled clashes left out
+  assert.match(html, /var markerClashes = useMemo\(function\(\)\{[\s\S]{0,700}\}, \[s\.clashes, _mkVisKey, _mkShowHandled\]\);/);
   assert.match(html, /\}, \[s\.comments, s\.activeCommentId\]\);/);
   // plan frame: a small LRU, keyed by elements-array identity
   assert.match(html, /var _PLAN_FRAME_CACHE_MAX = 8;/);

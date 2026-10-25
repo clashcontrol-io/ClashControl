@@ -64,11 +64,19 @@ from a token.
 | `--border`         | `#334155` | `#d1d5db` | Strong dividers, modal edges     |
 | `--border-subtle`  | `#1e293b` | `#e2e8f0` | List rows, internal separators   |
 
-### Status (semantic — always use these for success/warning/danger/info)
+### Status (semantic — always use these for success/danger/info)
+
+**No amber anywhere in the UI.** The `warning` role exists for older code
+but resolves to the neutral tokens (`--color-warning` → `--text-muted`,
+`-fg` → `--text-secondary`, `-bg` → `--bg-tertiary`, `-border` →
+`--border`; the same for `--pill-amber*`, `--sev-major`,
+`--progress-warn`). Never add an amber/orange/yellow hex to chrome — a
+problem is said in words, in a neutral note.
+
 | Role        | `--color-{role}` | `--color-{role}-fg` | `--color-{role}-bg` | `--color-{role}-border`             |
 |-------------|------------------|---------------------|---------------------|-------------------------------------|
 | `success`   | `#22c55e`        | `#34d399`           | `#052e16`           | `rgba(34,197,94,.35)`               |
-| `warning`   | `#f59e0b`        | `#fbbf24`           | `#422006`           | `rgba(245,158,11,.35)`              |
+| `warning`   | neutral (see above) | neutral          | neutral             | neutral                             |
 | `danger`    | `#ef4444`        | `#fca5a5`           | `#450a0a`           | `rgba(239,68,68,.4)`                |
 | `info`      | `#3b82f6`        | `#93c5fd`           | `#172554`           | `rgba(59,130,246,.35)`              |
 
@@ -220,15 +228,12 @@ border and `var(--bg-secondary)` background). Padding is
 `var(--space-3) var(--space-3)`; bottom border is `--border-subtle`. Title
 uses `--text-sm`/`--weight-medium`; description `--text-xs`/`--text-faint`.
 
-### Inline notes (`S_NOTE`, `S_NOTE_WARN`)
+### Inline notes (`S_NOTE`)
 
-- `S_NOTE` — neutral context inside a panel or card ("the other sharing mode
-  is in use"): `--text-secondary` on `--bg-tertiary`, `--border-subtle`.
-- `S_NOTE_WARN` — only for a problem the user should act on (not syncing,
-  records refused, feature unavailable in this browser): the `warning`
-  fg / bg / border triple.
-- Status colors are never decoration: an explanation that needs no action
-  uses `S_NOTE`.
+- Every inline note — context ("the other sharing mode is in use") or a
+  problem to act on (not syncing, records refused, feature unavailable in
+  this browser) — is `S_NOTE`: `--text-secondary` on `--bg-tertiary`,
+  `--border-subtle`. The words carry the meaning; no amber, no status tint.
 
 ### Status pills (`cc-status-pill`)
 
@@ -284,14 +289,14 @@ border (horizontal). Inactive tabs use `var(--text-muted)`; active uses
 else marks the active tab — no dot or glyph before the label. `role="tablist"`
 / `role="tab"` + `aria-selected`.
 
-### Disclosure (`CcDisclosure`, `_ccChevron`)
+### Disclosure (`CcDisclosure`)
 
 Anything that opens and closes in place (property sets, Location, a data
 quality check's elements, section headers) is a `<button>` with
-`aria-expanded` (+ `aria-controls`) and the right-pointing chevron SVG
-(`_ccChevron(open)`, rotated 90° when open) before the label — never a
-native `<summary>` marker or ▼/▶/▲ glyphs. `CcDisclosure` variants: `title`
-(`S_SUBTITLE`) and `item` (`--text-xs` semibold, `--text-secondary`).
+`aria-expanded` (+ `aria-controls`). Its marker is the text it always had
+(▶ / ▼, or ▲ / ▼ in the data-quality panel) — no icon is added for it.
+`CcDisclosure` variants: `title` (`S_SUBTITLE`) and `item` (`--text-xs`
+semibold, `--text-secondary`).
 
 ### Label / value rows
 
@@ -377,8 +382,8 @@ text; mono only for counts, IDs, keys and measured values.
   are filed in other buckets" + "show all".
   `.cc-overview` sits between the floating panels on desktop and is a
   fixed sheet above the panel on phones.
-- Group headers in the list use the same right-pointing chevron SVG as the
-  model clash matrix (rotated 90° when open), never ▼/▶ glyphs. A
+- Group headers in the list use the existing chevron of the model clash
+  matrix (rotated 90° when open). A
   root-cause header is the toggle (chevron, title + member count, then a
   `--text-xs` meta line: severity pill, extent, storey, open count) with
   the group actions (Accept all, Set status…) on their own row under it,
@@ -387,8 +392,8 @@ text; mono only for counts, IDs, keys and measured values.
   the status pill (label from the status table, translated) on its first
   line; under it one `--text-xs`/`--text-muted` meta line with the clash
   number and the markers (New, Auto, AI, note) — no line of its own for a
-  lone marker. Expand / collapse buttons are the same chevron SVG with an
-  `aria-label`.
+  lone marker. Expand / collapse buttons are the ▼ / ▲ text they always had,
+  with an `aria-label`.
 - Snapshot pictures themselves are 3D renders, not chrome: the A/B pair
   colours match the viewport's clash-focus colours, the context is a fixed
   light ghost so a BCF/PDF picture looks the same in either theme.
@@ -397,11 +402,12 @@ text; mono only for counts, IDs, keys and measured values.
 
 ### Iconography & button labels
 
-- **No emoji in the UI.** Icons are inline SVGs (`stroke="currentColor"`,
-  1.5–2px stroke, 11–16px) so they inherit theme colors — emoji render
-  with their own colors on every platform and break the monochrome
-  chrome. Established unicode tool glyphs (`⎙` print) are grandfathered;
-  don't add new ones.
+- **No icons added to the UI.** Don't introduce icons — not SVG, not icon
+  fonts, not emoji — and don't swap existing text markers (▼ ▶ ✕ ✓ ⚠ …)
+  for icons: a control says what it does in words. The icons that are
+  already there (toolbar, left rail, header, search / filter / eye in
+  lists) stay as they are; nothing new joins them.
+- **No emoji in the UI.**
 - Button labels are plain language, sentence case, no marketing words
   ("free"/"gratis") — pricing/positioning lives on the website, not in
   chrome. Source or scope goes in parentheses: "3D omgeving — NL (PDOK)".

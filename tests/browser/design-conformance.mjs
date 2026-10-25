@@ -30,8 +30,9 @@
 //                  controls drawn on top of each other
 //   untranslated   (non-English locale) common English UI words on controls
 //                  and headings — a mixed-language UI
-//   glyph          a ▼ / ▶ / ▾ / ▸ / ▲ / ◀ disclosure glyph, a leading • dot or an
-//                  emoji as UI text (DESIGN.md: chevron SVG / inline SVG icons)
+//   emoji          an emoji in UI text (DESIGN.md: no emoji, no added icons)
+//   amber          an amber / orange / yellow text, background or border
+//                  colour in chrome (DESIGN.md: no amber anywhere in the UI)
 //   cut-control    a <select> whose chosen option, or an empty input whose
 //                  placeholder, is wider than the box shows
 //   mono-prose     a sentence set in --font-mono (mono is for counts, IDs,
@@ -276,11 +277,21 @@ function inPageChecker() {
           const hit = txt.match(/\b(the|and|show|hide|all on|all off|add|clear|run|export|import|settings|remove|close|save|load|select|none|levels?|rules|view|from|with|not drawn|use|enter|more|less|reset|apply|cancel|delete|edit|warnings?|search|placement)\b/i);
           if (hit) add('untranslated', el, 'English word "' + hit[0] + '" in a ' + opts.uiLang + ' UI');
         }
-        // disclosure glyphs, leading dots and emoji instead of SVG icons
+        // emoji as UI text
         if (txt && !el.closest('[data-cc-card-idx],[data-cc-data],kbd,code,pre')) {
-          // arrows (U+2190–21FF: ↔ → ↓) are typography, not icons
-          const g = txt.match(/[▼▶▾▸▲◀▴◂►◄]|^\s*•\s|(?![\u2190-\u21FF])\p{Extended_Pictographic}/u);
-          if (g) add('glyph', el, 'glyph "' + g[0].trim() + '"');
+          const g = txt.match(/\p{Emoji_Presentation}/u);
+          if (g) add('emoji', el, 'emoji "' + g[0] + '"');
+        }
+        // amber / orange / yellow in chrome (data swatches are content)
+        if (!el.closest('[data-cc-swatch]')) {
+          for (const [what, c] of [['color', txt ? cs.color : null], ['background', cs.backgroundColor], ['border', px(cs.borderTopWidth) > 0 ? cs.borderTopColor : null]]) {
+            const m = c && c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+            if (!m || (m[4] != null && +m[4] < 0.05)) continue;
+            const r = +m[1] / 255, g = +m[2] / 255, b = +m[3] / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+            if (mx - mn < 0.25 || mx !== r) continue;          // greyish, or not red-led
+            const h = (60 * ((g - b) / (mx - mn)) + 360) % 360;  // hue with red as max
+            if (h >= 20 && h <= 65) { add('amber', el, what + ' ' + c); break; }
+          }
         }
         // a select / placeholder wider than its box
         if (el.matches('select,input:not([type]),input[type=text],input[type=search]')) {

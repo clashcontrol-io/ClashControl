@@ -26,15 +26,14 @@ test('loader warnings are stored as key + vars and translated where they are dra
   assert.match(helper, /return w\.message \|\| '';/, 'old stored warnings (message only) still render as before');
 });
 
-test('inspector disclosures are buttons with aria-expanded and the chevron, no ▼ / <summary>', () => {
+test('inspector disclosures are buttons with aria-expanded; the marker is the ▶ / ▼ text it had (DESIGN.md: no added icons)', () => {
   const r = fnBody('function renderDetails() {');
-  assert.doesNotMatch(r, /<summary/);
-  assert.doesNotMatch(r, /[▼▶▾▸]/);
   assert.match(r, /<\$\{CcDisclosure\}/);
   const d = fnBody('function CcDisclosure(props) {');
   assert.match(d, /aria-expanded=/);
   assert.match(d, /aria-controls=/);
-  assert.match(d, /_ccChevron\(open\)/);
+  assert.match(d, /\$\{open\?'▼':'▶'\}/);
+  assert.doesNotMatch(d, /_ccChevron|<svg/);
 });
 
 test('inspector data-quality checks go through _cc_t (no English values)', () => {
@@ -59,10 +58,10 @@ test('Settings focuses its card on open, not the close button', () => {
   assert.match(body, /_ccUseFocusTrap\(cardRef, true, \{initialFocus:'container'\}\)/);
 });
 
-test('Data quality + IDS panels: no ▲/▼ glyphs, disabled run buttons are the real variant at 0.5', () => {
+test('Data quality + IDS panels: no added icons (▲ / ▼ text as before), disabled run buttons are the real variant at 0.5', () => {
   const dq = fnBody('function DataQualityPanel(props) {');
   const ids = fnBody('function IDSValidationPanel(props) {');
-  assert.doesNotMatch(dq + ids, /[▲▼▶]/);
+  assert.doesNotMatch(dq + ids, /_ccChevron/);
   assert.match(dq, /\.\.\.S_BTN_PRIMARY_SM,flexShrink:0,whiteSpace:'nowrap',cursor:\(isRunning \|\| !hasModels\)\?'not-allowed':'pointer',opacity:\(isRunning \|\| !hasModels\)\?0\.5:1/);
   assert.match(ids, /\.\.\.S_BTN_PRIMARY_SM, cursor: runDisabled \? 'not-allowed' : 'pointer', opacity: runDisabled \? 0\.5 : 1/);
 });
