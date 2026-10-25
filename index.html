@@ -25186,6 +25186,10 @@ function startApp() {
   var S_MODAL_TITLE = {fontFamily:'var(--font-display)',fontWeight:'var(--weight-bold)',fontSize:'var(--text-lg)',color:'var(--text-primary)',lineHeight:'var(--leading-tight)',letterSpacing:'-.01em'};
   var S_MODAL_BODY = {padding:'var(--space-5)',display:'flex',flexDirection:'column',gap:'var(--space-3)'};
   var S_MODAL_CLOSE = {border:'none',background:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:'var(--text-xl)',lineHeight:1,padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-sm)',transition:'background var(--duration-fast) var(--ease-standard),color var(--duration-fast) var(--ease-standard)'};
+  // Inline notes: S_NOTE for neutral context ("the other sharing mode is in use"),
+  // S_NOTE_WARN only for a real problem the user should act on (not syncing, refused records)
+  var S_NOTE = {fontSize:'var(--text-xs)',color:'var(--text-secondary)',background:'var(--bg-tertiary)',border:'1px solid var(--border-subtle)',padding:'var(--space-2) var(--space-3)',borderRadius:'var(--radius-sm)',lineHeight:'var(--leading-base)'};
+  var S_NOTE_WARN = {...S_NOTE,color:'var(--color-warning-fg)',background:'var(--color-warning-bg)',border:'1px solid var(--color-warning-border)'};
   var S_LIST_ROW = {padding:'var(--space-3) var(--space-3)',borderBottom:'1px solid var(--border-subtle)',cursor:'pointer',borderLeft:'2px solid transparent'};
   var S_LIST_ROW_ACTIVE = {padding:'var(--space-3) var(--space-3)',borderBottom:'1px solid var(--border-subtle)',cursor:'pointer',borderLeft:'2px solid var(--accent)',background:'var(--bg-secondary)'};
   // Viewer overlay chrome — paired with .cc-overlay-chrome class
@@ -38909,7 +38913,6 @@ function startApp() {
     var linkHolder = _ccShareLinkHolder();
     var folderHolds = !!(linkHolder && linkHolder.src === 'folder');
     var cloudHolds = !!(linkHolder && linkHolder.src === 'cloud');
-    var S_MODE_NOTE = {fontSize:'var(--text-xs)',color:'var(--color-warning-fg)',background:'var(--color-warning-bg)',padding:'var(--space-2) var(--space-3)',borderRadius:'var(--radius-sm)',lineHeight:'var(--leading-base)'};
 
     var TabBtn = function(id, label, badge){
       var active = tab===id;
@@ -38949,7 +38952,7 @@ function startApp() {
             ${pKey ? html`<div style=${{padding:'var(--space-3) var(--space-4)',background:'var(--accent-bg)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-md)'}}>
               <div style=${{fontSize:'var(--text-xs)',color:'var(--accent)',fontWeight:'var(--weight-bold)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:'var(--space-2)'}}>${pKeyName ? pKeyName : _cc_t('share.sharedProject','Shared project')}</div>
               <div style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-lg)',fontWeight:600,color:'var(--text-primary)',letterSpacing:'.02em',marginBottom:'var(--space-2)',userSelect:'all'}}>${pKey}</div>
-              ${cloudSt.rejected && cloudSt.rejected.length > 0 && html`<div data-cc-cloud-rejected=${cloudSt.rejected.length} style=${{...S_MODE_NOTE,marginBottom:'var(--space-2)'}}>
+              ${cloudSt.rejected && cloudSt.rejected.length > 0 && html`<div data-cc-cloud-rejected=${cloudSt.rejected.length} style=${{...S_NOTE_WARN,marginBottom:'var(--space-2)'}}>
                 <div>${_ccShareRejectedText(cloudSt.rejected.length)}</div>
                 <ul style=${{margin:'var(--space-1) 0',paddingLeft:'var(--space-4)'}}>
                   ${cloudSt.rejected.slice(0,5).map(function(x){ return html`<li key=${x.id}>${_ccShareRejectedLine(x, s)}</li>`; })}
@@ -38957,7 +38960,7 @@ function startApp() {
                 ${cloudSt.rejected.length > 5 && html`<div>${_cc_t('share.rejectedMore','and {n} more', {n: cloudSt.rejected.length - 5})}</div>`}
                 <button data-cc-cloud-rejected-dismiss="1" onClick=${function(){ if (window._ccCloudShare) window._ccCloudShare.dismissRejected(); }} style=${{...btnGhost,marginTop:'var(--space-1)'}}>${_cc_t('common.dismiss','Dismiss')}</button>
               </div>`}
-              ${folderHolds && html`<div data-cc-share-mode-note="cloud-paused" style=${{...S_MODE_NOTE,marginBottom:'var(--space-2)'}}>${_cc_t('share.keyPausedFolder','Not syncing: this browser shares the project through the folder {folder}. Only one sharing mode works at a time — unlink the folder to sync with this key, or leave the key.', {folder: linkHolder.label || '—'})}</div>`}
+              ${folderHolds && html`<div data-cc-share-mode-note="cloud-paused" style=${{...S_NOTE_WARN,marginBottom:'var(--space-2)'}}>${_cc_t('share.keyPausedFolder','Not syncing: this browser shares the project through the folder {folder}. Only one sharing mode works at a time — unlink the folder to sync with this key, or leave the key.', {folder: linkHolder.label || '—'})}</div>`}
               ${cloudSt.conflicts > 0 && html`<div data-cc-cloud-conflict-count="1" class="cc-status-pill" style=${{display:'inline-block',marginBottom:'var(--space-2)',textTransform:'none',letterSpacing:0,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)'}}>
                 ${cloudSt.conflicts === 1 ? _cc_t('sharedConflict.countOne', '1 conflict to resolve') : _cc_t('sharedConflict.countMany', '{n} conflicts to resolve', {n: cloudSt.conflicts})}
               </div>`}
@@ -38971,7 +38974,7 @@ function startApp() {
             </div>` : html`<div style=${{padding:'var(--space-4) var(--space-4)',background:'var(--bg-tertiary)',border:'1px dashed var(--border)',borderRadius:'var(--radius-md)'}}>
               <div style=${{fontSize:'var(--text-base)',fontWeight:600,color:'var(--text-primary)',marginBottom:'var(--space-1)'}}>${_cc_t('share.quickShare','Quick share')}</div>
               <div style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-base)',marginBottom:'var(--space-2)'}}>${_cc_t('share.quickShareSub','Generate a project key in one click. Share the link — your teammate clicks it and instantly sees and can edit the same comments, issues, and clash decisions. No account, no upload, no per-person permissions: anyone with the key or link has full edit access.')}</div>
-              ${folderHolds && html`<div data-cc-share-mode-note="folder" style=${S_MODE_NOTE}>${_ccShareOtherModeText(linkHolder)}</div>`}
+              ${folderHolds && html`<div data-cc-share-mode-note="folder" style=${S_NOTE}>${_ccShareOtherModeText(linkHolder)}</div>`}
               ${!folderHolds && !createOpen && !joinOpen && html`<div style=${{display:'flex',gap:'var(--space-2)',flexWrap:'wrap'}}>
                 <button onClick=${function(){ setCreateOpen(true); setCreateName(pKeyName || _cc_t('share.untitledProject','Untitled project')); }} style=${{...btnPrimary,padding:'var(--space-2) var(--space-3)',fontSize:'var(--text-sm)'}}>${_cc_t('share.createProject','Create shared project')}</button>
                 <button onClick=${function(){ setJoinOpen(true); }} style=${{...btnSecondary,padding:'var(--space-2) var(--space-3)',fontSize:'var(--text-sm)'}}>${_cc_t('share.joinWithKey','Join with a key…')}</button>
@@ -39038,9 +39041,9 @@ function startApp() {
               ${sp.enabled && html`<button onClick=${unlink} style=${btnDanger}>${_cc_t('share.unlinkFolder','Unlink folder')}</button>`}
             </div>
 
-            ${!sp.enabled && cloudHolds && html`<div data-cc-share-mode-note="cloud" style=${S_MODE_NOTE}>${_ccShareOtherModeText(linkHolder)}</div>`}
+            ${!sp.enabled && cloudHolds && html`<div data-cc-share-mode-note="cloud" style=${S_NOTE}>${_ccShareOtherModeText(linkHolder)}</div>`}
 
-            ${!canUse && html`<div style=${{fontSize:'var(--text-xs)',color:'var(--color-warning-fg)',padding:'var(--space-2) var(--space-3)',background:'var(--color-warning-bg)',borderRadius:'var(--radius-sm)'}}>
+            ${!canUse && html`<div style=${S_NOTE_WARN}>
               ${_cc_t('share.fsApiUnavailable','File System Access API not available in this browser. Use Chrome or Edge to link a folder.')}
             </div>`}
 
@@ -40338,13 +40341,12 @@ function startApp() {
           var spId = null;
           try { spId = localStorage.getItem('cc_sharedProjectId'); } catch(e) {}
           var holder = _ccShareLinkHolder(), folderHolds = !!(holder && holder.src === 'folder');
-          var modeNote = {fontSize:'var(--text-xs)',color:'var(--color-warning-fg)',background:'var(--color-warning-bg)',padding:'var(--space-2) var(--space-3)',borderRadius:'var(--radius-sm)',lineHeight:'var(--leading-base)'};
           return html`<div>
             ${spId && html`<div style=${TROW}>
               <div>
                 <div style=${TLBL}>${_cc_t('settings.shared.projectKey','Project Key')}</div>
                 <div style=${TSUB}>${_cc_t('settings.shared.projectKeySub','Share this key with your team. Issue status, priority, assignee, title and description sync automatically.')}</div>
-                ${folderHolds && html`<div data-cc-share-mode-note="cloud-paused" style=${{...modeNote,marginTop:'var(--space-1)'}}>${_cc_t('share.keyPausedFolder','Not syncing: this browser shares the project through the folder {folder}. Only one sharing mode works at a time — unlink the folder to sync with this key, or leave the key.', {folder: holder.label || '—'})}</div>`}
+                ${folderHolds && html`<div data-cc-share-mode-note="cloud-paused" style=${{...S_NOTE_WARN,marginTop:'var(--space-1)'}}>${_cc_t('share.keyPausedFolder','Not syncing: this browser shares the project through the folder {folder}. Only one sharing mode works at a time — unlink the folder to sync with this key, or leave the key.', {folder: holder.label || '—'})}</div>`}
               </div>
               <div style=${{display:'flex',gap:'var(--space-1)',alignItems:'center',flexShrink:0}}>
                 <code style=${{fontSize:'var(--text-xs)',background:'var(--bg-secondary)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-mono)',color:'var(--accent)'}}>${spId}</code>
@@ -40378,7 +40380,7 @@ function startApp() {
             ${!spId && folderHolds && html`<div style=${TROW}>
               <div>
                 <div style=${TLBL}>${_cc_t('share.sharedProject','Shared project')}</div>
-                <div data-cc-share-mode-note="folder" style=${{...modeNote,marginTop:'var(--space-1)'}}>${_ccShareOtherModeText(holder)}</div>
+                <div data-cc-share-mode-note="folder" style=${{...S_NOTE,marginTop:'var(--space-1)'}}>${_ccShareOtherModeText(holder)}</div>
               </div>
             </div>`}
             ${!spId && !folderHolds && html`<div style=${TROW}>

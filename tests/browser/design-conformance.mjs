@@ -29,6 +29,14 @@
 //                  controls drawn on top of each other
 //   untranslated   (non-English locale) common English UI words on controls
 //                  and headings — a mixed-language UI
+//   glyph          a ▼ / ▶ / ▾ / ▸ / ▲ / ◀ disclosure glyph, a leading • dot or an
+//                  emoji as UI text (DESIGN.md: chevron SVG / inline SVG icons)
+//   cut-control    a <select> whose chosen option, or an empty input whose
+//                  placeholder, is wider than the box shows
+//   mono-prose     a sentence set in --font-mono (mono is for counts, IDs,
+//                  keys — not for "132 shown / 241 total")
+//   untranslated   also: English phrases in any non-data text ("not set",
+//                  "4 values", "Quality Score", …)
 //   diagnostics    "No diagnostics in the main UI": percentages, IFC class
 //                  names, file sizes / timings in the model card and the
 //                  inspector
@@ -250,6 +258,29 @@ function inPageChecker() {
           const hit = txt.match(/\b(the|and|show|hide|all on|all off|add|clear|run|export|import|settings|remove|close|save|load|select|none|levels?|rules|view|from|with|not drawn|use|enter|more|less|reset|apply|cancel|delete|edit|warnings?|search|placement)\b/i);
           if (hit) add('untranslated', el, 'English word "' + hit[0] + '" in a ' + opts.uiLang + ' UI');
         }
+        // disclosure glyphs, leading dots and emoji instead of SVG icons
+        if (txt && !el.closest('[data-cc-card-idx],[data-cc-data],kbd,code,pre')) {
+          const g = txt.match(/[▼▶▾▸▲◀▴◂►◄]|^\s*•\s|\p{Extended_Pictographic}/u);
+          if (g) add('glyph', el, 'glyph "' + g[0].trim() + '"');
+        }
+        // a select / placeholder wider than its box
+        if (el.matches('select,input:not([type]),input[type=text],input[type=search]')) {
+          const pad = px(cs.paddingLeft) + px(cs.paddingRight) + (el.matches('select') ? 18 : 0);
+          const shown = el.matches('select') ? (el.selectedOptions[0] ? el.selectedOptions[0].textContent.trim() : '') : (!el.value ? el.getAttribute('placeholder') || '' : '');
+          if (shown) {
+            const c = (window.__ccMeasure = window.__ccMeasure || document.createElement('canvas').getContext('2d'));
+            c.font = cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily;
+            const w = c.measureText(shown).width;
+            if (w > el.clientWidth - pad + 1) add('cut-control', el, '"' + shown.slice(0, 40) + '" needs ' + Math.round(w) + ' px, box shows ' + Math.round(el.clientWidth - pad));
+          }
+        }
+        // sentences in the mono face
+        if (txt && /mono/i.test(cs.fontFamily) && cs.textTransform !== 'uppercase' && !el.closest('kbd,code,pre,samp,[data-cc-data]') && (txt.match(/\b\p{L}{3,}\b/gu) || []).length >= 2 && !/^[\w.-]+@|^https?:|^[A-Z0-9]+-[\w]+$/.test(txt)) add('mono-prose', el, txt.slice(0, 50));
+        // English phrases in non-data text
+        if (opts.uiLang && txt && !el.closest('[data-cc-card-idx],[data-cc-data]') && el.getAttribute('title') !== txt) {
+          const hit = txt.match(/\b(not assigned|not set|could not|quality score|property sets?|\d+ values?|\d+ psets?|no data|unknown)\b/i);
+          if (hit) add('untranslated', el, 'English phrase "' + hit[0] + '" in a ' + opts.uiLang + ' UI');
+        }
         // diagnostics in the default model card / inspector
         if (txt && el.closest('[data-cc-plain]')) {
           if (/\d\s?%|\bIfc[A-Z][A-Za-z]+|\b\d+(\.\d+)?\s?(MB|KB|GB)\b|\b\d+\.\d+\s?s\b|\b\d+\s?meshes\b/.test(txt) || /\b(stated|inferred|provenance|confidence|evidence)\b/i.test(txt)) add('diagnostics', el, txt.slice(0, 80));
@@ -425,6 +456,13 @@ async function runVariant(variant, viewport, theme, mobile) {
   await page.evaluate(() => window._ccDispatch({ t: 'TAB', v: 'accessibility' }));
   await surface(page, variant, 'accessibility', LEFT, o);
   await page.evaluate(() => window._ccDispatch({ t: 'TAB', v: null }));
+  // share modal, both tabs
+  await page.evaluate(() => { window._ccDispatch({ t: 'SHARE', v: true }); window._ccDispatch({ t: 'SHARE_TAB', v: 'overview' }); });
+  await page.waitForSelector('[aria-labelledby=cc-share-title]', { timeout: 5000 }).catch(() => {});
+  await surface(page, variant, 'share-overview', ['[aria-labelledby=cc-share-title]'], o);
+  await page.evaluate(() => window._ccDispatch({ t: 'SHARE_TAB', v: 'comments' }));
+  await surface(page, variant, 'share-comments', ['[aria-labelledby=cc-share-title]'], o);
+  await page.evaluate(() => window._ccDispatch({ t: 'SHARE', v: false }));
   // settings, every tab
   await page.evaluate(() => window._ccDispatch({ t: 'SETTINGS', v: true }));
   await page.waitForSelector('[role=dialog] [role=tablist]', { timeout: 5000 }).catch(() => {});

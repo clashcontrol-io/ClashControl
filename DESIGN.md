@@ -23,15 +23,15 @@ the tokens below rather than introducing one-off colors, sizes, or spacings.
   lives in CSS custom properties at the top of `index.html` and a small set of
   shared style-object constants near `S_BTN`. Components are inline-composed
   with token references — no separate component library.
-- **Themes:** dark (`:root`) is the default; light (`[data-theme=light]`) is a
+- **Themes:** light (`:root`) is the default; dark (`[data-theme=dark]`) is a
   full peer with mirrored tokens.
 
 ---
 
 ## 2. Color Palette & Roles
 
-All colors below live as CSS custom properties in `index.html` `:root` (dark)
-and `[data-theme=light]`. **Never** hand-pick a hex in component code; pull
+All colors below live as CSS custom properties in `index.html` `:root` (light)
+and `[data-theme=dark]`. **Never** hand-pick a hex in component code; pull
 from a token.
 
 ### Surfaces
@@ -211,6 +211,16 @@ the hover state. Active rows use `S_LIST_ROW_ACTIVE` (a 2px accent left
 border and `var(--bg-secondary)` background). Padding is
 `var(--space-3) var(--space-3)`; bottom border is `--border-subtle`. Title
 uses `--text-sm`/`--weight-medium`; description `--text-xs`/`--text-faint`.
+
+### Inline notes (`S_NOTE`, `S_NOTE_WARN`)
+
+- `S_NOTE` — neutral context inside a panel or card ("the other sharing mode
+  is in use"): `--text-secondary` on `--bg-tertiary`, `--border-subtle`.
+- `S_NOTE_WARN` — only for a problem the user should act on (not syncing,
+  records refused, feature unavailable in this browser): the `warning`
+  fg / bg / border triple.
+- Status colors are never decoration: an explanation that needs no action
+  uses `S_NOTE`.
 
 ### Status pills (`cc-status-pill`)
 
@@ -453,7 +463,7 @@ this scale.
 
 1. **Open `index.html`** — that is the only source file.
 2. **Pull tokens, don't pick values.** If you need a new token, add it to
-   `:root` *and* `[data-theme=light]` first.
+   `:root` (light) *and* `[data-theme=dark]` first.
 3. **Reuse `S_BTN`, `S_INPUT`, `S_LIST_ROW`, `S_BACKDROP`, `S_MODAL_*`,
    `S_OVERLAY`, `cc-status-pill`, `cc-overlay-chrome`** before composing
    anything new.
