@@ -38,6 +38,20 @@ if ! wasm-pack --version 2>/dev/null | grep -q " $WASM_PACK_VERSION"; then
   cargo install wasm-pack --locked --version "$WASM_PACK_VERSION"
 fi
 
+# wasm-bindgen CLI: the version engine/Cargo.lock pins, built with --locked
+# into a tools folder of its own and put first on PATH (wasm-pack uses the
+# wasm-bindgen it finds there). A copy installed some other way — e.g. a
+# plain `cargo install` that resolved newer internal dependencies — emits
+# different .wasm bytes for the same source, so the committed pkg would not
+# rebuild byte-for-byte elsewhere.
+WASM_BINDGEN_VERSION="$(awk '/^name = "wasm-bindgen"$/{getline; gsub(/version = |"/, ""); print; exit}' "$ENGINE_DIR/Cargo.lock")"
+TOOLS_DIR="${CARGO_TARGET_DIR:-$ENGINE_DIR/target}/tools"
+if ! "$TOOLS_DIR/bin/wasm-bindgen" --version 2>/dev/null | grep -q " $WASM_BINDGEN_VERSION\b"; then
+  echo "→ Installing wasm-bindgen-cli $WASM_BINDGEN_VERSION (locked)..."
+  cargo install wasm-bindgen-cli --locked --version "$WASM_BINDGEN_VERSION" --root "$TOOLS_DIR"
+fi
+export PATH="$TOOLS_DIR/bin:$PATH"
+
 # ── Build mode ──────────────────────────────────────────────────
 
 PROFILE="--release"

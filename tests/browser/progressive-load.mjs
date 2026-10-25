@@ -166,7 +166,11 @@ try {
     const idleOn = await framesWhileIdle(on);
     await on.close();
     const diffs = diffDigests(dOff, dOn);
-    if (!w.previewBeforeCommit || !(w.batches > 1)) fail('[single] no preview before the commit (' + JSON.stringify(w) + ')');
+    // A preview with geometry must be on screen before the commit. How many
+    // streamed batches reach it depends on the machine: batches still queued
+    // when the file's result is decoded are dropped on purpose (the model
+    // commits next — docs/INTERNALS.md §21.50), so a fast runner may draw one.
+    if (!w.previewBeforeCommit || !(w.batches >= 1) || !(w.maxTris > 0)) fail('[single] no preview before the commit (' + JSON.stringify(w) + ')');
     else if (w.inMg || w.inState || w.picked) fail('[single] preview leaked: ' + JSON.stringify(w));
     else if (w.after.live || w.after.inScene || w.leftInScene) fail('[single] preview not torn down: ' + JSON.stringify(w.after));
     else if (diffs.length) fail('[single] model differs from the flag-off load:\n' + diffs.join('\n'));
