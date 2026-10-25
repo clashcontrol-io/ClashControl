@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.7.0 (2026-10-25)
+- Accuracy, speed, proportional actions, shared conflicts, grids, units (#719)
+
 ## v7.6.5 (2026-10-22)
 - CLAUDE.md: list occlusion-core.js in the file overview
 
