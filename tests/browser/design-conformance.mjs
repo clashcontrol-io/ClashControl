@@ -241,8 +241,16 @@ function inPageChecker() {
           // nearest ancestor that clips or scrolls: a vertical list that
           // scrolls sideways hides the row end just the same
           let anc = null;
-          for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) { const ac = getComputedStyle(a); if (!/^visible/.test(ac.overflowX)) { anc = a; break; } }
-          if (anc) { const r = el.getBoundingClientRect(), ar = anc.getBoundingClientRect(); if (r.width > 0 && r.right > ar.right + 1 && r.left < ar.right) add('clipped', el, 'cut off at the right edge by ' + Math.round(r.right - ar.right) + ' px'); }
+          // (a position:fixed box is clipped by none of its ancestors' overflow)
+          for (let a = el; a && a !== document.body; a = a.parentElement) {
+            const ac = getComputedStyle(a);
+            if (ac.position === 'fixed') break;
+            if (a !== el && !/^visible/.test(ac.overflowX)) { anc = a; break; }
+          }
+          // a deliberate sideways strip (scrolls in x, not in y: chip strip,
+          // phone bucket bar, phone settings tabs) may run past its edge
+          const strip = anc && /(auto|scroll)/.test(getComputedStyle(anc).overflowX) && anc.scrollHeight <= anc.clientHeight + 1;
+          if (anc && !strip) { const r = el.getBoundingClientRect(), ar = anc.getBoundingClientRect(); if (r.width > 0 && r.right > ar.right + 1 && r.left < ar.right) add('clipped', el, 'cut off at the right edge by ' + Math.round(r.right - ar.right) + ' px'); }
         }
         if (el.matches(CONTROL)) {
           const lab = (el.innerText || '').trim();
@@ -270,7 +278,8 @@ function inPageChecker() {
         }
         // disclosure glyphs, leading dots and emoji instead of SVG icons
         if (txt && !el.closest('[data-cc-card-idx],[data-cc-data],kbd,code,pre')) {
-          const g = txt.match(/[▼▶▾▸▲◀▴◂►◄]|^\s*•\s|\p{Extended_Pictographic}/u);
+          // arrows (U+2190–21FF: ↔ → ↓) are typography, not icons
+          const g = txt.match(/[▼▶▾▸▲◀▴◂►◄]|^\s*•\s|(?![\u2190-\u21FF])\p{Extended_Pictographic}/u);
           if (g) add('glyph', el, 'glyph "' + g[0].trim() + '"');
         }
         // a select / placeholder wider than its box

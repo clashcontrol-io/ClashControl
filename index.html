@@ -637,7 +637,13 @@
     .cc-btn-press:active:not(:disabled){transform:translateY(1px)}
     .cc-status-pill{display:inline-flex;align-items:center;gap:var(--space-1);padding:2px var(--space-2);border-radius:var(--radius-pill);font-size:var(--text-2xs);font-weight:var(--weight-semibold);letter-spacing:.04em;text-transform:uppercase;line-height:var(--leading-tight);white-space:nowrap}
     /* ── PatternFly-inspired tree view ── */
-    .cc-tv{--cc-tv-indent:1.25rem;--cc-tv-row-pad-y:.3rem;--cc-tv-row-pad-x:var(--space-3);--cc-tv-icon-size:14px;--cc-tv-toggle-size:14px;list-style:none;margin:0;padding:0;font-size:var(--text-sm);color:var(--text-primary)}
+    /* <summary> disclosure: the same chevron as _ccChevron (right closed, down
+       open), drawn in CSS — never the UA triangle or a ▸/▾ text glyph */
+    summary{list-style:none}
+    summary::-webkit-details-marker{display:none}
+    summary::before{content:'';display:inline-block;flex-shrink:0;width:.4em;height:.4em;margin:0 var(--space-2) .1em .1em;border-right:1.5px solid var(--text-muted);border-bottom:1.5px solid var(--text-muted);transform:rotate(-45deg);transition:transform var(--duration-fast) var(--ease-standard);vertical-align:middle}
+    details[open] > summary::before{transform:rotate(45deg)}
+    .cc-tv{--cc-tv-indent:1.25rem;--cc-tv-row-pad-y:var(--space-1);--cc-tv-row-pad-x:var(--space-3);--cc-tv-icon-size:14px;--cc-tv-toggle-size:14px;list-style:none;margin:0;padding:0;font-size:var(--text-sm);color:var(--text-primary)}
     .cc-tv ul{list-style:none;margin:0;padding:0}
     .cc-tv__item{position:relative}
     .cc-tv__content{display:flex;align-items:center;gap:var(--space-2);padding:var(--cc-tv-row-pad-y) var(--cc-tv-row-pad-x);cursor:pointer;color:var(--text-primary);border:none;background:none;width:100%;box-sizing:border-box;text-align:left;font:inherit;line-height:var(--leading-base);transition:background var(--duration-fast) var(--ease-standard),color var(--duration-fast) var(--ease-standard);border-radius:var(--radius-xs);min-height:28px}
@@ -729,9 +735,6 @@
       }
       button, a[href], [role=switch], [role=tab], [role=menuitem] { min-width:44px!important; }
       summary, a[href], label:has(> input[type=checkbox]), label:has(> input[type=radio]) { display:flex; align-items:center; }
-      /* display:flex drops the native disclosure triangle — draw it back */
-      summary::before { content:'\25B8'; margin-right:var(--space-2); color:var(--text-muted); }
-      details[open] > summary::before { content:'\25BE'; }
       .cc-side-panel input[type=checkbox], .cc-left-panel input[type=checkbox] {
         width:20px!important; height:20px!important;
       }
@@ -800,10 +803,10 @@
     body[data-presenting="1"] .cc-mobile-theme{display:none!important}
     .cc-mobile-nav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:calc(var(--z-panel) + 4);
       background:var(--surface);border-top:1px solid var(--hairline);
-      justify-content:space-around;align-items:center;padding:var(--space-1) 0;padding-bottom:env(safe-area-inset-bottom,var(--space-1))}
+      justify-content:space-around;align-items:center;padding:var(--space-1) var(--space-1);padding-bottom:env(safe-area-inset-bottom,var(--space-1));box-sizing:border-box}
     .cc-mobile-nav button{background:none;border:none;cursor:pointer;color:var(--text-muted);
-      display:flex;flex-direction:column;align-items:center;gap:2px;padding:var(--space-1) var(--space-2);
-      font-size:var(--text-2xs);font-family:inherit;min-width:44px;min-height:44px;justify-content:center;
+      display:flex;flex-direction:column;align-items:center;gap:2px;padding:var(--space-1) var(--space-1);
+      font-size:var(--text-2xs);font-family:inherit;flex:1 1 0;min-width:44px;line-height:var(--leading-tight);text-align:center;min-height:44px;justify-content:center;
       border-radius:var(--radius-md);transition:color var(--duration-fast) var(--ease-standard),background var(--duration-fast) var(--ease-standard);position:relative}
     .cc-mobile-nav button.active{color:var(--text-primary);background:var(--accent-bg)}
     .cc-mobile-nav button svg{width:20px;height:20px}
@@ -25851,7 +25854,8 @@ function startApp() {
         <div class="cc-header-project" style=${{position:'relative'}}>
           <button onClick=${function(){setProjOpen(!projOpen)}}
             style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-primary)',border:'1px solid var(--border)',display:'flex',alignItems:'center',gap:'var(--space-1)',fontSize:'var(--text-sm)',padding:'var(--space-1) var(--space-2)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-            ${_ccProjectName(activeProj)} <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${projOpen?'▲':'▼'}</span>
+            ${_ccProjectName(activeProj)} <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              style=${{flexShrink:0,color:'var(--text-faint)',transform:projOpen?'rotate(180deg)':'none',transition:'transform var(--duration-fast) var(--ease-standard)'}}><path d="M6 9l6 6 6-6"/></svg>
           </button>
           ${projOpen && html`<div style=${{position:'absolute',top:'100%',left:0,marginTop:'var(--space-1)',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-md)',boxShadow:'var(--shadow-lg)',minWidth:220,zIndex:'var(--z-dropdown)',overflowY:'auto',maxHeight:'60vh'}}>
             ${projects.map(function(p){
@@ -25949,12 +25953,14 @@ function startApp() {
           ↓ ${_cc_t('toolbar.bcf30','BCF 3.0')}
         </button>
         <button onClick=${function(){d({t:A.UPD_PREFS,u:{theme:isDark?'light':'dark'}})}}
-          style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-md)',padding:'var(--space-1) var(--space-2)'}}
+          style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',display:'inline-flex',alignItems:'center',justifyContent:'center',padding:'var(--space-1) var(--space-2)'}}
           title=${isDark?_cc_t('toolbar.switchLight','Switch to light mode'):_cc_t('toolbar.switchDark','Switch to dark mode')}
-          aria-label=${isDark?_cc_t('toolbar.switchLight','Switch to light mode'):_cc_t('toolbar.switchDark','Switch to dark mode')}>${isDark?'☀':'☾'}</button>
+          aria-label=${isDark?_cc_t('toolbar.switchLight','Switch to light mode'):_cc_t('toolbar.switchDark','Switch to dark mode')}>${isDark
+            ? html`<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>`
+            : html`<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`}</button>
         <button onClick=${function(){d({t:A.SETTINGS,v:true})}}
-          style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',fontSize:'var(--text-md)',padding:'var(--space-1) var(--space-2)'}}
-          title=${_cc_t('toolbar.settings','Settings')} aria-label=${_cc_t('toolbar.openSettings','Open settings')}>⚙</button>
+          style=${{...S_BTN,background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',display:'inline-flex',alignItems:'center',justifyContent:'center',padding:'var(--space-1) var(--space-2)'}}
+          title=${_cc_t('toolbar.settings','Settings')} aria-label=${_cc_t('toolbar.openSettings','Open settings')}><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
       </div>
     </header>`;
   }
@@ -29023,7 +29029,7 @@ function startApp() {
           style=${opts.italic?{fontStyle:'italic'}:null}
           onClick=${opts.onClick}
           onDblClick=${opts.onDblClick}
-          title=${opts.title||null}>
+          title=${opts.title||(typeof opts.label==='string' ? opts.label + (opts.secondary!=null ? ' · ' + opts.secondary : '') : null)}>
           ${hasChildren
             ? html`<button type="button" class="cc-tv__toggle"
                 aria-label=${expanded?_cc_t('nav.collapse','Collapse'):_cc_t('nav.expand','Expand')}
@@ -29489,7 +29495,7 @@ function startApp() {
       <button onClick=${function(){setOpen(!open)}}
         style=${{fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-1)',borderRadius:'var(--radius-xs)',background:'var(--bg-secondary)',color:allVisible?'var(--text-secondary)':'var(--accent)',border:'1px solid var(--border)',width:'100%',textAlign:'left',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
         <span style=${{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${summary}</span>
-        <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',marginLeft:'var(--space-1)',flexShrink:0}}>${open?'▲':'▼'}</span>
+        <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-faint)',marginLeft:'var(--space-1)',flexShrink:0}}>${_ccCaret(open)}</span>
       </button>
       ${open && html`<div style=${{position:'absolute',top:'100%',left:0,right:0,marginTop:'2px',background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',boxShadow:'0 6px 20px rgba(0,0,0,.35)',zIndex:'var(--z-dropdown)',overflow:'hidden',maxHeight:'12rem',display:'flex',flexDirection:'column'}}>
         <div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
@@ -29566,7 +29572,7 @@ function startApp() {
           <circle cx="12" cy="22" r="1"/>
         </svg>
         <span style=${{fontSize:'var(--text-xs)',fontWeight:700,color:'var(--accent)',flex:1}}>${_cc_t('clashAISummary.aiAnalysis','AI Analysis')}</span>
-        <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',transform:collapsed?'rotate(-90deg)':'rotate(0)',transition:'transform .2s'}}>▼</span>
+        <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-faint)'}}>${_ccChevron(!collapsed)}</span>
       </div>
       ${!collapsed && html`<div style=${{marginTop:'var(--space-1)'}}>
         <div style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center',marginBottom:'var(--space-1)'}}>
@@ -30495,7 +30501,7 @@ function startApp() {
               style=${{...S_BTN,width:'100%',padding:'var(--space-2) var(--space-3)',background:'none',color:'var(--text-secondary)',
                 display:'flex',alignItems:'center',justifyContent:'space-between',fontSize:'var(--text-sm)'}}>
               <span style=${{fontWeight:'var(--weight-semibold)'}}>${_cc_t('run.projectStandards','Project standards')}</span>
-              <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${showStandards?'▲':'▼'} ${_cc_t('run.projectStandardsDesc','default clearance, IFC type pairs, discipline pairs')}</span>
+              <span style=${{display:'inline-flex',alignItems:'center',gap:'var(--space-1)',fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${_ccCaret(showStandards)} ${_cc_t('run.projectStandardsDesc','default clearance, IFC type pairs, discipline pairs')}</span>
             </button>
             ${showStandards && html`<div style=${{padding:'0 var(--space-1) var(--space-2)',borderTop:'1px solid var(--border-subtle)'}}>
               <${StandardsPanel} s=${s} d=${d} />
@@ -30665,8 +30671,8 @@ function startApp() {
                     d({t:A.DETECTING});d({t:A.TAB,v:'clashes'});
                     detectClashesAsync(s.models,merged).then(function(result){_ccCommitDetectionResult(result,d,presetDs);});
                   });
-                }} disabled=${!canRun} title=${_cc_t('run.loadAndRun','Load & Run')}
-                  style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-1)',background:'var(--accent-bg)',color:'var(--accent-subtle)',borderRadius:'0',borderLeft:'1px solid var(--border-subtle)'}}>▶</button>
+                }} disabled=${!canRun} title=${_cc_t('run.loadAndRun','Load & Run')} aria-label=${_cc_t('run.loadAndRun','Load & Run')}
+                  style=${{...S_BTN,display:'inline-flex',alignItems:'center',padding:'var(--space-1) var(--space-1)',background:'var(--accent-bg)',color:'var(--accent-subtle)',borderRadius:'0',borderLeft:'1px solid var(--border-subtle)'}}>${_ccPlayIcon(10)}</button>
                 <button onClick=${function(){
                   var list=savedPresets.filter(function(p){return p.id!==sp.id});
                   _saveClashPresets(list);setSavedPresets(list);
@@ -31105,6 +31111,17 @@ function startApp() {
       </button>
       ${open && html`<div id=${idRef.current} style=${props.bodyStyle || {padding:'var(--space-1) 0 0 var(--space-4)'}}>${props.children}</div>`}
     </div>`;
+  }
+  // Dropdown caret: points down closed, up open (a list that opens below).
+  function _ccCaret(open) {
+    return html`<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"
+      style=${{flexShrink:0,transform:open?'rotate(180deg)':'none',transition:'transform var(--duration-fast) var(--ease-standard)'}}><path d="M6 9l6 6 6-6"/></svg>`;
+  }
+  // Media / feedback icons (inline SVG, currentColor) in place of ▶ ❚❚ ▲ ▼ glyphs.
+  function _ccPlayIcon(size) { return html`<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width=${size||12} height=${size||12}><path d="M7 4l13 8-13 8z" fill="currentColor"/></svg>`; }
+  function _ccPauseIcon(size) { return html`<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width=${size||12} height=${size||12}><path d="M8 5v14M16 5v14"/></svg>`; }
+  function _ccThumbIcon(up) {
+    return html`<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style=${{transform:up?'none':'rotate(180deg)'}}><path d="M7 10v11H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h3z"/><path d="M7 10l4-8a2.5 2.5 0 0 1 2.5 2.5V8h5.4a2 2 0 0 1 2 2.3l-1.4 9A2 2 0 0 1 17.5 21H7"/></svg>`;
   }
   // Severity as a pill: the word carries the meaning, the colour only backs it.
   function _ccSeverityPillStyle(sev) {
@@ -34908,7 +34925,7 @@ function startApp() {
       </div>
       <button onClick=${function(){setDetailOpen(!detailOpen)}}
         style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-1)',background:'var(--bg-primary)',color:'var(--text-muted)',width:'100%',textAlign:'left',border:'1px solid var(--border-subtle)'}}>
-        ${detailOpen?'▼':'▶'} ${_cc_t('clashProps.elementProperties','Element Properties')}
+        <span aria-hidden="true" style=${{display:'inline-flex',verticalAlign:'middle',marginRight:'var(--space-1)'}}>${_ccChevron(detailOpen)}</span>${_cc_t('clashProps.elementProperties','Element Properties')}
       </button>
       ${detailOpen && html`<div style=${{marginTop:'var(--space-1)',maxHeight:'300px',overflowY:'auto'}}>
         ${isSingle ? html`
@@ -38689,7 +38706,7 @@ function startApp() {
           <button onClick=${function(){setAutoplay(!autoplay);}}
             title=${autoplay?_cc_t('present.pauseAutoAdvance','Pause auto-advance (Space)'):_cc_t('present.autoAdvance','Auto-advance every 5.5s (Space)')}
             style=${{...btnFaint,background:autoplay?'var(--accent)':btnFaint.background,fontWeight:600}}>
-            ${autoplay?'❚❚':'▶'}
+            ${autoplay?_ccPauseIcon(12):_ccPlayIcon(12)}
           </button>
         </${React.Fragment}>` : html`<span style=${{fontSize:'var(--text-xs)',opacity:.6}}>${_cc_t('present.noViewpoints','No viewpoints saved — use Save Viewpoint, then ← → to navigate')}</span>`}
         <span style=${{width:1,height:18,background:'rgba(255,255,255,.15)',margin:'0 var(--space-1)'}}></span>
@@ -39218,7 +39235,7 @@ function startApp() {
 
             <div>
               <label style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',fontWeight:'var(--weight-bold)',textTransform:'uppercase',letterSpacing:'.08em',display:'block',marginBottom:'var(--space-1)'}}>${_cc_t('share.yourName','Your name')}</label>
-              <input type="text" value=${sp.userName||''} placeholder=${_cc_t('share.yourNamePlaceholder','Used to attribute your changes')}
+              <input type="text" value=${sp.userName||''} placeholder=${_cc_t('share.yourNamePlaceholder','Shown with your changes')}
                 onInput=${function(e){setUserName(e.target.value);}}
                 style=${inputStyle} />
             </div>
@@ -40204,7 +40221,7 @@ function startApp() {
     function sel(k){return function(e){var u={};u[k]=e.target.value;d({t:A.UPD_PREFS,u:u});}}
     var LBL={fontSize:'var(--text-sm)',color:'var(--text-muted)',display:'block',marginBottom:'var(--space-1)'};
     var SEC=Object.assign({}, S_SECTION_LABEL, {marginBottom:'var(--space-2)',marginTop:'var(--space-4)'});
-    var TROW={display:'flex',justifyContent:'space-between',alignItems:'center',padding:'var(--space-2) 0',gap:'var(--space-4)',borderBottom:'1px solid var(--border-subtle)'};
+    var TROW={display:'flex',flexWrap:'wrap',justifyContent:'space-between',alignItems:'center',padding:'var(--space-2) 0',gap:'var(--space-2) var(--space-4)',borderBottom:'1px solid var(--border-subtle)'};
     var TLBL={fontSize:'var(--text-md)',color:'var(--text-primary)',fontWeight:'var(--weight-medium)'};
     var TSUB={fontSize:'var(--text-xs)',color:'var(--text-muted)',marginTop:'2px',lineHeight:'var(--leading-base)'};
     function Toggle(tp) {
@@ -40602,7 +40619,7 @@ function startApp() {
               </div>
               <div style=${{display:'flex',gap:'var(--space-1)',flexShrink:0}}>
                 <input type="text" placeholder=${_cc_t('ph.eGMepAbc123','e.g. MEP-abc123')} id="cc-join-key"
-                  style=${{...S_INPUT,width:120,fontSize:'var(--text-xs)',fontFamily:'var(--font-mono)'}} />
+                  style=${{...S_INPUT,width:'9rem',fontSize:'var(--text-xs)',fontFamily:'var(--font-mono)'}} />
                 <button onClick=${function(){
                   var key = document.getElementById('cc-join-key').value.trim();
                   if (!key) return;
@@ -40776,7 +40793,7 @@ function startApp() {
             border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',
             display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <span>${expanded?_cc_t('settings.advanced.hideMatrix','Hide tolerance matrix ({types} types, {pairs} pairs)',{types:typeList.length,pairs:pairs.length}):_cc_t('settings.advanced.showMatrix','Show tolerance matrix ({types} types, {pairs} pairs)',{types:typeList.length,pairs:pairs.length})}</span>
-          <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${expanded?'▲':'▼'}</span>
+          <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-faint)'}}>${_ccCaret(expanded)}</span>
         </button>
 
         ${expanded && html`<div style=${{marginTop:'var(--space-2)',maxHeight:400,overflowY:'auto',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',background:'var(--bg-primary)'}}>
@@ -45575,7 +45592,7 @@ function startApp() {
       <!-- Exclude IFC types -->
       ${allIfcTypes.length>0 && html`<div style=${{marginTop:'var(--space-2)'}}>
         <div onClick=${function(){setExOpen(!exOpen)}} style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',cursor:'pointer',display:'flex',alignItems:'center',gap:'var(--space-1)',userSelect:'none'}}>
-          <span style=${{fontSize:'var(--text-2xs)',transition:'transform .15s',transform:exOpen?'rotate(90deg)':'rotate(0)'}}>▶</span>
+          <span aria-hidden="true" style=${{display:'inline-flex'}}>${_ccChevron(exOpen)}</span>
           ${_cc_t('setup.excludeIfcTypes','Exclude IFC types')}${rules.excludeTypes&&rules.excludeTypes.length?' ('+rules.excludeTypes.length+')':''}
         </div>
         ${exOpen && html`<div style=${{marginTop:'var(--space-1)',maxHeight:120,overflowY:'auto',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',background:'var(--input-bg)',padding:'var(--space-1)'}}>
@@ -46140,7 +46157,7 @@ function startApp() {
     function renderAIFeedback(msgIdx, msgText) {
       var fb = feedback[msgIdx];
       var thumbStyle = function(active, color) { return {
-        background:'none', border:'none', cursor:'pointer', fontSize:'var(--text-xs)', padding:'2px var(--space-1)',
+        background:'none', border:'none', cursor:'pointer', fontSize:'var(--text-xs)', padding:'2px var(--space-1)', display:'inline-flex', alignItems:'center',
         borderRadius:'var(--radius-xs)', opacity: active ? 1 : 0.4, color: active ? color : mutedCol,
         transition:'opacity .15s'
       }; };
@@ -46150,14 +46167,14 @@ function startApp() {
           setFeedback(function(prev){ var n=Object.assign({},prev); n[msgIdx]='up'; return n; });
           _sendTrainingData({ type:'nl_command', input: msgs[msgIdx-1] ? msgs[msgIdx-1].text : '', matched: true,
             feedbackType:'thumbs_up', action: msgText.substring(0,60), appVersion: CC_VERSION.v });
-        }} title=${_cc_t('nl.feedback.goodResponse','Good response')} style=${thumbStyle(fb==='up','#4ade80')}>▲</button>
+        }} title=${_cc_t('nl.feedback.goodResponse','Good response')} aria-label=${_cc_t('nl.feedback.goodResponse','Good response')} aria-pressed=${fb==='up'?'true':'false'} style=${thumbStyle(fb==='up','var(--color-success-fg)')}>${_ccThumbIcon(true)}</button>
         <button onClick=${function(){
           setFeedback(function(prev){ var n=Object.assign({},prev); n[msgIdx] = fb==='down_expand' ? 'down' : 'down_expand'; return n; });
           if (fb !== 'down_expand') {
             _sendTrainingData({ type:'nl_command', input: msgs[msgIdx-1] ? msgs[msgIdx-1].text : '', matched: false,
               feedbackType:'thumbs_down', action: msgText.substring(0,60), appVersion: CC_VERSION.v });
           }
-        }} title=${_cc_t('nl.feedback.wrongResponseTitle','Wrong response')} style=${thumbStyle(fb==='down'||fb==='down_expand','#f87171')}>▼</button>
+        }} title=${_cc_t('nl.feedback.wrongResponseTitle','Wrong response')} aria-label=${_cc_t('nl.feedback.wrongResponseTitle','Wrong response')} aria-pressed=${fb==='down'||fb==='down_expand'?'true':'false'} style=${thumbStyle(fb==='down'||fb==='down_expand','var(--color-danger-fg)')}>${_ccThumbIcon(false)}</button>
         <button onClick=${function(){ setReplyTo({idx:msgIdx, text:msgText}); if(inputRef.current) inputRef.current.focus(); }}
           title=${_cc_t('nl.feedback.replyToMessage','Reply to this message')} style=${thumbStyle(false, mutedCol)}>↩</button>
         ${showCorrection && html`<div style=${{display:'flex',gap:'var(--space-1)',flex:1}}>
