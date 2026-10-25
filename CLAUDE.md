@@ -159,6 +159,7 @@ scripts/lint-inline.js      — Extracts the main inline <script> from index.htm
 clash-assignment-core.js    — Non-addon core module: assignment rules (discipline-pair × storey → assignee/priority)
 clash-classification-core.js — Non-addon core module: clash classification (spatial-hash clustering), deterministic severity + extent (graze/through/partial), review buckets (`reviewBucket`, `findTwice`) shared by both engines
 clash-discipline-core.js    — Non-addon core module: discipline / MEP sub-discipline / role classification with provenance (stated before inferred), the trade-aware clash matrix, and the registries for pack data (locale `disciplineHints`, country `classifications`) — IFC-standard knowledge only, nothing language- or country-specific in code
+clash-exceptions-core.js    — Non-addon core module: intersection exceptions (straight MEP penetrations, flush fittings) and the "structural penetration requires an opening / provision" check — post-classification annotations (`c.exception`, `c.missingProvision`) under `rules.exceptions`, all off by default
 clash-identity-core.js      — Non-addon core module: stable clash identity across re-runs
 clash-reconciliation-core.js — Non-addon core module: merges new detection results with prior status/assignment
 clash-triage-core.js        — Non-addon core module: clash review smart filtering — storey normalisation across models, facets with live counts, suggested views, search, saved views (review buckets + severity/extent live in clash-classification-core.js)

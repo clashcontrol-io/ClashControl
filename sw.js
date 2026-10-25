@@ -28,6 +28,7 @@ var PRECACHE = [
   'clash-reconciliation-core.js',
   'clash-classification-core.js',
   'clash-triage-core.js',
+  'clash-exceptions-core.js',
   'country-pack-core.js',
   'project-codec.js',
   'storage-core.js',

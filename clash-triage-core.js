@@ -198,6 +198,9 @@
     if (c.type === 'hard' && ((runA && /Slab/.test(tyB) && _isVertical(c.bboxA)) || (runB && /Slab/.test(tyA) && _isVertical(c.bboxB)))) tags.push('riser-through-slab');
     if (sev === 'critical' && !c.assignee) tags.push('unassigned-critical');
     if (c.opening === 'partial' || c.provision === 'partial') tags.push('opening-too-small');
+    // "A requires B": a structural penetration without an opening / provision
+    // (clash-exceptions-core.js, rules.exceptions.requireProvision)
+    if (c.missingProvision) tags.push('missing-provision');
     if (c._delta === 'new') tags.push('new');
     // a decision teammates changed at the same time in a shared folder
     // (addons/shared-project.js puts the conflict on the clash)
@@ -277,7 +280,7 @@
   var ORDER = {
     severity: ['critical', 'major', 'minor', 'info'],
     extent: ['through', 'through-thin', 'partial', 'graze', 'unknown', 'clearance', 'contact', 'open-inside', 'duplicate', 'visibility', 'other'],
-    bucket: ['review', 'contact', 'openshape', 'provided', 'provision', 'zone', 'twice', 'embedded', 'finish', 'graze', 'adjacent', 'handled'],
+    bucket: ['review', 'contact', 'openshape', 'provided', 'provision', 'penetration', 'fitting', 'zone', 'twice', 'embedded', 'finish', 'graze', 'adjacent', 'handled'],
     status: ['open', 'in_progress', 'accepted_needs_check', 'confirmed', 'resolved', 'closed', 'denied']
   };
   // labelOf (optional): the display label — ties in count are broken by it
@@ -306,6 +309,7 @@
     { id: 'riser-through-slab', label: 'Risers through slabs', facets: { tag: ['riser-through-slab'] } },
     { id: 'unassigned-critical', label: 'Unassigned critical', facets: { tag: ['unassigned-critical'] } },
     { id: 'opening-too-small', label: 'Openings too small', facets: { tag: ['opening-too-small'] } },
+    { id: 'missing-provision', label: 'Missing openings / provisions', facets: { tag: ['missing-provision'] } },
     { id: 'near-miss', label: 'Near misses', facets: { extent: ['clearance'], tag: ['near-miss'] } },
     { id: 'new', label: 'New since last run', facets: { tag: ['new'] } },
     // offered whenever there are any, even when every item is in conflict
