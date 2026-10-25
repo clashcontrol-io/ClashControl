@@ -723,6 +723,18 @@
         width:20px!important; height:20px!important;
       }
     }
+    /* Settings on a phone: the section list is a horizontal, scrollable tab
+       row above the content (accent underline, DESIGN.md Tabs) instead of a
+       168 px column that squeezes every row and clips its controls. */
+    @media(max-width:640px){
+      .cc-settings-layout{flex-direction:column!important}
+      .cc-settings-nav{width:auto!important;padding:0 var(--space-3)!important;border-right:none!important;border-bottom:1px solid var(--border-subtle);overflow-x:auto!important;overflow-y:hidden!important;flex-direction:row!important}
+      .cc-settings-nav > span{display:none!important}
+      .cc-settings-nav > a{white-space:nowrap;align-self:center}
+      .cc-settings-tabs{flex-direction:row!important;gap:0!important}
+      .cc-settings-tabs > [role=tab]{width:auto!important;white-space:nowrap;border-left:none!important;border-radius:0!important;border-bottom:2px solid transparent!important;background:none!important}
+      .cc-settings-tabs > [role=tab][aria-selected=true]{border-bottom-color:var(--accent)!important}
+    }
     @media(max-width:480px){
       .cc-header-brand-text{display:none!important}
       .cc-header-version{display:none!important}
@@ -25230,6 +25242,9 @@ function startApp() {
   var S_BTN_PRIMARY_SM = Object.assign({}, S_BTN_SM, {background:'var(--accent)',color:'var(--accent-contrast)',fontWeight:'var(--weight-semibold)'});
   var S_BTN_SECONDARY_SM = Object.assign({}, S_BTN_SM, {background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'});
   var S_BTN_GHOST_SM = Object.assign({}, S_BTN_SM, {background:'none',color:'var(--text-muted)'});
+  // Quiet destructive action in a dense row (Remove a model): ghost shape,
+  // danger text — reads as destructive without a red slab in every card.
+  var S_BTN_DANGER_GHOST_SM = Object.assign({}, S_BTN_SM, {background:'none',color:'var(--color-danger-fg)'});
   var S_SELECT_SM = Object.assign({}, S_INPUT, {width:'auto',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-sm)'});
   window._ccHtml = html;
   window._ccS_BTN = S_BTN;
@@ -25256,8 +25271,14 @@ function startApp() {
      hook calls run unconditionally, in the same order, on every render.
      Renaming would break the `_ccUseFocusTrap` contract other code and
      tests already depend on. */
-  function _ccUseFocusTrap(containerRef, active) {
+  // opts.initialFocus === 'container': focus the dialog card itself on open
+  // (it carries tabindex="-1" and no outline) instead of its first control —
+  // for dialogs whose first control is the close ×, so opening one never
+  // shows a focus ring on the × (DESIGN.md: focus ring on keyboard focus
+  // only). Tab from the card still moves to the first control.
+  function _ccUseFocusTrap(containerRef, active, opts) {
     var openerRef = useRef(null);
+    var initialContainer = !!(opts && opts.initialFocus === 'container');
     useEffect(function(){
       if (!active || !containerRef.current) return;
       openerRef.current = document.activeElement;
@@ -25269,7 +25290,7 @@ function startApp() {
         );
         return Array.prototype.filter.call(nodes, function(el){ return el.offsetParent !== null; });
       }
-      var first = focusables()[0];
+      var first = initialContainer ? null : focusables()[0];
       var target = first || container;
       if (target && typeof target.focus === 'function') {
         try { target.focus(); } catch(_) {}
@@ -26826,8 +26847,10 @@ function startApp() {
       if (med < bestErr) { bestErr = med; best = s; }
     });
     if (best == null) {
-      out.warning = { code: 'space-boundaries-unplaced', severity: 'warning', reason: 'no-space-geometry',
-        message: _cc_t('boundary.noSpaces', 'Space boundaries could not be placed: their rooms have no geometry.'), total: nP, placed: 0 };
+      // key + vars, translated where it is drawn (_ccLoaderWarningText);
+      // message stays the English text for the console / API.
+      out.warning = { code: 'space-boundaries-unplaced', severity: 'warning', reason: 'no-space-geometry', total: nP, placed: 0,
+        key: 'boundary.noSpaces', message: 'Space boundaries could not be placed: their rooms have no geometry.' };
       return out;
     }
     var S = best;
@@ -27017,9 +27040,11 @@ function startApp() {
     if (placedPolys < nP) {
       out.warning = { code: 'space-boundaries-unplaced', severity: placedPolys ? 'info' : 'warning',
         reason: placedPolys ? 'partial' : 'no-consistent-frame', total: nP, placed: placedPolys,
+        key: placedPolys ? 'boundary.partial' : 'boundary.unplaced',
+        vars: placedPolys ? { n: nP - placedPolys, total: nP } : null,
         message: placedPolys
-          ? _cc_t('boundary.partial', '{n} of {total} space boundaries could not be placed and are not shown.', { n: nP - placedPolys, total: nP })
-          : _cc_t('boundary.unplaced', 'Space boundaries could not be placed: they do not lie on their rooms in the IFC frame or with one consistent offset, so they are not shown.') };
+          ? (nP - placedPolys) + ' of ' + nP + ' space boundaries could not be placed and are not shown.'
+          : 'Space boundaries could not be placed: they do not lie on their rooms in the IFC frame or with one consistent offset, so they are not shown.' };
     }
     return out;
   }
@@ -27113,8 +27138,11 @@ function startApp() {
       window._ccGeoplaceFromCRS(mcModelId, mcModel, key)
         .catch(function(err){ alert(_cc_t('dlg.crsPlacementFailed','CRS placement failed: {v1}',{v1:(err && err.message || err)})); });
     }
-    // Which single action is primary.
-    var primary = s.modelGeo ? null : hasEN ? 'crs' : siteOk ? 'site' : 'manual';
+    // Button variants (DESIGN.md): every placement / surroundings action is a
+    // Secondary button in every state — the panel's one Primary is "Add
+    // model" — so the same action never flips between a filled slab and a
+    // text link. Undo-type actions (Remove from map, Reset) are Ghost. The
+    // recommended placement comes first.
 
     // 3D surroundings: the anchor lat/lon (+ the basemap's world origin, north and nudge).
     function tilesLatLon(){
@@ -27237,7 +27265,7 @@ function startApp() {
           </select>
         </label>
         <div style=${ROW}>
-          <button data-cc-geo-action="crs" onClick=${placeFromCRS} style=${primary==='crs'?S_BTN_PRIMARY_SM:S_BTN_SECONDARY_SM}
+          <button data-cc-geo-action="crs" onClick=${placeFromCRS} style=${S_BTN_SECONDARY_SM}
             title=${_cc_t('tip.reprojectTheProjectedEN','Reproject the projected E/N to lat/lon (placement-grade, ~1 m — not RDNAPTRANS survey-grade) and drop the basemap there. The model never moves.')}>${_cc_t('geoplace.placeFromCoordinates','Place on the map')}</button>
         </div>
       </div>`}
@@ -27245,9 +27273,9 @@ function startApp() {
         ${_cc_t('geoplace.siteLooksDefault','The site location in the file looks like a default ({coords}), not the building. Enter the real location.',{coords:fmt(site.georef.refLat)+', '+fmt(site.georef.refLon)})}
       </p>`}
       ${!s.modelGeo && html`<div style=${ROW}>
-        ${siteOk && html`<button data-cc-geo-action="site" onClick=${placeAtSite} style=${primary==='site'?S_BTN_PRIMARY_SM:S_BTN_SECONDARY_SM}
+        ${siteOk && html`<button data-cc-geo-action="site" onClick=${placeAtSite} style=${S_BTN_SECONDARY_SM}
           title=${_cc_t('geoplace.siteTip','Site location in the file: {coords}',{coords:fmt(site.georef.refLat)+', '+fmt(site.georef.refLon)})}>${_cc_t('geoplace.useSiteLocation','Use site location')}</button>`}
-        <button data-cc-geo-action="manual" onClick=${enterLocation} style=${primary==='manual'?S_BTN_PRIMARY_SM:S_BTN_GHOST_SM}>${_cc_t('geoplace.enterLocation','Enter location…')}</button>
+        <button data-cc-geo-action="manual" onClick=${enterLocation} style=${S_BTN_SECONDARY_SM}>${_cc_t('geoplace.enterLocation','Enter location…')}</button>
       </div>`}
       ${window._ccLoadTiles3D && html`<div style=${{display:'flex',flexDirection:'column',gap:'var(--space-2)',marginTop:'var(--space-1)'}}>
         <span style=${S_SUBTITLE}>${_cc_t('geoplace.surroundingsTitle','3D surroundings')}</span>
@@ -27288,7 +27316,7 @@ function startApp() {
                 var auto = !!(window._ccTiles3DHeightAuto && window._ccTiles3DHeightAuto());
                 var hstep = function(){ var v = 0.5; try { v = parseFloat(localStorage.getItem('cc_tiles3d_hstep')) || 0.5; } catch(_){} return v; };
                 var setH = function(v){ window._ccSetTiles3DHeight(Math.round(v*100)/100); };
-                return html`<div style=${ROW} title=${_cc_t('tip.verticalPlacementOfThe3d','Vertical placement of the 3D world context. Auto-aligns to the model floor from the streamed geometry; ▼/▲ override manually.')}>
+                return html`<div style=${ROW} title=${_cc_t('tip.verticalPlacementOfThe3d','Vertical placement of the 3D world context. Auto-aligns to the model floor from the streamed geometry; the arrows override it manually.')}>
                   <span style=${LBL}>${_cc_t('geoplace.heightLabel','Height')}</span>
                   <button onClick=${function(){ setH(hgt - hstep()); }} aria-label=${_cc_t('geoplace.lowerContext','Lower the surroundings')} title=${_cc_t('geoplace.lowerContext','Lower the surroundings')} style=${{...S_BTN_SECONDARY_SM,padding:'var(--space-1)',lineHeight:0}}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
                   <button onClick=${function(){ setH(hgt + hstep()); }} aria-label=${_cc_t('geoplace.raiseContext','Raise the surroundings')} title=${_cc_t('geoplace.raiseContext','Raise the surroundings')} style=${{...S_BTN_SECONDARY_SM,padding:'var(--space-1)',lineHeight:0}}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
@@ -27320,7 +27348,7 @@ function startApp() {
                   window._ccLoadTiles3D({ ion: {token: itok.trim()}, lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north, offset: ll.offset })
                     .catch(function(err){ alert(_cc_t('dlg.cesiumIon3dTilesFailed','Cesium ion 3D tiles failed: {v1}',{v1:(err && err.message || err)})); });
                 }}
-                title=${_cc_t('geoplace.osmBuildingsTitle','Worldwide OSM Buildings via Cesium ion (free account token)')} style=${S_BTN_GHOST_SM}>${_cc_t('geoplace.cesiumIon','OSM buildings (Cesium ion)…')}</button>
+                title=${_cc_t('geoplace.osmBuildingsTitle','Worldwide OSM Buildings via Cesium ion (free account token)')} style=${S_BTN_SECONDARY_SM}>${_cc_t('geoplace.cesiumIon','OSM buildings (Cesium ion)…')}</button>
               <button onClick=${function(){
                   var ll = tilesLatLon(); if (!ll) return;
                   var tkey = '';
@@ -27333,7 +27361,7 @@ function startApp() {
                   window._ccLoadTiles3D({ key: tkey, lat: ll.lat, lon: ll.lon, origin: ll.origin, north: ll.north, offset: ll.offset })
                     .catch(function(err){ alert(_cc_t('dlg.3dTilesFailed','3D tiles failed: {v1}',{v1:(err && err.message || err)})); });
                 }}
-                title=${_cc_t('tip.photorealisticGoogle3dTilesWorldwide','Photorealistic Google 3D Tiles (worldwide; bring your own Map Tiles API key)')} style=${S_BTN_GHOST_SM}>${_cc_t('geoplace.google3d','Photorealistic (Google)…')}</button>
+                title=${_cc_t('tip.photorealisticGoogle3dTilesWorldwide','Photorealistic Google 3D Tiles (worldwide; bring your own Map Tiles API key)')} style=${S_BTN_SECONDARY_SM}>${_cc_t('geoplace.google3d','Photorealistic (Google)…')}</button>
             </div>`}
       </div>`}
     </section>`;
@@ -28293,7 +28321,7 @@ function startApp() {
         ${(s.parkedModels||[]).length > 0 && html`<div style=${{marginTop:'var(--space-1)',borderTop:'1px solid var(--hairline)',paddingTop:'var(--space-1)'}}>
           <div style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-bold)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.08em',padding:'0 var(--space-1)',marginBottom:'var(--space-1)',display:'flex',alignItems:'center',gap:'var(--space-1)'}}>
             <span>${_cc_t('sidebar.parked','Parked (memory freed)')}</span>
-            <span title=${_cc_t('sidebar.parkedInfo','These models are unloaded to save memory. Their geometry is cached — click Restore to reload with all clashes intact.')} style=${{color:'var(--text-faint)',cursor:'help'}}>ⓘ</span>
+            <span title=${_cc_t('sidebar.parkedInfo','These models are unloaded to save memory. Their geometry is cached — click Restore to reload with all clashes intact.')} style=${{color:'var(--text-muted)',cursor:'help',display:'inline-flex',lineHeight:0}}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" dangerouslySetInnerHTML=${{__html:_CC_ICON_NOTICE}}></svg></span>
           </div>
           ${(s.parkedModels||[]).map(function(pm){return html`<div key=${pm.id} style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',border:'1px dashed var(--border)',borderRadius:'var(--radius-md)',marginBottom:'var(--space-1)',opacity:.85}}>
             <span style=${{width:10,height:10,borderRadius:'50%',background:pm.color,flexShrink:0,opacity:.6}}></span>
@@ -28302,7 +28330,7 @@ function startApp() {
             <button onClick=${function(){if(window._ccRestoreParkedModel)window._ccRestoreParkedModel(pm.id);}}
               title=${_cc_t('sidebar.reloadModel','Reload this model')} style=${{...S_BTN,padding:'2px var(--space-2)',fontSize:'var(--text-2xs)',background:'var(--accent-bg)',color:'var(--accent)',border:'none',borderRadius:'var(--radius-sm)',cursor:'pointer',flexShrink:0}}>${_cc_t('sidebar.restore','Restore')}</button>
             <button onClick=${function(){if(!confirm(_cc_t('sidebar.confirmRemoveParked','Remove parked model "{name}" and delete its cached geometry?',{name:pm.name})))return;d({t:A.UNPARK_MODEL,id:pm.id});idbDeleteFile(pm.id);idbDeleteGeoCache(pm.id);}}
-              title=${_cc_t('sidebar.removePermanently','Remove permanently (deletes cache)')} style=${{...S_BTN,padding:'0 2px',background:'none',color:'var(--text-faint)',fontSize:'var(--text-2xs)',flexShrink:0}}>✕</button>
+              title=${_cc_t('sidebar.removePermanently','Remove permanently (deletes cache)')} aria-label=${_cc_t('sidebar.removePermanently','Remove permanently (deletes cache)')} style=${{...S_BTN,padding:'var(--space-1)',background:'none',color:'var(--text-muted)',flexShrink:0,lineHeight:0}}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
           </div>`})}
         </div>`}
         ${(s.models.length >= 2 || (s.parkedModels||[]).length > 0) && html`<label style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-1)',marginTop:'2px',cursor:'pointer',color:'var(--text-faint)',fontSize:'var(--text-2xs)'}}
@@ -28423,12 +28451,15 @@ function startApp() {
           var elevMap=_ccStoreyElevByName(_visModels); // metres, each model with its own unit
           var stKeys=Object.keys(allStoreys).sort(function(a,b){return (elevMap[a]||0)-(elevMap[b]||0);});
           if(!stKeys.length) return null;
-          return html`<div style=${{marginTop:'var(--space-1)',borderTop:'1px solid var(--hairline)',paddingTop:'var(--space-1)'}}>
-            <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'var(--space-1)',padding:'0 var(--space-1)'}}>
-              <span style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-bold)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.08em'}}>${_cc_t('sidebar.levels','Levels')}</span>
+          // Same section shape as Location above: border-top, section label,
+          // compact Ghost actions; rows are list rows (--text-xs title, mono
+          // elevation) with labelled icon buttons.
+          return html`<section aria-labelledby="cc-levels-title" style=${{marginTop:'var(--space-2)',borderTop:'1px solid var(--border-subtle)',padding:'var(--space-3) var(--space-1) 0',display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
+            <div style=${{display:'flex',justifyContent:'space-between',alignItems:'center',gap:'var(--space-2)'}}>
+              <span id="cc-levels-title" style=${S_SECTION_LABEL}>${_cc_t('sidebar.levels','Levels')}</span>
               <div style=${{display:'flex',gap:'var(--space-1)'}}>
-                <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:(m.storeys||[]).concat(['']),hide:false});});}} style=${{fontSize:'var(--text-2xs)',padding:'1px var(--space-1)',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-muted)',fontFamily:'var(--font-body)'}}>${_cc_t('sidebar.allOn','All on')}</button>
-                <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:(m.storeys||[]).concat(['']),hide:true});});}} style=${{fontSize:'var(--text-2xs)',padding:'1px var(--space-1)',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',color:'var(--text-muted)',fontFamily:'var(--font-body)'}}>${_cc_t('sidebar.allOff','All off')}</button>
+                <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:(m.storeys||[]).concat(['']),hide:false});});}} style=${S_BTN_GHOST_SM}>${_cc_t('sidebar.allOn','All on')}</button>
+                <button onClick=${function(){s.models.forEach(function(m){d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:(m.storeys||[]).concat(['']),hide:true});});}} style=${S_BTN_GHOST_SM}>${_cc_t('sidebar.allOff','All off')}</button>
               </div>
             </div>
             ${stKeys.map(function(st){
@@ -28438,19 +28469,22 @@ function startApp() {
               return html`<div key=${st} style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',padding:'var(--space-1) var(--space-1)',borderRadius:'var(--radius-xs)',background:isPlanActive?'var(--accent-bg)':'transparent',borderLeft:isPlanActive?'2px solid var(--accent)':'2px solid transparent',opacity:isHidden?0.45:1,transition:'opacity .1s'}}>
                 <button onClick=${function(){var h=!isHidden;s.models.forEach(function(m){if((m.storeys||[]).indexOf(st)!==-1)d({t:A.TOGGLE_ALL_STOREYS,id:m.id,storeys:[st],hide:h});});}}
                   title=${isHidden?_cc_t('sidebar.showLevel','Show level'):_cc_t('sidebar.hideLevel','Hide level')}
-                  style=${{background:'none',border:'none',cursor:'pointer',color:isHidden?'var(--text-faint)':'var(--text-secondary)',padding:0,lineHeight:0,flexShrink:0}}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                  aria-label=${(isHidden?_cc_t('sidebar.showLevel','Show level'):_cc_t('sidebar.hideLevel','Hide level')) + ': ' + st} aria-pressed=${isHidden?'false':'true'}
+                  style=${{background:'none',border:'none',cursor:'pointer',color:isHidden?'var(--text-faint)':'var(--text-secondary)',padding:'var(--space-1)',lineHeight:0,flexShrink:0,borderRadius:'var(--radius-sm)'}}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
                     ${isHidden?html`<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>`:html`<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>`}
                   </svg>
                 </button>
-                <span style=${{fontSize:'var(--text-2xs)',color:isPlanActive?'var(--accent)':'var(--text-primary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontWeight:isPlanActive?500:400}} title=${st}>${st}</span>
-                ${hasElev&&html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',flexShrink:0,fontFamily:'var(--font-mono)'}}>${_ccFormatElev(elev)}</span>`}
-                ${hasElev&&html`<button onClick=${function(e){e.stopPropagation();if(isPlanActive)d({t:A.FLOOR_PLAN,v:null});else d({t:A.FLOOR_PLAN,v:{storeyId:st,storeyName:st,elevation:elev||0,cutHeight:1.2}});}} title=${isPlanActive?_cc_t('sidebar.exitPlan','Exit plan'):_cc_t('sidebar.openPlan','Open plan')} style=${{background:'none',border:'none',cursor:'pointer',color:isPlanActive?'var(--accent)':'var(--text-faint)',padding:0,lineHeight:0,flexShrink:0}}>
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 10h16"/><path d="M10 4v16"/></svg>
+                <span style=${{fontSize:'var(--text-xs)',color:isPlanActive?'var(--accent)':'var(--text-primary)',flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontWeight:isPlanActive?'var(--weight-medium)':'var(--weight-regular)'}} title=${st}>${st}</span>
+                ${hasElev&&html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',flexShrink:0,fontFamily:'var(--font-mono)'}}>${_ccFormatElev(elev)}</span>`}
+                ${hasElev&&html`<button onClick=${function(e){e.stopPropagation();if(isPlanActive)d({t:A.FLOOR_PLAN,v:null});else d({t:A.FLOOR_PLAN,v:{storeyId:st,storeyName:st,elevation:elev||0,cutHeight:1.2}});}} title=${isPlanActive?_cc_t('sidebar.exitPlan','Exit plan'):_cc_t('sidebar.openPlan','Open plan')}
+                  aria-label=${(isPlanActive?_cc_t('sidebar.exitPlan','Exit plan'):_cc_t('sidebar.openPlan','Open plan')) + ': ' + st} aria-pressed=${isPlanActive?'true':'false'}
+                  style=${{background:'none',border:'none',cursor:'pointer',color:isPlanActive?'var(--accent)':'var(--text-muted)',padding:'var(--space-1)',lineHeight:0,flexShrink:0,borderRadius:'var(--radius-sm)'}}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 10h16"/><path d="M10 4v16"/></svg>
                 </button>`}
               </div>`;
             })}
-          </div>`;
+          </section>`;
         }()}
       </div>
     </div>`;
@@ -28563,26 +28597,39 @@ function startApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on sig, a fingerprint of the element data, so the score recomputes only on real data changes; s.models is read for the same data
     }, [sig]);
     if (!entry || entry.score == null) return null;
-    var color = entry.score >= 80 ? 'var(--accent)' : entry.score >= 60 ? '#eab308' : '#f87171';
-    var bg    = entry.score >= 80 ? 'var(--accent-bg)' : entry.score >= 60 ? 'rgba(234,179,8,.12)' : 'rgba(248,113,113,.12)';
-    var tip = 'Quality Score ' + entry.score + '/100 (grade ' + entry.grade + ')\n' +
-      entry.breakdown.categories.map(function(c){ return '· ' + c.label + ': ' + c.score + '/100 (' + c.checks + ' checks)'; }).join('\n') +
-      '\nClick to open the Data Quality tab.';
-    return html`<div title=${tip}
+    // Calm card (DESIGN.md): the number + its grade carry the status, the
+    // breakdown (which standards fed it) lives in the Data quality panel
+    // and the tooltip — not as a list of standard names on the card.
+    var tone = entry.score >= 80 ? 'success' : entry.score >= 60 ? 'warning' : 'danger';
+    // The addon's built-in category labels are stable English ids; national
+    // standards keep their pack label (a proper name such as "ILS / NL-SfB").
+    var CAT = {
+      'Data quality': _cc_t('qualityScore.cat.dataQuality', 'Data quality'),
+      'BIM basics': _cc_t('qualityScore.cat.bimBasics', 'BIM basics'),
+      'Accessibility': _cc_t('qualityScore.cat.accessibility', 'Accessibility')
+    };
+    var tip = _cc_t('qualityScore.tip', 'Quality score {score} of 100 (grade {grade})', {score: entry.score, grade: entry.grade}) + '\n' +
+      entry.breakdown.categories.map(function(c){ return '· ' + (CAT[c.label] || c.label) + ': ' + c.score; }).join('\n');
+    var title = _cc_t('qualityScore.title', 'Quality score');
+    return html`<button data-cc-quality-score="1" title=${tip}
+      aria-label=${_cc_t('qualityScore.aria', 'Quality score {score} of 100, grade {grade}. Open data quality', {score: entry.score, grade: entry.grade})}
       onClick=${function(){ try { window._ccDispatch({t:'TAB', v:'dataquality'}); } catch(_){} }}
-      style=${{margin:'var(--space-1) 0 var(--space-1)', padding:'var(--space-2) var(--space-3)', borderRadius:'var(--radius-xs)',
-               background:bg, border:'1px solid '+color+'30', display:'flex', alignItems:'center',
-               gap:'var(--space-2)', cursor:'pointer'}}>
-      <div style=${{fontFamily:'var(--font-mono)', fontWeight:700, fontSize:'var(--text-lg)', color:color, lineHeight:1, minWidth:'2.5em'}}>
-        ${entry.score}
-        <span style=${{fontSize:'var(--text-2xs)', color:'var(--text-faint)', fontWeight:500}}>/100</span>
-      </div>
-      <div style=${{flex:1, lineHeight:'var(--leading-tight)'}}>
-        <div style=${{fontSize:'var(--text-xs)', fontWeight:600, color:'var(--text-primary)'}}>Quality Score <span style=${{color:color}}>· ${entry.grade}</span></div>
-        <div style=${{fontSize:'var(--text-2xs)', color:'var(--text-muted)'}}>${entry.breakdown.categories.map(function(c){return c.label;}).join(' + ')}</div>
-      </div>
-      <div style=${{fontSize:'var(--text-2xs)', color:'var(--text-faint)'}}>›</div>
-    </div>`;
+      style=${{...S_BTN, width:'100%', textAlign:'left', margin:'0 0 var(--space-1)', padding:'var(--space-2) var(--space-3)', borderRadius:'var(--radius-md)',
+               background:'var(--bg-secondary)', border:'1px solid var(--border-subtle)', color:'var(--text-primary)', display:'flex', alignItems:'center',
+               gap:'var(--space-3)', flexShrink:0}}>
+      <span style=${{display:'inline-flex', alignItems:'baseline', gap:2, flexShrink:0}}>
+        <span data-cc-status="1" style=${{fontFamily:'var(--font-mono)', fontWeight:'var(--weight-semibold)', fontSize:'var(--text-lg)', color:'var(--color-' + tone + '-fg)', lineHeight:'var(--leading-tight)'}}>${entry.score}</span>
+        <span style=${{fontFamily:'var(--font-mono)', fontSize:'var(--text-2xs)', color:'var(--text-muted)'}}>/100</span>
+      </span>
+      <span style=${{flex:1, minWidth:0, display:'flex', flexDirection:'column', gap:2}}>
+        <span style=${{display:'flex', alignItems:'center', flexWrap:'wrap', gap:'var(--space-2)'}}>
+          <span style=${{fontSize:'var(--text-sm)', fontWeight:'var(--weight-medium)', lineHeight:'var(--leading-tight)'}}>${title}</span>
+          <span class="cc-status-pill" style=${{background:'var(--color-' + tone + '-bg)', color:'var(--color-' + tone + '-fg)'}}>${_cc_t('qualityScore.grade', 'Grade {grade}', {grade: entry.grade})}</span>
+        </span>
+        <span style=${{fontSize:'var(--text-xs)', color:'var(--text-muted)', lineHeight:'var(--leading-tight)'}}>${_cc_t('qualityScore.open', 'Details in Data quality')}</span>
+      </span>
+      <span aria-hidden="true" style=${{display:'inline-flex', color:'var(--text-muted)', flexShrink:0}}>${_ccChevron(false)}</span>
+    </button>`;
   }
 
   function _SplatLayersSection() {
@@ -28631,10 +28678,26 @@ function startApp() {
     (m.loaderWarnings || []).forEach(function(w, i) {
       var t = w && w.code === 'space-boundaries-unplaced'
         ? (w.reason === 'partial' ? _cc_t('modelCard.notice.roomOutlinesSome', 'Some room outlines could not be placed and are hidden.') : _cc_t('modelCard.notice.roomOutlinesAll', 'Room outlines could not be placed and are hidden.'))
-        : (w && w.message) || '';
+        : _ccLoaderWarningText(w);
       if (t) out.push({ key: 'w' + i, text: t });
     });
     return out;
+  }
+  // A loader warning is stored as data (code + key + vars, English message
+  // for the console / API) and translated here, where it is drawn, so the
+  // UI language at render time wins — also after a language change and for
+  // projects restored from storage. Older stored warnings carry only a
+  // finished `message` and render as before.
+  var _CC_LOADER_WARNING_TEXT = {
+    'boundary.noSpaces': function(){ return _cc_t('boundary.noSpaces', 'Space boundaries could not be placed: their rooms have no geometry.'); },
+    'boundary.partial': function(v){ return _cc_t('boundary.partial', '{n} of {total} space boundaries could not be placed and are not shown.', v); },
+    'boundary.unplaced': function(){ return _cc_t('boundary.unplaced', 'Space boundaries could not be placed: they do not lie on their rooms in the IFC frame or with one consistent offset, so they are not shown.'); }
+  };
+  function _ccLoaderWarningText(w) {
+    if (!w) return '';
+    if (w.key && _CC_LOADER_WARNING_TEXT[w.key]) return _CC_LOADER_WARNING_TEXT[w.key](w.vars || {});
+    if (w.key) return _cc_t(w.key, w.message || '', w.vars || undefined);
+    return w.message || '';
   }
   var _CC_ICON_NOTICE = '<circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16.5v.01"/>';
 
@@ -28686,22 +28749,22 @@ function startApp() {
         ${notices.map(function(n){ return html`<div key=${n.key} data-cc-notice=${n.key} style=${{display:'flex',alignItems:'flex-start',gap:'var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-base)'}}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style=${{flexShrink:0,marginTop:2,color:'var(--text-muted)'}} dangerouslySetInnerHTML=${{__html:_CC_ICON_NOTICE}}></svg>
           <span style=${{flex:1,minWidth:0}}>${n.text}</span>
-          ${n.action && html`<button onClick=${n.action.run} style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',flexShrink:0}}>${n.action.label}</button>`}
+          ${n.action && html`<button onClick=${n.action.run} style=${{...S_BTN_SECONDARY_SM,flexShrink:0}}>${n.action.label}</button>`}
         </div>`; })}
         <label style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>
-          <span style=${{minWidth:72}}>${_cc_t('modelCard.discipline','Discipline')}</span>
+          <span style=${{flex:'0 0 30%',minWidth:0}}>${_cc_t('modelCard.discipline','Discipline')}</span>
           <select value=${m.discipline} onChange=${function(e){var p=DISC.find(function(x){return x.id===e.target.value});d({t:A.UPD_MODEL,id:m.id,u:{discipline:e.target.value,color:p?p.c:m.color}})}}
             style=${{...S_INPUT,fontSize:'var(--text-sm)',padding:'var(--space-1) var(--space-2)',flex:1,minWidth:0}}>
             ${DISC.map(function(p){return {id:p.id,label:_cc_t('disc.' + p.id, p.label)};}).sort(function(a,b){return a.label.localeCompare(b.label);}).map(function(p){return html`<option key=${p.id} value=${p.id}>${p.label}</option>`})}
           </select>
         </label>
         <label style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>
-          <span style=${{minWidth:72}}>${_cc_t('modelCard.colour','Colour')}</span>
+          <span style=${{flex:'0 0 30%',minWidth:0}}>${_cc_t('modelCard.colour','Colour')}</span>
           <input type="color" value=${m.color} onChange=${function(e){d({t:A.UPD_MODEL,id:m.id,u:{color:e.target.value}})}} data-cc-swatch="1"
             style=${{width:32,height:24,border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',padding:0,background:'none',cursor:'pointer'}} />
         </label>
         ${m.discipline==='other' && html`<label style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>
-          <span style=${{minWidth:72}}>${_cc_t('modelCard.tag','Tag')}</span>
+          <span style=${{flex:'0 0 30%',minWidth:0}}>${_cc_t('modelCard.tag','Tag')}</span>
           <input type="text" value=${m.tag||''} placeholder=${_cc_t('modelCard.tagExample','e.g. Group A')}
             onChange=${function(e){d({t:A.UPD_MODEL,id:m.id,u:{tag:e.target.value.trim()}})}}
             style=${{...S_INPUT,fontSize:'var(--text-sm)',padding:'var(--space-1) var(--space-2)',flex:1,minWidth:0}} />
@@ -28717,16 +28780,16 @@ function startApp() {
             m._versionDiff.summary.modified>0 ? _cc_t('modelCard.modifiedCount','{n} changed',{n:m._versionDiff.summary.modified}) : null
           ].filter(Boolean).join(' · ') || _cc_t('modelCard.noChanges','No changes')}</span>
           <div style=${{display:'flex',gap:'var(--space-2)'}}>
-            <button onClick=${function(){showModelDiff(m);}} style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)'}}>${_cc_t('modelCard.showChanges','Show changes')}</button>
-            <button onClick=${function(){clearModelDiff(m);}} style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:'none',color:'var(--text-muted)'}}>${_cc_t('modelCard.hideChanges','Hide changes')}</button>
+            <button onClick=${function(){showModelDiff(m);}} style=${S_BTN_SECONDARY_SM}>${_cc_t('modelCard.showChanges','Show changes')}</button>
+            <button onClick=${function(){clearModelDiff(m);}} style=${S_BTN_GHOST_SM}>${_cc_t('modelCard.hideChanges','Hide changes')}</button>
           </div>
         </div>`}
         <div style=${{display:'flex',gap:'var(--space-2)',borderTop:'1px solid var(--border-subtle)',paddingTop:'var(--space-2)'}}>
           ${!(m.stats&&m.stats.source==='revit-direct') && html`<button onClick=${function(){if(window._ccParkModel)window._ccParkModel(m.id);}}
             title=${_cc_t('modelCard.parkTip','Park this model — free its memory now, restore with one click later. Nothing is deleted.')}
-            style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:'none',color:'var(--text-muted)'}}>${_cc_t('modelCard.park','Unload for now')}</button>`}
+            style=${S_BTN_SECONDARY_SM}>${_cc_t('modelCard.park','Unload for now')}</button>`}
           <span style=${{flex:1}}></span>
-          <button onClick=${remove} style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:'none',color:'var(--text-muted)'}}>${_cc_t('modelCard.remove','Remove')}</button>
+          <button onClick=${remove} title=${_cc_t('modelCard.removeTip','Remove this model from the project')} style=${S_BTN_DANGER_GHOST_SM}>${_cc_t('modelCard.remove','Remove')}</button>
         </div>
       </div>`}
     </div>`;
@@ -30957,6 +31020,78 @@ function startApp() {
     return html`<svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
       style=${{transform:open?'rotate(90deg)':'none',transition:'transform var(--duration-fast) var(--ease-standard)'}}><path d="M9 6l6 6-6 6"/></svg>`;
   }
+  // An element's IFC class as a plain word in the UI language ("Wall" /
+  // "Wand"): the common building and MEP classes are translated, any other
+  // class reads as its humanised name ("IfcFlowController" -> "Flow Controller").
+  var _CC_IFC_TYPE_WORD = {
+    Wall: function(){ return _cc_t('ifcType.Wall', 'Wall'); },
+    CurtainWall: function(){ return _cc_t('ifcType.CurtainWall', 'Curtain wall'); },
+    Slab: function(){ return _cc_t('ifcType.Slab', 'Slab'); },
+    Roof: function(){ return _cc_t('ifcType.Roof', 'Roof'); },
+    Beam: function(){ return _cc_t('ifcType.Beam', 'Beam'); },
+    Column: function(){ return _cc_t('ifcType.Column', 'Column'); },
+    Member: function(){ return _cc_t('ifcType.Member', 'Member'); },
+    Plate: function(){ return _cc_t('ifcType.Plate', 'Plate'); },
+    Footing: function(){ return _cc_t('ifcType.Footing', 'Footing'); },
+    Pile: function(){ return _cc_t('ifcType.Pile', 'Pile'); },
+    Door: function(){ return _cc_t('ifcType.Door', 'Door'); },
+    Window: function(){ return _cc_t('ifcType.Window', 'Window'); },
+    Stair: function(){ return _cc_t('ifcType.Stair', 'Stair'); },
+    StairFlight: function(){ return _cc_t('ifcType.StairFlight', 'Stair flight'); },
+    Ramp: function(){ return _cc_t('ifcType.Ramp', 'Ramp'); },
+    RampFlight: function(){ return _cc_t('ifcType.RampFlight', 'Ramp flight'); },
+    Railing: function(){ return _cc_t('ifcType.Railing', 'Railing'); },
+    Covering: function(){ return _cc_t('ifcType.Covering', 'Covering'); },
+    Space: function(){ return _cc_t('ifcType.Space', 'Room'); },
+    OpeningElement: function(){ return _cc_t('ifcType.OpeningElement', 'Opening'); },
+    BuildingElementProxy: function(){ return _cc_t('ifcType.BuildingElementProxy', 'Unclassified element'); },
+    FurnishingElement: function(){ return _cc_t('ifcType.FurnishingElement', 'Furnishing'); },
+    Furniture: function(){ return _cc_t('ifcType.Furniture', 'Furniture'); },
+    DuctSegment: function(){ return _cc_t('ifcType.DuctSegment', 'Duct segment'); },
+    DuctFitting: function(){ return _cc_t('ifcType.DuctFitting', 'Duct fitting'); },
+    PipeSegment: function(){ return _cc_t('ifcType.PipeSegment', 'Pipe segment'); },
+    PipeFitting: function(){ return _cc_t('ifcType.PipeFitting', 'Pipe fitting'); },
+    CableCarrierSegment: function(){ return _cc_t('ifcType.CableCarrierSegment', 'Cable tray'); },
+    CableSegment: function(){ return _cc_t('ifcType.CableSegment', 'Cable'); },
+    FlowSegment: function(){ return _cc_t('ifcType.FlowSegment', 'Flow segment'); },
+    FlowFitting: function(){ return _cc_t('ifcType.FlowFitting', 'Flow fitting'); },
+    FlowTerminal: function(){ return _cc_t('ifcType.FlowTerminal', 'Terminal'); },
+    AirTerminal: function(){ return _cc_t('ifcType.AirTerminal', 'Air terminal'); },
+    Valve: function(){ return _cc_t('ifcType.Valve', 'Valve'); },
+    Pump: function(){ return _cc_t('ifcType.Pump', 'Pump'); },
+    Fan: function(){ return _cc_t('ifcType.Fan', 'Fan'); },
+    LightFixture: function(){ return _cc_t('ifcType.LightFixture', 'Light fixture'); },
+    BuildingStorey: function(){ return _cc_t('ifcType.BuildingStorey', 'Storey'); }
+  };
+  function _ccIfcTypeWord(ifcType) {
+    var base = String(ifcType || '').replace(/^Ifc/, '').replace(/(StandardCase|ElementedCase)$/, '');
+    if (!base) return _cc_t('ifcType.Element', 'Element');
+    var f = _CC_IFC_TYPE_WORD[base];
+    return f ? f() : base.replace(/([a-z])([A-Z])/g, '$1 $2');
+  }
+  // Disclosure (DESIGN.md "Disclosure"): a full-width button with the
+  // chevron above + aria-expanded / aria-controls, the content mounted only
+  // while open. Replaces native <summary> markers (▼/▶ glyphs).
+  //   variant 'title'  — sub-section title (S_SUBTITLE), e.g. "Property sets (3)"
+  //   variant 'item'   — a group inside a card, e.g. one property set
+  var _ccDisclosureSeq = 0;
+  function CcDisclosure(props) {
+    var st = useState(!!props.defaultOpen), open = st[0], setOpen = st[1];
+    var idRef = useRef(null);
+    if (!idRef.current) idRef.current = 'cc-disc-' + (++_ccDisclosureSeq);
+    var item = props.variant === 'item';
+    var label = item
+      ? {fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',color:'var(--text-secondary)',lineHeight:'var(--leading-tight)'}
+      : S_SUBTITLE;
+    return html`<div data-cc-disclosure="1" style=${props.style || null}>
+      <button type="button" aria-expanded=${open?'true':'false'} aria-controls=${idRef.current} onClick=${function(){ setOpen(!open); }}
+        style=${{...S_BTN,...label,display:'flex',alignItems:'center',gap:'var(--space-1)',width:'100%',textAlign:'left',background:'none',padding:'var(--space-1) 0',minWidth:0}}>
+        <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)',flexShrink:0}}>${_ccChevron(open)}</span>
+        <span style=${{flex:1,minWidth:0,overflowWrap:'anywhere'}}>${props.title}</span>
+      </button>
+      ${open && html`<div id=${idRef.current} style=${props.bodyStyle || {padding:'var(--space-1) 0 0 var(--space-4)'}}>${props.children}</div>`}
+    </div>`;
+  }
   // Severity as a pill: the word carries the meaning, the colour only backs it.
   function _ccSeverityPillStyle(sev) {
     var m = { critical: ['var(--color-danger-bg)', 'var(--color-danger-fg)'], major: ['var(--color-warning-bg)', 'var(--color-warning-fg)'],
@@ -32417,7 +32552,14 @@ function startApp() {
     var packs = (typeof window._ccGetCountryPacks === 'function' && window._ccGetCountryPacks()) || [];
     packs.forEach(function(pk) {
       ((pk.dataQuality && pk.dataQuality.idsSpecs) || []).forEach(function(sp) {
-        out.push({name: sp.name + ' (' + pk.name + ')', description: sp.description, rules: sp.rules});
+        // name stays the result key; label / description / rule text are
+        // translated through the locale pack when the set has an id
+        // (regulations/README.md: country.<region>.ids.<id>.name / .description / .rules.<j>).
+        var tk = sp.id ? 'country.' + pk.region + '.ids.' + sp.id : null;
+        out.push({name: sp.name + ' (' + pk.name + ')', description: sp.description, rules: sp.rules,
+          label: (tk ? _cc_t(tk + '.name', sp.name) : sp.name) + ' (' + pk.name + ')',
+          descLabel: tk ? _cc_t(tk + '.description', sp.description) : sp.description,
+          ruleLabels: sp.rules.map(function(r, j){ return tk ? _cc_t(tk + '.rules.' + j, r.desc) : r.desc; })});
       });
     });
     return out;
@@ -33681,7 +33823,18 @@ function startApp() {
     var stdOther = (stds||[]).filter(function(x){ return !stdCounts(x); });
 
     var SEV = {error:'var(--color-danger-fg)', warn:'var(--color-warning-fg)', info:'var(--color-info-fg)'};
-    var SEC = {fontSize:'var(--text-xs)',fontWeight:'var(--weight-bold)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.08em',padding:'var(--space-2) var(--space-2)',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'space-between',background:'var(--bg-secondary)',borderBottom:'1px solid var(--border-subtle)'};
+    // Section header (DESIGN.md section label) as a disclosure button.
+    var SEC = Object.assign({}, S_BTN, S_SECTION_LABEL, {width:'100%',textAlign:'left',borderRadius:0,padding:'var(--space-2) var(--space-2)',display:'flex',alignItems:'center',gap:'var(--space-2)',background:'var(--bg-secondary)',borderBottom:'1px solid var(--border-subtle)'});
+    function secHeader(open, onToggle, label, extra, title) {
+      return html`<button type="button" aria-expanded=${open?'true':'false'} onClick=${onToggle} title=${title || null} style=${SEC}>
+        <span aria-hidden="true" style=${{display:'inline-flex',flexShrink:0}}>${_ccChevron(open)}</span>
+        <span style=${{flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${label}</span>
+        ${extra || null}
+      </button>`;
+    }
+    // Compact row action (3D / +issue / Color) — Secondary, neutral colours.
+    var ROW_BTN = Object.assign({}, S_BTN_SECONDARY_SM, {fontSize:'var(--text-2xs)',padding:'2px var(--space-2)',flexShrink:0});
+    var ROW_BTN_ON = Object.assign({}, ROW_BTN, {background:'var(--accent-bg-deep)',color:'var(--text-primary)',border:'1px solid var(--accent)'});
 
     function renderCheckGroup(checks, keys, title) {
       var issues = 0;
@@ -33692,29 +33845,31 @@ function startApp() {
           var col = SEV[ch.sev]||SEV.info;
           var isExp = expanded[key];
           return html`<div key=${key} style=${{borderBottom:'1px solid var(--border-subtle)'}}>
-            <div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',padding:'var(--space-1) var(--space-2)'}}>
-              <span style=${{fontSize:'var(--text-2xs)',fontWeight:700,minWidth:28,textAlign:'right',color:ch.count===0?'var(--color-success-fg)':col}}>${ch.count===0?'✓':ch.count}</span>
-              <span onClick=${ch.count>0?function(){toggleExp(key);}:null}
-                style=${{fontSize:'var(--text-xs)',color:ch.count===0?'var(--text-faint)':'var(--text-secondary)',flex:1,cursor:ch.count>0?'pointer':'default'}}>${ch.label}</span>
+            <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)'}}>
+              <span data-cc-status="1" style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',minWidth:'var(--space-6)',textAlign:'right',flexShrink:0,color:ch.count===0?'var(--color-success-fg)':col}}>${ch.count===0?'✓':ch.count}</span>
+              ${ch.count>0
+                ? html`<button type="button" aria-expanded=${isExp?'true':'false'} onClick=${function(){toggleExp(key);}}
+                    style=${{...S_BTN,background:'none',padding:'var(--space-1) 0',flex:1,minWidth:0,textAlign:'left',display:'flex',alignItems:'center',gap:'var(--space-1)',fontSize:'var(--text-xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-base)'}}>
+                    <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)',flexShrink:0}}>${_ccChevron(isExp)}</span>
+                    <span style=${{flex:1,minWidth:0}}>${ch.label}</span>
+                  </button>`
+                : html`<span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',flex:1,minWidth:0,lineHeight:'var(--leading-base)',paddingLeft:'var(--space-4)'}}>${ch.label}</span>`}
               ${ch.count>0 && html`<button onClick=${function(){highlightCheckElements(ch);}}
-                title=${_cc_t('dq.highlightIn3D','Highlight in 3D')}
-                style=${{fontSize:'var(--text-2xs)',padding:'1px var(--space-1)',background:'none',border:'1px solid '+col,borderRadius:'var(--radius-xs)',color:col,cursor:'pointer',lineHeight:'var(--leading-tight)',fontFamily:'inherit'}}>${_cc_t('dq.threeD','3D')}</button>`}
+                title=${_cc_t('dq.highlightIn3D','Highlight in 3D')} style=${ROW_BTN}>${_cc_t('dq.threeD','3D')}</button>`}
               ${ch.count>0 && html`<button onClick=${function(){createIssueFromCheck(key, ch);}}
-                title=${_cc_t('dq.createIssueFromCheck','Create issue from this check')}
-                style=${{fontSize:'var(--text-2xs)',padding:'1px var(--space-1)',background:'none',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',color:'var(--text-muted)',cursor:'pointer',lineHeight:'var(--leading-tight)',fontFamily:'inherit'}}>${_cc_t('dq.plusIssue','+issue')}</button>`}
-              ${ch.count>0 && html`<span onClick=${function(){toggleExp(key);}} style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',cursor:'pointer'}}>${isExp?'▲':'▼'}</span>`}
+                title=${_cc_t('dq.createIssueFromCheck','Create issue from this check')} style=${ROW_BTN}>${_cc_t('dq.plusIssue','+issue')}</button>`}
             </div>
-            ${isExp && ch.count>0 && html`<div style=${{padding:'var(--space-1) var(--space-2) var(--space-1) var(--space-10)',background:'var(--bg-primary)'}}>
+            ${isExp && ch.count>0 && html`<div style=${{padding:'var(--space-1) var(--space-2) var(--space-1) var(--space-8)',background:'var(--bg-primary)'}}>
               ${ch.ex.map(function(it) {
                 return html`<div key=${it.gid||it.name} style=${{padding:'var(--space-1) 0',borderBottom:'1px solid var(--border-subtle)'}}>
                   <div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)'}}>
-                    <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',flexShrink:0}}>${it.ifcType||''}</span>
-                    <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${it.name}>${it.name}</span>
-                    ${it.detail && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--color-warning-fg)',flexShrink:0}}>${it.detail}</span>`}
+                    <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',flexShrink:0}}>${it.ifcType ? _ccIfcTypeWord(it.ifcType) : ''}</span>
+                    <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title=${it.name}>${it.name}</span>
+                    ${it.detail && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',flexShrink:0}}>${it.detail}</span>`}
                   </div>
                 </div>`;
               })}
-              ${ch.count>ch.ex.length && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontStyle:'italic',padding:'var(--space-1) 0'}}>+${ch.count-ch.ex.length} more</div>`}
+              ${ch.count>ch.ex.length && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',padding:'var(--space-1) 0'}}>${_cc_t('dq.nMore','+{n} more',{n:ch.count-ch.ex.length})}</div>`}
             </div>`}
           </div>`;
         })}
@@ -33732,15 +33887,11 @@ function startApp() {
       var classKey = 'class:' + key, compKey = 'compliance:' + key;
       var COMP = ['Compliant','Minor issues','Major issues'];
       return html`<div key=${key}>
-        <div onClick=${function(){toggleSection(secKey);}} style=${SEC}>
-          <span title=${std.title || std.label}>${std.title || std.label}</span>
-          <span style=${{display:'flex',alignItems:'center',gap:'var(--space-1)'}}>
-            ${tot > 0 ? html`<span style=${{fontSize:'var(--text-2xs)',padding:'1px var(--space-1)',borderRadius:'var(--radius-pill)',background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',fontWeight:600}}>${tot}</span>` : null}
-            <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${open?'▲':'▼'}</span>
-          </span>
-        </div>
+        ${secHeader(open, function(){toggleSection(secKey);}, std.title || std.label,
+          tot > 0 ? html`<span class="cc-status-pill" style=${{background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',letterSpacing:0}}>${tot}</span>` : null,
+          std.title || std.label)}
         ${open && html`<div>
-          <div style=${{padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-2xs)',color:'var(--text-faint)',borderBottom:'1px solid var(--border-subtle)'}}>${_cc_t('dq.stdFrom','Country pack: {pack} · applies because: {why}',{pack:x.entry.packName, why:why})}</div>
+          <div style=${{padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:'var(--leading-base)',borderBottom:'1px solid var(--border-subtle)'}}>${_cc_t('dq.stdFrom','Country pack: {pack} · applies because: {why}',{pack:x.entry.packName, why:why})}</div>
           ${renderCheckGroup(res, stdKeys(x), std.label)}
 
           ${res._classDist && cls && html`<div style=${{borderTop:'1px solid var(--border-subtle)'}}>
@@ -33748,11 +33899,12 @@ function startApp() {
               <span style=${{fontSize:'var(--text-2xs)',fontWeight:600,color:'var(--text-muted)',flex:1}}>${cls.distLabel || _cc_t('dq.classDist','{name} distribution',{name:cls.name})}</span>
               <button onClick=${function(){colorByStdDist(x, 'class');}}
                 title=${activeDistKey===classKey?_cc_t('dq.clearColoring','Clear coloring'):_cc_t('dq.colorByClass','Color by {name}',{name:cls.name})}
-                style=${{fontSize:'var(--text-2xs)',padding:'1px var(--space-1)',background:activeDistKey===classKey?'var(--accent)':'none',border:'1px solid '+(activeDistKey===classKey?'var(--accent)':'var(--border)'),borderRadius:'var(--radius-xs)',
-                  color:activeDistKey===classKey?'var(--accent-contrast)':'var(--text-faint)',cursor:'pointer',lineHeight:'var(--leading-tight)',fontFamily:'inherit'}}>
+                aria-pressed=${activeDistKey===classKey?'true':'false'} style=${activeDistKey===classKey?ROW_BTN_ON:ROW_BTN}>
                 ${activeDistKey===classKey?_cc_t('dq.clear','Clear'):_cc_t('dq.color','Color')}
               </button>
-              <span onClick=${function(){toggleExp('dist_'+classKey);}} style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',cursor:'pointer'}}>${expanded['dist_'+classKey]?'▲':'▼'}</span>
+              <button type="button" aria-expanded=${expanded['dist_'+classKey]?'true':'false'} onClick=${function(){toggleExp('dist_'+classKey);}}
+                aria-label=${cls.distLabel || _cc_t('dq.classDist','{name} distribution',{name:cls.name})}
+                style=${{...S_BTN,background:'none',padding:'var(--space-1)',lineHeight:0,color:'var(--text-muted)',flexShrink:0}}>${_ccChevron(!!expanded['dist_'+classKey])}</button>
             </div>
             ${expanded['dist_'+classKey] && html`<div style=${{padding:'0 var(--space-2) var(--space-1)',background:'var(--bg-primary)'}}>
               ${Object.keys(res._classDist).sort(function(a,b){return (res._classDist[b]||[]).length-(res._classDist[a]||[]).length;}).slice(0,40).map(function(val, idx) {
@@ -33782,8 +33934,7 @@ function startApp() {
               <span style=${{fontSize:'var(--text-2xs)',fontWeight:600,color:'var(--text-muted)',flex:1}}>${(std.compliance && std.compliance.label) || _cc_t('dq.compliance','Compliance')}</span>
               <button onClick=${function(){colorByStdDist(x, 'compliance');}}
                 title=${activeDistKey===compKey?_cc_t('dq.clearColoring','Clear coloring'):_cc_t('dq.colorByCompliance','Color by compliance')}
-                style=${{fontSize:'var(--text-2xs)',padding:'1px var(--space-1)',background:activeDistKey===compKey?'var(--accent)':'none',border:'1px solid '+(activeDistKey===compKey?'var(--accent)':'var(--border)'),borderRadius:'var(--radius-xs)',
-                  color:activeDistKey===compKey?'var(--accent-contrast)':'var(--text-faint)',cursor:'pointer',lineHeight:'var(--leading-tight)',fontFamily:'inherit'}}>
+                aria-pressed=${activeDistKey===compKey?'true':'false'} style=${activeDistKey===compKey?ROW_BTN_ON:ROW_BTN}>
                 ${activeDistKey===compKey?_cc_t('dq.clear','Clear'):_cc_t('dq.color','Color')}
               </button>
             </div>
@@ -33809,7 +33960,7 @@ function startApp() {
               })}
             </div>
           </div>`}
-          ${std.note && html`<div style=${{padding:'var(--space-2) var(--space-2)',fontSize:'var(--text-2xs)',color:'var(--text-faint)',lineHeight:'var(--leading-base)'}}>${std.note}</div>`}
+          ${std.note && html`<div style=${{padding:'var(--space-2) var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:'var(--leading-base)'}}>${std.note}</div>`}
         </div>`}
       </div>`;
     }
@@ -33822,79 +33973,70 @@ function startApp() {
             <option value="all">${_cc_t('dq.allModels','All models')}</option>
             ${(s.models||[]).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}</option>`})}
           </select>
-          ${qc && html`<span style=${{fontSize:'var(--text-2xs)',padding:'2px var(--space-1)',borderRadius:'var(--radius-pill)',
+          ${qc && html`<span class="cc-status-pill" style=${{
             background:totalIssues+totalBim+totalStd===0?'var(--color-success-bg)':'var(--color-warning-bg)',
-            color:totalIssues+totalBim+totalStd===0?'var(--color-success-fg)':'var(--color-warning-fg)',fontWeight:600,flexShrink:0}}>
+            color:totalIssues+totalBim+totalStd===0?'var(--color-success-fg)':'var(--color-warning-fg)',flexShrink:0}}>
             ${totalIssues+totalBim+totalStd===0?_cc_t('dq.allPassed','All passed'):_cc_t('dq.issuesCount','{n} issues',{n:totalIssues+totalBim+totalStd})}
           </span>`}
-          <button onClick=${runChecks} disabled=${isRunning || !hasModels}
-            style=${{padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',fontSize:'var(--text-xs)',fontWeight:600,cursor:hasModels?'pointer':'not-allowed',border:'none',flexShrink:0,whiteSpace:'nowrap',
-              background:isRunning?'var(--bg-tertiary)':'var(--accent)',color:isRunning?'var(--text-faint)':'var(--accent-contrast)',fontFamily:'inherit',
-              opacity:hasModels?1:0.5}}>
+          <button onClick=${runChecks} disabled=${isRunning || !hasModels} aria-busy=${isRunning?'true':'false'}
+            style=${{...S_BTN_PRIMARY_SM,flexShrink:0,whiteSpace:'nowrap',cursor:(isRunning || !hasModels)?'not-allowed':'pointer',opacity:(isRunning || !hasModels)?0.5:1}}>
             ${isRunning ? _cc_t('dq.checking','Checking…') : qc ? _cc_t('dq.recheck','Re-check') : _cc_t('dq.runChecks','Run checks')}
           </button>
         </div>
-        ${lastChecked && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${_cc_t('dq.lastChecked','Last checked: {n} min ago',{n:Math.round((Date.now()-lastChecked)/60000)})}</span>`}
+        ${lastChecked && html`<span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${_cc_t('dq.lastChecked','Last checked: {n} min ago',{n:Math.round((Date.now()-lastChecked)/60000)})}</span>`}
         ${dqDelta && (dqDelta.worse.length>0 || dqDelta.better.length>0) && html`<div>
-          <div onClick=${function(){toggleExp('dq_delta');}} style=${{display:'flex',gap:'var(--space-1)',alignItems:'center',fontSize:'var(--text-2xs)',cursor:'pointer'}}>
-            <span style=${{color:'var(--text-faint)'}}>${_cc_t('dq.sinceLastRun','Since last run:')}</span>
-            ${dqDelta.worse.length>0 && html`<span style=${{color:'var(--color-danger-fg)',fontWeight:600}}>${_cc_t('dq.worse','{n} worse',{n:dqDelta.worse.length})}</span>`}
-            ${dqDelta.better.length>0 && html`<span style=${{color:'var(--color-success-fg)',fontWeight:600}}>${_cc_t('dq.better','{n} better',{n:dqDelta.better.length})}</span>`}
-            <span style=${{color:'var(--text-faint)'}}>${expanded['dq_delta']?'▲':'▼'}</span>
-          </div>
-          ${expanded['dq_delta'] && html`<div style=${{padding:'var(--space-1) 0 0 var(--space-1)',display:'flex',flexDirection:'column',gap:'2px'}}>
-            ${dqDelta.worse.map(function(w,i){return html`<div key=${'w'+i} style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>
-              <span style=${{color:'var(--color-danger-fg)'}}>▲</span> ${w.label}: ${w.from} → ${w.to}
+          <button type="button" aria-expanded=${expanded['dq_delta']?'true':'false'} onClick=${function(){toggleExp('dq_delta');}}
+            style=${{...S_BTN,background:'none',padding:'var(--space-1) 0',display:'flex',gap:'var(--space-1)',alignItems:'center',fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>
+            <span aria-hidden="true" style=${{display:'inline-flex',flexShrink:0}}>${_ccChevron(!!expanded['dq_delta'])}</span>
+            <span>${_cc_t('dq.sinceLastRun','Since last run:')}</span>
+            ${dqDelta.worse.length>0 && html`<span data-cc-status="1" style=${{color:'var(--color-danger-fg)',fontWeight:'var(--weight-semibold)'}}>${_cc_t('dq.worse','{n} worse',{n:dqDelta.worse.length})}</span>`}
+            ${dqDelta.better.length>0 && html`<span data-cc-status="1" style=${{color:'var(--color-success-fg)',fontWeight:'var(--weight-semibold)'}}>${_cc_t('dq.better','{n} better',{n:dqDelta.better.length})}</span>`}
+          </button>
+          ${expanded['dq_delta'] && html`<div style=${{padding:'var(--space-1) 0 0 var(--space-4)',display:'flex',flexDirection:'column',gap:'2px'}}>
+            ${dqDelta.worse.map(function(w,i){return html`<div key=${'w'+i} style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
+              ${_cc_t('dq.deltaWorse','{label}: {from} → {to} (worse)',{label:w.label, from:w.from, to:w.to})}
             </div>`;})}
-            ${dqDelta.better.map(function(bt,i){return html`<div key=${'b'+i} style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)'}}>
-              <span style=${{color:'var(--color-success-fg)'}}>▼</span> ${bt.label}: ${bt.from} → ${bt.to}
+            ${dqDelta.better.map(function(bt,i){return html`<div key=${'b'+i} style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
+              ${_cc_t('dq.deltaBetter','{label}: {from} → {to} (better)',{label:bt.label, from:bt.from, to:bt.to})}
             </div>`;})}
           </div>`}
         </div>`}
-        ${!hasModels && html`<span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${_cc_t('dq.loadModel','Load a model to run data quality checks.')}</span>`}
-        <div style=${{display:'flex',gap:'var(--space-1)',alignItems:'center',fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>
-          <span data-cc-status="1" style=${{width:7,height:7,borderRadius:'50%',background:'var(--color-danger)',flexShrink:0,display:'inline-block'}}></span> ${_cc_t('dq.error','Error')}
-          <span data-cc-status="1" style=${{width:7,height:7,borderRadius:'50%',background:'var(--color-warning)',flexShrink:0,display:'inline-block',marginLeft:'var(--space-1)'}}></span> ${_cc_t('dq.warning','Warning')}
-          <span data-cc-status="1" style=${{width:7,height:7,borderRadius:'50%',background:'var(--color-info)',flexShrink:0,display:'inline-block',marginLeft:'var(--space-1)'}}></span> ${_cc_t('dq.info','Info')}
-        </div>
+        ${!hasModels && html`<span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${_cc_t('dq.loadModel','Load a model to run data quality checks.')}</span>`}
+        ${qc && html`<div role="list" aria-label=${_cc_t('dq.legendAria','Severity colours')} style=${{display:'flex',gap:'var(--space-3)',alignItems:'center',flexWrap:'wrap',fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>
+          ${[['danger',_cc_t('dq.error','Error')],['warning',_cc_t('dq.warning','Warning')],['info',_cc_t('dq.info','Info')]].map(function(lg){
+            return html`<span key=${lg[0]} role="listitem" style=${{display:'inline-flex',alignItems:'center',gap:'var(--space-1)'}}>
+              <span data-cc-status="1" aria-hidden="true" style=${{width:8,height:8,borderRadius:'50%',background:'var(--color-' + lg[0] + ')',flexShrink:0}}></span>${lg[1]}
+            </span>`;
+          })}
+        </div>`}
       </div>
 
       <div style=${{flex:1,overflowY:'auto'}}>
         ${qc && html`<div>
-          <div onClick=${function(){toggleSection('general');}} style=${SEC}>
-            <span>${_cc_t('dq.generalChecks','General Checks')}</span>
-            <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${sections.general?'▲':'▼'}</span>
-          </div>
+          ${secHeader(!!sections.general, function(){toggleSection('general');}, _cc_t('dq.generalChecks','General Checks'))}
           ${sections.general && renderCheckGroup(qc, ['guidCollision','noGlobalId','proxy','genericName','duplicateName','noMaterial','noStorey','emptyGeometry','zeroLayers','unhostedOpenings','noProperties','noDescription'], 'General')}
         </div>`}
 
         ${bim && html`<div>
-          <div onClick=${function(){toggleSection('bim');}} style=${SEC}>
-            <span>${_cc_t('dq.bimChecks','BIM Model Checks')}</span>
-            <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${sections.bim?'▲':'▼'}</span>
-          </div>
+          ${secHeader(!!sections.bim, function(){toggleSection('bim');}, _cc_t('dq.bimChecks','BIM Model Checks'))}
           ${sections.bim && renderCheckGroup(bim, ['thicknessMismatch','noFireRating','noIsExternal','noLoadBearing','missingCommonPset','noClassification','noObjectType','invalidName','missingArea','missingVolume'], 'BIM')}
         </div>`}
 
         ${stdShown.map(function(x){ return renderStandard(x); })}
 
-        ${stdOther.length > 0 && html`<details style=${{borderBottom:'1px solid var(--border-subtle)'}}>
-          <summary style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',padding:'var(--space-2) var(--space-2)',cursor:'pointer'}}>${_cc_t('dq.otherStandards','National standards that don\u2019t apply here ({n})',{n:stdOther.length})}</summary>
-          <div style=${{padding:'0 var(--space-2) var(--space-2)',fontSize:'var(--text-2xs)',color:'var(--text-secondary)',display:'flex',flexDirection:'column',gap:'var(--space-1)',alignItems:'flex-start'}}>
+        ${stdOther.length > 0 && html`<${CcDisclosure} variant="item" style=${{borderBottom:'1px solid var(--border-subtle)',padding:'var(--space-1) var(--space-2)'}}
+          title=${_cc_t('dq.otherStandards','National standards that don\u2019t apply here ({n})',{n:stdOther.length})}
+          bodyStyle=${{padding:'0 0 var(--space-2) var(--space-4)',fontSize:'var(--text-xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-base)',display:'flex',flexDirection:'column',gap:'var(--space-2)',alignItems:'flex-start'}}>
             <span>${_cc_t('dq.otherStandardsHelp','These come from country packs. None is the active regional code and the project doesn\u2019t use their classification, so their findings aren\u2019t counted as issues.')}</span>
             ${stdOther.map(function(x){ return html`<div key=${x.entry.key} style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexWrap:'wrap'}}>
-              <span>${x.entry.std.label} <span style=${{color:'var(--text-faint)'}}>(${x.entry.packName})</span></span>
+              <span>${x.entry.std.label} <span style=${{color:'var(--text-muted)'}}>(${x.entry.packName})</span></span>
               <button onClick=${function(){ setStdAnyway(function(p){ var n = Object.assign({}, p); n[x.entry.key] = true; return n; }); }}
-                style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'none',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontFamily:'inherit'}}>${_cc_t('dq.checkAnyway','Check against {name} anyway',{name:x.entry.std.label})}</button>
+                style=${S_BTN_SECONDARY_SM}>${_cc_t('dq.checkAnyway','Check against {name} anyway',{name:x.entry.std.label})}</button>
             </div>`; })}
-          </div>
-        </details>`}
+        </${CcDisclosure}>`}
 
         ${bim && bim._dist && html`<div>
-          <div onClick=${function(){toggleSection('dist');}} style=${SEC}>
-            <span>${_cc_t('dataQuality.propertyDistribution','Property Distribution')}</span>
-            <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${sections.dist?'▲':'▼'}</span>
-          </div>
+          ${secHeader(!!sections.dist, function(){toggleSection('dist');}, _cc_t('dataQuality.propertyDistribution','Property Distribution'))}
           ${sections.dist && html`<div style=${{padding:'var(--space-1) 0'}}>
             ${['isExternal','loadBearing','fireRating','classification','objectType','material','storey'].map(function(dk) {
               var groups = bim._dist[dk]||{};
@@ -33905,15 +34047,17 @@ function startApp() {
               var isActive = activeDistKey === dk;
               return html`<div key=${dk} style=${{borderBottom:'1px solid var(--border-subtle)'}}>
                 <div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',padding:'var(--space-1) var(--space-2)'}}>
-                  <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',flex:1}}>${labels[dk]||dk}</span>
-                  <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)'}}>${_cc_t('dq.nValues','{n} values',{n:gKeys.length})}</span>
+                  <button type="button" aria-expanded=${expanded['dist_'+dk]?'true':'false'} onClick=${function(){toggleExp('dist_'+dk);}}
+                    style=${{...S_BTN,background:'none',padding:'var(--space-1) 0',flex:1,minWidth:0,textAlign:'left',display:'flex',alignItems:'center',gap:'var(--space-1)',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
+                    <span aria-hidden="true" style=${{display:'inline-flex',color:'var(--text-muted)',flexShrink:0}}>${_ccChevron(!!expanded['dist_'+dk])}</span>
+                    <span style=${{flex:1,minWidth:0}}>${labels[dk]||dk}</span>
+                  </button>
+                  <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',flexShrink:0}}>${_cc_t('dq.nValues','{n} values',{n:gKeys.length})}</span>
                   <button onClick=${function(){colorByDistribution(dk);}}
-                    title=${isActive?_cc_t('dq.clearColoring','Clear coloring'):_cc_t('dq.colorIn3dBy','Color in 3D by {key}',{key:dk})}
-                    style=${{fontSize:'var(--text-2xs)',padding:'1px var(--space-1)',background:isActive?'var(--accent)':'none',border:'1px solid '+(isActive?'var(--accent)':'var(--border)'),borderRadius:'var(--radius-xs)',
-                      color:isActive?'var(--accent-contrast)':'var(--text-faint)',cursor:'pointer',lineHeight:'var(--leading-tight)',fontFamily:'inherit'}}>
+                    title=${isActive?_cc_t('dq.clearColoring','Clear coloring'):_cc_t('dq.colorIn3dBy','Color in 3D by {key}',{key:labels[dk]||dk})}
+                    aria-pressed=${isActive?'true':'false'} style=${isActive?ROW_BTN_ON:ROW_BTN}>
                     ${isActive?_cc_t('dq.clear','Clear'):_cc_t('dq.color','Color')}
                   </button>
-                  <span onClick=${function(){toggleExp('dist_'+dk);}} style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',cursor:'pointer'}}>${expanded['dist_'+dk]?'▲':'▼'}</span>
                 </div>
                 ${expanded['dist_'+dk] && html`<div style=${{padding:'0 var(--space-2) var(--space-1)',background:'var(--bg-primary)'}}>
                   ${gKeys.slice(0,30).map(function(val, idx) {
@@ -33933,7 +34077,7 @@ function startApp() {
                       <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',flexShrink:0,minWidth:20,textAlign:'right'}}>${pct}%</span>
                     </div>`;
                   })}
-                  ${gKeys.length > 30 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontStyle:'italic',padding:'var(--space-1) 0'}}>+${gKeys.length-30} more values</div>`}
+                  ${gKeys.length > 30 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',padding:'var(--space-1) 0'}}>${_cc_t('dq.nMoreValues','+{n} more values',{n:gKeys.length-30})}</div>`}
                 </div>`}
               </div>`;
             })}
@@ -33941,34 +34085,27 @@ function startApp() {
         </div>`}
 
         <div style=${{borderTop:'2px solid var(--border)',marginTop:'var(--space-2)'}}>
-          <div style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-bold)',color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'.08em',padding:'var(--space-2) var(--space-2)',background:'var(--bg-secondary)',borderBottom:'1px solid var(--border-subtle)'}}>${_cc_t('dataQuality.idsRules','IDS Rules')}</div>
+          <div style=${{...S_SECTION_LABEL,padding:'var(--space-2) var(--space-2)',background:'var(--bg-secondary)',borderBottom:'1px solid var(--border-subtle)'}}>${_cc_t('dataQuality.idsRules','IDS Rules')}</div>
           <${IDSValidationPanel} s=${s} d=${d} />
         </div>
 
         ${qc && html`<div style=${{padding:'var(--space-2) var(--space-2)',borderTop:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',gap:'var(--space-1)'}}>
           <div style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flexWrap:'wrap'}}>
-            <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',flex:1}}>
-              ${qc._total} elements · ${totalIssues+totalBim+totalStd} finding${totalIssues+totalBim+totalStd!==1?'s':''}
+            <span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',flex:1,minWidth:0}}>
+              ${_cc_t('dq.footerSummary','{elements} elements · {findings} findings',{elements:window._ccNumFmt?window._ccNumFmt(qc._total):qc._total, findings:totalIssues+totalBim+totalStd})}
             </span>
-            ${activeDistKey && html`<button onClick=${function(){colorByDistribution(activeDistKey);}}
-              style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontFamily:'inherit'}}>${_cc_t('dq.clearColor','Clear color')}</button>`}
+            ${activeDistKey && html`<button onClick=${function(){colorByDistribution(activeDistKey);}} style=${S_BTN_GHOST_SM}>${_cc_t('dq.clearColor','Clear color')}</button>`}
             <button onClick=${function(){if(_unghostAll)_unghostAll();var S=window._ccState3d;if(S&&S._dqOrigColors){S._dqOrigColors.forEach(function(e){if(e.mesh&&e.mesh.material)e.mesh.material.color.copy(e.color);});S._dqOrigColors=null;}setActiveDistKey(null);invalidate();}}
-              style=${{fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-muted)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontFamily:'inherit'}}>${_cc_t('dq.resetView','Reset view')}</button>
+              style=${S_BTN_GHOST_SM}>${_cc_t('dq.resetView','Reset view')}</button>
           </div>
-          <div style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap'}}>
-            <button onClick=${function(){ if (window._ccDataQualityReport) window._ccDataQualityReport(s); }} title=${_cc_t('dq.printReportTitle','Open a print-ready report (Quality Score, BIM basics, national standards, accessibility)')}
-              style=${{flex:1,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600,fontFamily:'inherit',whiteSpace:'nowrap'}}>
-              ⎙ ${_cc_t('dq.printReport','Print report')}
-            </button>
-            <button onClick=${exportCSV} title=${_cc_t('dq.downloadCsvTitle','Download all findings as CSV')}
-              style=${{flex:1,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600,fontFamily:'inherit',whiteSpace:'nowrap'}}>
-              ↓ ${_cc_t('dq.exportCsv','Export CSV')}
-            </button>
+          <div style=${{display:'flex',gap:'var(--space-2)',flexWrap:'wrap'}}>
             ${totalIssues+totalBim+totalStd > 0 && html`<button onClick=${createAllIssues}
               title=${_cc_t('dq.createNIssuesTitle','Create {n} issues from all failing checks',{n:totalIssues+totalBim+totalStd})}
-              style=${{flex:1,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-xs)',cursor:'pointer',fontWeight:600,fontFamily:'inherit',whiteSpace:'nowrap'}}>
-              + ${_cc_t('dq.createAllIssues','Create all issues')}
-            </button>`}
+              style=${S_BTN_PRIMARY_SM}>${_cc_t('dq.createAllIssues','Create all issues')}</button>`}
+            <button onClick=${function(){ if (window._ccDataQualityReport) window._ccDataQualityReport(s); }} title=${_cc_t('dq.printReportTitle','Open a print-ready report (Quality Score, BIM basics, national standards, accessibility)')}
+              style=${S_BTN_SECONDARY_SM}>⎙ ${_cc_t('dq.printReport','Print report')}</button>
+            <button onClick=${exportCSV} title=${_cc_t('dq.downloadCsvTitle','Download all findings as CSV')}
+              style=${S_BTN_SECONDARY_SM}>${_cc_t('dq.exportCsv','Export CSV')}</button>
           </div>
         </div>`}
       </div>
@@ -34049,52 +34186,58 @@ function startApp() {
       filteredResults = ids.results.filter(function(r) { return r.severity === viewFilter; });
     }
 
-    return html`<div style=${{padding: 'var(--space-2)', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', overflowX: 'hidden'}}>
-      <span style=${{fontSize: 'var(--text-2xs)', color: 'var(--text-faint)', display: 'block'}}>${_cc_t('ids.validateDesc','Validate IFC models against Information Delivery Specifications')}</span>
+    // List rows (DESIGN.md): title --text-sm / medium, description --text-xs
+    // muted; sub-headings --text-xs semibold.
+    var SUBHEAD = {fontSize:'var(--text-xs)', fontWeight:'var(--weight-semibold)', color:'var(--text-secondary)', display:'block', marginBottom:'var(--space-1)', lineHeight:'var(--leading-tight)'};
+    var noSpec = selectedBundled.length === 0 && !customSpecs;
+    var runDisabled = ids.running || s.models.length === 0 || noSpec;
+    return html`<div style=${{padding: 'var(--space-2)', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', overflowX: 'hidden'}}>
+      <span style=${{fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'block', lineHeight: 'var(--leading-base)'}}>${_cc_t('ids.validateDesc','Validate IFC models against Information Delivery Specifications')}</span>
 
       <div>
-        <span style=${{fontSize: 'var(--text-2xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 'var(--space-1)'}}>${_cc_t('ids.builtInRuleSets','Built-in Rule Sets')}</span>
+        <span style=${SUBHEAD}>${_cc_t('ids.builtInRuleSets','Built-in Rule Sets')}</span>
         ${_ccBundledIdsSpecs().map(function(spec, idx) {
           var isSelected = selectedBundled.indexOf(idx) !== -1;
           // Built-in sets: a plain name + one sentence in the UI language (the
-          // stored name stays the result key). Pack sets show their own text.
+          // stored name stays the result key). Pack sets: their translated
+          // label (or own text when the locale pack has none).
           var txt = IDS_SPEC_TEXT[spec.key];
-          var nm = txt ? txt[0] : spec.name, ds = txt ? txt[1] : spec.description;
-          var tooltip = spec.rules.map(function(r){ return '• ' + r.desc; }).join('\n');
-          return html`<label key=${idx} title=${tooltip} style=${{display: 'flex', alignItems: 'flex-start', gap: 'var(--space-1)', padding: 'var(--space-1) 0', cursor: 'pointer', fontSize: 'var(--text-2xs)'}}>
+          var nm = txt ? txt[0] : (spec.label || spec.name), ds = txt ? txt[1] : (spec.descLabel || spec.description);
+          var tooltip = spec.rules.map(function(r, j){ return '· ' + ((spec.ruleLabels && spec.ruleLabels[j]) || r.desc); }).join('\n');
+          return html`<label key=${idx} title=${tooltip} style=${{display: 'flex', alignItems: 'flex-start', gap: 'var(--space-2)', padding: 'var(--space-1) 0', cursor: 'pointer'}}>
             <input type="checkbox" checked=${isSelected} onChange=${function() { toggleBundled(idx); }}
               style=${{accentColor: 'var(--accent)', marginTop: '2px', flexShrink: 0}} />
-            <div>
-              <div style=${{color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: 500}}>${nm}</div>
-              ${ds && html`<div style=${{color: 'var(--text-muted)', fontSize: 'var(--text-2xs)'}}>${ds}</div>`}
-            </div>
+            <span style=${{display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0}}>
+              <span style=${{fontSize: 'var(--text-sm)', color: 'var(--text-primary)', fontWeight: 'var(--weight-medium)', lineHeight: 'var(--leading-tight)'}}>${nm}</span>
+              ${ds && html`<span style=${{color: 'var(--text-muted)', fontSize: 'var(--text-xs)', lineHeight: 'var(--leading-base)'}}>${ds}</span>`}
+            </span>
           </label>`;
         })}
       </div>
 
       <div>
-        <span style=${{fontSize: 'var(--text-2xs)', color: 'var(--text-muted)', display: 'block', marginBottom: 'var(--space-1)'}}>${_cc_t('ids.customIdsFile','Custom IDS File')}</span>
-        <label style=${{...S_BTN, display:'inline-flex', alignItems:'center', fontSize:'var(--text-xs)', padding:'var(--space-1) var(--space-2)', background:'var(--bg-secondary)', color:'var(--text-primary)', border:'1px solid var(--border)', cursor:'pointer'}}>
+        <span style=${SUBHEAD}>${_cc_t('ids.customIdsFile','Custom IDS File')}</span>
+        <label style=${{...S_BTN_SECONDARY_SM, display:'inline-flex', alignItems:'center'}}>
           ${_cc_t('ids.chooseFile','Choose an IDS file…')}
           <input type="file" accept=".ids,.xml" class="cc-sr-only" onChange=${handleFileUpload} aria-label=${_cc_t('ids.customIdsFile','Custom IDS File')} />
         </label>
-        ${customSpecs && customSpecs.length > 0 && html`<div style=${{fontSize: 'var(--text-2xs)', color: 'var(--color-success-fg)', marginTop: 'var(--space-1)'}}>${(customSpecs.length===1?_cc_t('ids.loadedSpecsOne','Loaded: 1 specification'):_cc_t('ids.loadedSpecsMany','Loaded: {n} specifications',{n:customSpecs.length}))}</div>`}
+        ${customSpecs && customSpecs.length > 0 && html`<div role="status" style=${{fontSize: 'var(--text-xs)', color: 'var(--color-success-fg)', marginTop: 'var(--space-1)'}}>${(customSpecs.length===1?_cc_t('ids.loadedSpecsOne','Loaded: 1 specification'):_cc_t('ids.loadedSpecsMany','Loaded: {n} specifications',{n:customSpecs.length}))}</div>`}
         ${idsParseError && html`<div role="alert" style=${{fontSize: 'var(--text-2xs)', color: 'var(--color-danger-fg)', background:'var(--color-danger-bg)', border:'1px solid var(--color-danger)', borderRadius:'var(--radius-xs)', padding:'var(--space-1) var(--space-2)', marginTop: 'var(--space-1)'}}>${_cc_t('ids.parseFailed','Couldn\'t read this IDS file — {reason}',{reason:idsParseError})}</div>`}
       </div>
 
-      <div style=${{display: 'flex', gap: 'var(--space-1)'}}>
-        <button onClick=${runValidation} disabled=${ids.running || s.models.length === 0 || (selectedBundled.length === 0 && !customSpecs)}
-          style=${{...S_BTN, flex: 1, padding: 'var(--space-1)', background: ids.running ? 'var(--accent-bg)' : 'var(--accent)', color: ids.running ? 'var(--accent)' : 'var(--accent-contrast)', fontSize: 'var(--text-xs)', fontWeight: 600,
-            opacity: (ids.running || s.models.length === 0 || (selectedBundled.length === 0 && !customSpecs)) ? 0.5 : 1}}>
+      <div style=${{display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap'}}>
+        <button onClick=${runValidation} disabled=${runDisabled} aria-describedby=${noSpec ? 'cc-ids-run-hint' : null}
+          style=${{...S_BTN_PRIMARY_SM, cursor: runDisabled ? 'not-allowed' : 'pointer', opacity: runDisabled ? 0.5 : 1}}>
           ${ids.running ? _cc_t('ids.validating','Validating…') : _cc_t('ids.runValidation','Run Validation')}
         </button>
+        ${noSpec && !ids.running && html`<span id="cc-ids-run-hint" style=${{fontSize: 'var(--text-xs)', color: 'var(--text-muted)'}}>${_cc_t('ids.chooseRuleSetHint','Choose a rule set or an IDS file first.')}</span>`}
       </div>
 
       ${ids.summary && html`<div style=${{background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', padding: 'var(--space-2)'}}>
         <div style=${{display: 'flex', gap: 'var(--space-2)', marginBottom: 'var(--space-1)'}}>
-          <span style=${{fontSize: 'var(--text-2xs)', padding: '2px var(--space-1)', borderRadius: 'var(--radius-pill)', background: 'var(--color-success-bg)', color: 'var(--color-success-fg)', fontWeight: 600}}>${_cc_t('ids.passN','{n} Pass',{n:ids.summary.pass})}</span>
-          <span style=${{fontSize: 'var(--text-2xs)', padding: '2px var(--space-1)', borderRadius: 'var(--radius-pill)', background: 'var(--color-danger-bg)', color: 'var(--color-danger-fg)', fontWeight: 600}}>${_cc_t('ids.failN','{n} Fail',{n:ids.summary.fail})}</span>
-          <span style=${{fontSize: 'var(--text-2xs)', padding: '2px var(--space-1)', borderRadius: 'var(--radius-pill)', background: 'var(--tag-bg)', color: 'var(--text-secondary)'}}>${_cc_t('ids.totalN','{n} Total',{n:ids.summary.total})}</span>
+          <span class="cc-status-pill" style=${{background: 'var(--color-success-bg)', color: 'var(--color-success-fg)'}}>${_cc_t('ids.passN','{n} Pass',{n:ids.summary.pass})}</span>
+          <span class="cc-status-pill" style=${{background: 'var(--color-danger-bg)', color: 'var(--color-danger-fg)'}}>${_cc_t('ids.failN','{n} Fail',{n:ids.summary.fail})}</span>
+          <span class="cc-status-pill" style=${{background: 'var(--bg-tertiary)', color: 'var(--text-secondary)'}}>${_cc_t('ids.totalN','{n} Total',{n:ids.summary.total})}</span>
         </div>
         ${Object.keys(ids.summary.bySpec).map(function(sn) {
           var ss = ids.summary.bySpec[sn];
@@ -34103,10 +34246,10 @@ function startApp() {
           return html`<div key=${sn} style=${{marginBottom: 'var(--space-1)'}}>
             <div style=${{display: 'flex', justifyContent: 'space-between', fontSize: 'var(--text-2xs)'}}>
               <span style=${{color: 'var(--text-secondary)'}}>${sn}</span>
-              <span style=${{color: pct >= 80 ? 'var(--color-success-fg)' : pct >= 50 ? 'var(--color-warning-fg)' : 'var(--color-danger-fg)'}}>${pct}%</span>
+              <span data-cc-status="1" style=${{fontFamily: 'var(--font-mono)', color: pct >= 80 ? 'var(--color-success-fg)' : pct >= 50 ? 'var(--color-warning-fg)' : 'var(--color-danger-fg)'}}>${pct}%</span>
             </div>
             <div style=${{height: 3, background: 'var(--bg-primary)', borderRadius: 'var(--radius-xs)', overflow: 'hidden'}}>
-              <div style=${{height: '100%', width: pct + '%', background: pct >= 80 ? 'var(--color-success)' : pct >= 50 ? 'var(--color-warning)' : 'var(--color-danger)', borderRadius: 'var(--radius-xs)'}}></div>
+              <div data-cc-status="1" style=${{height: '100%', width: pct + '%', background: pct >= 80 ? 'var(--color-success)' : pct >= 50 ? 'var(--color-warning)' : 'var(--color-danger)', borderRadius: 'var(--radius-xs)'}}></div>
             </div>
             ${(ss.note || ss.unchecked > 0) && html`<div style=${{fontSize: 'var(--text-2xs)', color: 'var(--text-faint)', marginTop: '1px'}}>
               ${ss.note}${ss.unchecked > 0 ? ((ss.note ? ' · ' : '') + (ss.unchecked===1?_cc_t('ids.partiallyCheckedOne','1 element partially checked'):_cc_t('ids.partiallyCheckedMany','{n} elements partially checked',{n:ss.unchecked}))) : ''}
@@ -34115,23 +34258,23 @@ function startApp() {
         })}
 
         <div style=${{display: 'flex', gap: 'var(--space-1)', marginTop: 'var(--space-2)', flexWrap: 'wrap'}}>
-          <button onClick=${function() { setShowResults(!showResults); }}
-            style=${{...S_BTN, fontSize: 'var(--text-2xs)', padding: 'var(--space-1) var(--space-1)', background: showResults ? 'var(--accent-bg)' : 'var(--bg-primary)', color: showResults ? 'var(--accent-subtle)' : 'var(--text-muted)'}}>
-            ${showResults ? _cc_t('common.hide','Hide') : _cc_t('common.show','Show')} ${_cc_t('ids.failures','Failures')}</button>
+          <button onClick=${function() { setShowResults(!showResults); }} aria-expanded=${showResults ? 'true' : 'false'}
+            style=${S_BTN_SECONDARY_SM}>
+            ${showResults ? _cc_t('ids.hideFailures','Hide failures') : _cc_t('ids.showFailures','Show failures')}</button>
           <button onClick=${function() { highlightValidationFailures(s.models, ids.results); }}
-            style=${{...S_BTN, fontSize: 'var(--text-2xs)', padding: 'var(--space-1) var(--space-1)', background: 'var(--bg-primary)', color: 'var(--color-danger-fg)'}} title=${_cc_t('ids.highlight3dTip','Ghost passing elements, highlight failures')}>
+            style=${S_BTN_SECONDARY_SM} title=${_cc_t('ids.highlight3dTip','Ghost passing elements, highlight failures')}>
             ${_cc_t('ids.highlightIn3d','Highlight in 3D')}</button>
           <button onClick=${function() { if (_unghostAll) _unghostAll(); invalidate(5); }}
-            style=${{...S_BTN, fontSize: 'var(--text-2xs)', padding: 'var(--space-1) var(--space-1)', background: 'var(--bg-primary)', color: 'var(--text-muted)'}}>
+            style=${S_BTN_GHOST_SM}>
             ${_cc_t('ids.clearHighlight','Clear Highlight')}</button>
           <button onClick=${downloadReport}
-            style=${{...S_BTN, fontSize: 'var(--text-2xs)', padding: 'var(--space-1) var(--space-1)', background: 'var(--bg-primary)', color: 'var(--color-info-fg)'}}>
+            style=${S_BTN_SECONDARY_SM}>
             ${_cc_t('ids.htmlReport','HTML Report')}</button>
           <button onClick=${function() { exportValidationBCF(ids.results, '2.1'); }}
-            style=${{...S_BTN, fontSize: 'var(--text-2xs)', padding: 'var(--space-1) var(--space-1)', background: 'var(--bg-primary)', color: 'var(--accent)'}}>
+            style=${S_BTN_SECONDARY_SM}>
             BCF 2.1</button>
           <button onClick=${function() { exportValidationBCF(ids.results, '3.0'); }}
-            style=${{...S_BTN, fontSize: 'var(--text-2xs)', padding: 'var(--space-1) var(--space-1)', background: 'var(--bg-primary)', color: 'var(--accent)'}}>
+            style=${S_BTN_SECONDARY_SM}>
             BCF 3.0</button>
         </div>
       </div>`}
@@ -34140,10 +34283,10 @@ function startApp() {
         <div style=${{display: 'flex', gap: 'var(--space-1)', marginBottom: 'var(--space-1)'}}>
           ${['all', 'error', 'warning', 'info'].map(function(f) {
             var count = f === 'all' ? ids.results.length : ids.results.filter(function(r) { return r.severity === f; }).length;
-            return html`<button key=${f} onClick=${function() { setViewFilter(f); }}
-              style=${{...S_BTN, fontSize: 'var(--text-2xs)', padding: '2px var(--space-1)',
-                background: viewFilter === f ? (f === 'error' ? 'var(--color-danger-bg)' : f === 'warning' ? 'var(--color-warning-bg)' : 'var(--accent-bg)') : 'var(--bg-primary)',
-                color: viewFilter === f ? (f === 'error' ? 'var(--color-danger-fg)' : f === 'warning' ? 'var(--color-warning-fg)' : 'var(--accent)') : 'var(--text-faint)'}}>${f === 'all' ? _cc_t('common.all','All') : (_cc_t('ids.severity.'+f, f.charAt(0).toUpperCase() + f.slice(1)))} (${count})</button>`;
+            return html`<button key=${f} onClick=${function() { setViewFilter(f); }} aria-pressed=${viewFilter === f ? 'true' : 'false'}
+              style=${{...S_BTN_SECONDARY_SM, borderRadius: 'var(--radius-pill)', fontSize: 'var(--text-2xs)', padding: '2px var(--space-2)',
+                background: viewFilter === f ? 'var(--accent-bg-deep)' : 'var(--bg-secondary)', border: '1px solid ' + (viewFilter === f ? 'var(--accent)' : 'var(--border)'),
+                color: viewFilter === f ? 'var(--text-primary)' : 'var(--text-secondary)'}}>${f === 'all' ? _cc_t('common.all','All') : (_cc_t('ids.severity.'+f, f.charAt(0).toUpperCase() + f.slice(1)))} <span style=${{fontFamily: 'var(--font-mono)', color: 'var(--text-muted)'}}>${count}</span></button>`;
           })}
         </div>
         <div style=${{maxHeight: '300px', overflowY: 'auto'}}>
@@ -34155,16 +34298,16 @@ function startApp() {
                 if (_highlightById) _highlightById(r.elementId);
                 if (_fitToElement) _fitToElement(r.elementId);
               }}
-              title=${r.ruleDesc + '\nStorey: ' + (r.storey||'—') + '\nGlobalId: ' + (r.globalId||'—')}
+              title=${r.ruleDesc + '\n' + _cc_t('ids.resultTipStorey','Storey: {v}',{v:r.storey||'—'}) + '\n' + _cc_t('ids.resultTipGlobalId','GlobalId: {v}',{v:r.globalId||'—'})}
               style=${{padding: 'var(--space-1) var(--space-2)', borderBottom: '1px solid var(--border-subtle)', cursor: 'pointer', fontSize: 'var(--text-2xs)',
                 display: 'flex', gap: 'var(--space-1)', alignItems: 'center',
                 background: isSel ? 'var(--accent-bg-deep)' : 'transparent',
                 borderLeft: isSel ? '2px solid var(--accent)' : '2px solid transparent'}}>
-              <span style=${{flexShrink: 0, width: 6, height: 6, borderRadius: '50%',
+              <span data-cc-status="1" aria-hidden="true" style=${{flexShrink: 0, width: 8, height: 8, borderRadius: '50%',
                 background: r.severity === 'error' ? 'var(--color-danger)' : r.severity === 'warning' ? 'var(--color-warning)' : 'var(--color-info)'}}></span>
               <span style=${{color: 'var(--text-muted)', flexShrink: 0}}>${r.ifcType}</span>
               <span style=${{color: 'var(--text-secondary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>${r.elementName}</span>
-              <span style=${{color: 'var(--text-faint)', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 80}}>${r.ruleDesc}</span>
+              <span style=${{color: 'var(--text-muted)', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 80}}>${r.ruleDesc}</span>
             </div>`;
           })}
           ${filteredResults.length > 200 && html`<div style=${{color: 'var(--text-faint)', padding: 'var(--space-1)', textAlign: 'center', fontSize: 'var(--text-2xs)'}}>${_cc_t('ids.moreResults','+{n} more results',{n:filteredResults.length - 200})}</div>`}
@@ -40003,7 +40146,7 @@ function startApp() {
     },[]);
     // Task D: role="dialog" aria-modal="true" modals must trap/move focus.
     var cardRef = useRef(null);
-    _ccUseFocusTrap(cardRef, true);
+    _ccUseFocusTrap(cardRef, true, {initialFocus:'container'});
     function toggleConsent() {
       var nv = !dataConsent;
       setDataConsent(nv);
@@ -40030,9 +40173,9 @@ function startApp() {
         <span id="cc-settings-title" style=${S_MODAL_TITLE}>${_cc_t('panel.settings.title','Settings')}</span>
         <button onClick=${function(){d({t:A.SETTINGS,v:false})}} style=${S_MODAL_CLOSE} aria-label=${_cc_t('settings.closeAria','Close settings')}>✕</button>
       </div>
-      <div style=${{display:'flex',flex:1,minHeight:0,overflow:'hidden'}}>
-        <div style=${{width:168,flexShrink:0,padding:'var(--space-2) var(--space-2) var(--space-3) 0',borderRight:'1px solid var(--border-subtle)',overflowY:'auto',display:'flex',flexDirection:'column'}}>
-          <div role="tablist" aria-orientation="vertical" aria-label=${_cc_t('settings.sectionsAria','Settings sections')} style=${{display:'flex',flexDirection:'column',gap:2}}>
+      <div class="cc-settings-layout" style=${{display:'flex',flex:1,minHeight:0,overflow:'hidden'}}>
+        <div class="cc-settings-nav" style=${{width:168,flexShrink:0,padding:'var(--space-2) var(--space-2) var(--space-3) 0',borderRight:'1px solid var(--border-subtle)',overflowY:'auto',display:'flex',flexDirection:'column'}}>
+          <div class="cc-settings-tabs" role="tablist" aria-orientation="vertical" aria-label=${_cc_t('settings.sectionsAria','Settings sections')} style=${{display:'flex',flexDirection:'column',gap:2}}>
             ${SETTINGS_TABS.map(function(t){return html`<button key=${t.id} role="tab" aria-selected=${activeTab===t.id}
               onClick=${function(){setActiveTab(t.id);}} style=${NAVBTN(activeTab===t.id)}>${_cc_t('settings.tab.' + t.id, t.label)}</button>`;})}
           </div>
@@ -40197,7 +40340,7 @@ function startApp() {
             <div style=${TSUB}>${_cc_t('settings.measurement.calibrateSub','Rare. Pick two points whose real distance you know to fix mis-scaled imports. The model geometry won\'t change — only display values do.')}</div>
           </div>
           <button onClick=${function(){if(window._ccStartCalibration)window._ccStartCalibration();d({t:A.SETTINGS,v:false});}}
-            style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',padding:'var(--space-1) var(--space-3)',fontSize:'var(--text-sm)',cursor:'pointer',fontFamily:'inherit'}}>
+            style=${{background:'var(--bg-tertiary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)',padding:'var(--space-1) var(--space-3)',fontSize:'var(--text-sm)',cursor:'pointer',fontFamily:'inherit',flexShrink:0,whiteSpace:'nowrap'}}>
             ${_cc_t('settings.measurement.calibrateBtn','Calibrate…')}
           </button>
         </div>
@@ -47618,7 +47761,7 @@ function startApp() {
           borderRight:'none', borderRadius:'var(--radius-md) 0 0 var(--radius-md)', padding:'var(--space-2) var(--space-1)',
           cursor:'pointer', color:'var(--text-secondary)', fontSize:'var(--text-xs)',
           writingMode:'vertical-rl', boxShadow:'var(--shadow-md)'
-        }}>${drawerEl ? 'Details ›' : 'Ask AI ›'}</button>`;
+        }}>${drawerEl ? _cc_t('aiChat.tabDetails','Details') : _cc_t('aiChat.tabAskAi','Ask AI')}</button>`;
     }
 
     // ── Measurements tab content — full management surface (T2.4) ──
@@ -47745,8 +47888,11 @@ function startApp() {
       var workspace = s.workspace || 'present';
       var WRAP = {flex:1,overflowY:'auto',padding:'var(--space-3) var(--space-4)',display:'flex',flexDirection:'column',gap:'var(--space-2)',minWidth:0};
       var ROW  = {display:'flex',gap:'var(--space-2)',alignItems:'baseline',padding:'var(--space-1) 0',borderBottom:'1px solid var(--border-subtle)',fontSize:'var(--text-xs)'};
-      var LBL  = {color:'var(--text-muted)',minWidth:88,flexShrink:0};
-      var VAL  = {color:'var(--text-primary)',flex:1,wordBreak:'break-word'};
+      // Label / value columns: the label column has one width and wraps a
+      // long label ("Predefined type") instead of pushing its value out of
+      // line with the rows above and below.
+      var LBL  = {color:'var(--text-muted)',flex:'0 0 38%',minWidth:0,overflowWrap:'anywhere'};
+      var VAL  = {color:'var(--text-primary)',flex:1,minWidth:0,wordBreak:'break-word'};
       var CARD = {padding:'var(--space-3) 0 0',borderTop:'1px solid var(--border-subtle)',flexShrink:0,minWidth:0};
       var HDR  = Object.assign({}, S_SUBTITLE, {marginBottom:'var(--space-2)'});
       var MONO = {fontFamily:'var(--font-mono)',fontSize:'var(--text-2xs)'};
@@ -47781,8 +47927,8 @@ function startApp() {
         }
       }
       var ep = (_latestEl&&_latestEl.props)||(el&&el.props)||null;
-      var typeName   = String(ep&&ep.ifcType||'Element').replace(/^Ifc/,'').replace(/StandardCase$/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
-      var elName     = ep&&ep.name||'Unnamed element';
+      var typeName   = _ccIfcTypeWord(ep&&ep.ifcType);
+      var elName     = ep&&ep.name||_cc_t('inspector.unnamedElement','Unnamed element');
       var storey     = ep&&(ep.storey||ep.psets&&ep.psets['Constraints']&&ep.psets['Constraints']['Base Constraint'])||null;
       var discipline = el.modelName||'';
       var psetCount  = ep&&ep.psets ? Object.keys(ep.psets).length : 0;
@@ -47840,7 +47986,7 @@ function startApp() {
             title=${_cc_t('navigator.clickHighlightDblFrame','Click to highlight, double-click to frame')}
             style=${{...ROW,cursor:'pointer'}}>
             <span style=${{...LBL,minWidth:0,flex:1,color:'var(--text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${ap.name||('#'+ae.expressId)}</span>
-            <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',flexShrink:0}}>${(ap.ifcType||'').replace(/^Ifc/,'')}</span>
+            <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',flexShrink:0}}>${ap.ifcType ? _ccIfcTypeWord(ap.ifcType) : ''}</span>
           </div>`;
         })}
         ${_adjEls.length>20 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontStyle:'italic',paddingTop:'var(--space-1)'}}>+${_adjEls.length-20}</div>`}
@@ -47981,14 +48127,15 @@ function startApp() {
 
       // Data quality checks (used in both Clash & DQ workspaces)
       var nameGenerated = ep&&ep.name&&/^Basic |^\d+$|^[\w]+:\d+$/.test(ep.name);
+      var _dqMissing = _cc_t('inspector.dq.missing', 'missing'), _dqNone = _cc_t('inspector.dq.none', 'none');
       var dqChecks = [
-        {ok:!!(ep&&ep.globalId),    label:'GlobalId',            detail: ep&&ep.globalId ? ep.globalId.slice(0,8)+'…' : 'missing'},
-        {ok:!!(ep&&ep.name) && !nameGenerated, label:'Name',     detail: nameGenerated ? 'auto-generated' : (ep&&ep.name||'missing')},
-        {ok:psetCount>0,            label:'Psets',               detail: psetCount>0 ? psetCount+' pset'+(psetCount===1?'':'s') : 'none'},
-        {ok:qtyCount>0,             label:'Quantities',          detail: qtyCount>0 ? qtyCount+' values' : 'none'},
-        {ok:!!(ep&&ep.material),    label:'Material',            detail: ep&&ep.material||'not assigned'},
-        {ok:!!(ep&&ep.storey),      label:'Floor/Storey',        detail: ep&&ep.storey||'unassigned'},
-        {ok:!!(ep&&ep.objectType),  label:'Object type',         detail: ep&&ep.objectType||'not set'},
+        {key:'globalId',  ok:!!(ep&&ep.globalId),    label:_cc_t('details.globalId','GlobalId'),          detail: ep&&ep.globalId ? ep.globalId.slice(0,8)+'…' : _dqMissing, mono:!!(ep&&ep.globalId)},
+        {key:'name',      ok:!!(ep&&ep.name) && !nameGenerated, label:_cc_t('inspector.dq.name','Name'), detail: nameGenerated ? _cc_t('inspector.dq.autoGenerated','generated by the authoring tool') : (ep&&ep.name||_dqMissing)},
+        {key:'psets',     ok:psetCount>0,            label:_cc_t('inspector.dq.psets','Property sets'),   detail: psetCount>0 ? (psetCount===1 ? _cc_t('inspector.dq.psetOne','1 set') : _cc_t('inspector.dq.psetMany','{n} sets',{n:psetCount})) : _dqNone},
+        {key:'quantities',ok:qtyCount>0,             label:_cc_t('inspector.dq.quantities','Quantities'), detail: qtyCount>0 ? (qtyCount===1 ? _cc_t('inspector.dq.valueOne','1 value') : _cc_t('inspector.dq.valueMany','{n} values',{n:qtyCount})) : _dqNone},
+        {key:'material',  ok:!!(ep&&ep.material),    label:_cc_t('inspector.dq.material','Material'),     detail: ep&&ep.material||_cc_t('inspector.dq.notAssigned','not assigned')},
+        {key:'storey',    ok:!!(ep&&ep.storey),      label:_cc_t('inspector.dq.storey','Storey'),         detail: ep&&ep.storey||_cc_t('inspector.dq.notAssigned','not assigned')},
+        {key:'objectType',ok:!!(ep&&ep.objectType),  label:_cc_t('inspector.dq.objectType','Object type'),detail: ep&&ep.objectType||_cc_t('inspector.dq.notSet','not set')},
       ];
       var dqScore = dqChecks.filter(function(c){return c.ok;}).length;
       var dqTotal = dqChecks.length;
@@ -48015,27 +48162,27 @@ function startApp() {
         var propRows = [];
         function addRow(label, value){ if(value) propRows.push({label:label, value:value}); }
 
-        addRow('Type', typeName || typeWord);
+        addRow(_cc_t('inspector.row.type','Type'), typeName || typeWord);
         // Level: prefer storey name, fallback to Base Constraint from psets
         var _levelDisplay = storey || (constraintProps.find(function(p){return p.label==='Base Constraint';}) || {}).value || null;
-        addRow('Level', _levelDisplay);
-        addRow('Model', discipline);
-        addRow('Material', ep && ep.material);
-        addRow('Classification', ep && ep.objectType);
+        addRow(_cc_t('inspector.row.storey','Storey'), _levelDisplay);
+        addRow(_cc_t('inspector.row.model','Model'), discipline);
+        addRow(_cc_t('inspector.row.material','Material'), ep && ep.material);
+        addRow(_cc_t('inspector.row.objectType','Object type'), ep && ep.objectType);
         // Base/top offsets if meaningful (non-zero)
         var _baseOff = constraintProps.find(function(p){return p.label==='Base Offset';});
-        if (_baseOff && _baseOff.value !== '0') addRow('Base Offset', _baseOff.value);
+        if (_baseOff && _baseOff.value !== '0') addRow(_cc_t('inspector.row.baseOffset','Base offset'), _baseOff.value);
         var _topConstr = constraintProps.find(function(p){return p.label==='Top Constraint';});
-        if (_topConstr) addRow('Top Constraint', _topConstr.value);
+        if (_topConstr) addRow(_cc_t('inspector.row.topConstraint','Top constraint'), _topConstr.value);
         var _topOff = constraintProps.find(function(p){return p.label==='Top Offset';});
-        if (_topOff && _topOff.value !== '0') addRow('Top Offset', _topOff.value);
+        if (_topOff && _topOff.value !== '0') addRow(_cc_t('inspector.row.topOffset','Top offset'), _topOff.value);
         var _unconH = constraintProps.find(function(p){return p.label==='Unconnected Height';});
-        if (_unconH) addRow('Height', _unconH.value);
+        if (_unconH) addRow(_cc_t('inspector.row.height','Height'), _unconH.value);
         // Structural flags in present mode
         var _loadBear = structProps.find(function(p){return p.label==='Load Bearing';});
-        if (_loadBear && (_loadBear.value==='true'||_loadBear.value==='1')) addRow('Structural', 'Load Bearing');
+        if (_loadBear && (_loadBear.value==='true'||_loadBear.value==='1')) addRow(_cc_t('inspector.row.structural','Structural'), _cc_t('inspector.row.loadBearing','Load bearing'));
         var _isExt = structProps.find(function(p){return p.label==='Is External';});
-        if (_isExt) addRow('External', _isExt.value==='true'||_isExt.value==='1'?'Yes':'No');
+        if (_isExt) addRow(_cc_t('inspector.row.external','External'), _isExt.value==='true'||_isExt.value==='1'?_cc_t('common.yes','Yes'):_cc_t('common.no','No'));
 
         // Dimensions row
         if (dL || dW || dH) {
@@ -48044,18 +48191,18 @@ function startApp() {
             dW ? dW.f(dW.v) + (dW.l==='Thickness'?' T':' W') : null,
             dH ? dH.f(dH.v) + (dH.l==='Depth'?' D':' H') : null
           ].filter(Boolean).join('  ·  ');
-          addRow('Dimensions', dimStr);
+          addRow(_cc_t('inspector.row.dimensions','Dimensions'), dimStr);
         }
-        if (dA) addRow('Area', dA.f(dA.v));
-        if (dV) addRow('Volume', dV.f(dV.v));
+        if (dA) addRow(_cc_t('inspector.row.area','Area'), dA.f(dA.v));
+        if (dV) addRow(_cc_t('inspector.row.volume','Volume'), dV.f(dV.v));
 
         var LABEL_STYLE = {
           fontSize:'var(--text-xs)', fontWeight:'var(--weight-medium)', color:'var(--text-muted)',
-          width:90, flexShrink:0, paddingTop:'var(--space-1)'
+          flex:'0 0 38%', minWidth:0, overflowWrap:'anywhere', paddingTop:'var(--space-1)'
         };
         var VALUE_STYLE = {
           fontSize:'var(--text-sm)', color:'var(--text-primary)', fontWeight:'var(--weight-medium)',
-          lineHeight:'var(--leading-base)', wordBreak:'break-word'
+          lineHeight:'var(--leading-base)', wordBreak:'break-word', flex:1, minWidth:0
         };
         var ROW_STYLE = {
           display:'flex', gap:'var(--space-3)', padding:'var(--space-1) 0',
@@ -48066,8 +48213,8 @@ function startApp() {
         var ctxBadges = null;
         if (linkedClashes.length || linkedIssues.length) {
           ctxBadges = html`<div style=${{display:'flex',gap:'var(--space-2)',marginTop:'var(--space-2)',flexWrap:'wrap'}}>
-            ${linkedClashes.length ? html`<span class="cc-status-pill" style=${{background:'var(--color-danger-bg)',color:'var(--color-danger-fg)',border:'1px solid var(--color-danger-border)'}}>${linkedClashes.length} clash${linkedClashes.length===1?'':'es'}</span>` : null}
-            ${linkedIssues.length  ? html`<span class="cc-status-pill" style=${{background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--border)'}}>${linkedIssues.length} issue${linkedIssues.length===1?'':'s'}</span>` : null}
+            ${linkedClashes.length ? html`<span class="cc-status-pill" style=${{background:'var(--color-danger-bg)',color:'var(--color-danger-fg)',border:'1px solid var(--color-danger-border)'}}>${linkedClashes.length===1 ? _cc_t('inspector.clashOne','1 clash') : _cc_t('inspector.clashMany','{n} clashes',{n:linkedClashes.length})}</span>` : null}
+            ${linkedIssues.length  ? html`<span class="cc-status-pill" style=${{background:'var(--accent-bg)',color:'var(--accent)',border:'1px solid var(--border)'}}>${linkedIssues.length===1 ? _cc_t('inspector.issueOne','1 issue') : _cc_t('inspector.issueMany','{n} issues',{n:linkedIssues.length})}</span>` : null}
           </div>`;
         }
 
@@ -48091,27 +48238,20 @@ function startApp() {
             ${ep&&ep.globalId && html`<div style=${ROW_STYLE}>
               <span style=${LABEL_STYLE}>${_cc_t('details.globalId','GlobalId')}</span>
               <span style=${{...VALUE_STYLE,...MONO,fontSize:'var(--text-xs)',display:'flex',alignItems:'center',gap:'var(--space-1)',minWidth:0}}>
-                <span style=${{overflow:'hidden',textOverflow:'ellipsis'}}>${ep.globalId}</span>${_copyBtn(ep.globalId,'GlobalId')}
+                <span title=${ep.globalId} style=${{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',minWidth:0}}>${ep.globalId}</span>${_copyBtn(ep.globalId,'GlobalId')}
               </span>
             </div>`}
             ${ctxBadges}
             ${descQuote}
           </div>
-          ${breadcrumb.length>0 && html`<details style=${{marginTop:'var(--space-2)'}}>
-            <summary style=${{...S_SUBTITLE,cursor:'pointer'}}>${_cc_t('details.location','Location')}</summary>
-            <div style=${{fontSize:'var(--text-sm)',color:'var(--text-secondary)',padding:'var(--space-1) 0 0'}} title=${breadcrumb.join(' › ')}>${breadcrumb.join(' › ')}</div>
-          </details>`}
-          ${allPsets.length>0 && html`<details style=${{marginTop:'var(--space-2)'}}>
-            <summary style=${{...S_SUBTITLE,cursor:'pointer'}}>${_cc_t('details.propertySets','Property Sets ({n})',{n:psetCount})}</summary>
-            <div style=${{padding:'var(--space-1) 0 0'}}>
-              ${allPsets.map(function(sec){return html`<details key=${sec.raw} style=${{marginBottom:'var(--space-1)'}}>
-                <summary style=${{cursor:'pointer',fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',color:'var(--text-secondary)'}}>${sec.name}</summary>
-                <div style=${{padding:'var(--space-1) 0 0 var(--space-1)'}}>
-                  ${sec.props.map(function(p){return html`<div style=${ROW}><span style=${LBL}>${p.k}</span><span style=${VAL}>${p.v}</span></div>`;})}
-                </div>
-              </details>`;})}
-            </div>
-          </details>`}
+          ${breadcrumb.length>0 && html`<${CcDisclosure} style=${{marginTop:'var(--space-2)'}} title=${_cc_t('details.location','Location')}>
+            <div style=${{fontSize:'var(--text-sm)',color:'var(--text-secondary)'}} title=${breadcrumb.join(' › ')}>${breadcrumb.join(' › ')}</div>
+          </${CcDisclosure}>`}
+          ${allPsets.length>0 && html`<${CcDisclosure} style=${{marginTop:'var(--space-2)'}} title=${_cc_t('details.propertySets','Property Sets ({n})',{n:psetCount})}>
+            ${allPsets.map(function(sec){return html`<${CcDisclosure} key=${sec.raw} variant="item" title=${sec.name} bodyStyle=${{padding:'0 0 var(--space-1) var(--space-4)'}}>
+              ${sec.props.map(function(p){return html`<div style=${ROW}><span style=${LBL}>${p.k}</span><span style=${VAL}>${p.v}</span></div>`;})}
+            </${CcDisclosure}>`;})}
+          </${CcDisclosure}>`}
         </div>`;
       }
 
@@ -48130,16 +48270,16 @@ function startApp() {
             <div style=${{flex:1}}>
               <div style=${{fontSize:'var(--text-xs)',fontWeight:600,color:'var(--text-primary)',marginBottom:'var(--space-1)'}}>${_cc_t('aiChat.dataQualityScore','Data Quality Score')}</div>
               <div style=${{display:'flex',gap:'2px'}}>
-                ${dqChecks.map(function(c){return html`<div key=${c.label} data-cc-status="1" title=${c.label+': '+c.detail} style=${{flex:1,height:4,borderRadius:'var(--radius-xs)',background:c.ok?'var(--color-success-fg)':'var(--color-danger-fg)'}}></div>`;})}
+                ${dqChecks.map(function(c){return html`<div key=${c.key} data-cc-status="1" title=${c.label+': '+c.detail} style=${{flex:1,height:4,borderRadius:'var(--radius-xs)',background:c.ok?'var(--color-success-fg)':'var(--color-danger-fg)'}}></div>`;})}
               </div>
             </div>
           </div>
           <!-- DQ checks detail -->
           <div style=${CARD}>
             <div style=${HDR}>${_cc_t('aiChat.checks','Checks')}</div>
-            ${dqChecks.map(function(c){return html`<div key=${c.label} style=${{...ROW,alignItems:'center'}}>
-              <span style=${{...LBL,display:'flex',alignItems:'center',gap:'var(--space-1)'}}>
-                <svg width="10" height="10" viewBox="0 0 12 12">
+            ${dqChecks.map(function(c){return html`<div key=${c.key} style=${{...ROW,alignItems:'center'}}>
+              <span style=${{...LBL,flexBasis:'46%',overflowWrap:'normal',display:'flex',alignItems:'center',gap:'var(--space-1)'}}>
+                <svg width="10" height="10" viewBox="0 0 12 12" aria-hidden="true" style=${{flexShrink:0}}>
                   ${c.ok
                     ? html`<path d="M2 6l3 3 5-5" stroke="var(--color-success-fg)" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`
                     : html`<circle cx="6" cy="6" r="5" stroke="var(--color-danger-fg)" stroke-width="1.5" fill="none"/><path d="M6 4v3" stroke="var(--color-danger-fg)" stroke-width="1.5" stroke-linecap="round"/><circle cx="6" cy="9" r=".6" fill="var(--color-danger-fg)"/>`
@@ -48147,15 +48287,15 @@ function startApp() {
                 </svg>
                 ${c.label}
               </span>
-              <span data-cc-status="1" style=${{...VAL,color:c.ok?'var(--text-secondary)':'var(--color-danger-fg)',fontSize:'var(--text-xs)'}}>${c.detail}</span>
+              <span data-cc-status="1" style=${{...VAL,...(c.mono?MONO:{}),color:c.ok?'var(--text-secondary)':'var(--color-danger-fg)',fontSize:c.mono?'var(--text-2xs)':'var(--text-xs)'}}>${c.detail}</span>
             </div>`;})}
           </div>
           <!-- Identity -->
           <div style=${CARD}>
             <div style=${HDR}>${_cc_t('aiChat.identity','Identity')}</div>
-            ${ep&&ep.ifcType     && html`<div style=${ROW}><span style=${LBL}>IFC type</span><span style=${{...VAL,...MONO}}>${ep.ifcType}</span></div>`}
-            ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,...MONO,display:'flex',alignItems:'center',gap:'var(--space-1)'}}><span style=${{overflow:'hidden',textOverflow:'ellipsis'}}>${ep.globalId}</span>${_copyBtn(ep.globalId,'GlobalId')}</span></div>`}
-            ${ep&&ep.expressId   && html`<div style=${ROW}><span style=${LBL}>Express ID</span><span style=${{...VAL,...MONO,display:'flex',alignItems:'center',gap:'var(--space-1)'}}><span>#${ep.expressId}</span>${_copyBtn(ep.expressId,'Express ID')}</span></div>`}
+            ${ep&&ep.ifcType     && html`<div style=${ROW}><span style=${LBL}>${_cc_t('inspector.ifcType','IFC type')}</span><span style=${{...VAL,...MONO}}>${ep.ifcType}</span></div>`}
+            ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>${_cc_t('details.globalId','GlobalId')}</span><span style=${{...VAL,...MONO,display:'flex',alignItems:'center',gap:'var(--space-1)'}}><span title=${ep.globalId} style=${{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',minWidth:0}}>${ep.globalId}</span>${_copyBtn(ep.globalId,'GlobalId')}</span></div>`}
+            ${ep&&ep.expressId   && html`<div style=${ROW}><span style=${LBL}>${_cc_t('inspector.expressId','Express ID')}</span><span style=${{...VAL,...MONO,display:'flex',alignItems:'center',gap:'var(--space-1)'}}><span>#${ep.expressId}</span>${_copyBtn(ep.expressId,'Express ID')}</span></div>`}
             ${ep&&ep.objectType  && html`<div style=${ROW}><span style=${LBL}>${_cc_t('aiChat.objectType','Object type')}</span><span style=${VAL}>${ep.objectType}</span></div>`}
             ${ep&&ep.description && html`<div style=${ROW}><span style=${LBL}>${_cc_t('history.field.description','Description')}</span><span style=${VAL}>${ep.description}</span></div>`}
             ${breadcrumb.length>0
@@ -48173,7 +48313,7 @@ function startApp() {
                 title=${_cc_t('navigator.clickHighlightDblFrame','Click to highlight, double-click to frame')}
                 style=${{...ROW,cursor:'pointer'}}>
                 <span style=${{...LBL,minWidth:0,flex:1,color:'var(--text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${hp.name||('#'+he.expressId)}</span>
-                <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',flexShrink:0}}>${(hp.ifcType||'').replace(/^Ifc/,'')}</span>
+                <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',flexShrink:0}}>${hp.ifcType ? _ccIfcTypeWord(hp.ifcType) : ''}</span>
               </div>`;
             })}
             ${hostedEls.length>20 && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',fontStyle:'italic',paddingTop:'var(--space-1)'}}>${_cc_t('aiChat.nMore','+{n} more',{n:hostedEls.length-20})}</div>`}
@@ -48245,19 +48385,16 @@ function startApp() {
           ${ep&&ep.material    && html`<div style=${ROW}><span style=${LBL}>${_cc_t('aiChat.material','Material')}</span><span style=${VAL}>${ep.material}</span></div>`}
           ${ep&&ep.objectType  && html`<div style=${ROW}><span style=${LBL}>${_cc_t('aiChat.objectType','Object type')}</span><span style=${VAL}>${ep.objectType}</span></div>`}
           ${ep&&ep.description && html`<div style=${ROW}><span style=${LBL}>${_cc_t('history.field.description','Description')}</span><span style=${VAL}>${ep.description}</span></div>`}
-          ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>GlobalId</span><span style=${{...VAL,...MONO,opacity:.65,display:'flex',alignItems:'center',gap:'var(--space-1)'}}><span>${ep.globalId.slice(0,16)}…</span>${_copyBtn(ep.globalId,'GlobalId')}</span></div>`}
+          ${ep&&ep.globalId    && html`<div style=${ROW}><span style=${LBL}>${_cc_t('details.globalId','GlobalId')}</span><span style=${{...VAL,...MONO,color:'var(--text-secondary)',display:'flex',alignItems:'center',gap:'var(--space-1)'}}><span title=${ep.globalId} style=${{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',minWidth:0}}>${ep.globalId}</span>${_copyBtn(ep.globalId,'GlobalId')}</span></div>`}
         </div>
         <!-- Full property sets (Task B: "Properties everywhere" — every
              workspace shows the complete pset dump, not just Present's
              derived summary or this workspace's structural-flag subset) -->
         ${allPsets.length>0 && html`<div style=${CARD}>
           <div style=${HDR}>${_cc_t('details.propertySets','Property Sets ({n})',{n:psetCount})}</div>
-          ${allPsets.map(function(sec){return html`<details key=${sec.raw} open style=${{marginBottom:'var(--space-2)'}}>
-            <summary style=${{cursor:'pointer',fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',color:'var(--text-secondary)'}}>${sec.name}</summary>
-            <div style=${{padding:'2px 0 0 var(--space-1)'}}>
-              ${sec.props.map(function(p){return html`<div style=${ROW}><span style=${LBL}>${p.k}</span><span style=${VAL}>${p.v}</span></div>`;})}
-            </div>
-          </details>`;})}
+          ${allPsets.map(function(sec){return html`<${CcDisclosure} key=${sec.raw} variant="item" defaultOpen=${true} title=${sec.name} bodyStyle=${{padding:'0 0 var(--space-2) var(--space-4)'}}>
+            ${sec.props.map(function(p){return html`<div style=${ROW}><span style=${LBL}>${p.k}</span><span style=${VAL}>${p.v}</span></div>`;})}
+          </${CcDisclosure}>`;})}
         </div>`}
         <!-- Dimensions & Constraints -->
         ${constraintProps.length>0 && html`<div style=${CARD}>
@@ -48317,23 +48454,23 @@ function startApp() {
         background:'transparent',transition:'background .15s',borderRadius:'var(--radius-lg) 0 0 var(--radius-lg)'}} onMouseEnter=${function(e){e.currentTarget.style.background='var(--accent-bg-deep)';}} onMouseLeave=${function(e){e.currentTarget.style.background='transparent';}}></div>
       <!-- Tab bar + collapse -->
       <div style=${{display:'flex',alignItems:'center',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,height:40,gap:0,paddingLeft:'var(--space-3)'}}>
+        <div role="tablist" aria-label=${_cc_t('aiChat.tabsAria','Panel sections')} style=${{display:'flex',alignItems:'stretch',height:'100%'}}>
         ${(drawerTab==='models' ? ['models','details','ai'] : ['details','ai']).map(function(tab){
           var labels={models:_cc_t('panel.models.title','Models'),details:_cc_t('aiChat.tabDetails','Details'),ai:_cc_t('aiChat.tabAskAi','Ask AI')};
           var isActive=drawerTab===tab||( tab==='details' && drawerTab==='measure');
-          var hasDot = tab==='details' && drawerEl;
-          return html`<button key=${tab} aria-pressed=${isActive?'true':'false'}
+          // DESIGN.md Tabs: the active tab is the accent underline + primary
+          // text, nothing else (no dot / glyph in front of the label).
+          return html`<button key=${tab} role="tab" aria-selected=${isActive?'true':'false'}
             onClick=${function(){setDrawerTab(tab);}}
             style=${{
               background:'none',border:'none',borderBottom:isActive?'2px solid var(--accent)':'2px solid transparent',
               color:isActive?'var(--text-primary)':'var(--text-muted)',
-              padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-xs)',fontWeight:isActive?600:400,
-              cursor:'pointer',fontFamily:'inherit',height:'100%',display:'flex',alignItems:'center',gap:'var(--space-1)',
-              marginBottom:'-1px',transition:'color .12s,border-color .12s'
-            }}>
-            ${hasDot&&html`<span style=${{width:6,height:6,borderRadius:'50%',background:'var(--accent)',display:'inline-block'}}></span>`}
-            ${labels[tab]}
-          </button>`;
+              padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-xs)',fontWeight:isActive?'var(--weight-semibold)':'var(--weight-regular)',
+              cursor:'pointer',fontFamily:'inherit',display:'flex',alignItems:'center',
+              marginBottom:'-1px',transition:'color var(--duration-fast) var(--ease-standard),border-color var(--duration-fast) var(--ease-standard)'
+            }}>${labels[tab]}</button>`;
         })}
+        </div>
         <div style=${{flex:1}}></div>
         <button onClick=${function(){ setCollapsed(true); try{localStorage.setItem('cc_ai_panel_collapsed','1');}catch(e){} }}
           title=${_cc_t('panel.close','Close panel')} aria-label=${_cc_t('panel.close','Close panel')} style=${{
