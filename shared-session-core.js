@@ -351,12 +351,46 @@
       return Array.from(byId.values()).sort(function(a, b) { return (a.ts || 0) - (b.ts || 0); });
     }
     function isDeleted(ts) { var del = ts.fields.deleted; return !!(del && del.known && del.value === true); }
+    // A viewpoint captured for an issue goes with it: the reducer drops them
+    // together and only the issue's delete is recorded. So a viewpoint whose
+    // issue is deleted in the log is not shown, and projecting an issue
+    // projects its viewpoints too (Keep after a delete brings them back).
+    function issueGone(crV) {
+      var link = crV && crV.known && crV.value ? crV.value.linkedId : null;
+      return !!link && isDeleted(C.targetState(log, 'issue', link));
+    }
+    // issue key → viewpoint target keys, rebuilt only when the log grew
+    var vpByIssue = { size: -1, map: new Map() };
+    function viewpointsOfIssues() {
+      if (vpByIssue.size === log.size) return vpByIssue.map;
+      var map = new Map(), pre = C.targetKey('viewpoint', '');
+      Object.keys(log.targets).forEach(function(tk) {
+        if (tk.indexOf(pre) !== 0) return;
+        var fs = C.fieldState(log, C.groupKey('viewpoint', tk.slice(pre.length), 'created'));
+        var link = fs && fs.known && fs.value ? fs.value.linkedId : null;
+        if (!link) return;
+        var arr = map.get(link); if (arr) arr.push(tk); else map.set(link, [tk]);
+      });
+      vpByIssue = { size: log.size, map: map };
+      return map;
+    }
+    function withIssueViewpoints(tks) {
+      var pre = C.targetKey('issue', ''), out = null, map = null;
+      tks.forEach(function(tk) {
+        if (tk.indexOf(pre) !== 0) return;
+        map = map || viewpointsOfIssues();
+        var vs = map.get(tk.slice(pre.length));
+        if (vs) { out = out || new Set(tks); vs.forEach(function(v) { out.add(v); }); }
+      });
+      return out || tks;
+    }
     // Puts the shared value of every field of the given targets (and their
     // conflict markers) on the local clashes / issues / notes / viewpoints.
     // Dispatches only what differs (all `_fromSync`). Returns the number of
     // dispatches.
     function project(tks, st) {
       if (!st || !tks || !tks.size) return 0;
+      tks = withIssueViewpoints(tks);
       var F = C.DECISION_FIELDS, restore = {}, nRestore = 0, cnt = 0;
       var issues = new Map(); (st.issues || []).forEach(function(i) { issues.set(i.id, i); });
       var notes = new Map(); (st.comments || []).forEach(function(c) { notes.set(c.id, c); });
@@ -408,7 +442,7 @@
           if (anyN) dd({ t: 'UPD_COMMENT', id: key, u: patchN, _fromSync: true });
         } else if (kind === 'viewpoint') {
           var crV = ts.fields.created, lv = vps.get(key);
-          if (isDeleted(ts)) { if (lv) dd({ t: 'DEL_VIEWPOINT', id: key, _fromSync: true }); return; }
+          if (isDeleted(ts) || issueGone(crV)) { if (lv) dd({ t: 'DEL_VIEWPOINT', id: key, _fromSync: true }); return; }
           var patchV = {}, anyV = false;
           VIEWPOINT_FIELDS.forEach(function(f) { var fs = ts.fields[f]; if (fs && fs.known && (!lv || !C.same(lv[f], fs.value))) { patchV[f] = fs.value; anyV = true; } });
           if (!lv) {

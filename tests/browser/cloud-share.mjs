@@ -213,6 +213,26 @@ try {
     'after a reload, page B pulled from its cached cursor: only the 1 new record', JSON.stringify(gets));
   await B2.close();
 
+  // ── delete vs edit, then Keep: the issue's viewpoint (dropped by the
+  //    deleter's reducer together with the issue) comes back on both pages ──
+  await A.evaluate(() => {
+    window._ccDispatch({ t: 'ADD_ISSUE', v: { id: 'iss_vp_1', title: 'Duct through beam', status: 'open', priority: 'normal', createdAt: '2026-10-25' } });
+    window._ccDispatch({ t: 'ADD_VIEWPOINT', v: { id: 'vp_iss_1', name: 'Beam view', camera: { position: [5, 5, 5], target: [0, 0, 0], fov: 50 }, linkedId: 'iss_vp_1', createdAt: '2026-10-25' } });
+  });
+  await settle(A); await pull(B);
+  const hasVp = (P) => P.evaluate(() => window._ccLatestState.viewpoints.some((v) => v.id === 'vp_iss_1'));
+  check(await hasVp(B), 'page B got the issue\'s viewpoint');
+  await A.evaluate(() => window._ccDispatch({ t: 'DEL_ISSUE', id: 'iss_vp_1' }));
+  await B.evaluate(() => window._ccDispatch({ t: 'UPD_ISSUE', id: 'iss_vp_1', u: { status: 'resolved' } }));
+  await settle(A); await settle(B); await pull(A); await pull(B);
+  check(await hasVp(A) && await hasVp(B), 'delete in conflict: the viewpoint stays on both pages');
+  await B.evaluate(() => window._ccSharedResolve({ src: 'cloud', kind: 'issue', key: 'iss_vp_1', field: 'deleted', value: false }));
+  await settle(B); await pull(A); await pull(B);
+  for (const [P, who] of [[A, 'A'], [B, 'B']]) {
+    const st = await P.evaluate(() => ({ it: window._ccLatestState.issues.find((i) => i.id === 'iss_vp_1') || null, vp: window._ccLatestState.viewpoints.find((v) => v.id === 'vp_iss_1') || null }));
+    check(st.it && st.it.status === 'resolved' && st.vp && st.vp.linkedId === 'iss_vp_1', 'page ' + who + ': Keep restores the issue with the edit AND its viewpoint', JSON.stringify({ it: !!st.it, vp: st.vp && st.vp.linkedId }));
+  }
+
   // ── a record the server refuses (over the 16 KB value cap) is not lost
   //    silently: the sender is told which change and why (toast + Share
   //    panel), it is never retried, the notice survives a reload until

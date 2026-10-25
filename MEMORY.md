@@ -335,6 +335,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- ~~2026-10-25: delete-then-Keep restores the issue's viewpoints, and a deleted issue's viewpoints are no longer re-added as orphans by a full sync (branch `one-sharing-mode`, shared-session-core `issueGone` / `withIssueViewpoints`). INTERNALS §21.56.~~ (2026-10-25)
 - ~~2026-10-25: cloud records the server refuses are reported (branch `one-sharing-mode`): `/api/project` PUT returns `rejected: [{id, reason}]`; session `reject` / `rejected` / `dismissRejected`; toast + Share-panel notice naming the change and why, survives a reload; issue records no longer silently drop text over 4000 chars. INTERNALS §21.56.~~ (2026-10-25)
 - ~~2026-10-25: one sharing mode at a time (branch `one-sharing-mode`): shared-session-core `claimLink` / `releaseLink` / `linkHolder`; folder link and key create/join refuse while the other mode holds the link, with the reason in Share / Settings / Integrations; an old double link keeps the key. Share modal Create now shows the new key (it read `data.project`, the API answers `{id, name}`). INTERNALS §21.56.~~ (2026-10-25)
 - ~~2026-10-24: heap after a geo-cache restore (park → restore, project reopen) ≈ heap after a fresh load (branch `restore-mem`): measured, nothing retained; harness artifacts fixed, `tests/browser/restore-heap.mjs` in CI. INTERNALS §6 "Heap after a restore".~~ (2026-10-24)

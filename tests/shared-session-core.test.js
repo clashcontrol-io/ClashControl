@@ -23,7 +23,8 @@ function app(user) {
       case 'CLASH_BATCH_RESTORE': st = Object.assign({}, s, { clashes: s.clashes.map((x) => a.prev[x.id] ? Object.assign({}, x, a.prev[x.id]) : x) }); break;
       case 'ADD_ISSUE': st = Object.assign({}, s, { issues: s.issues.concat([a.v]) }); break;
       case 'UPD_ISSUE': st = Object.assign({}, s, { issues: s.issues.map((x) => x.id === a.id ? Object.assign({}, x, a.u) : x) }); break;
-      case 'DEL_ISSUE': st = Object.assign({}, s, { issues: s.issues.filter((x) => x.id !== a.id) }); break;
+      // like the app's reducer: an issue's viewpoints go with it
+      case 'DEL_ISSUE': st = Object.assign({}, s, { issues: s.issues.filter((x) => x.id !== a.id), viewpoints: s.viewpoints.filter((v) => v.linkedId !== a.id) }); break;
       case 'ADD_VIEWPOINT': st = Object.assign({}, s, { viewpoints: s.viewpoints.concat([a.v]) }); break;
       case 'UPD_VIEWPOINT': st = Object.assign({}, s, { viewpoints: s.viewpoints.map((x) => x.id === a.id ? Object.assign({}, x, a.u) : x) }); break;
       case 'DEL_VIEWPOINT': st = Object.assign({}, s, { viewpoints: s.viewpoints.filter((x) => x.id !== a.id) }); break;
@@ -102,6 +103,38 @@ test('delete vs edit in the app: both keep the issue with a conflict marker; kee
       assert.equal(p.sess.conflictCount(), 0);
     }
   }
+});
+
+test('an issue\'s viewpoints follow the issue: back on Keep, gone on Delete, never re-added as orphans', () => {
+  for (const choice of [false, true]) {
+    const a = app('ua'), b = app('ub');
+    a.sess.sync({}); b.sess.sync({});
+    a.act({ t: 'ADD_ISSUE', v: { id: 'iss_v', title: 'Leak', status: 'open' } });
+    a.act({ t: 'ADD_VIEWPOINT', v: { id: 'vp_1', name: 'Leak view', camera: { p: [1, 2, 3] }, linkedId: 'iss_v' } });
+    a.exchange(b);
+    assert.ok(b.st.viewpoints.some((v) => v.id === 'vp_1' && v.linkedId === 'iss_v'));
+    a.act({ t: 'DEL_ISSUE', id: 'iss_v' });                       // the reducer drops vp_1 too
+    b.act({ t: 'UPD_ISSUE', id: 'iss_v', u: { status: 'resolved' } });
+    a.exchange(b); b.exchange(a);
+    for (const p of [a, b]) assert.ok(p.st.viewpoints.some((v) => v.id === 'vp_1'), 'while the delete is in conflict the issue and its viewpoint stay');
+    b.sess.resolve({ kind: 'issue', key: 'iss_v', field: 'deleted', value: choice });
+    b.exchange(a);
+    for (const p of [a, b]) {
+      p.sess.sync({ full: true });                                  // a later full pass changes nothing
+      const has = p.st.viewpoints.some((v) => v.id === 'vp_1');
+      if (choice) assert.equal(has, false, 'Delete: the viewpoint is gone with its issue');
+      else assert.equal(has, true, 'Keep: the viewpoint is back with its issue');
+    }
+  }
+  // a plain delete (no conflict): the deleter's next full pass does not bring the viewpoint back
+  const a = app('ua'), b = app('ub');
+  a.sess.sync({}); b.sess.sync({});
+  a.act({ t: 'ADD_ISSUE', v: { id: 'iss_w', title: 'Gap', status: 'open' } });
+  a.act({ t: 'ADD_VIEWPOINT', v: { id: 'vp_2', name: 'Gap view', camera: { p: [0, 0, 1] }, linkedId: 'iss_w' } });
+  a.exchange(b);
+  a.act({ t: 'DEL_ISSUE', id: 'iss_w' });
+  a.exchange(b);
+  for (const p of [a, b]) { p.sess.sync({ full: true }); assert.equal(p.st.viewpoints.some((v) => v.id === 'vp_2'), false); }
 });
 
 test('a record being written is never amended; a failed write is retried with the same records', () => {
