@@ -334,6 +334,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- ~~2026-10-25: last-frame cull flake pinned (branch `one-sharing-mode`): a fixed wait vs slow SwiftShader frames — the test now waits for the render burst to end, every cull-counter phase. Fixed on the way: ortho / plan views culled elements as "too small" measured from the perspective camera (now `S.camera`, ortho screen share by zoom, cull key with camera / zoom). INTERNALS §21.54.~~ (2026-10-25)
 - ~~2026-10-25: mesh index + pick index see a mesh that gains / loses children of its own (branch `one-sharing-mode`): `installMeshChildHook` (viewer-pick-index.js) notifies the nearest container with `subtree: true`; tests fail without it. INTERNALS §21.47 / §21.54.~~ (2026-10-25)
 - ~~2026-10-25: search keystroke cost (branch `one-sharing-mode`): narrowing tests only the new tokens (`_ccSearchStep`), review-bucket list cached, pair labels memoised, nav badge counts memoised; typing "wall duct" app JS 204–221 → 147–156 ms, first keystroke 39–54 → 18–23 ms. INTERNALS §21.54.~~ (2026-10-25)
 - ~~2026-10-25: hide / show a model groups once (branch `one-sharing-mode`): the list takes the review model's groups when it shows exactly the review set (`groupShared`), review-item summaries on demand, shadow frustum from cached per-model boxes; app JS per toggle 35–44 → 23–26 ms (13.7k-clash generated building). INTERNALS §21.54.~~ (2026-10-25)

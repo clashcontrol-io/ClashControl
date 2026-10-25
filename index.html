@@ -21548,9 +21548,12 @@ function startApp() {
       var _dragFrameTimes = []; // recent frame deltas WHILE a drag is actually moving, for the DPR-drop budget check
       var _dragLowResLatched = false; // once a drag session drops DPR, stay dropped for the rest of it (no thrash)
       function _camFingerprint() {
-        var p = S.camera.position, q = S.camera.quaternion;
-        return p.x.toFixed(4)+','+p.y.toFixed(4)+','+p.z.toFixed(4)+','+
-               q.x.toFixed(5)+','+q.y.toFixed(5)+','+q.z.toFixed(5)+','+q.w.toFixed(5);
+        var c = S.camera, p = c.position, q = c.quaternion;
+        // the frustum (fov / ortho extent, zoom) and the camera itself are part
+        // of the pose: an ortho zoom or a camera swap re-culls
+        return c.uuid+','+p.x.toFixed(4)+','+p.y.toFixed(4)+','+p.z.toFixed(4)+','+
+               q.x.toFixed(5)+','+q.y.toFixed(5)+','+q.z.toFixed(5)+','+q.w.toFixed(5)+','+
+               (c.zoom||1).toFixed(5)+','+(c.isOrthographicCamera ? (c.top-c.bottom).toFixed(4) : (c.fov||0).toFixed(3));
       }
       var LOD_HIDE_RATIO  = 0.0000005; // hide entirely — covers < ~0.07% screen (~1px at 1080p)
 
@@ -21559,10 +21562,23 @@ function startApp() {
         if (S._spacesShown) cam.layers.enable(_CC_SPACE_LAYER); else cam.layers.disable(_CC_SPACE_LAYER);
         cam.layers.enable(_CC_SPACE_FORCE_LAYER);
       }
+      var _cullCamPos = new THREE.Vector3();
+      var _cullOrthoRef = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
       function updateCulling(){
-        projScreenMatrix.multiplyMatrices(S.camera.projectionMatrix, S.camera.matrixWorldInverse);
+        // The pose this frame renders: render() refreshes the camera's world
+        // matrices only after culling, and the cull is keyed on this pose.
+        // S.camera, not the perspective camera: plan / ortho views swap it,
+        // and the size cutoff used to measure from where the perspective
+        // camera was left.
+        var cam = S.camera;
+        cam.updateMatrixWorld();
+        projScreenMatrix.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
         frustum.setFromProjectionMatrix(projScreenMatrix);
-        var camPos = camera.position;
+        var camPos = _cullCamPos.setFromMatrixPosition(cam.matrixWorld);
+        // Orthographic: an element's screen share does not depend on its
+        // distance — r / (half view height / zoom) — scaled so the cutoff is
+        // the same share of the screen as in the perspective view.
+        var orthoK = cam.isOrthographicCamera ? _cullOrthoRef * cam.zoom / Math.max(1e-9, (cam.top - cam.bottom) / 2) : 0;
         S.mg.traverse(function(obj){
           if(obj.isMesh && obj.parent && obj.parent.userData.modelId && !obj.parent.visible) { obj.visible = false; return; }
           if(!obj.isMesh) return;
@@ -21578,9 +21594,9 @@ function startApp() {
             obj.userData._frustumCulled = true;
             return;
           }
-          var distSq = camPos.distanceToSquared(tmpSphere.center);
-          var r = tmpSphere.radius;
-          var screenRatio = distSq > 0 ? (r * r) / distSq : 1;
+          var r = tmpSphere.radius, screenRatio;
+          if (orthoK) { var rk = r * orthoK; screenRatio = rk * rk; }
+          else { var distSq = camPos.distanceToSquared(tmpSphere.center); screenRatio = distSq > 0 ? (r * r) / distSq : 1; }
 
           if(screenRatio < LOD_HIDE_RATIO){
             obj.visible = false;
