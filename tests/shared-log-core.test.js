@@ -486,3 +486,23 @@ test('migrateLegacyRows: decisions of the old per-issue rows, deterministic ids'
   assert.ok(!('_updatedAt' in m1.changes[1].value));
   assert.notDeepStrictEqual(L.migrateLegacyRows(rows, { projectId: 'P-2', identityKey: opts.identityKey }).changes[0].id, m1.changes[0].id);
 });
+
+test('ids come from the cryptographic generator: right length and alphabet, never Math.random', () => {
+  const C = require('../shared-log-core.js');
+  const realRandom = Math.random;
+  Math.random = () => { throw new Error('Math.random used for an id'); };
+  try {
+    const seen = new Set();
+    for (let i = 0; i < 2000; i++) {
+      const id = C.randomId(12);
+      assert.match(id, /^[a-z0-9]{12}$/);
+      seen.add(id);
+    }
+    assert.equal(seen.size, 2000);
+  } finally { Math.random = realRandom; }
+  const fs = require('node:fs'), path = require('node:path');
+  const addon = fs.readFileSync(path.join(__dirname, '..', 'addons', 'shared-project.js'), 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.match(addon, /function _rand\(n\) \{ return core\(\)\.randomId\(n\); \}/);
+  assert.doesNotMatch(html, /writer: 'w' \+ Date\.now\(\)\.toString\(36\) \+ Math\.random/);
+});

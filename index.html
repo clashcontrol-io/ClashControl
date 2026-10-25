@@ -42926,7 +42926,7 @@ function startApp() {
   // The same per-browser id the shared folder uses (random, never personal).
   function _cloudUserId() {
     if (typeof window.__ccSharedTestUser === 'string' && window.__ccSharedTestUser) return window.__ccSharedTestUser;
-    var rnd = function(n){ var s = ''; while (s.length < n) s += Math.random().toString(36).slice(2); return s.slice(0, n); };
+    var rnd = function(n){ return window._ccSharedLogCore.randomId(n); };
     try {
       var u = localStorage.getItem('cc_shared_uid');
       if (u && /^[a-z0-9][a-z0-9-]{2,63}$/.test(u)) return u;
@@ -42991,7 +42991,7 @@ function startApp() {
     try { ls = window.localStorage; } catch(e) {}
     _cloud.pid = pid; _cloud.cursor = '0'; _cloud.synced = false; _cloud.seeded = false; _cloud.conflicts = 0;
     var sess = _cloud.sess = SC.register(SC.createSession({
-      src: 'cloud', userId: _cloudUserId(), writer: 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), projectKey: 'cloud:' + pid,
+      src: 'cloud', userId: _cloudUserId(), writer: 'w' + Date.now().toString(36) + window._ccSharedLogCore.randomId(12), projectKey: 'cloud:' + pid,
       dispatch: function(a) { if (typeof window._ccDispatch === 'function') window._ccDispatch(a); },
       getState: function() { return window._ccLatestState || null; },
       i18n: _cc_t, storage: ls, outboxPrefix: 'cc_cloud_outbox',

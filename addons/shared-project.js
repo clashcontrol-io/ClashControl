@@ -63,7 +63,7 @@
   var _userId = null;
   var _stats = { ticks: 0, idleTicks: 0, listings: 0, filesRead: 0, bytesRead: 0, filesWritten: 0, bytesWritten: 0, deleted: 0, dispatches: 0, snapshotsWritten: 0 };
 
-  function _rand(n) { var s = ''; while (s.length < n) s += Math.random().toString(36).slice(2); return s.slice(0, n); }
+  function _rand(n) { return core().randomId(n); }
   function _uid() {
     if (typeof window.__ccSharedTestUser === 'string' && window.__ccSharedTestUser) return window.__ccSharedTestUser;
     try {
@@ -262,7 +262,7 @@
     if (!C) throw new Error('shared-log-core.js not loaded');
     _stop();
     _userId = _uid();
-    _writer = 'w' + Date.now().toString(36) + _rand(4);
+    _writer = 'w' + Date.now().toString(36) + _rand(12);
     _seq = 0;
     var entries = await _entries(dirHandle);
     var proj = null, legacy = null;

@@ -587,8 +587,28 @@
     return { changes: recs.map(normaliseChange).filter(Boolean), names: names };
   }
 
+  // Random [a-z0-9] string from the platform's cryptographic generator. Ids
+  // (user, writer → record ids, project file) must not be predictable: the
+  // log dedupes by record id, so a guessed id could be taken first and the
+  // real record dropped as already known.
+  var ALNUM = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  /** @param {number} n */
+  function randomId(n) {
+    var g = /** @type {any} */ (typeof globalThis !== 'undefined' ? globalThis : {}).crypto;
+    if (!g || typeof g.getRandomValues !== 'function') throw new Error('shared-log-core: no crypto.getRandomValues');
+    var bytes = new Uint8Array(n), out = '';
+    g.getRandomValues(bytes);
+    // 252 = 7 × 36: drop the top values so every character is equally likely
+    for (var i = 0; out.length < n; i++) {
+      if (i === bytes.length) { g.getRandomValues(bytes); i = 0; }
+      if (bytes[i] < 252) out += ALNUM[bytes[i] % 36];
+    }
+    return out;
+  }
+
   return Object.freeze({
     contractVersion: 2,
+    randomId: randomId,
     FORMAT: FORMAT,
     DECISION_FIELDS: DECISION_FIELDS,
     targetKey: targetKey,
