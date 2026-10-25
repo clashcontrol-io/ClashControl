@@ -136,3 +136,22 @@ test('registry: notes go to every active session, a resolution only to the sessi
   } finally { SC.unregister(a.sess); SC.unregister(f.sess); }
   assert.equal(SC.sessions().length, 0);
 });
+
+test('one sharing mode at a time: the mode holding the link refuses the other until it releases', () => {
+  assert.equal(SC.linkHolder(), null);
+  assert.equal(SC.claimLink('cloud', 'MEP-abc123'), null, 'the first mode gets the link');
+  try {
+    assert.equal(SC.claimLink('cloud', 'MEP-def456'), null, 'the same mode may switch keys');
+    assert.deepEqual(SC.linkHolder(), { src: 'cloud', label: 'MEP-def456' });
+    assert.deepEqual(SC.claimLink('folder', 'Team share'), { src: 'cloud', label: 'MEP-def456' }, 'the folder is refused and told who holds the link');
+    SC.releaseLink('folder');
+    assert.equal(SC.linkHolder().src, 'cloud', 'a refused mode cannot release the other mode\'s link');
+    const h = SC.linkHolder(); h.src = 'folder';
+    assert.equal(SC.linkHolder().src, 'cloud', 'the holder is returned as a copy');
+  } finally { SC.releaseLink('cloud'); }
+  assert.equal(SC.linkHolder(), null);
+  assert.equal(SC.claimLink('folder', 'Team share'), null, 'after leaving the key the folder can link');
+  assert.equal(SC.claimLink('cloud', 'MEP-abc123').src, 'folder');
+  SC.releaseLink('folder');
+  assert.equal(SC.linkHolder(), null);
+});

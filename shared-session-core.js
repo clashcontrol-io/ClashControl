@@ -532,6 +532,26 @@
     return hit;
   }
 
+  // ── One sharing mode at a time ────────────────────────────────────
+  // The folder and the project key each keep their own log; with both
+  // linked, one log's values and conflict markers would overwrite the
+  // other's on the same item, and a teammate on only one of them never
+  // sees the other's decisions. So a transport claims the link before it
+  // starts (the folder before it touches the folder, the cloud before its
+  // first pull) and a claim held by the other mode is refused — the UI
+  // says which mode is linked and how to leave it.
+  /** @type {{src:string, label:string}|null} */
+  var holder = null;
+  /** @param {string} src @param {string} [label] @returns {{src:string, label:string}|null} the other mode's claim, or null when the link is ours */
+  function claimLink(src, label) {
+    if (holder && holder.src !== src) return { src: holder.src, label: holder.label };
+    holder = { src: src, label: label || '' };
+    return null;
+  }
+  /** @param {string} src */
+  function releaseLink(src) { if (holder && holder.src === src) holder = null; }
+  function linkHolder() { return holder ? { src: holder.src, label: holder.label } : null; }
+
   return Object.freeze({
     contractVersion: 1,
     NOTE_FIELDS: NOTE_FIELDS,
@@ -542,6 +562,9 @@
     sessions: function() { return sessions.slice(); },
     noteAll: noteAll,
     observeAll: observeAll,
-    resolve: resolveAny
+    resolve: resolveAny,
+    claimLink: claimLink,
+    releaseLink: releaseLink,
+    linkHolder: linkHolder
   });
 }));

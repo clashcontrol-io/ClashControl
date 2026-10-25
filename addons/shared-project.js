@@ -80,6 +80,15 @@
     return String(n || '').trim().slice(0, 80);
   }
   function _d(a) { if (typeof window._ccDispatch === 'function') { _stats.dispatches++; window._ccDispatch(a); } }
+  // One sharing mode at a time (shared-session-core claimLink): the project
+  // key's claim when it holds the link, else null.
+  function _cloudHolds() {
+    var SC = sessCore(), h = SC && SC.linkHolder ? SC.linkHolder() : null;
+    return h && h.src !== 'folder' ? h : null;
+  }
+  function _otherModeText(h) {
+    return _i18n('share.otherModeCloud', 'This project is shared with the project key {key}. Only one sharing mode works at a time — leave the project key to use a shared folder instead.', {key: (h && h.label) || '—'});
+  }
   function _state() { return window._ccLatestState || null; }
 
   // ── Registration ────────────────────────────────────────────────
@@ -117,6 +126,7 @@
       var sp = s.sharedProject || {};
       var enabled = sp.enabled;
       var canUse = !!window.showDirectoryPicker;
+      var cloud = _cloudHolds();
       var T = {fontSize:'var(--text-xs)', color:'var(--text-secondary)', lineHeight:'var(--leading-base)'};
       var BTN = {padding:'var(--space-1) var(--space-3)', borderRadius:'var(--radius-sm)', fontSize:'var(--text-xs)', fontWeight:'var(--weight-semibold)', cursor:'pointer', fontFamily:'inherit', border:'1px solid var(--border)', background:'var(--bg-secondary)', color:'var(--text-secondary)'};
       return html`<div style=${{padding:'var(--space-2) 0', display:'flex', flexDirection:'column', gap:'var(--space-2)', ...T}}>
@@ -137,11 +147,12 @@
           ${sp.conflicts === 1 ? _i18n('sharedConflict.countOne', '1 conflict to resolve') : _i18n('sharedConflict.countMany', '{n} conflicts to resolve', {n: sp.conflicts})}
         </div>`}
         <div style=${{display:'flex', gap:'var(--space-1)', flexWrap:'wrap'}}>
-          ${!enabled && html`<button onClick=${function(){ _pickSharedFolder(d); }} disabled=${!canUse}
-            style=${{...BTN, border:'none', background:canUse?'var(--accent)':'var(--bg-tertiary)', color:canUse?'var(--accent-contrast)':'var(--text-faint)'}}>${_i18n('sharedProject.linkFolder','Link Folder')}</button>`}
+          ${!enabled && html`<button onClick=${function(){ _pickSharedFolder(d); }} disabled=${!canUse || !!cloud}
+            style=${{...BTN, border:'none', background:(canUse && !cloud)?'var(--accent)':'var(--bg-tertiary)', color:(canUse && !cloud)?'var(--accent-contrast)':'var(--text-faint)'}}>${_i18n('sharedProject.linkFolder','Link Folder')}</button>`}
           ${enabled && html`<button onClick=${function(){ _syncSharedProject(d); }} disabled=${sp.syncing} style=${BTN}>${sp.syncing ? _i18n('sharedProject.syncing', 'Syncing...') : _i18n('sharedProject.syncNow', 'Sync Now')}</button>`}
           ${enabled && html`<button onClick=${function(){ _disconnectShared(d); }} style=${{...BTN, border:'1px solid var(--color-danger-border)', color:'var(--color-danger-fg)'}}>${_i18n('sharedProject.unlink','Unlink')}</button>`}
         </div>
+        ${!enabled && cloud && html`<div data-cc-share-mode-note="cloud" style=${{color:'var(--color-warning-fg)'}}>${_otherModeText(cloud)}</div>`}
         ${!canUse && html`<div style=${{color:'var(--color-warning-fg)'}}>${_i18n('sharedProject.fileSystemAccessApiNot','File System Access API not supported in this browser. Use Chrome or Edge.')}</div>`}
       </div>`;
     }
@@ -243,6 +254,8 @@
       alert(_i18n('sharedProject.fileSystemAccessApiNot','File System Access API not supported in this browser. Use Chrome or Edge.'));
       return;
     }
+    var cloud = _cloudHolds();
+    if (cloud) { if (window._ccToast) window._ccToast(_otherModeText(cloud), 'error'); return; }
     // (The old code called .then on dirHandle.values() — an async iterator,
     // not a promise — so linking never completed. _link iterates with for await.)
     window.showDirectoryPicker({mode:'readwrite'}).then(function(dirHandle) {
@@ -258,8 +271,25 @@
   // Finds (or creates) the shared project in the picked folder, migrates an
   // old .ccproject there once, loads the local cache and starts syncing.
   async function _link(dirHandle, d, opts) {
-    var C = core();
+    var C = core(), SC = sessCore();
     if (!C) throw new Error('shared-log-core.js not loaded');
+    if (!SC) throw new Error('shared-session-core.js not loaded');
+    // One sharing mode at a time: a linked project key keeps the link. A
+    // folder saved from an older version (both were allowed then) is not
+    // reconnected; its handle stays saved, so it reconnects on a later load
+    // once the key is left.
+    var other = SC.claimLink('folder', dirHandle.name || '');
+    if (other) {
+      var msg = opts && opts.restored
+        ? _i18n('sharedProject.notReconnected', 'The shared folder {folder} was not reconnected: this browser shares the project with the project key {key}. Only one sharing mode works at a time — leave the project key to use the folder again.', {folder: dirHandle.name || '—', key: other.label || '—'})
+        : _otherModeText(other);
+      if (window._ccToast) window._ccToast(msg, 'error');
+      return false;
+    }
+    try { return await _linkClaimed(dirHandle, d, C); }
+    catch (e) { if (!_sess) SC.releaseLink('folder'); throw e; }
+  }
+  async function _linkClaimed(dirHandle, d, C) {
     _stop();
     _userId = _uid();
     _writer = 'w' + Date.now().toString(36) + _rand(12);
@@ -350,6 +380,7 @@
       _root = _proj = _projKey = _log = _sess = null;
       _applied = new Set();
       _clearSharedHandle();
+      if (sessCore()) sessCore().releaseLink('folder');
       d({t:A_UPD, u:{enabled:false, folderName:'', fileName:'', lastSync:null, syncing:false, conflicts:0}});
     };
     _flush().then(done, done);

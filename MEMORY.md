@@ -287,6 +287,10 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Open / deferred items
 
+**Found 2026-10-25 (one-sharing-mode), not fixed:**
+- The Share modal's "Copy share link" (`?p=KEY`) is never read on load — opening the link does nothing; only pasting it into "Join with a key…" works.
+- `tests/browser/shared-folder.mjs` crashes the cloud sandbox's Chromium browser process (two pages in one context, page B's first dispatch) on main too; CI's Chromium runs it green.
+
 **Found 2026-10-24 (geoshare), not fixed:**
 - `tests/browser/memory-federation.mjs` fails on the base commit too: the 14k-element `fed-shared` model never gets `_propsVersion` (lazy props never merge), the load wait runs into its 25-min timeout (its 15-s "props never merged" guard sets `idleAt` on the interval id, a number, so it never fires).
 - Render styles look up `ifcType` by expressId across ALL models (`_eidToType`): ids collide between models, so glass/opaque decisions depend on model order (changes after park/restore).
@@ -331,6 +335,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- ~~2026-10-25: one sharing mode at a time (branch `one-sharing-mode`): shared-session-core `claimLink` / `releaseLink` / `linkHolder`; folder link and key create/join refuse while the other mode holds the link, with the reason in Share / Settings / Integrations; an old double link keeps the key. Share modal Create now shows the new key (it read `data.project`, the API answers `{id, name}`). INTERNALS §21.56.~~ (2026-10-25)
 - ~~2026-10-24: heap after a geo-cache restore (park → restore, project reopen) ≈ heap after a fresh load (branch `restore-mem`): measured, nothing retained; harness artifacts fixed, `tests/browser/restore-heap.mjs` in CI. INTERNALS §6 "Heap after a restore".~~ (2026-10-24)
 - ~~2026-10-24: rename / hide a model cost what they change (branch `rename-hide`): model-pair facet keyed by model ids (labels from current names, saved views migrated), row offsets only on height changes, incremental list grouping on visible-model changes (full rebuild as reference). INTERNALS §21.54.~~ (2026-10-24)
 - ~~2026-10-24: cloud share (project key) on the same change log as the shared folder (branch `cloud-conflicts`): `shared_changes` table + cursor pull in `api/project.js`, shared session engine for both modes, viewpoints / confirm-created issues / delete-vs-edit conflicts shared. INTERNALS §21.56, `tests/project-changelog.test.js`, `tests/browser/cloud-share.mjs`.~~ (2026-10-24)

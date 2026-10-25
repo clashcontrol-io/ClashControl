@@ -2209,6 +2209,18 @@ function startApp() {
     }, []);
     return window._ccCloudShare ? window._ccCloudShare.status() : { conflicts: 0, lastSync: null, pid: null };
   }
+  // One sharing mode at a time: the mode that holds the link ({src, label})
+  // or null (shared-session-core.js claimLink).
+  function _ccShareLinkHolder() {
+    var SC = window._ccSharedSessionCore;
+    return SC && typeof SC.linkHolder === 'function' ? SC.linkHolder() : null;
+  }
+  // Why the other sharing mode cannot be linked now.
+  function _ccShareOtherModeText(h) {
+    if (!h) return '';
+    if (h.src === 'folder') return _cc_t('share.otherModeFolder', 'This project is shared through the folder {folder}. Only one sharing mode works at a time — unlink the folder to use a project key instead.', {folder: h.label || '—'});
+    return _cc_t('share.otherModeCloud', 'This project is shared with the project key {key}. Only one sharing mode works at a time — leave the project key to use a shared folder instead.', {key: h.label || '—'});
+  }
   // Human-readable "why this country pack" line for Settings / panels.
   function _ccRegionReasonText(res) {
     if (!res) return '';
@@ -38642,18 +38654,12 @@ function startApp() {
       if (!window._ccSharedCreate) { alert(_cc_t('dlg.sharingServiceUnavailable','Sharing service unavailable.')); return; }
       setCreating(true);
       window._ccSharedCreate(name).then(function(data){
-        try{
-          if (data && data.project) {
-            localStorage.setItem('cc_sharedProjectId', data.project.id);
-            localStorage.setItem('cc_sharedProjectName', data.project.name);
-            setPKey(data.project.id);
-            setPKeyName(data.project.name);
-          }
-        }catch(e){}
+        // POST /api/project answers {id, name, editKey}; _ccSharedCreate saved them
+        if (data && data.id) { setPKey(data.id); setPKeyName(data.name || ''); }
         setCreating(false);
         setCreateOpen(false);
         setCreateName('');
-      }).catch(function(){ alert(_cc_t('dlg.couldNotCreateSharedProject','Could not create shared project. Server may be unavailable.')); setCreating(false); });
+      }).catch(function(err){ alert(err && err.code === 'other_mode' ? _ccShareOtherModeText(err.holder) : _cc_t('dlg.couldNotCreateSharedProject','Could not create shared project. Server may be unavailable.')); setCreating(false); });
     }
     function copy(text, kind){
       try {
@@ -38685,7 +38691,9 @@ function startApp() {
           // alert() — a blocking dialog for a form validation error is
           // disproportionate and the app's own toast/inline-error pattern is
           // used everywhere else in this panel.
-          if (err && err.status) {
+          if (err && err.code === 'other_mode') {
+            setJoinError(_ccShareOtherModeText(err.holder));
+          } else if (err && err.status) {
             setJoinError(_cc_t('share.projectNotFound','Project not found. Check the key and try again.'));
           } else {
             setJoinError(_cc_t('share.joinNetworkError','Could not reach the server — check your connection and try again.'));
@@ -38698,6 +38706,11 @@ function startApp() {
       setPKey(''); setPKeyName('');
     }
     var cloudSt = useCcCloudShare();
+    // one sharing mode at a time: the mode holding the link blocks the other
+    var linkHolder = _ccShareLinkHolder();
+    var folderHolds = !!(linkHolder && linkHolder.src === 'folder');
+    var cloudHolds = !!(linkHolder && linkHolder.src === 'cloud');
+    var S_MODE_NOTE = {fontSize:'var(--text-xs)',color:'var(--color-warning-fg)',background:'var(--color-warning-bg)',padding:'var(--space-2) var(--space-3)',borderRadius:'var(--radius-sm)',lineHeight:'var(--leading-base)'};
 
     var TabBtn = function(id, label, badge){
       var active = tab===id;
@@ -38737,6 +38750,7 @@ function startApp() {
             ${pKey ? html`<div style=${{padding:'var(--space-3) var(--space-4)',background:'var(--accent-bg)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-md)'}}>
               <div style=${{fontSize:'var(--text-xs)',color:'var(--accent)',fontWeight:'var(--weight-bold)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:'var(--space-2)'}}>${pKeyName ? pKeyName : _cc_t('share.sharedProject','Shared project')}</div>
               <div style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-lg)',fontWeight:600,color:'var(--text-primary)',letterSpacing:'.02em',marginBottom:'var(--space-2)',userSelect:'all'}}>${pKey}</div>
+              ${folderHolds && html`<div data-cc-share-mode-note="cloud-paused" style=${{...S_MODE_NOTE,marginBottom:'var(--space-2)'}}>${_cc_t('share.keyPausedFolder','Not syncing: this browser shares the project through the folder {folder}. Only one sharing mode works at a time — unlink the folder to sync with this key, or leave the key.', {folder: linkHolder.label || '—'})}</div>`}
               ${cloudSt.conflicts > 0 && html`<div data-cc-cloud-conflict-count="1" class="cc-status-pill" style=${{display:'inline-block',marginBottom:'var(--space-2)',textTransform:'none',letterSpacing:0,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)'}}>
                 ${cloudSt.conflicts === 1 ? _cc_t('sharedConflict.countOne', '1 conflict to resolve') : _cc_t('sharedConflict.countMany', '{n} conflicts to resolve', {n: cloudSt.conflicts})}
               </div>`}
@@ -38750,7 +38764,8 @@ function startApp() {
             </div>` : html`<div style=${{padding:'var(--space-4) var(--space-4)',background:'var(--bg-tertiary)',border:'1px dashed var(--border)',borderRadius:'var(--radius-md)'}}>
               <div style=${{fontSize:'var(--text-base)',fontWeight:600,color:'var(--text-primary)',marginBottom:'var(--space-1)'}}>${_cc_t('share.quickShare','Quick share')}</div>
               <div style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-base)',marginBottom:'var(--space-2)'}}>${_cc_t('share.quickShareSub','Generate a project key in one click. Share the link — your teammate clicks it and instantly sees and can edit the same comments, issues, and clash decisions. No account, no upload, no per-person permissions: anyone with the key or link has full edit access.')}</div>
-              ${!createOpen && !joinOpen && html`<div style=${{display:'flex',gap:'var(--space-2)',flexWrap:'wrap'}}>
+              ${folderHolds && html`<div data-cc-share-mode-note="folder" style=${S_MODE_NOTE}>${_ccShareOtherModeText(linkHolder)}</div>`}
+              ${!folderHolds && !createOpen && !joinOpen && html`<div style=${{display:'flex',gap:'var(--space-2)',flexWrap:'wrap'}}>
                 <button onClick=${function(){ setCreateOpen(true); setCreateName(pKeyName || _cc_t('share.untitledProject','Untitled project')); }} style=${{...btnPrimary,padding:'var(--space-2) var(--space-3)',fontSize:'var(--text-sm)'}}>${_cc_t('share.createProject','Create shared project')}</button>
                 <button onClick=${function(){ setJoinOpen(true); }} style=${{...btnSecondary,padding:'var(--space-2) var(--space-3)',fontSize:'var(--text-sm)'}}>${_cc_t('share.joinWithKey','Join with a key…')}</button>
               </div>`}
@@ -38810,13 +38825,15 @@ function startApp() {
             </div>`}
 
             <div style=${{display:'flex',gap:'var(--space-2)',flexWrap:'wrap'}}>
-              ${!sp.enabled && html`<button onClick=${pick} disabled=${!canUse}
-                style=${{...btnPrimary, opacity:canUse?1:0.5, cursor:canUse?'pointer':'not-allowed'}}>${_cc_t('share.linkFolder','Link a shared folder')}</button>`}
+              ${!sp.enabled && html`<button onClick=${pick} disabled=${!canUse || cloudHolds}
+                style=${{...btnPrimary, opacity:(canUse && !cloudHolds)?1:0.5, cursor:(canUse && !cloudHolds)?'pointer':'not-allowed'}}>${_cc_t('share.linkFolder','Link a shared folder')}</button>`}
               ${sp.enabled && html`<button onClick=${syncNow} disabled=${sp.syncing} style=${{...btnSecondary, opacity:sp.syncing?0.5:1}}>${_cc_t('share.syncNow','Sync now')}</button>`}
               ${sp.enabled && html`<button onClick=${unlink} style=${btnDanger}>${_cc_t('share.unlinkFolder','Unlink folder')}</button>`}
             </div>
 
-            ${!canUse && html`<div style=${{fontSize:'var(--text-xs)',color:'var(--color-warning-fg)',padding:'var(--space-2) var(--space-3)',background:'rgba(234,179,8,.08)',borderRadius:'var(--radius-sm)'}}>
+            ${!sp.enabled && cloudHolds && html`<div data-cc-share-mode-note="cloud" style=${S_MODE_NOTE}>${_ccShareOtherModeText(linkHolder)}</div>`}
+
+            ${!canUse && html`<div style=${{fontSize:'var(--text-xs)',color:'var(--color-warning-fg)',padding:'var(--space-2) var(--space-3)',background:'var(--color-warning-bg)',borderRadius:'var(--radius-sm)'}}>
               ${_cc_t('share.fsApiUnavailable','File System Access API not available in this browser. Use Chrome or Edge to link a folder.')}
             </div>`}
 
@@ -40113,11 +40130,14 @@ function startApp() {
         ${function(){
           var spId = null;
           try { spId = localStorage.getItem('cc_sharedProjectId'); } catch(e) {}
+          var holder = _ccShareLinkHolder(), folderHolds = !!(holder && holder.src === 'folder');
+          var modeNote = {fontSize:'var(--text-xs)',color:'var(--color-warning-fg)',background:'var(--color-warning-bg)',padding:'var(--space-2) var(--space-3)',borderRadius:'var(--radius-sm)',lineHeight:'var(--leading-base)'};
           return html`<div>
             ${spId && html`<div style=${TROW}>
               <div>
                 <div style=${TLBL}>${_cc_t('settings.shared.projectKey','Project Key')}</div>
                 <div style=${TSUB}>${_cc_t('settings.shared.projectKeySub','Share this key with your team. Issue status, priority, assignee, title and description sync automatically.')}</div>
+                ${folderHolds && html`<div data-cc-share-mode-note="cloud-paused" style=${{...modeNote,marginTop:'var(--space-1)'}}>${_cc_t('share.keyPausedFolder','Not syncing: this browser shares the project through the folder {folder}. Only one sharing mode works at a time — unlink the folder to sync with this key, or leave the key.', {folder: holder.label || '—'})}</div>`}
               </div>
               <div style=${{display:'flex',gap:'var(--space-1)',alignItems:'center',flexShrink:0}}>
                 <code style=${{fontSize:'var(--text-xs)',background:'var(--bg-secondary)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-mono)',color:'var(--accent)'}}>${spId}</code>
@@ -40148,7 +40168,13 @@ function startApp() {
                 }()}
               </div>
             </div>`}
-            ${!spId && html`<div style=${TROW}>
+            ${!spId && folderHolds && html`<div style=${TROW}>
+              <div>
+                <div style=${TLBL}>${_cc_t('share.sharedProject','Shared project')}</div>
+                <div data-cc-share-mode-note="folder" style=${{...modeNote,marginTop:'var(--space-1)'}}>${_ccShareOtherModeText(holder)}</div>
+              </div>
+            </div>`}
+            ${!spId && !folderHolds && html`<div style=${TROW}>
               <div>
                 <div style=${TLBL}>${_cc_t('share.sharedProject','Shared project')}</div>
                 <div style=${TSUB}>${_cc_t('settings.shared.sharedProjectSub','Sync clash decisions with your team. No account needed — just share the project key.')}</div>
@@ -40170,7 +40196,7 @@ function startApp() {
                       // failure instead of always blaming "the key". Toast,
                       // not alert() — this settings row has no inline error
                       // slot and a blocking dialog is disproportionate here.
-                      var msg = err && err.status ? _cc_t('share.projectNotFound','Project not found. Check the key and try again.') : _cc_t('share.joinNetworkError','Could not reach the server — check your connection and try again.');
+                      var msg = err && err.code === 'other_mode' ? _ccShareOtherModeText(err.holder) : err && err.status ? _cc_t('share.projectNotFound','Project not found. Check the key and try again.') : _cc_t('share.joinNetworkError','Could not reach the server — check your connection and try again.');
                       if (typeof window._ccToast === 'function') window._ccToast(msg); else alert(msg);
                     });
                 }}
@@ -40181,7 +40207,7 @@ function startApp() {
                   if (!window._ccSharedCreate) return;
                   window._ccSharedCreate(name)
                     .then(function(data){ d({t:A.UPD_PREFS,u:{_sharedRefresh:Date.now()}}); })
-                    .catch(function(){ alert(_cc_t('share.createFailed','Could not create shared project. Server may be unavailable.')); });
+                    .catch(function(err){ alert(err && err.code === 'other_mode' ? _ccShareOtherModeText(err.holder) : _cc_t('share.createFailed','Could not create shared project. Server may be unavailable.')); });
                 }}
                   style=${{...S_BTN,padding:'var(--space-1) var(--space-2)',background:'var(--accent)',color:'var(--accent-contrast)',fontSize:'var(--text-xs)',fontWeight:600,borderRadius:'var(--radius-sm)',whiteSpace:'nowrap'}}>${_cc_t('share.create','Create')}</button>
               </div>
@@ -42986,6 +43012,10 @@ function startApp() {
     var SC = window._ccSharedSessionCore;
     if (!pid || !SC || !window._ccSharedLogCore) return null;
     if (_cloud.sess && _cloud.pid === pid) return _cloud.sess;
+    // One sharing mode at a time (shared-session-core claimLink): while a
+    // shared folder is linked the key stays saved but does not sync; the
+    // share panels say why. It starts once the folder is unlinked.
+    if (SC.claimLink('cloud', pid)) return null;
     _cloudLeave(false);
     var ident = window._ccClashIdentityCore, ls = null;
     try { ls = window.localStorage; } catch(e) {}
@@ -43011,6 +43041,7 @@ function startApp() {
   function _cloudLeave(leave) {
     if (_cloud.pullTimer) { clearInterval(_cloud.pullTimer); _cloud.pullTimer = null; }
     if (_cloud.pushTimer) { clearTimeout(_cloud.pushTimer); _cloud.pushTimer = null; }
+    if (leave && window._ccSharedSessionCore) window._ccSharedSessionCore.releaseLink('cloud');
     if (leave && _cloud.sess) {
       _cloud.sess.clearMarkers();
       if (window._ccSharedSessionCore) window._ccSharedSessionCore.unregister(_cloud.sess);
@@ -43121,7 +43152,17 @@ function startApp() {
 
   window.addEventListener('pagehide', function() { if (_cloud.sess && _cloud.sess.pending()) { _cloud.sess.saveOutbox(); _cloudPush(); } });
 
+  // Create / join are refused while a shared folder holds the link (one
+  // sharing mode at a time) — before anything is created on the server.
+  function _sharedOtherMode() {
+    var SC = window._ccSharedSessionCore, h = SC ? SC.linkHolder() : null;
+    if (!h || h.src === 'cloud') return null;
+    var e = new Error('another sharing mode is linked'); e.code = 'other_mode'; e.holder = h;
+    return e;
+  }
   function _sharedCreateProject(name) {
+    var other = _sharedOtherMode();
+    if (other) return Promise.reject(other);
     return fetch('/api/project', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -43141,6 +43182,8 @@ function startApp() {
   }
   // Checks a key before joining (one small v2 page) and starts syncing.
   function _sharedJoinProject(key) {
+    var other = _sharedOtherMode();
+    if (other) return Promise.reject(other);
     return fetch('/api/project?id=' + encodeURIComponent(key) + '&v=2&limit=1')
       .then(function(r){ if (!r.ok) { var e = new Error(); e.status = r.status; throw e; } return r.json(); })
       .then(function(data){

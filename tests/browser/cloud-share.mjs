@@ -213,6 +213,48 @@ try {
     'after a reload, page B pulled from its cached cursor: only the 1 new record', JSON.stringify(gets));
   await B2.close();
 
+  // ── one sharing mode at a time (shared-session-core claimLink) ──
+  // With a project key linked, a shared folder cannot be linked (each mode
+  // keeps its own log; both at once would overwrite each other's values and
+  // markers) — and the other way round, with the reason shown.
+  await A.evaluate(() => window._ccActivateAddon('shared-project'));
+  await A.waitForFunction(() => window._ccSharedLog, null, { timeout: 30_000 });
+  const refused = await A.evaluate(async () => {
+    window.__toasts.length = 0;
+    const r = await window._ccSharedLog.link(await navigator.storage.getDirectory());
+    return { r, sess: !!window._ccSharedLog.session(), holder: window._ccSharedSessionCore.linkHolder(), toasts: window.__toasts.slice() };
+  });
+  check(refused.r === false && !refused.sess && refused.holder.src === 'cloud' && refused.toasts.some((m) => m.includes(pid)),
+    'project key linked: linking a folder is refused with the key named', JSON.stringify(refused));
+  await A.evaluate(() => window._ccDispatch({ t: 'SHARE', v: true }));
+  const shareNote = await A.waitForSelector('[data-cc-share-mode-note="cloud"]', { timeout: 5_000 }).catch(() => null);
+  const linkDisabled = await A.evaluate(() => [...document.querySelectorAll('button')].some((b) => /Link a shared folder/.test(b.textContent) && b.disabled));
+  check(!!shareNote && linkDisabled, 'Share panel: "Link a shared folder" disabled with the reason');
+  await A.evaluate(() => window._ccDispatch({ t: 'SHARE', v: false }));
+  // leave the key → the folder links; now the key is refused before any request
+  const nReq = () => log.filter((x) => x.who === 'ualice0000001').length;
+  await A.evaluate(() => { localStorage.removeItem('cc_sharedProjectId'); localStorage.removeItem('cc_sharedProjectName'); window._ccSharedStop(true); });
+  const linked = await A.evaluate(async () => {
+    const r = await window._ccSharedLog.link(await navigator.storage.getDirectory());
+    return { r, sess: !!window._ccSharedLog.session(), holder: window._ccSharedSessionCore.linkHolder(), sessions: window._ccSharedSessionCore.sessions().map((s) => s.src) };
+  });
+  check(linked.r === true && linked.sess && linked.holder.src === 'folder' && linked.sessions.join() === 'folder', 'after leaving the key the folder links (one session)', JSON.stringify(linked));
+  const r0 = nReq();
+  const join = await A.evaluate((k) => window._ccSharedJoin(k).then(() => 'joined', (e) => e.code), pid);
+  check(join === 'other_mode' && nReq() === r0, 'folder linked: joining a key is refused before any request');
+  // a key saved by an older version while the folder is linked does not sync
+  await A.evaluate((k) => { localStorage.setItem('cc_sharedProjectId', k); window._ccDispatch({ t: 'UPD_PREFS', u: { _sharedRefresh: Date.now() } }); }, pid);
+  await A.evaluate(() => window._ccDispatch({ t: 'SHARE', v: true }));
+  const paused = await A.waitForSelector('[data-cc-share-mode-note="cloud-paused"]', { timeout: 5_000 }).catch(() => null);
+  check(!!paused && !(await A.evaluate(() => window._ccCloudShare.session())) && nReq() === r0, 'saved key while the folder is linked: not syncing, the panel says why');
+  await A.evaluate(() => window._ccDispatch({ t: 'SHARE', v: false }));
+  // unlink the folder → the saved key starts syncing again
+  await A.evaluate(() => window._disconnectShared(window._ccDispatch));
+  await A.waitForFunction(() => !window._ccSharedLog.session(), null, { timeout: 10_000 });
+  await A.evaluate(() => window._ccDispatch({ t: 'UPD_PREFS', u: { _sharedRefresh: Date.now() } }));
+  await A.waitForFunction((k) => window._ccCloudShare.status().pid === k && window._ccSharedSessionCore.linkHolder().src === 'cloud', pid, { timeout: 10_000 })
+    .then(() => ok('folder unlinked: the saved key syncs again'), () => fail('folder unlinked: the saved key did not resume'));
+
   // ── never the old rejection path ──
   for (const [P, who] of [[A, 'A'], [B, 'B']]) {
     const t = await P.evaluate(() => window.__toasts);
