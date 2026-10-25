@@ -18486,7 +18486,7 @@ function startApp() {
         }
         grp.add(_ball(from, 0x60a5fa)); // viewer = blue
         grp.add(_ball(hit,  0xef4444)); // blocker = red
-        grp.add(_ball(to,   0xfbbf24)); // target = amber
+        grp.add(_ball(to,   0x334155)); // target = dark slate (no amber in the UI)
         S.scene.add(grp);
         _activeSightLine = grp;
       }
@@ -32648,7 +32648,7 @@ function startApp() {
 
   var _diffMatAdded = new THREE.MeshBasicMaterial({color: 0x22c55e, transparent: true, opacity: 0.7, depthWrite: false});
   var _diffMatRemoved = new THREE.MeshBasicMaterial({color: 0xef4444, transparent: true, opacity: 0.5, depthWrite: false});
-  var _diffMatModified = new THREE.MeshBasicMaterial({color: 0xeab308, transparent: true, opacity: 0.7, depthWrite: false});
+  var _diffMatModified = new THREE.MeshBasicMaterial({color: 0x3b82f6, /* --color-info: no amber in the UI */ transparent: true, opacity: 0.7, depthWrite: false});
   var _diffMatUnchanged = new THREE.MeshBasicMaterial({color: 0x334155, transparent: true, opacity: 0.08, depthWrite: false});
 
   function showModelDiff(model) {
@@ -33081,8 +33081,8 @@ function startApp() {
         }).join(' ');
       }
       return '<svg width="'+W+'" height="'+H+'" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px">'
-        + '<polyline points="'+pts('total')+'" fill="none" stroke="#64748b" stroke-width="1.5"/>'
-        + '<polyline points="'+pts('open')+'" fill="none" stroke="#475569" stroke-width="2"/>'
+        + '<polyline points="'+pts('total')+'" fill="none" stroke="#cbd5e1" stroke-width="1.5"/>'
+        + '<polyline points="'+pts('open')+'" fill="none" stroke="#334155" stroke-width="2"/>'
         + '</svg>'
         + '<div style="font-size:11px;color:#64748b;margin-top:2px">light = total, dark = open · '+hist.length+' detection runs · peak '+max+'</div>';
     }
@@ -40434,7 +40434,7 @@ function startApp() {
           <${Toggle} on=${p.showAxes!==false} onToggle=${tog('showAxes')} />
         </div>
         <div style=${TROW}>
-          <div><div style=${TLBL}>${_cc_t('settings.showMarkers','Show markers')}</div><div style=${TSUB}>${_cc_t('settings.display3dMarkersRed','Display 3D markers — red/amber for clashes, green for issues')}</div></div>
+          <div><div style=${TLBL}>${_cc_t('settings.showMarkers','Show markers')}</div><div style=${TSUB}>${_cc_t('settings.display3dMarkersRed','Display 3D markers — red / grey for clashes by severity, green for issues')}</div></div>
           <${Toggle} on=${!!p.showMarkers} onToggle=${tog('showMarkers')} />
         </div>
         <div style=${TROW}>
@@ -49184,7 +49184,7 @@ function startApp() {
             ${_cc_t('tools.markers','Markers')} <span style=${{color:s.prefs.showMarkers?'#22c55e':'#ef4444',fontWeight:600}}>${s.prefs.showMarkers?_cc_t('tools.on','On'):_cc_t('tools.off','Off')}</span>
           </button>
           <div style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:'var(--leading-base)'}}>
-            ${_cc_t('tools.markersSub','Clash markers are shown in red/amber, issue markers in green.')}
+            ${_cc_t('tools.markersSub','Clash markers are red / grey by severity, issue markers green.')}
           </div>
         </div>
       </div>
