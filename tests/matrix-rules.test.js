@@ -228,7 +228,8 @@ test('project codec: matrixRules round-trips; an old project without it sets no 
   const old = { _cc: 'ClashControl', rules: { hard: true, maxGap: 50, disciplineMatrix: { 'mep:structural': false } }, models: [] };
   const acts2 = [];
   codec.restoreProject(old, (a) => acts2.push(a), { ADD_MODEL: 'ADD_MODEL', UPD_RULES: 'UPD_RULES' });
-  assert.equal(Object.prototype.hasOwnProperty.call(acts2[0].u, 'matrixRules'), false);
+  // a project without matrix rules starts with none (never the previously open project's)
+  assert.deepEqual(acts2[0].u.matrixRules, {});
   assert.equal(core.disciplinePairEnabled('structural', 'mep.ventilation', acts2[0].u), false, 'old boolean still honoured');
 });
 

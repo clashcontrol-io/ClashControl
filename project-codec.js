@@ -52,6 +52,9 @@
     if (!data._cc || data._cc !== 'ClashControl') throw new Error('Not a ClashControl project file.');
   }
 
+  // Rule maps that belong to one project (never carried over from another).
+  var PROJECT_RULE_MAPS = ['disciplineMatrix', 'matrixRules', 'toleranceByTypePair', 'roleChoices'];
+
   function restoreProject(data, dispatch, actions) {
     data.models.forEach(function(model) {
       dispatch({t:actions.ADD_MODEL, v:Object.assign({}, model, {meshes:[],elements:[],_stub:true})});
@@ -61,6 +64,14 @@
     // contact classification; it dropped genuine small penetrations, so a
     // project saved with the old default loads with the new one (0 = off).
     if (rules && rules.minOverlapVolM3 === 1e-5) rules = Object.assign({}, rules, {minOverlapVolM3: 0});
+    // Rules merge into the current ones (UPD_RULES), so a per-project rule
+    // map the file lacks (older projects) would keep the previously open
+    // project's cells / tolerances / choices. Those maps start empty.
+    if (rules) {
+      var maps = {};
+      PROJECT_RULE_MAPS.forEach(function(k) { if (!(k in rules)) maps[k] = {}; });
+      if (Object.keys(maps).length) rules = Object.assign({}, rules, maps);
+    }
     dispatch({t:actions.UPD_RULES, u:rules});
     if (data.clashes) dispatch({t:actions.SET_CLASHES, v:data.clashes});
     if (data.runHistory || data.lastDeltaSummary) dispatch({

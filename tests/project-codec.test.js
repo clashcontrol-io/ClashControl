@@ -86,7 +86,8 @@ test('restore emits the exact action order and restores models only as geometry 
 test('minimal legacy exports still emit only model and rules actions', () => {
   const emitted = [];
   codec.restoreProject({_cc:'ClashControl',models:[],rules:{}}, (action)=>emitted.push(action), actions);
-  assert.deepEqual(emitted, [{t:'UPD_RULES',u:{}}]);
+  // per-project rule maps a file lacks start empty (never the previously open project's)
+  assert.deepEqual(emitted, [{t:'UPD_RULES',u:{disciplineMatrix:{},matrixRules:{},toleranceByTypePair:{},roleChoices:{}}}]);
 });
 
 // Bug 9: comments were never included in the serialized project file, so
@@ -124,4 +125,16 @@ test('serializeProject keeps parked models as model stubs (found by the pressure
   const data = codec.serializeProject(state({parkedModels:[{id:'p',name:'Parked',discipline:'architectural',color:'#abcdef',tag:''}]}), '1', 't');
   assert.deepEqual(data.models.map((m)=>m.id), ['m','p']);
   assert.equal(data.models[1].name, 'Parked');
+});
+
+test('a project without matrix / tolerance maps does not inherit the open project\'s', () => {
+  let rules = { maxGap: 50, matrixRules: { 'mep:structural': { mode: 'clearance', gapMm: 100 } }, toleranceByTypePair: { 'IfcWall|IfcPipeSegment': 20 } };
+  const dispatch = (a) => { if (a.t === 'UPD_RULES') rules = Object.assign({}, rules, a.u); };
+  codec.restoreProject({ _cc: 'ClashControl', models: [], rules: { maxGap: 25 } }, dispatch, actions);
+  assert.equal(rules.maxGap, 25);
+  assert.deepEqual(rules.matrixRules, {});
+  assert.deepEqual(rules.toleranceByTypePair, {});
+  // a file that has them keeps its own
+  codec.restoreProject({ _cc: 'ClashControl', models: [], rules: { matrixRules: { 'a:b': { mode: 'off' } } } }, dispatch, actions);
+  assert.deepEqual(rules.matrixRules, { 'a:b': { mode: 'off' } });
 });
