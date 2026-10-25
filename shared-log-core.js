@@ -460,7 +460,9 @@
       if (k.charAt(0) === '_' || ISSUE_DROP[k]) return;
       var v = issue[k];
       if (v === undefined || typeof v === 'function') return;
-      if (typeof v === 'string' && v.length > 4000) return;
+      // pictures (data: URLs) stay local; long text is shared in full (a
+      // record over the store's size cap is refused and its author told —
+      // never cut short or dropped here without anyone knowing)
       if (typeof v === 'string' && /^data:/.test(v)) return;
       out[k] = v;
     });

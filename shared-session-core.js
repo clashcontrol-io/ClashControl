@@ -54,6 +54,10 @@
     var outbox = [];                 // own records not stored yet (log record objects)
     var inflight = Object.create(null);
     var written = Object.create(null);
+    // Own records the store refused (malformed / over a size cap). They stay
+    // in the local log — this user's view keeps their edit — but teammates
+    // never get them, so the user is told: id → {id, kind, key, field, reason, ts}.
+    var rejected = Object.create(null);
     var n = 0, recorded = false;
     var last = { clashes: null, issues: null, comments: null, viewpoints: null };
     /** @type {{clashes:any, map:Map<string, any[]>}} */
@@ -485,6 +489,27 @@
       saveOutbox();
     }
     function release(batch) { (batch || []).forEach(function(r) { delete inflight[r.id]; }); }
+    // The store refused these (`[{id, reason}]`): taken out of the outbox
+    // like a stored record (retrying gives the same answer), kept in the
+    // local log, and listed until the user dismisses them. Returns how many
+    // were not known as refused yet.
+    function reject(list) {
+      var fresh = 0;
+      (list || []).forEach(function(x) {
+        if (!x || typeof x.id !== 'string') return;
+        var r = log.changes[x.id];
+        delete inflight[x.id];
+        written[x.id] = true;
+        if (rejected[x.id]) return;
+        rejected[x.id] = { id: x.id, kind: r ? r.target.kind : null, key: r ? r.target.key : null, field: r ? r.field : null,
+          reason: typeof x.reason === 'string' ? x.reason.slice(0, 40) : 'malformed', ts: r ? r.ts : null };
+        fresh++;
+      });
+      if (fresh) { outbox = outbox.filter(function(r) { return !rejected[r.id]; }); saveOutbox(); }
+      return fresh;
+    }
+    function rejectedList() { return Object.keys(rejected).map(function(id) { return Object.assign({}, rejected[id]); }); }
+    function dismissRejected() { rejected = Object.create(null); }
     function clearMarkers() {
       var st = state();
       if (!st) return;
@@ -503,6 +528,7 @@
       note: note, observe: observe, resolve: resolve, seed: seed,
       ingest: ingest, sync: sync, project: project,
       takeBatch: takeBatch, done: done, release: release,
+      reject: reject, rejected: rejectedList, dismissRejected: dismissRejected,
       pending: function() { return outbox.length; },
       outbox: function() { return outbox.slice(); },
       saveOutbox: saveOutbox, adoptOutboxes: adoptOutboxes,

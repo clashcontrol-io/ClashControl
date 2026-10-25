@@ -213,6 +213,34 @@ try {
     'after a reload, page B pulled from its cached cursor: only the 1 new record', JSON.stringify(gets));
   await B2.close();
 
+  // ── a record the server refuses (over the 16 KB value cap) is not lost
+  //    silently: the sender is told which change and why (toast + Share
+  //    panel), it is never retried, the notice survives a reload until
+  //    dismissed, and the teammate never gets it ──
+  await A.evaluate(() => { window.__toasts.length = 0; window._ccDispatch({ t: 'ADD_ISSUE', v: { id: 'iss_big_1', title: 'Huge notes', description: 'x'.repeat(20000), status: 'open', priority: 'normal', createdAt: '2026-10-25' } }); });
+  await settle(A);
+  const rej = await A.evaluate(() => ({ st: window._ccCloudShare.status(), toasts: window.__toasts.slice() }));
+  check(rej.st.pending === 0 && rej.st.rejected.length === 1 && rej.st.rejected[0].reason === 'value-too-large' && rej.st.rejected[0].key === 'iss_big_1'
+    && rej.toasts.some((m) => /not shared/i.test(m)), 'refused record: listed with its reason, toast shown, not pending', JSON.stringify(rej));
+  const putsBefore = log.filter((x) => x.who === 'ualice0000001' && x.method === 'PUT').length;
+  await A.evaluate(() => window._ccCloudShare.push());
+  check(log.filter((x) => x.who === 'ualice0000001' && x.method === 'PUT').length === putsBefore, 'refused record is not retried');
+  await A.evaluate(() => window._ccDispatch({ t: 'SHARE', v: true }));
+  const rejNote = await A.waitForSelector('[data-cc-cloud-rejected]', { timeout: 5_000 }).then((el) => el.textContent(), () => '');
+  check(/too large to share/.test(rejNote) && /Huge notes/.test(rejNote), 'Share panel: which change was not shared and why', rejNote);
+  await A.evaluate(() => window._ccDispatch({ t: 'SHARE', v: false }));
+  await pull(B);
+  check(!(await B.evaluate(() => window._ccLatestState.issues.some((i) => i.id === 'iss_big_1'))), 'the teammate never got the refused record');
+  const A2 = await A.context().newPage();
+  A2.on('pageerror', (e) => pageErrors.push('A2: ' + e.message));
+  await A2.goto(url, { waitUntil: 'domcontentloaded' });
+  await A2.waitForFunction(() => window._ccCloudShare && window._ccCloudShare.status().lastSync, null, { timeout: 60_000 });
+  const rej2 = await A2.evaluate(() => window._ccCloudShare.status());
+  check(rej2.rejected.length === 1 && rej2.pending === 0, 'after a reload the notice is still there and nothing is re-sent', JSON.stringify(rej2.rejected));
+  await A2.evaluate(() => window._ccCloudShare.dismissRejected());
+  check((await A2.evaluate(() => window._ccCloudShare.status().rejected.length)) === 0, 'Dismiss clears the notice');
+  await A2.close();
+
   // ── one sharing mode at a time (shared-session-core claimLink) ──
   // With a project key linked, a shared folder cannot be linked (each mode
   // keeps its own log; both at once would overwrite each other's values and

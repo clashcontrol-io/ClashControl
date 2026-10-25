@@ -178,6 +178,9 @@ test('validation caps: malformed / oversized records are reported invalid and no
     assert.equal(r.status, 200);
     assert.equal(r.body.accepted, 1);
     assert.deepEqual(r.body.invalid.sort(), bad.map((b) => b.id).sort());
+    // each refusal says why, so the sender can tell its user
+    const why = Object.fromEntries(r.body.rejected.map((x) => [x.id, x.reason]));
+    assert.deepEqual(why, { 'u1.2': 'kind', 'u1.3': 'field', 'u1.4': 'value-too-large', 'u1.5': 'key-too-long', 'u1.6': 'user', 'u1.7': 'resolves', 'u1.8': 'malformed' });
     assert.equal(db.changes.get(p.id).length, 1);
     const many = new Array(501).fill(0).map((_, i) => Object.assign({}, ok, { id: 'm' + i }));
     const r2 = await call(handler, { method: 'PUT', query: { id: p.id }, body: { v: 2, user: 'u1', changes: many } });

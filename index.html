@@ -2215,6 +2215,26 @@ function startApp() {
     var SC = window._ccSharedSessionCore;
     return SC && typeof SC.linkHolder === 'function' ? SC.linkHolder() : null;
   }
+  // Changes the cloud store refused (never shared with teammates).
+  function _ccShareRejectedText(n) {
+    return n === 1 ? _cc_t('share.rejectedOne', '1 change was not shared: the server refused it. It stays on this computer only.')
+      : _cc_t('share.rejectedMany', '{n} changes were not shared: the server refused them. They stay on this computer only.', {n: n});
+  }
+  function _ccShareRejectReason(reason) {
+    if (reason === 'value-too-large' || reason === 'prev-too-large') return _cc_t('share.rejectTooLarge', 'too large to share');
+    return _cc_t('share.rejectMalformed', 'not in a shareable form (an app error — please report it)');
+  }
+  // One refused change: what it was about and why it was refused.
+  function _ccShareRejectedLine(x, st) {
+    var what;
+    if (x.kind === 'issue') { var it = ((st && st.issues) || []).find(function(i){ return i.id === x.key; }); what = _cc_t('share.rejectIssue', 'Issue {name}', {name: it && it.title ? '“' + it.title + '”' : ''}).trim(); }
+    else if (x.kind === 'note') what = _cc_t('share.rejectNote', '3D comment');
+    else if (x.kind === 'viewpoint') what = _cc_t('share.rejectViewpoint', 'Viewpoint');
+    else if (x.kind === 'clash') what = _cc_t('share.rejectClash', 'Clash');
+    else what = _cc_t('share.rejectChange', 'Change');
+    var field = x.field ? (x.field === 'created' ? _cc_t('share.rejectCreated', 'new') : x.field.split(':')[0]) : '';
+    return what + (field ? ' · ' + field : '') + ' — ' + _ccShareRejectReason(x.reason);
+  }
   // Why the other sharing mode cannot be linked now.
   function _ccShareOtherModeText(h) {
     if (!h) return '';
@@ -38750,6 +38770,14 @@ function startApp() {
             ${pKey ? html`<div style=${{padding:'var(--space-3) var(--space-4)',background:'var(--accent-bg)',border:'1px solid var(--accent-subtle)',borderRadius:'var(--radius-md)'}}>
               <div style=${{fontSize:'var(--text-xs)',color:'var(--accent)',fontWeight:'var(--weight-bold)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:'var(--space-2)'}}>${pKeyName ? pKeyName : _cc_t('share.sharedProject','Shared project')}</div>
               <div style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-lg)',fontWeight:600,color:'var(--text-primary)',letterSpacing:'.02em',marginBottom:'var(--space-2)',userSelect:'all'}}>${pKey}</div>
+              ${cloudSt.rejected && cloudSt.rejected.length > 0 && html`<div data-cc-cloud-rejected=${cloudSt.rejected.length} style=${{...S_MODE_NOTE,marginBottom:'var(--space-2)'}}>
+                <div>${_ccShareRejectedText(cloudSt.rejected.length)}</div>
+                <ul style=${{margin:'var(--space-1) 0',paddingLeft:'var(--space-4)'}}>
+                  ${cloudSt.rejected.slice(0,5).map(function(x){ return html`<li key=${x.id}>${_ccShareRejectedLine(x, s)}</li>`; })}
+                </ul>
+                ${cloudSt.rejected.length > 5 && html`<div>${_cc_t('share.rejectedMore','and {n} more', {n: cloudSt.rejected.length - 5})}</div>`}
+                <button data-cc-cloud-rejected-dismiss="1" onClick=${function(){ if (window._ccCloudShare) window._ccCloudShare.dismissRejected(); }} style=${{...btnGhost,marginTop:'var(--space-1)'}}>${_cc_t('common.dismiss','Dismiss')}</button>
+              </div>`}
               ${folderHolds && html`<div data-cc-share-mode-note="cloud-paused" style=${{...S_MODE_NOTE,marginBottom:'var(--space-2)'}}>${_cc_t('share.keyPausedFolder','Not syncing: this browser shares the project through the folder {folder}. Only one sharing mode works at a time — unlink the folder to sync with this key, or leave the key.', {folder: linkHolder.label || '—'})}</div>`}
               ${cloudSt.conflicts > 0 && html`<div data-cc-cloud-conflict-count="1" class="cc-status-pill" style=${{display:'inline-block',marginBottom:'var(--space-2)',textTransform:'none',letterSpacing:0,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)'}}>
                 ${cloudSt.conflicts === 1 ? _cc_t('sharedConflict.countOne', '1 conflict to resolve') : _cc_t('sharedConflict.countMany', '{n} conflicts to resolve', {n: cloudSt.conflicts})}
@@ -42982,7 +43010,7 @@ function startApp() {
         try {
           var out = { recs: [], names: {}, cursor: '0' };
           var tx = db.transaction('log', 'readonly'), g = tx.objectStore('log').getAll(IDBKeyRange.bound([pid], [pid, []]));
-          g.onsuccess = function() { (g.result || []).forEach(function(v) { if (v && v._meta) { out.cursor = v.cursor || '0'; out.names = v.names || {}; } else if (v) out.recs.push(v); }); };
+          g.onsuccess = function() { (g.result || []).forEach(function(v) { if (v && v._meta) { out.cursor = v.cursor || '0'; out.names = v.names || {}; out.rejected = Array.isArray(v.rejected) ? v.rejected : []; } else if (v) out.recs.push(v); }); };
           tx.oncomplete = function() { resolve(out); };
           tx.onerror = tx.onabort = function() { resolve(empty); };
         } catch(e) { resolve(empty); }
@@ -42997,13 +43025,22 @@ function startApp() {
       try {
         var tx = db.transaction('log', 'readwrite'), st = tx.objectStore('log');
         recs.forEach(function(r) { st.put(r, [pid, r.id]); });
-        if (meta) st.put({ _meta: true, cursor: meta.cursor, names: meta.names }, [pid, '~meta']);
+        if (meta) st.put({ _meta: true, cursor: meta.cursor, names: meta.names, rejected: meta.rejected || [] }, [pid, '~meta']);
         if (tx.commit) tx.commit();
       } catch(e) { /* a cache only — the server stays the source */ }
     });
   }
   function _cloudCacheDrop(pid) {
     _cloudDb(function(db) { if (db) try { db.transaction('log', 'readwrite').objectStore('log').delete(IDBKeyRange.bound([pid], [pid, []])); } catch(e) {} });
+  }
+
+  function _cloudMeta(sess) { return { cursor: _cloud.cursor, names: sess.log.names, rejected: sess.rejected() }; }
+  // Dismiss the "not shared" notice (the records stay in this user's log).
+  function _cloudDismissRejected() {
+    if (!_cloud.sess) return;
+    _cloud.sess.dismissRejected();
+    _cloudCachePut(_cloud.pid, [], _cloudMeta(_cloud.sess));
+    _cloudEmit();
   }
 
   // The session for the current project key (a new one when the key changed).
@@ -43032,6 +43069,7 @@ function startApp() {
     _cloud.loaded = _cloudCacheLoad(pid).then(function(c) {
       if (_cloud.sess !== sess) return;
       sess.ingest(c.recs, c.names);
+      if (c.rejected && c.rejected.length) sess.reject(c.rejected);
       _cloud.cursor = c.cursor || '0';
       if (sess.adoptOutboxes()) _cloudSchedulePush(0);
     });
@@ -43074,9 +43112,18 @@ function startApp() {
       .then(function(data) {
         sess.done(batch);
         _cloud.stats.pushes++; _cloud.stats.changesOut += batch.length;
-        _cloudCachePut(pid, batch, null);
-        // malformed / oversized records (a bug, not a conflict): kept locally, not retried
-        if (data && data.invalid && data.invalid.length) console.warn('[cloud-share] the server refused malformed records:', data.invalid);
+        // Refused records (malformed / over a size cap — never a conflict):
+        // retrying gives the same answer, so they stay in this user's log
+        // only. Teammates never get them, so the user is told which and why.
+        var refused = (data && Array.isArray(data.rejected)) ? data.rejected
+          : ((data && Array.isArray(data.invalid)) ? data.invalid.map(function(id) { return { id: id, reason: 'malformed' }; }) : []);
+        var fresh = refused.length ? sess.reject(refused) : 0;
+        _cloudCachePut(pid, batch, refused.length ? _cloudMeta(sess) : null);
+        if (fresh) {
+          console.warn('[cloud-share] the server refused ' + refused.length + ' record(s); they stay on this computer only:', sess.rejected());
+          if (typeof window._ccToast === 'function') window._ccToast(_ccShareRejectedText(fresh), 'error');
+          _cloudEmit();
+        }
         return true;
       }, function(err) {
         sess.release(batch);
@@ -43117,7 +43164,7 @@ function startApp() {
       }
       return page().then(function(data) {
         if (!data || _cloud.sess !== sess) return null;
-        if (fresh.length || _cloud.cursor !== before) _cloudCachePut(pid, fresh, { cursor: _cloud.cursor, names: sess.log.names });
+        if (fresh.length || _cloud.cursor !== before) _cloudCachePut(pid, fresh, _cloudMeta(sess));
         sess.sync({ touched: touched, remote: remote, full: !_cloud.synced });
         _cloud.synced = true;
         _cloud.lastSync = Date.now();
@@ -43233,7 +43280,8 @@ function startApp() {
   window._ccSharedDeleteProject = _sharedDeleteProject;
   // status for the share panels; internal plumbing for the browser test
   window._ccCloudShare = {
-    status: function() { return { pid: _cloud.pid, conflicts: _cloud.conflicts, lastSync: _cloud.lastSync, pending: _cloud.sess ? _cloud.sess.pending() : 0 }; },
+    status: function() { return { pid: _cloud.pid, conflicts: _cloud.conflicts, lastSync: _cloud.lastSync, pending: _cloud.sess ? _cloud.sess.pending() : 0, rejected: _cloud.sess ? _cloud.sess.rejected() : [] }; },
+    dismissRejected: _cloudDismissRejected,
     stats: _cloud.stats,
     pull: _cloudPull, push: _cloudPush,
     session: function() { return _cloud.sess; },

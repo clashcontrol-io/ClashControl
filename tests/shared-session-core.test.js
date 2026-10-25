@@ -155,3 +155,25 @@ test('one sharing mode at a time: the mode holding the link refuses the other un
   SC.releaseLink('folder');
   assert.equal(SC.linkHolder(), null);
 });
+
+test('a record the store refused leaves the outbox, stays in the local log, is listed with its reason until dismissed', () => {
+  const a = app('ua');
+  a.act({ t: 'UPD_CLASH', id: 'c1-ua', u: { status: 'in_progress' } });
+  a.act({ t: 'UPD_CLASH', id: 'c1-ua', u: { assignee: 'Ann' } });
+  const batch = a.sess.takeBatch();
+  assert.equal(batch.length, 2);
+  a.sess.done(batch);
+  assert.equal(a.sess.reject([{ id: batch[1].id, reason: 'value-too-large' }, { id: 'nope', reason: 'malformed' }]), 2);
+  assert.equal(a.sess.reject([{ id: batch[1].id, reason: 'value-too-large' }]), 0, 'a refusal already known is not new');
+  assert.equal(a.sess.pending(), 0, 'never retried');
+  const list = a.sess.rejected();
+  assert.deepEqual(list.find((x) => x.id === batch[1].id), { id: batch[1].id, kind: 'clash', key: 'A|B@0,0,0', field: 'assignee', reason: 'value-too-large', ts: batch[1].ts });
+  assert.equal(L.fieldState(a.sess.log, L.groupKey('clash', 'A|B@0,0,0', 'assignee')).value, 'Ann', 'this user keeps the edit');
+  // refused while still in the outbox (a later push, the first never confirmed): taken out
+  a.act({ t: 'UPD_CLASH', id: 'c1-ua', u: { priority: 'high' } });
+  const b2 = a.sess.takeBatch();
+  a.sess.reject([{ id: b2[0].id, reason: 'prev-too-large' }]);
+  assert.equal(a.sess.pending(), 0);
+  a.sess.dismissRejected();
+  assert.deepEqual(a.sess.rejected(), []);
+});

@@ -14,7 +14,7 @@
 //
 // Wire format (v2):
 //   GET  ?id=KEY&v=2&after=<cursor>[&limit=n] → {v, project, changes, names, cursor, more}
-//   PUT  ?id=KEY  body {v:2, user, name, changes:[record]} → {v, accepted, known, invalid:[ids]}
+//   PUT  ?id=KEY  body {v:2, user, name, changes:[record]} → {v, accepted, known, invalid:[ids], rejected:[{id, reason}]}
 //   POST (create), DELETE ?scope=project (editKey) — unchanged.
 // Old clients (no v): GET returns the agreed values as the old `issues`
 // shape (read-only view); PUT is refused — nothing is written and every id
@@ -183,20 +183,25 @@ function jsonLen(v) { try { return JSON.stringify(v === undefined ? null : v).le
 
 // One record from a client: the core's normalisation (malformed → null)
 // plus the server's caps. Returns the record or null.
-function validateChange(raw) {
+// A record the log can store, or why not (`reason`, sent back to the client
+// so it can tell its user which change was not shared and why).
+function checkChange(raw) {
   var r = LOG.normaliseChange(raw);
-  if (!r) return null;
-  if (!CHANGE_KINDS[r.target.kind] || r.target.key.length > CHANGE_CAPS.key) return null;
-  if (!FIELD_RE.test(r.field) || !USER_ID_RE.test(r.user)) return null;
+  if (!r) return { reason: 'malformed' };
+  if (!CHANGE_KINDS[r.target.kind]) return { reason: 'kind' };
+  if (r.target.key.length > CHANGE_CAPS.key) return { reason: 'key-too-long' };
+  if (!FIELD_RE.test(r.field)) return { reason: 'field' };
+  if (!USER_ID_RE.test(r.user)) return { reason: 'user' };
   r.ts = Math.round(r.ts);
-  if (!Number.isSafeInteger(r.ts)) return null;
-  if (r.base && r.base.length > 200) return null;
-  if (jsonLen(r.value) > CHANGE_CAPS.value) return null;
-  if (r.prev !== undefined && jsonLen(r.prev) > CHANGE_CAPS.prev) return null;
-  if (r.resolves && (r.resolves.length > CHANGE_CAPS.resolves || r.resolves.some(function(x) { return x.length > 200; }))) return null;
-  if (r.covers && r.covers.length > CHANGE_CAPS.covers) return null;
-  return r;
+  if (!Number.isSafeInteger(r.ts)) return { reason: 'ts' };
+  if (r.base && r.base.length > 200) return { reason: 'base' };
+  if (jsonLen(r.value) > CHANGE_CAPS.value) return { reason: 'value-too-large' };
+  if (r.prev !== undefined && jsonLen(r.prev) > CHANGE_CAPS.prev) return { reason: 'prev-too-large' };
+  if (r.resolves && (r.resolves.length > CHANGE_CAPS.resolves || r.resolves.some(function(x) { return x.length > 200; }))) return { reason: 'resolves' };
+  if (r.covers && r.covers.length > CHANGE_CAPS.covers) return { reason: 'covers' };
+  return { r: r };
 }
+function validateChange(raw) { return checkChange(raw).r || null; }
 
 function changeToRow(r, ord, userName) {
   var meta = {};
@@ -506,10 +511,13 @@ async function serve(sql, req, res) {
         if (body.changes.length > CHANGE_CAPS.perPut) return res.status(413).json({ error: 'Too many changes in one request', max: CHANGE_CAPS.perPut });
         var userName = isValidStr(body.name, 120) ? body.name.trim() : '';
 
-        var valid = [], invalid = [], seen = {};
+        var valid = [], invalid = [], rejected = [], seen = {};
         body.changes.forEach(function(raw) {
-          var r = validateChange(raw);
-          if (!r) { if (raw && typeof raw.id === 'string' && raw.id.length <= 200) invalid.push(raw.id); return; }
+          var ck = checkChange(raw), r = ck.r;
+          if (!r) {
+            if (raw && typeof raw.id === 'string' && raw.id.length <= 200) { invalid.push(raw.id); rejected.push({ id: raw.id, reason: ck.reason }); }
+            return;
+          }
           if (seen[r.id]) return;
           seen[r.id] = true;
           valid.push(r);
@@ -517,7 +525,7 @@ async function serve(sql, req, res) {
 
         await ensureLog(sql, projectId);
         var inserted = valid.length ? await appendChanges(sql, projectId, valid, function() { return userName || null; }) : [];
-        return res.status(200).json({ v: LOG_V, accepted: inserted.length, known: valid.length - inserted.length, invalid: invalid });
+        return res.status(200).json({ v: LOG_V, accepted: inserted.length, known: valid.length - inserted.length, invalid: invalid, rejected: rejected });
       }
 
       // DELETE — Remove a single issue, or (scope=project) the whole shared
@@ -573,6 +581,7 @@ module.exports.generateKey = generateKey;
 module.exports.validateIssue = validateIssue;
 module.exports.stripToShared = stripToShared;
 module.exports.validateChange = validateChange;
+module.exports.checkChange = checkChange;
 module.exports.legacyView = legacyView;
 module.exports.LOG_V = LOG_V;
 module.exports.CHANGE_CAPS = CHANGE_CAPS;
