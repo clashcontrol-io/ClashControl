@@ -270,10 +270,11 @@ try {
   const renameBack = await act('renameBack', `window._ccDispatch({ t: 'UPD_MODEL', id: ${JSON.stringify(m0)}, u: { name: ${JSON.stringify(name0)} } })`);
   check(renameBack.summary === sum0, 'rename + rename back: review set as before');
   const visOff = await act('visOff', `window._ccDispatch({ t: 'UPD_MODEL', id: ${JSON.stringify(m0)}, u: { visible: false } })`);
-  // one grouping per consumer (list, review set): an incremental update while
-  // under a third of the items change, else the (cheaper) full regroup
-  check(visOff.walks === 0 && visOff.k.triageFull === 0 && visOff.k.triageRows === 0 && visOff.k.triageVis === 1 && visOff.k.groupAndSort + visOff.k.groupDelta <= 2,
-    'visibility toggle: no material / clipping walk; buckets + facet rows reused, one grouping per consumer ' + JSON.stringify(visOff.k) + (visOff.stacks.length ? ' ' + visOff.stacks[0] : ''));
+  // ONE grouping: the review set groups (incremental while under a third of
+  // the items change, else the cheaper full regroup) and the list, showing
+  // exactly the review set, takes those groups instead of grouping again
+  check(visOff.walks === 0 && visOff.k.triageFull === 0 && visOff.k.triageRows === 0 && visOff.k.triageVis === 1 && visOff.k.groupAndSort + visOff.k.groupDelta === 1 && visOff.k.groupShared === 1,
+    'visibility toggle: no material / clipping walk; buckets + facet rows reused, grouped once (the list reuses the review groups) ' + JSON.stringify(visOff.k) + (visOff.stacks.length ? ' ' + visOff.stacks[0] : ''));
   const visOn = await act('visOn', `window._ccDispatch({ t: 'UPD_MODEL', id: ${JSON.stringify(m0)}, u: { visible: true } })`);
   check(visOn.summary === sum0, 'visibility off + on: review set as before');
   // incremental (in place) triage after status edits = a from-scratch rebuild

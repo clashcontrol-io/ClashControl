@@ -21318,13 +21318,23 @@ function startApp() {
       // inflate the frustum (inflated frustum → fewer shadow texels per metre → blocky shadows).
       // Use horizontal footprint only for frustum size; deep piles inflate Y but
       // the sun direction is mostly horizontal so vertical extent matters less.
+      var _ccShadowModelBox = new WeakMap();
       window._ccUpdateShadowFrustum = function() {
         try {
           // Visible-only bbox
+          // each model's box (rooms left out) once per elements array: a
+          // visibility toggle unions a box per model, not every element's
           var box = new THREE.Box3();
           (modelsRef.current||[]).forEach(function(m){
-            if(m.visible===false) return;
-            (m.elements||[]).forEach(function(el){ if(el.box&&!el.box.isEmpty()&&!_ccIsSpaceEl(el)) box.union(el.box); });
+            if(m.visible===false || !m.elements) return;
+            var hit = _ccShadowModelBox.get(m.elements);
+            if (!hit || hit.n !== m.elements.length) {
+              var mb = new THREE.Box3();
+              m.elements.forEach(function(el){ if(el.box&&!el.box.isEmpty()&&!_ccIsSpaceEl(el)) mb.union(el.box); });
+              hit = { n: m.elements.length, box: mb };
+              _ccShadowModelBox.set(m.elements, hit);
+            }
+            if (!hit.box.isEmpty()) box.union(hit.box);
           });
           if(box.isEmpty() && typeof _elemsBBox==='function') box = _elemsBBox();
           if (!box || box.isEmpty()) return;
@@ -32074,7 +32084,7 @@ function startApp() {
       }()}
       ${!isExplorerTab && !isStandardsTab && items.length>0 && html`<${BulkActionBar} s=${s} d=${d} items=${items} isClash=${isClashTab} />`}
 
-      ${!isExplorerTab && !isStandardsTab && html`<${VirtualList} items=${items} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${listModels} storeyLabel=${isClashTab && triage ? triage.fctx.storey : null} groupBy=${isClashTab?s.clashGroupBy:s.issueGroupBy} sortBy=${isClashTab?s.clashSortBy:s.issueSortBy} selectMode=${s.selectMode} selected=${s.selected} trainingMode=${s.trainingMode} triageResults=${s.triageResults}
+      ${!isExplorerTab && !isStandardsTab && html`<${VirtualList} items=${items} reviewGroups=${isClashTab ? reviewModel : null} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${listModels} storeyLabel=${isClashTab && triage ? triage.fctx.storey : null} groupBy=${isClashTab?s.clashGroupBy:s.issueGroupBy} sortBy=${isClashTab?s.clashSortBy:s.issueSortBy} selectMode=${s.selectMode} selected=${s.selected} trainingMode=${s.trainingMode} triageResults=${s.triageResults}
         emptyCtx=${{
           hasModel: (s.models||[]).length > 0,
           detecting: !!s.detecting,
@@ -35069,7 +35079,9 @@ function startApp() {
     triageVis: 0, triageRows: 0,
     // incremental root-cause regroups (_ccElementGroupsDelta) — a model
     // hidden / shown updates the groups instead of regrouping
-    groupDelta: 0 };
+    groupDelta: 0,
+    // the list took the review model's groups (same clashes, same order)
+    groupShared: 0 };
   var _CC_SEV_RANK = { critical: 4, major: 3, minor: 2, info: 1 };
   function groupAndSort(items, groupBy, sortBy, opts) {
     window._ccListPerfCounters.groupAndSort++;
@@ -35350,16 +35362,23 @@ function startApp() {
     var items = groups.map(function(g) {
       var hit = _ccReviewItemCache.get(g);
       if (hit && hit.storey === tm.fctx.storey && hit.loc === loc) return hit.item;
-      var sum = g.items.length > 1 ? _ccGroupSummaryCached(g, tm.fctx.storey) : null;
-      var c0 = g.items[0];
-      var item = { key: g.items.length > 1 ? g.label : ('c:' + c0.id), group: g.items.length > 1, items: g.items, lead: c0,
-        title: sum ? sum.title : (c0.title || _ccFacetValueLabel('typePair', '')), summary: sum };
+      var c0 = g.items[0], storeyFn = tm.fctx.storey;
+      var item = { key: g.items.length > 1 ? g.label : ('c:' + c0.id), group: g.items.length > 1, items: g.items, lead: c0 };
+      if (g.items.length > 1) {
+        // built when first read (a card on screen, an export): a review
+        // build no longer summarises every group up front (§21.54)
+        Object.defineProperty(item, 'summary', { enumerable: true, get: function() { return _ccGroupSummaryCached(g, storeyFn); } });
+        Object.defineProperty(item, 'title', { enumerable: true, get: function() { var sm = _ccGroupSummaryCached(g, storeyFn); return sm ? sm.title : (c0.title || _ccFacetValueLabel('typePair', '')); } });
+      } else {
+        item.summary = null;
+        item.title = c0.title || _ccFacetValueLabel('typePair', '');
+      }
       _ccReviewItemCache.set(g, { storey: tm.fctx.storey, loc: loc, item: item });
       return item;
     });
     var byClash = {};
     items.forEach(function(it) { it.items.forEach(function(c) { byClash[c.id] = it; }); });
-    var out = { pre: pre, clashes: clashes, items: items, byClash: byClash };
+    var out = { pre: pre, clashes: clashes, items: items, byClash: byClash, groups: groups };
     _ccReviewLast = { clashes: s.clashes, rules: s.rules, tm: tm, filters: s.filters, facets: facets, names: names, bucketOf: tm.bucketOf, rows: tm.rowById, preAll: preAll, out: out, groups: groups, eg: eg };
     return out;
   }
@@ -35799,6 +35818,13 @@ function startApp() {
   // the same order and nothing the grouping or the in-group order reads
   // changed (element keys and types, severity, depth) — swap the new objects
   // into their groups instead of regrouping everything. null: regroup.
+  // Same members in the same order (cheap next to a regroup).
+  function _ccSameSeq(a, b) {
+    if (a === b) return true;
+    if (!a || !b || a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
   function _ccIsElementGrouping(groupBy, sortBy) {
     var g = Array.isArray(groupBy) ? groupBy.filter(function(x){ return x && x !== 'none'; }) : (groupBy && groupBy !== 'none' ? [groupBy] : []);
     var so = Array.isArray(sortBy) ? sortBy.filter(function(x){ return x && x !== 'none'; }) : (sortBy && sortBy !== 'none' ? [sortBy] : []);
@@ -35982,7 +36008,12 @@ function startApp() {
     var groups = useMemo(function(){
       var pin = prevGroupInRef.current, next = null, eg = null;
       var elem = _ccIsElementGrouping(groupBy, sortBy);
-      if (pin && pin.groupBy === groupBy && pin.sortBy === sortBy && elem) {
+      // The list shows exactly the review set (the default view): its
+      // root-cause groups are the review model's, already built for the
+      // same clashes in the same order — not grouped a second time.
+      var pre = props.reviewGroups;
+      if (elem && pre && pre.groups && _ccSameSeq(items, pre.clashes)) { next = pre.groups; window._ccListPerfCounters.groupShared++; }
+      else if (pin && pin.groupBy === groupBy && pin.sortBy === sortBy && elem) {
         next = _ccPatchElementGroups(pin.items, prevGroupsRef.current, items);
         if (next) eg = _ccElementGroupsAdopt(pin.eg, items, next);
         else if (pin.eg && pin.eg.groups === prevGroupsRef.current) { eg = _ccElementGroupsDelta(pin.eg, items); if (eg) next = eg.groups; }
@@ -35997,7 +36028,7 @@ function startApp() {
       if (_CC_RENDER_COUNT && isClash) window.__ccListGroups = { items: items, groups: next };
       return next;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the models only name the groups of a 'model' grouping (groupModels)
-    }, [items, groupBy, sortBy, groupModels]);
+    }, [items, groupBy, sortBy, groupModels, props.reviewGroups]);
     var flatItems = useMemo(function(){
       if(!groups) return items;
       var flat = [];
