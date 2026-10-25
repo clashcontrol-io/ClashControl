@@ -61,7 +61,8 @@ function bruteByEid(mg, eid) {
 
 test('per-model mesh index = S.mg traversal order under random scene edits (split-outs in place, the rest rebuilds)', () => {
   const r = rng(11);
-  const api = scene(THREE, {});
+  // the app's hook: a mesh's own children reach a container listener
+  const api = scene(THREE, { _ccViewerPickIndex: require('../viewer-pick-index.js') });
   const mg = new THREE.Group(); mg.userData._ccModelRoot = true;
   const groups = [];
   for (let g = 0; g < 3; g++) {
@@ -90,6 +91,13 @@ test('per-model mesh index = S.mg traversal order under random scene edits (spli
     else if (op < 0.8) { const c = g.children.find((x) => x.isMesh && !x.userData._isCCBatch); if (c) g.remove(c); }
     else if (op < 0.85) { g.add(plain(1 + Math.floor(r() * 25))); }                               // non-split root add → rebuild
     else if (op < 0.9) { const sub = g.children.find((x) => x.isGroup); if (sub && sub.children.length) sub.remove(sub.children[0]); }
+    else if (op < 0.95) {                                                                          // a mesh gets a mesh child (split-outs too)
+      const ms = []; g.traverse((x) => { if (x.isMesh && !x.userData._isCCBatch) ms.push(x); });
+      if (ms.length) ms[Math.floor(r() * ms.length)].add(plain(1 + Math.floor(r() * 25)));
+    } else {                                                                                       // … and loses one
+      const ms = []; g.traverse((x) => { if (x.isMesh && x.children.length) ms.push(x); });
+      if (ms.length) { const m = ms[Math.floor(r() * ms.length)]; m.remove(m.children[0]); }
+    }
     check('step ' + step);
   }
   // lookups after the scene settles cost no walk of the model

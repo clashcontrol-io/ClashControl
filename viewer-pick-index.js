@@ -158,7 +158,32 @@
   /**
    * @param {any} THREE three.js namespace (r180)
    */
+  // A mesh that gains or loses children of its own: the indexes listen on
+  // containers only (a listener on every mesh would cost memory per mesh),
+  // so add / remove on a Mesh also tells its nearest non-mesh ancestor —
+  // a container both this index and the core's per-model mesh index
+  // (index.html `_ccMeshIndexBuild`) listen on — with 'childadded' /
+  // 'childremoved' (`child` = that mesh, whose subtree changed; `subtree`
+  // marks it — it was not added to / removed from that container). Installed
+  // once on THREE.Object3D; one property check per add / remove otherwise.
+  /** @param {any} THREE */
+  function installMeshChildHook(THREE) {
+    var P = THREE && THREE.Object3D && THREE.Object3D.prototype;
+    if (!P || P._ccMeshChildHook) return;
+    var add = P.add, remove = P.remove;
+    /** @param {any} mesh @param {string} type */
+    function notify(mesh, type) {
+      var p = mesh.parent;
+      while (p && p.isMesh) p = p.parent;
+      if (p) p.dispatchEvent({ type: type, child: mesh, subtree: true });
+    }
+    P.add = function() { var r = add.apply(this, arguments); if (this.isMesh) notify(this, 'childadded'); return r; };
+    P.remove = function() { var r = remove.apply(this, arguments); if (this.isMesh) notify(this, 'childremoved'); return r; };
+    Object.defineProperty(P, '_ccMeshChildHook', { value: true });
+  }
+
   function create(THREE) {
+    installMeshChildHook(THREE);
     var MeshRaycast = THREE.Mesh.prototype.raycast;
     var InstRaycast = THREE.InstancedMesh && THREE.InstancedMesh.prototype.raycast;
     var BatchRaycast = THREE.BatchedMesh && THREE.BatchedMesh.prototype.raycast;
@@ -756,5 +781,5 @@
     };
   }
 
-  return { create: create, rayBox: rayBox, writeWorldBox: writeWorldBox, LEAF: LEAF, PAD_REL: PAD_REL };
+  return { create: create, installMeshChildHook: installMeshChildHook, rayBox: rayBox, writeWorldBox: writeWorldBox, LEAF: LEAF, PAD_REL: PAD_REL };
 }));

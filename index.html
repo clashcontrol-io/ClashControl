@@ -6341,12 +6341,15 @@ function startApp() {
   // dropped with it; it follows the group by itself: a ghost split-out mesh
   // appended to the group (userData._splitOut) is added / removed in place,
   // any other child added or removed anywhere inside marks the index dirty
-  // and the next lookup rebuilds it (one walk of that model). Known blind
-  // spot (same as the pick index): a mesh that later gets mesh children.
+  // and the next lookup rebuilds it (one walk of that model). A mesh that
+  // later gets (or loses) children of its own reaches a container listener
+  // through viewer-pick-index.js installMeshChildHook (the child is then a
+  // mesh with children → dirty), so no change to the graph goes unseen.
   // Keys are String(expressId) (object-key semantics); callers that compared
   // strictly still compare strictly.
   var _ccMeshIdx = new WeakMap();
   function _ccMeshIndexBuild(root) {
+    if (window._ccViewerPickIndex && window._ccViewerPickIndex.installMeshChildHook) window._ccViewerPickIndex.installMeshChildHook(THREE);
     var old = _ccMeshIdx.get(root);
     if (old) old.detach();
     var idx = { gen: old ? old.gen + 1 : 1, dirty: false, byEid: new Map(), multi: [], conts: [] };
@@ -6359,12 +6362,14 @@ function startApp() {
     function onAdd(e) {
       if (idx.dirty) return;
       var c = e.child;
+      if (e.subtree) { idx.dirty = true; return; } // a mesh's own children changed
       if (this === root && c && c.isMesh && c.userData && c.userData._splitOut && !c.children.length) { add(c); return; }
       idx.dirty = true;
     }
     function onRemove(e) {
       if (idx.dirty) return;
       var c = e.child;
+      if (e.subtree) { idx.dirty = true; return; }
       if (this === root && c && c.isMesh && c.userData && c.userData._splitOut && !c.children.length) {
         var a = c.userData.expressId != null ? idx.byEid.get(String(c.userData.expressId)) : null;
         var at = a ? a.indexOf(c) : -1;
