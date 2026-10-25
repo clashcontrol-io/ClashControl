@@ -29,7 +29,8 @@ test('the DQ panel\'s CSV button no longer shares a label with the print report'
   // would have been called "Export report", which is exactly the confusion
   // this rename fixes.
   assert.ok(!/↓ Export report/.test(src), 'the CSV button label must not collide with the new print report');
-  assert.ok(/↓ \$\{_cc_t\('dq\.exportCsv','Export CSV'\)\}/.test(src));
+  // plain label (DESIGN.md: no decorative arrow glyphs on buttons)
+  assert.ok(/>\$\{_cc_t\('dq\.exportCsv','Export CSV'\)\}</.test(src));
 });
 
 test('IssuePanel\'s Export flyout offers both the clash report and the data quality report', () => {

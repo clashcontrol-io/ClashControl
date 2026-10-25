@@ -316,7 +316,7 @@ async function load(page) {
   await page.evaluate(() => {
     const m = window._ccLatestState.models[0];
     window._ccDispatch({ t: 'UPD_MODEL', id: m.id, u: {
-      loaderWarnings: [{ code: 'boundaries-unplaced', message: 'Space boundaries could not be placed' }],
+      loaderWarnings: [{ code: 'space-boundaries-unplaced', severity: 'warning', reason: 'no-consistent-frame', total: 4, placed: 0, key: 'boundary.unplaced', message: 'Space boundaries could not be placed' }],
       stats: Object.assign({}, m.stats, { notDrawn: { total: 10, byReason: { transparent: 6, empty: 4 }, byType: { IfcSlab: 6, IfcSpace: 4 } } }),
     } });
   });

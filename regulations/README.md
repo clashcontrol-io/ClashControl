@@ -146,7 +146,11 @@ Quality Score category.
   that only feed that tally.
 - Labels are translatable through locale packs under the key
   `country.<region>.<standard id>.<check id>`.
-- `idsSpecs`: extra built-in IDS rule sets offered in the IDS panel.
+- `idsSpecs`: extra built-in IDS rule sets offered in the IDS panel. Write
+  `name`, `description` and each rule's `desc` in English; give the set an
+  optional `id` (lowercase, `a-z0-9-`) and the IDS panel translates it through
+  locale packs under `country.<region>.ids.<id>.name`, `.description` and
+  `.rules.<index>` (falling back to the pack's own text).
 
 ### `naming` — words in model and element names
 

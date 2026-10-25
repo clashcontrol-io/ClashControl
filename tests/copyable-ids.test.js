@@ -58,8 +58,9 @@ test('the Details inspector wires GlobalId and Express ID rows through _copyBtn/
   const fnSrc = src.slice(start, end);
   assert.ok(/_copyBtn\(ep\.globalId,'GlobalId'\)/.test(fnSrc), 'the full (non-truncated) GlobalId row must be copyable');
   assert.ok(/_copyBtn\(ep\.expressId,'Express ID'\)/.test(fnSrc), 'the Express ID row must be copyable');
-  // Present-mode's truncated GlobalId row must ALSO copy the FULL id, not the
-  // truncated display text.
-  assert.ok(/ep\.globalId\.slice\(0,16\)[\s\S]{0,80}_copyBtn\(ep\.globalId,'GlobalId'\)/.test(fnSrc),
-    'the truncated Present-mode GlobalId must still copy the untruncated value');
+  // A GlobalId row that is clipped to fit (CSS ellipsis) carries the full id
+  // in its title and copies the FULL id, never a truncated display text.
+  assert.ok(!/ep\.globalId\.slice\(0,16\)/.test(fnSrc), 'no hand-truncated GlobalId display');
+  assert.ok(/title=\$\{ep\.globalId\}[\s\S]{0,160}_copyBtn\(ep\.globalId,'GlobalId'\)/.test(fnSrc),
+    'a clipped GlobalId shows the full value in its title and copies the untruncated value');
 });

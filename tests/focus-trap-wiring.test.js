@@ -15,12 +15,12 @@ const html = readFileSync(join(__dirname, '..', 'index.html'), 'utf8');
 const safety = readFileSync(join(__dirname, '..', 'safety-migrations.js'), 'utf8');
 
 test('_ccUseFocusTrap is defined once and exposed on window', () => {
-  assert.match(html, /function _ccUseFocusTrap\(containerRef, active\) \{/);
+  assert.match(html, /function _ccUseFocusTrap\(containerRef, active, opts\) \{/);
   assert.match(html, /window\._ccUseFocusTrap = _ccUseFocusTrap;/);
 });
 
 test('the trap intercepts Tab in the capture phase only — every other key still reaches modal-owned handlers', () => {
-  const start = html.indexOf('function _ccUseFocusTrap(containerRef, active) {');
+  const start = html.indexOf('function _ccUseFocusTrap(containerRef, active, opts) {');
   const end = html.indexOf('\n  window._ccUseFocusTrap', start);
   const body = html.slice(start, end);
   assert.match(body, /if \(e\.key !== 'Tab'\) return;/);
@@ -28,7 +28,7 @@ test('the trap intercepts Tab in the capture phase only — every other key stil
 });
 
 test('the trap saves the opener and restores focus to it on cleanup/unmount', () => {
-  const start = html.indexOf('function _ccUseFocusTrap(containerRef, active) {');
+  const start = html.indexOf('function _ccUseFocusTrap(containerRef, active, opts) {');
   const end = html.indexOf('\n  window._ccUseFocusTrap', start);
   const body = html.slice(start, end);
   assert.match(body, /openerRef\.current = document\.activeElement;/);

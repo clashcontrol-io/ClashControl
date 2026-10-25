@@ -301,6 +301,8 @@
       else dq.idsSpecs.forEach(function(sp, i) {
         var w = 'dataQuality.idsSpecs[' + i + ']';
         if (!isObj(sp) || !textOk(sp.name, 100) || !textOk(sp.description, 400) || !Array.isArray(sp.rules) || !sp.rules.length) { errs.push(w + ' must be {name, description, rules[]}'); return; }
+        // optional id: the locale-pack key country.<region>.ids.<id>.* that translates the set
+        if (sp.id != null && (typeof sp.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(sp.id))) errs.push(w + '.id must be a short lowercase id (a-z, 0-9, -)');
         sp.rules.forEach(function(r, j) {
           var rw = w + '.rules[' + j + ']';
           if (!isObj(r) || !textOk(r.desc, 200) || !isObj(r.applicability) || !isObj(r.requirement)) { errs.push(rw + ' must be {desc, applicability, requirement, severity}'); return; }

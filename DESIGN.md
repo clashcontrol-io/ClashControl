@@ -177,8 +177,15 @@ translate-Y micro-interaction.
 | Secondary | `var(--bg-secondary)`            | `var(--text-secondary)`| `1px solid var(--border)`                        |
 | Ghost     | `none`                           | `var(--text-muted)`    | none                                             |
 | Danger    | `var(--color-danger)`            | `#fff`                 | none                                             |
+| Danger (quiet) | `none`                      | `var(--color-danger-fg)` | none — `S_BTN_DANGER_GHOST_SM`, a destructive action in a dense row (Remove a model) |
 | Success   | `var(--color-success-bg)`        | `var(--color-success-fg)` | `1px solid var(--color-success-border)`       |
 | Info      | `var(--color-info-bg)`           | `var(--color-info-fg)` | `1px solid var(--color-info-border)`             |
+
+**Hierarchy in a panel:** one Primary per panel (Models: "Add model"; Data
+quality: "Run checks"). Every other action is Secondary (`S_BTN_SECONDARY_SM`),
+undo-type actions (Reset, Remove from map, Hide changes) are Ghost, and an
+action keeps the same variant in every state — never a filled slab in one
+state and a text link in another.
 
 **States:** `:hover` lightens background by one step; `:focus-visible` adds a
 2px `--accent` outline (`outline-offset: 2px`); `:active` applies
@@ -241,6 +248,11 @@ Required ARIA: `role="dialog"`, `aria-modal="true"`,
 `aria-label="Close …"`. Escape closes the modal via a window keydown
 listener registered in `useEffect`.
 
+Initial focus: a dialog whose first control is the close `×` focuses its own
+card on open (`_ccUseFocusTrap(ref, true, {initialFocus:'container'})`, card
+`tabindex="-1"`, no outline), so the × never shows a ring until the user
+tabs to it; Tab then moves to the first control.
+
 Card width defaults: 440 (form modals), 480 (settings), 460 (welcome).
 Border radius `var(--radius-lg)`, shadow `var(--shadow-lg)`. Body padding
 `var(--space-5)`; header padding `var(--space-4) var(--space-5)`.
@@ -257,7 +269,25 @@ border, `var(--radius-md)` corner, `var(--shadow-md)` elevation, and an
 
 Active tab gets a 2px `var(--accent)` left border (vertical rail) or bottom
 border (horizontal). Inactive tabs use `var(--text-muted)`; active uses
-`var(--text-primary)`. Hover transitions over `var(--duration-fast)`.
+`var(--text-primary)`. Hover transitions over `var(--duration-fast)`. Nothing
+else marks the active tab — no dot or glyph before the label. `role="tablist"`
+/ `role="tab"` + `aria-selected`.
+
+### Disclosure (`CcDisclosure`, `_ccChevron`)
+
+Anything that opens and closes in place (property sets, Location, a data
+quality check's elements, section headers) is a `<button>` with
+`aria-expanded` (+ `aria-controls`) and the right-pointing chevron SVG
+(`_ccChevron(open)`, rotated 90° when open) before the label — never a
+native `<summary>` marker or ▼/▶/▲ glyphs. `CcDisclosure` variants: `title`
+(`S_SUBTITLE`) and `item` (`--text-xs` semibold, `--text-secondary`).
+
+### Label / value rows
+
+Inspector and model-card rows give the label column one fixed share
+(`flex: 0 0 38%`, wrapping) so a long label ("Predefined type") wraps instead
+of pushing its value out of line with the rows around it. Values are plain
+text; mono only for counts, IDs, keys and measured values.
 
 ### Toggles (`Toggle` component in SettingsModal)
 
