@@ -71,7 +71,7 @@ test('detectClashesAsync itself is untouched by this slice -- the candidate arra
 test('the BVH LRU honours an explicit cap, counts evictions and drops the evicted caches', () => {
   const vm = require('node:vm');
   const start = html.indexOf('  var _bvhCacheMaxCached = null;');
-  const end = html.indexOf('  // Between-chunk heap-pressure relief');
+  const end = html.indexOf('  // ── BVH (Bounding Volume Hierarchy) for triangles');
   assert.ok(start !== -1 && end > start);
   const ctx = { window: {}, navigator: {}, performance: {} };
   vm.runInNewContext(html.slice(start, end) + '\nthis.api = { setO: function(n){ _bvhCacheMaxOverride = n; }, max: _BVH_CACHE_MAX_FN, evict: _bvhLRUEvict, lru: _bvhLRU, ev: function(){ return _bvhEvictions; } };', ctx);

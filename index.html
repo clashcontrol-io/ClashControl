@@ -9789,37 +9789,6 @@ function startApp() {
     });
   }
 
-  // Between-chunk heap-pressure relief (storageDetectCaches, default-off).
-  // Today the only watchdog is a passive 15 s / 5 GB warning that never
-  // throttles a run. With the flag on, every ~2000 candidates (25 chunks)
-  // the run checks the heap and, past 85%, halves the BVH LRU — purely
-  // transient per-element caches, so results are identical; the evicted
-  // elements just re-extract if touched again.
-  var _ccPressureRelieved = false;
-  function _ccDetectPressureRelief(chunkIdx) {
-    try {
-      if (chunkIdx % (25 * _DETECT_CHUNK_SIZE) !== 0) return;
-      if (!(window._ccSafetyMigrations && window._ccSafetyMigrations.isEnabled('storageDetectCaches'))) return;
-      var m = (typeof performance !== 'undefined') && performance.memory;
-      if (!m || !m.jsHeapSizeLimit || m.usedJSHeapSize / m.jsHeapSizeLimit <= 0.85) return;
-      var target = Math.max(150, Math.floor(_bvhLRU.size / 2));
-      var dropped = 0;
-      while (_bvhLRU.size > target) {
-        var old = _bvhLRU.keys().next().value;
-        if (old === undefined) break;
-        _bvhLRU.delete(old);
-        delete old._wvCache; delete old._triCache; delete old._bvhCache; delete old._topo;
-        dropped++;
-      }
-      if (dropped && !_ccPressureRelieved) {
-        _ccPressureRelieved = true;
-        console.warn('[detect] heap at ' + Math.round(m.usedJSHeapSize / m.jsHeapSizeLimit * 100) +
-          '% — dropped ' + dropped + ' cached element BVHs to relieve pressure');
-        if (window._ccToast) window._ccToast(_cc_t('toast.memoryIsTightDetectionContinues','Memory is tight — detection continues with reduced caching.'));
-      }
-    } catch (e) {}
-  }
-
   // ── BVH (Bounding Volume Hierarchy) for triangles ───────────────
 
   // keys (optional, built at the root when absent): keys[t*3+axis] = the
@@ -12707,6 +12676,73 @@ function startApp() {
   // disagree: only the former surfaced a failure, the latter (which is
   // where detection spends nearly all its time, so the likelier crash
   // site) just quietly finished with whatever partial clashes it had.
+  // Detection memory watchdog (always on; docs/INTERNALS.md §21.57). A run
+  // that walks into the browser's memory wall takes the whole tab down
+  // ("Out of Memory") and every finding with it. The caches have budgets of
+  // their own, but nothing watched the run as a whole: the clash list grows,
+  // worker heaps are invisible to performance.memory, and memory held before
+  // the run counts too. Every ~0.5 s between chunks the run compares the JS
+  // heap with its limit and steps in, cheapest first:
+  //   relieveAt  drop every detection cache (pure caches — same results)
+  //   poolOffAt  stop the worker pool, finish on the main thread (same results)
+  //   stopAt     on two checks >= confirmMs apart (a GC may still free a lot):
+  //              stop the run — nothing is committed (a partial run would
+  //              auto-resolve the clashes it never reached), caches are
+  //              dropped, and the user is told how far it got and what to do.
+  // Browsers without performance.memory: maxClashes is the stop signal.
+  // Knobs + the last run's actions on window._ccDetectMemory (tests).
+  var _ccDetectMemCfg = window._ccDetectMemory = { relieveAt: 0.7, poolOffAt: 0.75, stopAt: 0.88, confirmMs: 1500, everyMs: 500, maxClashes: 500000, last: null };
+  function _ccHeapRatio() {
+    try {
+      var m = (typeof performance !== 'undefined') && performance.memory;
+      if (m && m.jsHeapSizeLimit) return m.usedJSHeapSize / m.jsHeapSizeLimit;
+    } catch (e) {}
+    return null;
+  }
+  // st: per-run state ({t, relieved, poolOff, highSince, actions}); returns
+  // null (carry on), 'pool' (stop the pool) or 'stop' (stop the run).
+  function _ccDetectMemGuard(st, nClashes) {
+    var cfg = _ccDetectMemCfg, now = performance.now();
+    if (nClashes > cfg.maxClashes) { st.actions.push('stop:clashes'); return 'stop'; }
+    if (now - st.t < cfg.everyMs) return null;
+    st.t = now;
+    var r = _ccHeapRatio();
+    if (r == null) return null;
+    if (r > st.peak) st.peak = r;
+    if (r >= cfg.relieveAt && !st.relieved) {
+      st.relieved = true;
+      var freed = 0;
+      try { freed = _ccDropDetectCaches(); } catch (e) {}
+      st.actions.push('relieve');
+      console.warn('[detect] heap at ' + Math.round(r * 100) + '% of the browser limit — dropped the detection caches (~' + Math.round((freed || 0) / 1048576) + ' MB)');
+      if (window._ccToast) window._ccToast(_cc_t('toast.memoryIsTightDetectionContinues','Memory is tight — detection continues with reduced caching.'));
+    }
+    if (r >= cfg.poolOffAt && !st.poolOff) { st.poolOff = true; st.actions.push('pool-off'); return 'pool'; }
+    if (r >= cfg.stopAt) {
+      if (st.highSince == null) { st.highSince = now; try { _ccDropDetectCaches(); } catch (e) {} return null; }
+      if (now - st.highSince >= cfg.confirmMs) { st.actions.push('stop:heap'); return 'stop'; }
+    } else st.highSince = null;
+    return null;
+  }
+  // The run stopped itself: free what it held and say why, in words the user
+  // can act on. Nothing was committed; the clash list is as it was.
+  function _ccSurfaceMemoryStop(done, total, why) {
+    var pct = total ? Math.round(done / total * 100) : 0;
+    try { _ccDropDetectCaches(); } catch (e) {}
+    try {
+      if (window._ccDispatch) window._ccDispatch({t:'STOP_DETECT'});
+      window.dispatchEvent(new CustomEvent('cc-detection-complete', { detail: {
+        ok:false, outcome:'memory', reason: why, checked: done, total: total, ts: Date.now()
+      }}));
+    } catch (e) {}
+    var msg = why === 'clashes'
+      ? _cc_t('detect.memoryStopClashes','Detection stopped at {pct}%: more than {n} clashes. Your clash list is unchanged. Narrow the run — fewer models or storeys, or hard clashes only — and run again.', {pct: pct, n: _ccDetectMemCfg.maxClashes.toLocaleString()})
+      : _cc_t('detect.memoryStop','Detection stopped at {pct}% because the browser was running out of memory. Your clash list is unchanged. Unload models you don\'t need, or run on fewer storeys or hard clashes only, then run again.', {pct: pct});
+    console.warn('[detect] ' + msg);
+    try { window._ccLastDetectError = { message: msg, ts: Date.now(), outcome: 'memory' }; } catch (e) {}
+    if (window._ccToast) window._ccToast(msg);
+  }
+
   function _ccSurfaceDetectionFailure(e) {
     console.error('Clash detection failed:', e);
     try {
@@ -13851,6 +13887,8 @@ function startApp() {
     // unlike nested setTimeout(0), is not clamped to >= 4 ms; that clamp alone
     // was ~0.5 s of idle per 10k candidates). Cancellation and progress are
     // still checked/reported per chunk.
+    // memory watchdog state for this run (_ccDetectMemGuard)
+    var _memSt = { t: -Infinity, relieved: false, poolOff: false, highSince: null, actions: [], peak: 0 };
     function _runChunk() {
       var t0 = performance.now();
       while (_runChunkOnce()) {
@@ -13897,12 +13935,23 @@ function startApp() {
       }
       _chunkBatchCache = null;
       chunkIdx = end;
-      _ccDetectPressureRelief(chunkIdx);
+      var _memAct = _ccDetectMemGuard(_memSt, clashes.length);
+      if (_memAct === 'pool' && _np && !_np.dead) _npStop('memory-pressure');
+      else if (_memAct === 'stop') {
+        _npStop('memory');
+        _runOK = false;
+        _ccDetectMemCfg.last = { stopped: true, actions: _memSt.actions.slice(), peak: _memSt.peak, checked: chunkIdx, total: totalCandidates };
+        _ccSurfaceMemoryStop(chunkIdx, totalCandidates, _memSt.actions[_memSt.actions.length - 1] === 'stop:clashes' ? 'clashes' : 'heap');
+        clashes.length = 0; _nextSnaps.clear();
+        resolveAsync(_ccTagDetectionResult([], _myGen, 'memory'));
+        return false;
+      }
       if (onProgress) onProgress(chunkIdx, totalCandidates);
       if (chunkIdx < totalCandidates) {
         return true; // next chunk (_runChunk yields to the UI between slices)
       } else {
         _npStop('finished');
+        _ccDetectMemCfg.last = { stopped: false, actions: _memSt.actions.slice(), peak: _memSt.peak, checked: chunkIdx, total: totalCandidates };
         _phase('Classifying results');
         resolveAsync(_finalize());
       }
