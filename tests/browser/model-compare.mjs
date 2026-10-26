@@ -247,23 +247,35 @@ try {
   const cardText = await page.waitForSelector(`[data-cc-model-diff="${diff.id}"] [data-cc-model-diff-summary]`, { timeout: 10_000 }).then((h) => h.textContent()).catch(() => null);
   check(cardText === '1 added · 1 removed · 2 moved or reshaped · 1 property change', 'model card: "' + cardText + '"');
 
-  // ── 3D colours ──
-  const colours = await page.evaluate((addedGid) => {
-    const btn = [...document.querySelectorAll('[data-cc-model-diff] button')].find((b) => /show changes/i.test(b.textContent));
+  // ── 3D colours + legend, in both themes (all from tokens) ──
+  const colourIn = (theme) => page.evaluate(async (theme) => {
+    document.documentElement.setAttribute('data-theme', theme);
+    await new Promise((r) => setTimeout(r, 50));
+    const btn = [...document.querySelectorAll('[data-cc-model-diff] button')].find((b) => /show changes|wijzigingen tonen/i.test(b.textContent));
     btn.click();
     const m = window.__mc.mep(), d = m._versionDiff;
     const el = (id) => m.elements.find((e) => e.expressId === id);
     const added = el(d.added[0]), changed = el(d.moved[0]);
     const cs = getComputedStyle(document.documentElement), col = new window.THREE.Color();
     const tok = (n) => { col.setStyle(cs.getPropertyValue(n).trim()); return col.getHexString(); };
-    const out = { added: added.meshes[0].material.color.getHexString(), changed: changed.meshes[0].material.color.getHexString(), success: tok('--color-success'), info: tok('--color-info') };
-    [...document.querySelectorAll('[data-cc-model-diff] button')].find((b) => /hide changes/i.test(b.textContent)).click();
+    const css = (v) => { col.setStyle(v); return col.getHexString(); };
+    const sw = (k) => { const x = document.querySelector('[data-cc-diff-legend="' + k + '"] [data-cc-swatch]'); return x ? css(getComputedStyle(x).backgroundColor) : null; };
+    const out = { theme, added: added.meshes[0].material.color.getHexString(), changed: changed.meshes[0].material.color.getHexString(),
+      success: tok('--color-success'), danger: tok('--color-danger'), primary: tok('--text-primary'), faint: tok('--text-faint'),
+      swAdded: sw('added'), swChanged: sw('changed'), swUnchanged: sw('unchanged') };
+    [...document.querySelectorAll('[data-cc-model-diff] button')].find((b) => /hide changes|wijzigingen verbergen/i.test(b.textContent)).click();
     return out;
-  }, ADDED_GID);
-  // changed = the DESIGN.md --color-info blue (the live --color-info token is the accent green)
-  check(colours.added === colours.success && colours.changed === '3b82f6' && colours.changed !== colours.added, '"Show changes": added = --color-success, changed = info blue', JSON.stringify(colours));
+  }, theme);
   const amber = (hex) => { const r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16); return r > 180 && g > 100 && b < 90 && r > g; };
-  check(!amber(colours.added) && !amber(colours.changed), 'no amber in the 3D diff colours');
+  const startTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme') || 'light');
+  for (const theme of ['light', 'dark']) {
+    const c = await colourIn(theme);
+    check(c.added === c.success && c.changed === c.primary, theme + ': "Show changes": added = --color-success, changed = --text-primary', JSON.stringify(c));
+    check(c.changed !== c.added && c.changed !== c.danger && c.changed !== '334155', theme + ': changed differs from added, removed and the faded ghost', JSON.stringify(c));
+    check(c.swAdded === c.success && c.swChanged === c.primary && c.swUnchanged === c.faint, theme + ': the legend swatches are the same tokens', JSON.stringify(c));
+    check(!amber(c.added) && !amber(c.changed), theme + ': no amber in the 3D diff colours');
+  }
+  await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), startTheme);
 
   // ── Navigator filter ──
   await page.evaluate(() => window._ccDispatch({ t: 'TAB', v: 'navigator' }));

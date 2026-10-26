@@ -73,14 +73,20 @@ but resolves to the neutral tokens (`--color-warning` → `--text-muted`,
 `--progress-warn`). Never add an amber/orange/yellow hex to chrome — a
 problem is said in words, in a neutral note.
 
-| Role        | `--color-{role}` | `--color-{role}-fg` | `--color-{role}-bg` | `--color-{role}-border`             |
-|-------------|------------------|---------------------|---------------------|-------------------------------------|
-| `success`   | `#22c55e`        | `#34d399`           | `#052e16`           | `rgba(34,197,94,.35)`               |
-| `warning`   | neutral (see above) | neutral          | neutral             | neutral                             |
-| `danger`    | `#ef4444`        | `#fca5a5`           | `#450a0a`           | `rgba(239,68,68,.4)`                |
-| `info`      | `#3b82f6`        | `#93c5fd`           | `#172554`           | `rgba(59,130,246,.35)`              |
+Values as they are in `index.html` (light `:root` / dark `[data-theme=dark]`):
 
-(Light theme provides equivalents that swap fg/bg lightness to remain legible.)
+| Role      | `--color-{role}`      | `-fg`                 | `-bg`                 | `-border`                                   |
+|-----------|-----------------------|-----------------------|-----------------------|---------------------------------------------|
+| `success` | `#16a34a` / `#22c55e` | `#15803d` / `#34d399` | `#f0fdf4` / `#052e16` | `rgba(22,163,74,.2)` / `rgba(34,197,94,.35)` |
+| `warning` | neutral (see above)   | neutral               | neutral               | neutral                                     |
+| `danger`  | `#dc2626` / `#ef4444` | `#b91c1c` / `#fca5a5` | `#fef2f2` / `#450a0a` | `rgba(220,38,38,.2)` / `rgba(239,68,68,.4)` |
+| `info`    | `#1a6b4a` / `#4d9e75` | `#155c3e` / `#6dba8e` | `#ecf7f2` / `#0d2b1e` | `rgba(26,107,74,.2)` / `rgba(77,158,117,.35)` |
+
+`info` is the accent green family, not blue. So it is never a way to tell
+something apart from `success`: where two states must read differently next
+to "success" (e.g. the model version comparison: added vs changed), use a
+neutral text token for the second one — the comparison draws changed
+elements in `--text-primary` and its legend uses the same tokens.
 
 ### Scene & overlays
 | Token                 | Purpose                                |

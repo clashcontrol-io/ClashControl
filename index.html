@@ -29491,7 +29491,12 @@ function startApp() {
             ${m._versionDiff.records && html`<button data-cc-model-diff-report="1" onClick=${function(){_ccModelDiffReport(m);}} style=${S_BTN_GHOST_SM}>${_cc_t('modelCard.diffReport','Report')}</button>`}
             ${m._versionDiff.records && html`<button data-cc-model-diff-csv="1" onClick=${function(){_ccExportModelDiffCsv(m);}} style=${S_BTN_GHOST_SM}>${_cc_t('modelCard.diffCsv','Export CSV')}</button>`}
           </div>
-          <span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:'var(--leading-base)'}}>${_cc_t('modelCard.diffColours','Show changes colours the 3D view: added elements green, changed elements blue, the rest faded.')}</span>
+          <div data-cc-model-diff-legend="1" style=${{display:'flex',gap:'var(--space-3)',flexWrap:'wrap',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
+            ${[['added','var(--color-success)',1,_cc_t('modelCard.legendAdded','Added')],['changed','var(--text-primary)',1,_cc_t('modelCard.legendChanged','Changed')],['unchanged','var(--text-faint)',.4,_cc_t('modelCard.legendUnchanged','Unchanged (faded)')]].map(function(x){
+              return html`<span key=${x[0]} data-cc-diff-legend=${x[0]} style=${{display:'inline-flex',alignItems:'center',gap:'var(--space-1)'}}><span data-cc-swatch="1" aria-hidden="true" style=${{width:8,height:8,borderRadius:'var(--radius-xs)',background:x[1],opacity:x[2],flexShrink:0}}></span>${x[3]}</span>`;
+            })}
+          </div>
+          <span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:'var(--leading-base)'}}>${_cc_t('modelCard.diffRemovedNote','Removed elements are no longer in this version: they are counted above, not drawn.')}</span>
         </div>`}
         <div style=${{display:'flex',gap:'var(--space-2)',borderTop:'1px solid var(--border-subtle)',paddingTop:'var(--space-2)'}}>
           ${!(m.stats&&m.stats.source==='revit-direct') && html`<button onClick=${function(){if(window._ccParkModel)window._ccParkModel(m.id);}}
@@ -33718,19 +33723,18 @@ function startApp() {
   window._ccModelDiffCsv = function(modelId) { var m = _ccModelById(modelId); return m ? _ccModelDiffCsv(m) : ''; };
   window._ccModelDiffReportHtml = function(modelId) { var m = _ccModelById(modelId); return m ? _ccModelDiffReportHtml(m) : ''; };
 
-  // 3D diff colours: added --color-success and removed --color-danger, read
-  // from the live theme each time the diff is shown; changed stays the
-  // DESIGN.md --color-info blue (#3b82f6) — the live --color-info token is
-  // the accent green, which would make "changed" look like "added";
-  // unchanged = the ghost. Never amber.
-  var _diffMatAdded = new THREE.MeshBasicMaterial({color: 0x22c55e, transparent: true, opacity: 0.7, depthWrite: false});
-  var _diffMatRemoved = new THREE.MeshBasicMaterial({color: 0xef4444, transparent: true, opacity: 0.5, depthWrite: false});
-  var _diffMatModified = new THREE.MeshBasicMaterial({color: 0x3b82f6, /* --color-info: no amber in the UI */ transparent: true, opacity: 0.7, depthWrite: false});
+  // 3D diff colours, read from the live theme each time the diff is shown:
+  // added = --color-success, changed = --text-primary (a neutral that stands
+  // apart from the green, from --color-danger and from the faded rest in both
+  // themes), unchanged = the ghost. Removed elements are not in the new
+  // version, so they are counted, not drawn. Never amber.
+  var _diffMatAdded = new THREE.MeshBasicMaterial({color: 0x16a34a, transparent: true, opacity: 0.7, depthWrite: false});
+  var _diffMatModified = new THREE.MeshBasicMaterial({color: 0x111111, transparent: true, opacity: 0.7, depthWrite: false});
   var _diffMatUnchanged = new THREE.MeshBasicMaterial({color: 0x334155, transparent: true, opacity: 0.08, depthWrite: false});
   function _ccDiffTokenColors() {
     try {
       var cs = getComputedStyle(document.documentElement);
-      [[_diffMatAdded, '--color-success'], [_diffMatRemoved, '--color-danger']].forEach(function(x) {
+      [[_diffMatAdded, '--color-success'], [_diffMatModified, '--text-primary']].forEach(function(x) {
         var v = String(cs.getPropertyValue(x[1]) || '').trim();
         if (/^#[0-9a-f]{3,8}$/i.test(v) || /^rgb/i.test(v)) x[0].color.setStyle(v);
       });
