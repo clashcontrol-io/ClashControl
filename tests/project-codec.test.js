@@ -138,3 +138,23 @@ test('a project without matrix / tolerance maps does not inherit the open projec
   codec.restoreProject({ _cc: 'ClashControl', models: [], rules: { matrixRules: { 'a:b': { mode: 'off' } } } }, dispatch, actions);
   assert.deepEqual(rules.matrixRules, { 'a:b': { mode: 'off' } });
 });
+
+// Run history with breakdowns (clash-history-core.js): old entries (run
+// totals only) and new ones (v + byPair / bySeverity / byAssignee / byBucket)
+// round-trip through the project file unchanged, side by side.
+test('runHistory entries with and without breakdowns round-trip unchanged', () => {
+  const H = require('../clash-history-core');
+  const old = {ts:1,total:3,open:3,newCount:3,persisting:0,autoResolved:0};
+  const cur = H.entry([{id:'a',status:'open',trades:['structural','mep.ventilation'],_delta:'new',assignee:'Ann'}],
+    {ts:2,newCount:1,persisting:0,autoResolved:3,issuesResolved:1}, {severity:()=>'major',bucket:()=>'review'});
+  const out = JSON.parse(JSON.stringify(codec.serializeProject(state({runHistory:[old,cur]}), 'v', 't')));
+  assert.deepEqual(out.runHistory, [old, cur]);
+  const emitted = [];
+  codec.restoreProject(out, (action)=>emitted.push(action), actions);
+  const lp = emitted.find((action)=>action.t==='LOAD_PROJECT_STATE');
+  assert.deepEqual(lp.data.runHistory, [old, cur]);
+  assert.equal(H.hasBreakdown(lp.data.runHistory[0]), false);
+  assert.equal(H.hasBreakdown(lp.data.runHistory[1]), true);
+  assert.deepEqual(H.series(lp.data.runHistory, 'pair', 'mep.ventilation × structural'), [null, {total:1,open:1,new:1,resolved:0}]);
+  assert.deepEqual(H.runSeries(lp.data.runHistory).map((r)=>r.total), [3, 1]);
+});

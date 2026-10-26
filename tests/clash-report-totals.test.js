@@ -114,3 +114,34 @@ test('a real title is used as-is, with no number suffix appended', () => {
   const rows = new Function(src)();
   assert.equal(rows[0].label, 'Duct vs beam');
 });
+
+// The report's trend section has a per discipline pair table built from the
+// stored run-history breakdowns (clash-history-core.js): the latest run's
+// total / open / new / resolved + the total over the last runs; old runs
+// without breakdowns read '–'.
+test('report trend: per pair table from the history breakdowns', () => {
+  const H = require('../clash-history-core');
+  const start = html.indexOf('function _pairTrendHtml(', reportStart);
+  assert.ok(start !== -1, '_pairTrendHtml not found in _ccClashReport');
+  const end = html.indexOf('\n    }\n', start) + 6;
+  const src = 'function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;");}\n'
+    + 'function _cc_t(k, en, v){ return v ? en.replace(/\\{(\\w+)\\}/g, (m, n) => v[n]) : en; }\n'
+    + html.slice(start, end) + '\nreturn _pairTrendHtml;';
+  const fn = new Function(src)();
+  const mk = (list, ts) => H.entry(list, { ts }, { severity: () => 'major' });
+  const a = { id: 'a', status: 'open', trades: ['structural', 'mep.ventilation'], _delta: 'new' };
+  const b = { id: 'b', status: 'open', trades: ['architectural', 'mep.plumbing'], _delta: 'new' };
+  const hist = [{ ts: 1, total: 9, open: 9 }, mk([a, b], 2), mk([Object.assign({}, a, { _delta: 'persisting' }), Object.assign({}, b, { status: 'auto_resolved', _delta: 'auto_resolved' })], 3)];
+  const out = fn(H, hist, (k) => k.toUpperCase());
+  assert.match(out, /By discipline pair/);
+  assert.match(out, /<th>Total, last 3 runs<\/th>/);
+  const row = (k) => (out.match(new RegExp('<tr data-pair="' + k + '">(.*?)</tr>')) || [])[1];
+  assert.equal(row('mep.ventilation × structural'), '<td>MEP.VENTILATION × STRUCTURAL</td><td>1</td><td>1</td><td>0</td><td>0</td><td>– → 1 → 1</td>');
+  assert.equal(row('architectural × mep.plumbing'), '<td>ARCHITECTURAL × MEP.PLUMBING</td><td>1</td><td>0</td><td>0</td><td>1</td><td>– → 1 → 1</td>');
+  assert.equal(fn(H, [{ ts: 1, total: 2, open: 2 }], String), '', 'no breakdowns: no table');
+  assert.equal(fn(undefined, hist, String), '', 'no core: no table');
+  // wired into the report's trend section
+  const rep = html.slice(reportStart, html.indexOf("var w = window.open('', '_blank');", reportStart));
+  assert.match(rep, /var _pairTrend = _pairTrendHtml\(window\._ccClashHistoryCore, hist,/);
+  assert.match(rep, /\+ _pairTrend\n/);
+});
