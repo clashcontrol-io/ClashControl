@@ -182,7 +182,7 @@
     if (!changed) return values;
     return out.filter(function(v, i, a) { return a.indexOf(v) === i; }).sort();
   }
-  // ctx: { severity(c), bucket(c), storey(modelId, name), trade(c, side), grid(c), space(c) } —
+  // ctx: { severity(c), bucket(c), storey(modelId, name), trade(c, side), grid(c), space(c), changed(c) } —
   // no model names: the model pair is keyed by ids (modelPairKey)
   function facetValues(c, ctx) {
     ctx = ctx || {};
@@ -205,6 +205,9 @@
     // (clash-exceptions-core.js, rules.exceptions.requireProvision)
     if (c.missingProvision) tags.push('missing-provision');
     if (c._delta === 'new') tags.push('new');
+    // on an element a model reload added or changed (model-diff-core.js:
+    // added / moved / reshaped / property change, ctx.changed reads the diffs)
+    if (ctx.changed && ctx.changed(c)) tags.push('changed-element');
     // a decision teammates changed at the same time in a shared folder
     // (addons/shared-project.js puts the conflict on the clash)
     if (c._sharedConflict && c._sharedConflict.length) tags.push('shared-conflict');
@@ -317,6 +320,7 @@
     { id: 'missing-provision', label: 'Missing openings / provisions', facets: { tag: ['missing-provision'] } },
     { id: 'near-miss', label: 'Near misses', facets: { extent: ['clearance'], tag: ['near-miss'] } },
     { id: 'new', label: 'New since last run', facets: { tag: ['new'] } },
+    { id: 'changed-elements', label: 'Clashes on changed elements', facets: { tag: ['changed-element'] } },
     // offered whenever there are any, even when every item is in conflict
     { id: 'shared-conflict', label: 'Conflicts', facets: { tag: ['shared-conflict'] }, always: true }
   ];

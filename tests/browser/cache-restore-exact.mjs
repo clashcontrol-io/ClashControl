@@ -113,6 +113,18 @@ const digest = () => page.evaluate(() => {
   }
   return out;
 });
+// Model version comparison: every element's geometry signature
+// (model-diff-core.js via _ccElementGeoSig), per model and element — a
+// restored model compared with its fresh load must show no change.
+const geoSigs = () => page.evaluate(() => {
+  const out = {};
+  for (const m of window._ccLatestState.models) {
+    const o = {};
+    for (const el of m.elements) o[el.expressId] = window._ccElementGeoSig(el);
+    out[m.name] = o;
+  }
+  return out;
+});
 const clashList = () => page.evaluate(() => window._ccLatestState.clashes.map((c) => {
   const o = {}; Object.keys(c).sort().forEach((k) => { if (!/^(id|createdAt|_?updatedAt|_runId|_runCount|_seenRuns|_lastSeen|_delta|_prev[A-Z]|history|_hist)/.test(k)) o[k] = c[k]; }); return JSON.stringify(o);
 }).sort());
@@ -196,6 +208,7 @@ try {
   }, names.length);
   if (cacheKeys < names.length) throw new Error('geometry caches not written: ' + cacheKeys + ' of ' + names.length);
   const d0 = await digest();
+  const g0 = await geoSigs();
   const s0 = await sharing();
   const cb = await cacheBytes();
   report('every cache record stores shared geometries once (gs:1) and is smaller than the per-mesh layout',
@@ -245,6 +258,11 @@ try {
   const d1 = await digest();
   const same = Object.keys(d0).length === Object.keys(d1).length && Object.keys(d0).every((k) => d1[k] && d1[k].h === d0[k].h && d1[k].vertices === d0[k].vertices && d1[k].elements === d0[k].elements);
   report('restored geometry is byte-identical to the fresh load (world positions + indices)', same, JSON.stringify({ fresh: d0, restored: d1 }));
+  const g1 = await geoSigs();
+  const sigDiff = [];
+  for (const k of Object.keys(g0)) for (const id of Object.keys(g0[k])) if (!g1[k] || g1[k][id] !== g0[k][id]) sigDiff.push(k + '#' + id);
+  report('version comparison: restored geometry signatures equal the fresh load (no false changes)', Object.keys(g0).length === names.length && sigDiff.length === 0 && Object.values(g0).every((o) => Object.values(o).some((x) => x)),
+    sigDiff.length + ' differ' + (sigDiff.length ? ': ' + sigDiff.slice(0, 5).join(', ') : ''));
   const s1 = await sharing();
   report('restored models share geometry exactly like the fresh load (partition, instancing, batching)', JSON.stringify(s1) === JSON.stringify(s0), JSON.stringify({ fresh: s0, restored: s1 }));
   const p1 = await pixels();
