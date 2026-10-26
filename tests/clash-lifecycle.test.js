@@ -100,6 +100,8 @@ test('found again after the auto-resolved record left the list: matched by ident
 
 function reducerHarness() {
   const lifecycle = slice('  function _ccIssueLifecycle(clashes, issues, a) {', '    return lc;\n  }');
+  // the run-history entry (clash-history-core.js absent here: run totals only)
+  const historyEntry = slice('  function _ccRunHistoryEntry(clashes, delta, rules) {', '    return { ts: delta.ts, total: (clashes || []).length, open: open, newCount: delta.newCount, persisting: delta.persisting, autoResolved: delta.autoResolved };\n  }');
   const merge = slice('      case A.SET_CLASHES:', '        return Object.assign({},s,_st);');
   const restore = slice('      case A.CLASH_BATCH_RESTORE:', '          issues:_cbrIssues\n        });');
   const A = { SET_CLASHES: 'SET_CLASHES', MERGE_CLASHES: 'MERGE_CLASHES', CLASH_BATCH_RESTORE: 'CLASH_BATCH_RESTORE' };
@@ -110,7 +112,7 @@ function reducerHarness() {
     return R.mergeDetectionResults(next, prev, deps({ now: undefined, isDeniedClash: R.makeDeniedMatcher(denied, identity.computeClashPair) }));
   }
   const make = new Function('A', 'window', '_cc_t', '_ccPushUndoable', 'mergeDetectionResults', '_ccApplyAssignmentRules', '_gcEvent', 'deriveFloors', 'INIT_FILTERS', '_ccChangelogUser',
-    lifecycle + '\nreturn function reducer(s, a) { switch (a.t) {\n' + merge + '\n' + restore + '\n default: return s; } };');
+    lifecycle + '\n' + historyEntry + '\nreturn function reducer(s, a) { switch (a.t) {\n' + merge + '\n' + restore + '\n default: return s; } };');
   const reducer = make(A, win, t, (e) => undo.push(e), mergeDetectionResults, (c) => c, () => {}, () => [], {}, 'Ann');
   let state;
   win._ccDispatch = (a) => { state = reducer(state, a); };

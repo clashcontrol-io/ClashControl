@@ -467,6 +467,15 @@ async function runVariant(variant, viewport, theme, mobile) {
   await page.evaluate(() => { const d = document.querySelector('[data-cc-run-details]'); if (d) d.open = true; const b = document.querySelector('[data-cc-list-actions]'); if (b) b.click(); });
   await surface(page, variant, 'clash-list-menu', LEFT, o);
   await page.keyboard.press('Escape');
+  // Trends (run history per discipline pair / severity / assignee): charts, then the table view
+  await page.evaluate(() => { const r = document.querySelector('[data-cc-run-details]'); if (r) r.open = false; const d = document.querySelector('[data-cc-trends-details]'); if (d) d.open = true; });
+  await page.waitForSelector('[data-cc-trends]', { timeout: 5000 }).catch(() => {});
+  await page.evaluate(() => { const t = document.querySelector('[data-cc-trends]'); if (t) t.scrollIntoView(); });
+  await surface(page, variant, 'trends', LEFT, o);
+  await page.evaluate(() => { const b = document.querySelector('[data-cc-trends-view="table"]'); if (b) b.click(); });
+  await page.evaluate(() => { const t = document.querySelector('[data-cc-trend-table="pair"]'); if (t) t.scrollIntoView(); });
+  await surface(page, variant, 'trends-table', LEFT, o);
+  await page.evaluate(() => { const d = document.querySelector('[data-cc-trends-details]'); if (d) d.open = false; });
   // review overview + Filters popover
   await page.evaluate(() => window._ccDispatch({ t: 'TRIAGE_UPD', u: { view: 'overview' } }));
   await page.waitForSelector('[data-cc-overview]', { timeout: 10_000 }).catch(() => {});

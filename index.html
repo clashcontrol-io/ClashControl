@@ -913,6 +913,7 @@
 <script src="clash-classification-core.js" defer></script>
 <script src="clash-triage-core.js" defer></script>
 <script src="clash-exceptions-core.js" defer></script>
+<script src="clash-history-core.js" defer></script>
 <script src="project-codec.js" defer></script>
 <script src="storage-core.js" defer></script>
 <script src="shared-log-core.js" defer></script>
@@ -1832,7 +1833,7 @@ function startApp() {
     selected:{}, // {id:true} — selected clash/issue IDs
     selectMode:false,
     lastDeltaSummary: null, // {new, persisting, autoResolved, ts} — set after each merge run
-    runHistory: [], // [{ts,total,open,newCount,persisting,autoResolved}] — one entry per detection run, capped at 100; feeds trend sparkline + clash report
+    runHistory: [], // [{ts,total,open,newCount,persisting,autoResolved, v,byPair,bySeverity,byAssignee,byBucket}] — one entry per detection run, capped at 100 (clash-history-core.js; old entries have no breakdowns); feeds the sparkline, Trends, the clash report and the history export
     idsValidation: {
       results: [],       // [{specName, ruleDesc, severity, status:'pass'|'fail', elementId, globalId, ifcType, elementName, modelId}]
       specs: [],         // [{name, rules:[{desc, applicability, requirement, severity}]}]
@@ -2738,7 +2739,7 @@ function startApp() {
       case A.UPD_MODEL:   return Object.assign({},s,{models:s.models.map(function(m){return m.id===a.id?Object.assign({},m,a.u):m})});
       case A.TOGGLE_ALL_STOREYS: return Object.assign({},s,{models:s.models.map(function(m){if(m.id!==a.id)return m;return Object.assign({},m,{hiddenStoreys:a.hide?a.storeys.reduce(function(o,st){o[st]=true;return o;},{}):{}}); })});
       case A.SET_CLASHES: /* falls through to MERGE_CLASHES with no prev clashes */
-      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[], a.coverageModelIds, s.deniedPairs); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); /* Linked issues follow their clash: resolved when the run no longer finds it, reopened when it comes back (never one a person resolved / closed) — one undo step, §21.58. */ var _lc=a.t===A.MERGE_CLASHES?_ccIssueLifecycle(_mr.clashes, s.issues, a):null; if(_lc&&(_lc.resolved||_lc.reopened)){ _mr.clashes=_lc.clashes; _mr.deltaSummary=Object.assign({},_mr.deltaSummary,{issuesResolved:_lc.resolved||undefined,issuesReopened:_lc.reopened||undefined}); } var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary, lastRunExcluded:a.excluded||null, lastAutoRerun:a.auto?{reason:a.auto,ts:_mr.deltaSummary.ts,delta:_mr.deltaSummary}:null}; if(_lc&&(_lc.resolved||_lc.reopened)){ _st.issues=_lc.issues; /* an automatic re-check says it in its own toast (lastAutoRerun) */ _st.lastIssueLifecycle=a.auto?Object.assign({},_lc.record,{auto:a.auto}):_lc.record; _st.changelog=(s.changelog||[]).concat(_lc.changelog); } var _rhOpen=0; _mr.clashes.forEach(function(c){if(c.status==='open'||c.status==='in_progress')_rhOpen++;}); _st.runHistory=(s.runHistory||[]).concat([{ts:_mr.deltaSummary.ts,total:_mr.clashes.length,open:_rhOpen,newCount:_mr.deltaSummary.newCount,persisting:_mr.deltaSummary.persisting,autoResolved:_mr.deltaSummary.autoResolved}]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* The bucket bar's "show" choices are per run, whatever the reset pref says: a new result starts on its review set. */ _st.filters=Object.assign({},_st.filters||s.filters,{showBuckets:[],hideBuckets:[]}); /* Grouped by root-cause element ("one row = one thing to fix", see _ccRootCauseKeyFor) whenever the user has nothing chosen — at any size: big sets render through the windowed list (VirtualList). Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0) { _st.clashGroupBy=['element']; }
+      case A.MERGE_CLASHES: var _mr=mergeDetectionResults(a.v, a.t===A.MERGE_CLASHES?s.clashes:[], a.coverageModelIds, s.deniedPairs); _mr.clashes=_ccApplyAssignmentRules(_mr.clashes, s.assignmentRules); _gcEvent('clash-detection', _mr.clashes.length+' clashes'); /* Linked issues follow their clash: resolved when the run no longer finds it, reopened when it comes back (never one a person resolved / closed) — one undo step, §21.58. */ var _lc=a.t===A.MERGE_CLASHES?_ccIssueLifecycle(_mr.clashes, s.issues, a):null; if(_lc&&(_lc.resolved||_lc.reopened)){ _mr.clashes=_lc.clashes; _mr.deltaSummary=Object.assign({},_mr.deltaSummary,{issuesResolved:_lc.resolved||undefined,issuesReopened:_lc.reopened||undefined}); } var _st={clashes:_mr.clashes,detecting:false,activeId:null,floors:deriveFloors(_mr.clashes),lastDeltaSummary:_mr.deltaSummary, lastRunExcluded:a.excluded||null, lastAutoRerun:a.auto?{reason:a.auto,ts:_mr.deltaSummary.ts,delta:_mr.deltaSummary}:null}; if(_lc&&(_lc.resolved||_lc.reopened)){ _st.issues=_lc.issues; /* an automatic re-check says it in its own toast (lastAutoRerun) */ _st.lastIssueLifecycle=a.auto?Object.assign({},_lc.record,{auto:a.auto}):_lc.record; _st.changelog=(s.changelog||[]).concat(_lc.changelog); } /* One history entry per run, with its breakdowns (pair / severity / assignee / bucket) from one O(n) pass here — merge time only, never on an interaction (clash-history-core.js, INTERNALS §21.60). */ _st.runHistory=(s.runHistory||[]).concat([_ccRunHistoryEntry(_mr.clashes,_mr.deltaSummary,s.rules)]).slice(-100); if(a.detectionSettings)_st.detectionSettings=a.detectionSettings; if(s.prefs.resetFiltersOnRun!==false)_st.filters=Object.assign({},INIT_FILTERS); /* The bucket bar's "show" choices are per run, whatever the reset pref says: a new result starts on its review set. */ _st.filters=Object.assign({},_st.filters||s.filters,{showBuckets:[],hideBuckets:[]}); /* Grouped by root-cause element ("one row = one thing to fix", see _ccRootCauseKeyFor) whenever the user has nothing chosen — at any size: big sets render through the windowed list (VirtualList). Never write localStorage here — that's the user-facing CLASH_GROUP_BY dispatch's job. */ if((!Array.isArray(s.clashGroupBy)||s.clashGroupBy.length===0) && _mr.clashes.length>0) { _st.clashGroupBy=['element']; }
         return Object.assign({},s,_st);
       case A.ADD_CLASHES: { /* additive, non-destructive append (does NOT auto-resolve existing clashes like MERGE_CLASHES). Used by the accessibility panel. */
         var _addc=(a.v||[]).filter(Boolean); if(!_addc.length) return s;
@@ -9598,6 +9599,25 @@ function startApp() {
     var core = window._ccClashClassificationCore;
     if (!core || !core.reviewBucket) return 'review';
     return core.reviewBucket(c, rules, ctx || null);
+  }
+  // The runHistory entry of one detection run (MERGE_CLASHES): run totals +
+  // breakdowns per discipline pair / severity / assignee / review bucket, in
+  // one pass over the merged list (clash-history-core.js). The bucket ctx is
+  // _ccTriageCtx of the same array, so the triage model reuses its findTwice.
+  // Without the core: the run totals only (the shape old entries have).
+  function _ccRunHistoryEntry(clashes, delta, rules) {
+    var hc = window._ccClashHistoryCore;
+    delta = delta || {};
+    if (hc && typeof hc.entry === 'function') {
+      var bctx = _ccTriageCtx(clashes);
+      return hc.entry(clashes, delta, {
+        severity: function(c) { return c.aiSeverity || _ccDeterministicSeverity(c); },
+        bucket: function(c) { return _ccReviewBucket(c, rules, bctx); }
+      });
+    }
+    var open = 0;
+    (clashes || []).forEach(function(c) { if (c.status === 'open' || c.status === 'in_progress') open++; });
+    return { ts: delta.ts, total: (clashes || []).length, open: open, newCount: delta.newCount, persisting: delta.persisting, autoResolved: delta.autoResolved };
   }
   // One memoised triage model per (clashes, rules, models): bucket of every
   // clash, bucket counts over the visible models (they always add up to the
@@ -30061,6 +30081,178 @@ function startApp() {
     </span>`;
   }
 
+  // ── Trends (run history per discipline pair / severity / assignee) ──
+  // docs/INTERNALS.md §21.60. Reads the stored runHistory breakdowns
+  // (clash-history-core.js, written at merge time) — opening the view costs
+  // O(runs × keys), never a pass over the clashes. Charts are data drawn with
+  // tokens (no icons, no amber), each with role=img + an aria-label carrying
+  // the numbers; the Table view is the plain alternative.
+  var _CC_TREND_RUNS = 20;           // runs drawn per small multiple
+  var _CC_TREND_PAIRS = 12;          // pairs shown before "Show all"
+  var _CC_TREND_SERIES = [
+    { f: 'total', stroke: 'var(--text-muted)', w: 1, dash: null },
+    { f: 'open', stroke: 'var(--accent)', w: 1.6, dash: null },
+    { f: 'new', stroke: 'var(--color-info)', w: 1.2, dash: '3 2' },
+    { f: 'resolved', stroke: 'var(--text-primary)', w: 1, dash: '1 2' }
+  ];
+  function _ccTrendFieldLabel(f) {
+    return ({ total: _cc_t('trends.total', 'Total'), open: _cc_t('trends.open', 'Open'), new: _cc_t('trends.new', 'New'), resolved: _cc_t('trends.resolved', 'Resolved') })[f] || f;
+  }
+  // "Structural × Ventilation: run 1 — total 12, open 12, new 12, resolved 0; …"
+  function _ccTrendAria(label, cells, fields, firstRun) {
+    var parts = [];
+    cells.forEach(function(c, i) {
+      var run = _cc_t('trends.runN', 'run {n}', { n: firstRun + i });
+      if (!c) { parts.push(run + ' — ' + _cc_t('trends.noBreakdown', 'no breakdown')); return; }
+      parts.push(run + ' — ' + fields.map(function(f) { return _ccTrendFieldLabel(f).toLowerCase() + ' ' + (c[f] == null ? 0 : c[f]); }).join(', '));
+    });
+    return label + ': ' + parts.join('; ');
+  }
+  function _ccTrendSvg(cells, fields, aria) {
+    var W = 120, H = 34, P = 2, n = cells.length, max = 1;
+    cells.forEach(function(c) { if (c) fields.forEach(function(f) { if (c[f] > max) max = c[f]; }); });
+    function xy(i, v) { var x = n > 1 ? P + (i / (n - 1)) * (W - 2 * P) : W / 2; return [x, H - P - (v / max) * (H - 2 * P)]; }
+    var marks = [];
+    _CC_TREND_SERIES.forEach(function(sr) {
+      if (fields.indexOf(sr.f) < 0) return;
+      var seg = [];
+      function flush() {
+        if (seg.length > 1) marks.push(html`<polyline key=${sr.f + marks.length} points=${seg.join(' ')} fill="none" stroke=${sr.stroke} stroke-width=${sr.w} stroke-dasharray=${sr.dash} vector-effect="non-scaling-stroke"/>`);
+        else if (seg.length === 1) { var p = seg[0].split(','); marks.push(html`<circle key=${sr.f + marks.length} cx=${p[0]} cy=${p[1]} r="1.6" fill=${sr.stroke}/>`); }
+        seg = [];
+      }
+      cells.forEach(function(c, i) { if (!c || c[sr.f] == null) { flush(); return; } var p = xy(i, c[sr.f]); seg.push(p[0].toFixed(1) + ',' + p[1].toFixed(1)); });
+      flush();
+    });
+    return html`<svg role="img" aria-label=${aria} viewBox=${'0 0 ' + W + ' ' + H} preserveAspectRatio="none" width="100%" height=${H} style=${{display:'block'}}>
+      <title>${aria}</title>
+      <line x1="0" y1=${H - P} x2=${W} y2=${H - P} stroke="var(--border-subtle)" stroke-width="1" vector-effect="non-scaling-stroke"/>
+      ${marks}
+    </svg>`;
+  }
+  // The latest numbers of a key as one line: "12 total · 8 open · 2 new · 1 resolved".
+  function _ccTrendLastLine(c, fields) {
+    if (!c) return _cc_t('trends.noBreakdown', 'no breakdown');
+    return fields.map(function(f) { return (c[f] == null ? 0 : c[f]) + '\u00a0' + _ccTrendFieldLabel(f).toLowerCase(); }).join(' · ');
+  }
+  function _ccExportRunHistory(s, fmt) {
+    var hc = window._ccClashHistoryCore, hist = (s && s.runHistory) || [];
+    if (!hc || !hist.length) { if (window._ccToast) window._ccToast(_cc_t('trends.nothingToExport', 'No detection runs to export yet')); return; }
+    var json = fmt === 'json';
+    var body = json ? hc.toJson(hist, { project: (s.activeProject && s.activeProject !== 'default') ? s.activeProject : null, exportedAt: new Date().toISOString() }) : hc.toCsv(hist);
+    var blob = new Blob([body], { type: json ? 'application/json' : 'text/csv;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'clash-history-' + new Date().toISOString().slice(0, 10) + (json ? '.json' : '.csv');
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function() { URL.revokeObjectURL(a.href); }, 1000);
+    _gcEvent('clash-history-export', json ? 'json' : 'csv');
+  }
+  function ClashTrends(props) {
+    var s = props.s, d = props.d, hc = window._ccClashHistoryCore;
+    var stView = useState('chart'), view = stView[0], setView = stView[1];
+    var stAll = useState(false), showAll = stAll[0], setShowAll = stAll[1];
+    var histRaw = s.runHistory, hist = histRaw || [];
+    var model = React.useMemo(function() {
+      var hist = histRaw || [];
+      if (!hc || !hist.length) return null;
+      var h = hist.slice(-_CC_TREND_RUNS), first = hist.length - h.length + 1;
+      function sec(dim) { return hc.keysOf(h, dim).map(function(k) { return { key: k, cells: hc.series(h, dim, k) }; }); }
+      return { h: h, first: first, run: hc.runSeries(h), pairs: sec('pair'), sevs: sec('severity'), people: sec('assignee'),
+        anyBreakdown: h.some(hc.hasBreakdown), allBreakdown: h.every(hc.hasBreakdown) };
+    }, [histRaw, hc]);
+    if (!model) return html`<div data-cc-trends="1" style=${{padding:'var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${_cc_t('trends.empty', 'Trends appear after the first detection run.')}</div>`;
+    var facets = (s.triage && s.triage.facets) || {}, activePairs = facets.trade || [];
+    var ALL = ['total', 'open', 'new', 'resolved'];
+    var GRID = {display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(8rem,1fr))',gap:'var(--space-2)'};
+    var CARD = {display:'flex',flexDirection:'column',gap:'var(--space-1)',padding:'var(--space-2)',border:'1px solid var(--border-subtle)',borderRadius:'var(--radius-sm)',background:'var(--bg-secondary)',minWidth:0,textAlign:'left',boxSizing:'border-box'};
+    var NAME = {fontSize:'var(--text-xs)',fontWeight:'var(--weight-medium)',color:'var(--text-primary)',overflowWrap:'anywhere',lineHeight:'var(--leading-tight)'};
+    var NUMS = {fontSize:'var(--text-2xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-base)'};
+    var TH = {textAlign:'left',fontWeight:'var(--weight-semibold)',color:'var(--text-secondary)',padding:'var(--space-1)',borderBottom:'1px solid var(--border)',whiteSpace:'nowrap'};
+    var TD = {padding:'var(--space-1)',borderBottom:'1px solid var(--border-subtle)',color:'var(--text-primary)',overflowWrap:'anywhere'};
+    var TDN = Object.assign({}, TD, {textAlign:'right',fontFamily:'var(--font-mono)',whiteSpace:'nowrap',overflowWrap:'normal'});
+    function last(cells) { return cells[cells.length - 1]; }
+    function prev(cells) { return cells.length > 1 ? cells[cells.length - 2] : null; }
+    function card(key, label, cells, fields, opts) {
+      opts = opts || {};
+      var aria = _ccTrendAria(label, cells, fields, model.first);
+      var inner = html`
+        <span style=${NAME}>${label}${opts.active ? html` <span style=${{color:'var(--text-muted)',fontWeight:'var(--weight-regular)'}}>${_cc_t('trends.filtered', '(filtered)')}</span>` : ''}</span>
+        ${_ccTrendSvg(cells, fields, aria)}
+        <span style=${NUMS}>${_ccTrendLastLine(last(cells), fields)}</span>`;
+      if (!opts.onClick) return html`<div key=${key} data-cc-trend-key=${key} style=${CARD}>${inner}</div>`;
+      return html`<button key=${key} type="button" data-cc-trend-key=${key} aria-pressed=${opts.active ? 'true' : 'false'} onClick=${opts.onClick}
+        title=${opts.active ? _cc_t('trends.pairUnfilter', 'Show every discipline pair in the clash list') : _cc_t('trends.pairFilter', 'Show only this discipline pair in the clash list')}
+        style=${{...S_BTN,...CARD,cursor:'pointer',border:'1px solid ' + (opts.active ? 'var(--accent)' : 'var(--border-subtle)'),background:opts.active ? 'var(--accent-bg)' : 'var(--bg-secondary)'}}>${inner}</button>`;
+    }
+    function table(rows, labelOf, fields, caption, dim) {
+      return html`<div style=${{overflowX:'auto'}}><table data-cc-trend-table=${dim} style=${{width:'100%',borderCollapse:'collapse',fontSize:'var(--text-xs)'}}>
+        <caption style=${{...S_SECTION_LABEL,textAlign:'left',padding:'var(--space-1) 0'}}>${caption}</caption>
+        <thead><tr>
+          <th scope="col" style=${TH}>${dim === 'pair' ? _cc_t('trends.colPair', 'Discipline pair') : dim === 'severity' ? _cc_t('trends.colSeverity', 'Severity') : dim === 'assignee' ? _cc_t('trends.colAssignee', 'Assignee') : _cc_t('trends.colRun', 'Clashes')}</th>
+          ${fields.map(function(f) { return html`<th key=${f} scope="col" style=${{...TH,textAlign:'right'}}>${_ccTrendFieldLabel(f)}</th>`; })}
+          <th scope="col" style=${{...TH,textAlign:'right'}}>${_cc_t('trends.colPrevious', 'Before')}</th>
+        </tr></thead>
+        <tbody>${rows.map(function(r) {
+          var c = last(r.cells), p = prev(r.cells), main = fields[0] === 'open' ? 'open' : 'total';
+          return html`<tr key=${r.key} data-cc-trend-row=${r.key}>
+            <th scope="row" style=${{...TD,fontWeight:'var(--weight-regular)',textAlign:'left',minWidth:'6rem'}}>${labelOf(r.key)}</th>
+            ${fields.map(function(f) { return html`<td key=${f} data-f=${f} style=${TDN}>${c ? (c[f] == null ? 0 : c[f]) : '–'}</td>`; })}
+            <td style=${TDN}>${p ? (p[main] == null ? 0 : p[main]) : '–'}</td>
+          </tr>`;
+        })}</tbody>
+      </table></div>`;
+    }
+    var pairLabel = function(k) { return _ccFacetValueLabel('trade', k); };
+    var sevLabel = function(k) { return _ccFacetValueLabel('severity', k); };
+    var whoLabel = function(k) { return _ccFacetValueLabel('assignee', k); };
+    var pairs = showAll ? model.pairs : model.pairs.slice(0, _CC_TREND_PAIRS);
+    function togglePair(k) { return function() { d({t:A.TRIAGE_UPD, u:{facets:_ccToggleFacet(facets, 'trade', k), activeViewId:null}}); }; }
+    var lastRun = hist[hist.length - 1];
+    var VIEWBTN = function(on) { return {...S_BTN_SECONDARY_SM, background:on ? 'var(--accent-bg)' : 'var(--bg-secondary)', color:on ? 'var(--text-primary)' : 'var(--text-secondary)', border:'1px solid ' + (on ? 'var(--accent)' : 'var(--border)')}; };
+    return html`<div data-cc-trends="1" style=${{display:'flex',flexDirection:'column',gap:'var(--space-3)',padding:'var(--space-2)'}}>
+      <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',flexWrap:'wrap'}}>
+        <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',flex:'1 1 10rem',minWidth:0}}>${_cc_t('trends.summary', '{n} detection runs · last {when}', { n: hist.length, when: new Date(lastRun.ts).toLocaleString() })}${hist.length > model.h.length ? ' · ' + _cc_t('trends.lastRuns', 'charts show the last {n}', { n: model.h.length }) : ''}</span>
+        <span role="group" aria-label=${_cc_t('trends.viewAs', 'Show trends as')} style=${{display:'inline-flex',gap:'var(--space-1)'}}>
+          <button type="button" data-cc-trends-view="chart" aria-pressed=${view === 'chart' ? 'true' : 'false'} onClick=${function() { setView('chart'); }} style=${VIEWBTN(view === 'chart')}>${_cc_t('trends.viewChart', 'Charts')}</button>
+          <button type="button" data-cc-trends-view="table" aria-pressed=${view === 'table' ? 'true' : 'false'} onClick=${function() { setView('table'); }} style=${VIEWBTN(view === 'table')}>${_cc_t('trends.viewTable', 'Table')}</button>
+        </span>
+      </div>
+      ${!model.allBreakdown && html`<div style=${S_NOTE}>${model.anyBreakdown ? _cc_t('trends.oldRuns', 'Runs from before this version have totals only; their breakdowns are gaps.') : _cc_t('trends.noBreakdowns', 'These runs have totals only. Run detection again to see trends per discipline pair, severity and assignee.')}</div>`}
+      ${view === 'chart' && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)',display:'flex',gap:'var(--space-3)',flexWrap:'wrap'}} aria-hidden="true">
+        ${_CC_TREND_SERIES.map(function(sr) { return html`<span key=${sr.f} style=${{display:'inline-flex',alignItems:'center',gap:'var(--space-1)'}}><svg width="16" height="6" style=${{display:'block'}}><line x1="0" y1="3" x2="16" y2="3" stroke=${sr.stroke} stroke-width=${sr.w + 0.4} stroke-dasharray=${sr.dash}/></svg>${_ccTrendFieldLabel(sr.f)}</span>`; })}
+      </div>`}
+      ${view === 'chart' ? html`
+        <section aria-label=${_cc_t('trends.allClashes', 'All clashes')}>
+          <div style=${{...S_SECTION_LABEL,marginBottom:'var(--space-1)'}}>${_cc_t('trends.allClashes', 'All clashes')}</div>
+          <div style=${GRID}>${card('run', _cc_t('trends.everyPair', 'Every discipline pair'), model.run, ALL)}</div>
+        </section>
+        ${model.pairs.length > 0 && html`<section data-cc-trend-section="pair" aria-label=${_cc_t('trends.byPair', 'By discipline pair')}>
+          <div style=${{...S_SECTION_LABEL,marginBottom:'var(--space-1)'}}>${_cc_t('trends.byPair', 'By discipline pair')}</div>
+          <div style=${GRID}>${pairs.map(function(r) { var on = activePairs.indexOf(r.key) >= 0; return card(r.key, pairLabel(r.key), r.cells, ALL, { active: on, onClick: togglePair(r.key) }); })}</div>
+          ${model.pairs.length > _CC_TREND_PAIRS && html`<button type="button" onClick=${function() { setShowAll(!showAll); }} style=${{...S_BTN_GHOST_SM,marginTop:'var(--space-1)'}}>${showAll ? _cc_t('trends.showFewer', 'Show fewer') : _cc_t('trends.showAll', 'Show all {n}', { n: model.pairs.length })}</button>`}
+        </section>`}
+        ${model.sevs.length > 0 && html`<section data-cc-trend-section="severity" aria-label=${_cc_t('trends.bySeverity', 'By severity')}>
+          <div style=${{...S_SECTION_LABEL,marginBottom:'var(--space-1)'}}>${_cc_t('trends.bySeverity', 'By severity')}</div>
+          <div style=${GRID}>${model.sevs.map(function(r) { return card(r.key, sevLabel(r.key), r.cells, ALL); })}</div>
+        </section>`}
+        ${model.people.length > 0 && html`<section data-cc-trend-section="assignee" aria-label=${_cc_t('trends.byAssignee', 'Open per assignee')}>
+          <div style=${{...S_SECTION_LABEL,marginBottom:'var(--space-1)'}}>${_cc_t('trends.byAssignee', 'Open per assignee')}</div>
+          <div style=${GRID}>${model.people.map(function(r) { return card('a:' + r.key, whoLabel(r.key), r.cells, ['open']); })}</div>
+        </section>`}
+      ` : html`
+        ${table([{ key: '', cells: model.run }], function() { return _cc_t('trends.everyPair', 'Every discipline pair'); }, ALL, _cc_t('trends.allClashes', 'All clashes'), 'run')}
+        ${model.pairs.length > 0 && table(model.pairs, pairLabel, ALL, _cc_t('trends.byPair', 'By discipline pair'), 'pair')}
+        ${model.sevs.length > 0 && table(model.sevs, sevLabel, ALL, _cc_t('trends.bySeverity', 'By severity'), 'severity')}
+        ${model.people.length > 0 && table(model.people, whoLabel, ['open'], _cc_t('trends.byAssignee', 'Open per assignee'), 'assignee')}
+      `}
+      <div style=${{display:'flex',gap:'var(--space-2)',flexWrap:'wrap'}}>
+        <button type="button" data-cc-history-export="csv" onClick=${function() { _ccExportRunHistory(s, 'csv'); }} style=${S_BTN_SECONDARY_SM}>${_cc_t('trends.exportCsv', 'Export history (CSV)')}</button>
+        <button type="button" data-cc-history-export="json" onClick=${function() { _ccExportRunHistory(s, 'json'); }} style=${S_BTN_SECONDARY_SM}>${_cc_t('trends.exportJson', 'Export history (JSON)')}</button>
+      </div>
+    </div>`;
+  }
+
   // "149 clashes · 149 open · 0 resolved" — the run's one-line summary
   // (validation rows are not clashes and are not counted).
   function _ccStatsSummaryLine(items, isClash) {
@@ -32488,6 +32680,7 @@ function startApp() {
     var fo=useState(false), filtersOpen=fo[0], setFiltersOpen=fo[1];
     // "Run details" (stats, AI summary, model matrix) is built only while open
     var rdo=useState(false), runDetailsOpen=rdo[0], setRunDetailsOpen=rdo[1];
+    var tro=useState(false), trendsOpen=tro[0], setTrendsOpen=tro[1];
     var isClashTab = s.tab==='clashes';
     // one memoised triage model per (clashes, rules, model signature)
     var tmAll = _ccTriageModel(s);
@@ -32739,6 +32932,10 @@ function startApp() {
             handledHiddenCount=${handledHiddenCount} showHandled=${!!f.showHandled} d=${d} />
           ${(s.models||[]).length >= 2 && html`<${ModelClashMatrix} s=${s} d=${d} items=${rawItems} />`}
         </div>`}
+      </details>`}
+      ${isClashTab && (s.runHistory||[]).length > 0 && html`<details data-cc-trends-details="1" open=${trendsOpen} onToggle=${function(e){ var o = !!e.currentTarget.open; if (o !== trendsOpen) setTrendsOpen(o); }} style=${{borderBottom:'1px solid var(--border-subtle)',flexShrink:0}}>
+        <summary style=${{cursor:'pointer',padding:'var(--space-1) var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>${_cc_t('trends.title','Trends')}</summary>
+        ${trendsOpen && html`<${ClashTrends} s=${s} d=${d} />`}
       </details>`}
       ${!isClashTab && !isExplorerTab && !isStandardsTab && rawItems.length > 0 && html`<${ClashStatsBar} items=${rawItems} isClash=${false} d=${d} />`}
 
@@ -33566,6 +33763,25 @@ function startApp() {
       }).join('');
     }
 
+    // Per discipline pair: the latest run's numbers + the total over the last
+    // runs, from the stored history breakdowns (clash-history-core.js) — the
+    // same numbers as the Trends view; old runs without breakdowns show '–'.
+    function _pairTrendHtml(hc, hist, label) {
+      if (!hc || !hist.length) return '';
+      var t = hc.pairTable(hist, 5);
+      if (!t.rows.length) return '';
+      return '<h3 style="font-size:13px;margin:14px 0 6px">'+esc(_cc_t('report.byPair','By discipline pair'))+'</h3>'
+        + '<table><tr><th>'+esc(_cc_t('trends.colPair','Discipline pair'))+'</th><th>'+esc(_cc_t('trends.total','Total'))+'</th><th>'+esc(_cc_t('trends.open','Open'))+'</th><th>'+esc(_cc_t('trends.new','New'))+'</th><th>'+esc(_cc_t('trends.resolved','Resolved'))+'</th><th>'+esc(_cc_t('report.totalOverRuns','Total, last {n} runs',{n:t.runs.length}))+'</th></tr>'
+        + t.rows.map(function(r) {
+            var c = r.cells[r.cells.length - 1];
+            var num = function(f) { return c ? String(c[f] || 0) : '–'; };
+            return '<tr data-pair="'+esc(r.key)+'"><td>'+esc(label(r.key))+'</td><td>'+num('total')+'</td><td>'+num('open')+'</td><td>'+num('new')+'</td><td>'+num('resolved')+'</td><td>'
+              + r.cells.map(function(x) { return x ? String(x.total) : '–'; }).join(' → ') + '</td></tr>';
+          }).join('')
+        + '</table>';
+    }
+    var _pairTrend = _pairTrendHtml(window._ccClashHistoryCore, hist, function(k) { return _ccFacetValueLabel('trade', k); });
+
     // Snapshot appendix: viewpoints linked to issues (capped — snapshots are heavy).
     var snaps = [];
     (s.viewpoints||[]).forEach(function(v){
@@ -33633,7 +33849,8 @@ function startApp() {
       + (hist.length >= 2
         ? '<h2>Trend</h2>'+_trendSvg()
           +'<table style="margin-top:8px"><tr><th>Run</th><th>Total</th><th>Open</th><th>New</th><th>Auto-resolved</th></tr>'+_histRows()+'</table>'
-        : '')
+          + _pairTrend
+        : (_pairTrend ? '<h2>Trend</h2>' + _pairTrend : ''))
       + _reviewSection()
       + '<h2>Clash clusters'+(truncated?' (top '+ROW_CAP+' by open count)':'')+'</h2>'
       + '<table><tr><th>#</th><th>Cluster</th><th>Clashes</th><th>Open</th><th>Severity</th><th>Location</th><th>Assignee</th></tr>'

@@ -28,7 +28,7 @@
 
 **Addons (`addons/`):** accessibility, align, data-quality, geoplace, local-engine, openaec-bridge, pointcloud, pwa, revit-bridge, shared-project, smart-bridge, splat, tiles, tauri-bridge (desktop only, inert in the browser), training-data, visibility, wasm-engine (+ `wasm-engine-pkg/`).
 
-**Non-addon core modules** (plain `<script defer>`, required, all `// @ts-check`): `cc-runtime.js`, `safety-migrations.js`, `storage-core.js`, `clash-{discipline,assignment,identity,reconciliation,classification,triage,exceptions}-core.js`, `project-codec.js`, `shared-log-core.js`, `shared-session-core.js`, `section-clipping.js`, `viewer-{camera,pick,gizmo}-core.js`, `viewer-pick-index.js`, `occlusion-core.js`, `renderer-contract.js`, `analytics-consent.js`.
+**Non-addon core modules** (plain `<script defer>`, required, all `// @ts-check`): `cc-runtime.js`, `safety-migrations.js`, `storage-core.js`, `clash-{discipline,assignment,identity,reconciliation,classification,triage,exceptions,history}-core.js`, `project-codec.js`, `shared-log-core.js`, `shared-session-core.js`, `section-clipping.js`, `viewer-{camera,pick,gizmo}-core.js`, `viewer-pick-index.js`, `occlusion-core.js`, `renderer-contract.js`, `analytics-consent.js`.
 
 **Backend (`api/`):** `nl` (Groq), `title`/`triage` (Gemma), `project`, `training`, `health`, `tile`, `_lib.js`, `schema.sql`. **Deployment:** Vercel, `www.clashcontrol.io`, no COOP/COEP; `.vercelignore` keeps docs/tests/engine/desktop sources out of the deploy.
 
@@ -250,6 +250,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 ---
 
 ## Recently completed (details in git history)
+- **2026-10-25 — trends per discipline pair / severity / assignee (branch `run-history`):** each `runHistory` entry carries `v:1` + `byPair` / `bySeverity` / `byAssignee` (open) / `byBucket` from one pass at merge time (`clash-history-core.js`, pair key = the Trades facet value); clash panel → Trends (small multiples, table view, a pair card filters the list), per pair table in the printable report, Export history CSV / JSON. Old entries load and draw as gaps. INTERNALS §21.60, `tests/browser/run-trends.mjs` (CI).
 - **2026-10-25 — automatic re-check on model change (branch `auto-rerun`):** pref `autoRerun` off / replaced (default: same-name reload, sidecar, Revit re-sync) / any load; `_ccScheduleAutoRerun` waits for the batch + lazy props, gated on a previous run, no restore / partial load / memory stop / detection in flight, then a silent `_ccRunDetection` and one toast ("Re-checked after model update: …"). A same-id `REPLACE_MODEL` now keeps the smart re-run memo, so a reload recomputes only the changed elements' pairs. INTERNALS §21.59, `tests/browser/auto-rerun.mjs` (CI).
 - **2026-10-25 — intersection exceptions + "A requires B" (branch `penetration-rules`):** `clash-exceptions-core.js` (UMD, ts-check): straight MEP penetrations through wall / slab / covering (angle + protrusion beyond both faces) and fittings set flush into ceiling / wall / slab get their own review buckets (`penetration`, `fitting`); a `through` MEP penetration of a structural wall / slab without an IFC opening or provision volume within N mm is marked (`c.missingProvision`, pill, tag + suggested view) and stays in review. Run modal → Filtering → "Exceptions and required provisions". Annotation only, Σ buckets == raw; off = unchanged results. INTERNALS §9.
 - **2026-10-25 — coordination matrix v2 (branch `matrix-v2`):** one cell = one rule (`rules.matrixRules`: off / on / hard / clearance mm + severity + note, beside the legacy boolean `disciplineMatrix`); per-pair gap = type-pair tolerance > cell > maxGap, broad-phase margin widens to the largest cell gap, cell severity via the `classifyClashes` ctx hook; Standards discipline-pair rules migrated once into the matrix; template export / import. Identical on every path (`tests/browser/matrix-rules.mjs`, CI). INTERNALS §9.
@@ -345,6 +346,7 @@ Keep every entry unless it's truly obsolete. Add a note when something gets fixe
 
 ## Active Work
 
+- ~~2026-10-25: P6 trends per discipline pair / severity / assignee (branch `run-history`): per-run breakdowns in `runHistory`, Trends view in the clash panel, report per-pair trend, history CSV / JSON export. INTERNALS §21.60.~~ (2026-10-25)
 - ~~2026-10-25: P3 automatic re-check on model change (branch `auto-rerun`): pref `autoRerun`, debounced scheduler + gate, loader / Revit hooks, one toast. INTERNALS §21.59.~~ (2026-10-25)
 - ~~2026-10-25: P5 intersection exceptions + "A requires B" presence check (branch `penetration-rules`): `clash-exceptions-core.js`, `penetration` / `fitting` buckets, `missingProvision` annotation, run-modal rows, fixture opt-in `penetrations`, `tests/browser/penetration-rules.mjs` (CI). INTERNALS §9.~~ (2026-10-25)
 
