@@ -158,3 +158,24 @@ test('runHistory entries with and without breakdowns round-trip unchanged', () =
   assert.deepEqual(H.series(lp.data.runHistory, 'pair', 'mep.ventilation × structural'), [null, {total:1,open:1,new:1,resolved:0}]);
   assert.deepEqual(H.runSeries(lp.data.runHistory).map((r)=>r.total), [3, 1]);
 });
+
+test('property rules round-trip through the project file; an older file restores none', () => {
+  const rules = [
+    {id:'pr1', appliesTo:['IfcWall'], prop:'Pset_WallCommon.FireRating', op:'exists', value:'', severity:'critical', stage:'Stage 2', enabled:true},
+    {id:'pr2', appliesTo:[], prop:'Pset_SlabCommon.Width', op:'gte', value:'200 mm', severity:'minor', stage:'', enabled:false},
+  ];
+  const out = JSON.parse(JSON.stringify(codec.serializeProject(state({propertyRules:rules}), 'v', 't')));
+  assert.deepEqual(out.propertyRules, rules);
+  const acts = Object.assign({}, actions, {SET_PROPERTY_RULES:'SET_PROPERTY_RULES'});
+  const seen = [];
+  codec.restoreProject(out, (a)=>seen.push(a), acts);
+  const set = seen.filter((a)=>a.t==='SET_PROPERTY_RULES');
+  assert.equal(set.length, 1);
+  assert.deepEqual(set[0].v, rules);
+  const old = codec.serializeProject(state(), 'v', 't');
+  delete old.propertyRules;
+  const seen2 = [];
+  codec.restoreProject(JSON.parse(JSON.stringify(old)), (a)=>seen2.push(a), acts);
+  assert.deepEqual(seen2.find((a)=>a.t==='SET_PROPERTY_RULES').v, []);
+  assert.deepEqual(codec.serializeProject(state(), 'v', 't').propertyRules, []);
+});

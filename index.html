@@ -1817,7 +1817,8 @@ function startApp() {
     viewpoints:[],
     classifications:{}, // { byType:{}, byStorey:{}, byDiscipline:{}, byMaterial:{} }
     hiddenClasses:(function(){try{return JSON.parse(localStorage.getItem('cc_hiddenClasses')||'{}')||{};}catch(e){return {};}})(), // { 'byType:IfcWall':true, ... } – persisted so spatial-tree category filters survive refresh
-    colorByClass:null, // null, 'byType', 'byStorey', 'byDiscipline', 'byMaterial'
+    colorByClass:null, // null, 'byType', 'byStorey', 'byDiscipline', 'byMaterial', 'byProperty' (key in colorByProp)
+    colorByProp:null, // 'Pset.Name' coloured by when colorByClass === 'byProperty' (§21.62)
     treeOpen:false,
     floorPlan:null, // {storeyName, elevation, cutHeight} or null
     walkMode:false, // first-person walk mode active
@@ -1843,6 +1844,7 @@ function startApp() {
       summary: null      // {total, pass, fail, bySpec:{specName:{pass,fail}}}
     },
     changelog: [],       // [{id, ts, user, type, targetId, field, value, prev}]
+    propertyRules: [],   // the coordinator's own Data Quality property rules (project data, §21.62)
     deniedPairs: {},     // denied memory: clash identity key → {pair, point, ts, reason, by} (docs/INTERNALS.md §21.58)
     lastIssueLifecycle: null, // the last run's linked-issue changes {ts, resolved, reopened, changes} (toast + sharing)
     lastAutoRerun: null, // the last AUTOMATIC re-check {reason, ts, delta} (its toast); not saved with the project
@@ -1955,6 +1957,7 @@ function startApp() {
     SMART_VIEWS:'SMART_VIEWS', ADD_SMART_VIEW:'ADD_SMART_VIEW', DEL_SMART_VIEW:'DEL_SMART_VIEW',
     COMMENT_MODE:'COMMENT_MODE', ADD_COMMENT:'ADD_COMMENT', UPD_COMMENT:'UPD_COMMENT',
     DEL_COMMENT:'DEL_COMMENT', SET_ACTIVE_COMMENT:'SET_ACTIVE_COMMENT', MERGE_COMMENTS:'MERGE_COMMENTS', DENIED_SET:'DENIED_SET',
+    SET_PROPERTY_RULES:'SET_PROPERTY_RULES', ADD_PROPERTY_RULE:'ADD_PROPERTY_RULE', UPD_PROPERTY_RULE:'UPD_PROPERTY_RULE', DEL_PROPERTY_RULE:'DEL_PROPERTY_RULE', COLOR_BY_PROPERTY:'COLOR_BY_PROPERTY',
     /* UI shell — workspace switcher and persisted panel/inspector/ask state */
     SET_WORKSPACE:'SET_WORKSPACE', DIAGNOSTICS:'DIAGNOSTICS', PRE_RUN:'PRE_RUN',
     INSPECTOR_OPEN:'INSPECTOR_OPEN',
@@ -3021,6 +3024,13 @@ function startApp() {
       case '_REPLACE_HIDDEN_CLASSES': var hc3=Object.assign({},a.v||{}); _persistHiddenClasses(hc3); return Object.assign({},s,{hiddenClasses:hc3});
       case A.HIDE_ALL_CLASSES: var hca={}; if(s.classifications[a.view]){Object.keys(s.classifications[a.view]).forEach(function(k){hca[a.view+':'+k]=true;});} _persistHiddenClasses(hca); return Object.assign({},s,{hiddenClasses:hca});
       case A.COLOR_BY_CLASS: return Object.assign({},s,{colorByClass:s.colorByClass===a.v?null:a.v});
+      // Colour by one property (Pset.Name); the same key again, or none, clears it.
+      case A.COLOR_BY_PROPERTY: { var _cbOff=!a.v||(s.colorByClass==='byProperty'&&s.colorByProp===a.v&&!a.keep); return Object.assign({},s,{colorByClass:_cbOff?(s.colorByClass==='byProperty'?null:s.colorByClass):'byProperty', colorByProp:_cbOff?null:String(a.v)}); }
+      // Property rules (Data Quality, §21.62): project data, saved with the project.
+      case A.SET_PROPERTY_RULES: return Object.assign({},s,{propertyRules:Array.isArray(a.v)?a.v:[]});
+      case A.ADD_PROPERTY_RULE: return a.v&&a.v.id ? Object.assign({},s,{propertyRules:(s.propertyRules||[]).concat([a.v])}) : s;
+      case A.UPD_PROPERTY_RULE: return Object.assign({},s,{propertyRules:(s.propertyRules||[]).map(function(r){return r.id===a.id?Object.assign({},r,a.u):r;})});
+      case A.DEL_PROPERTY_RULE: return Object.assign({},s,{propertyRules:(s.propertyRules||[]).filter(function(r){return r.id!==a.id;})});
 
       case A.TREE:         return Object.assign({},s,{treeOpen:a.v});
       case A.FLOOR_PLAN:   return Object.assign({},s,{floorPlan:a.v, sectionAxis:null, sectionCustom:null, sectionBox:null, walkMode:a.v?false:s.walkMode, measureMode:a.v?null:s.measureMode, commentMode:a.v?false:s.commentMode});
@@ -14632,7 +14642,8 @@ function startApp() {
       ADD_ASSIGN_RULE:'ADD_ASSIGN_RULE', MERGE_CHANGELOG:A.MERGE_CHANGELOG,
       MERGE_COMMENTS:A.MERGE_COMMENTS, // Bug 9: comments weren't persisted at all
       TRIAGE_STATE:A.TRIAGE_STATE, UPD_FILTERS:A.UPD_FILTERS, // clash review facets / saved views / search
-      DENIED_SET:A.DENIED_SET // denied memory (§21.58)
+      DENIED_SET:A.DENIED_SET, // denied memory (§21.58)
+      SET_PROPERTY_RULES:A.SET_PROPERTY_RULES // property rules (§21.62)
     };
   }
   function _ccSerializeProject(s, version, savedAt) {
@@ -14714,6 +14725,141 @@ function startApp() {
       });
     });
     return {byType:byType, byStorey:byStorey, byDiscipline:byDiscipline, byMaterial:byMaterial};
+  }
+
+  // ── Property keys and colour by property (docs/INTERNALS.md §21.62) ──
+  // "Pset.Name" keys the loaded models carry, for the property-rule picker
+  // and the Navigator's colour by property. Nothing is built in: the list is
+  // what the models hold (property sets by name; quantities, whose set names
+  // the loader does not keep, under BaseQuantities). Built lazily — only
+  // when a picker opens — and cached per model element list and props
+  // version (psets can be merged into the elements later, _propsVersion).
+  var _ccPropKeyCache = new WeakMap();
+  function _ccModelPropKeys(m) {
+    var els = m && m.elements;
+    if (!els) return {};
+    var hit = _ccPropKeyCache.get(els);
+    if (hit && hit.v === (m._propsVersion || 0)) return hit.out;
+    var out = Object.create(null);
+    for (var i = 0; i < els.length; i++) {
+      var p = els[i].props;
+      if (!p) continue;
+      var ps = p.psets;
+      if (ps) for (var setName in ps) {
+        var grp = ps[setName];
+        if (!grp || typeof grp !== 'object') continue;
+        for (var k in grp) { var v = grp[k]; if (v != null && String(v).trim()) { var key = setName + '.' + k; out[key] = (out[key] || 0) + 1; } }
+      }
+      var q = p.quantities;
+      if (q) for (var qn in q) { if (q[qn] != null && String(q[qn]).trim()) { var qk = 'BaseQuantities.' + qn; out[qk] = (out[qk] || 0) + 1; } }
+    }
+    _ccPropKeyCache.set(els, {v:m._propsVersion || 0, out:out});
+    return out;
+  }
+  // [{key, count}] over the visible models, most common first.
+  function _ccPropertyKeys(models) {
+    var all = Object.create(null);
+    (models || []).forEach(function(m) {
+      if (!m || m.visible === false) return;
+      var mk = _ccModelPropKeys(m);
+      for (var k in mk) all[k] = (all[k] || 0) + mk[k];
+    });
+    return Object.keys(all).map(function(k) { return {key:k, count:all[k]}; })
+      .sort(function(a, b) { return b.count - a.count || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0); });
+  }
+  // An element's value for "Pset.Name" — the same lookup as the property-rule
+  // engine (addons/data-quality.js _findPropValue): names compare without
+  // case, the last non-empty value wins, no dot = any property set, a
+  // Qto_* / BaseQuantities set reads the flattened quantities.
+  function _ccPropValue(p, key) {
+    if (!p || !key) return null;
+    var k = String(key), i = k.indexOf('.');
+    var pset = (i > 0 && i < k.length - 1) ? k.slice(0, i).toLowerCase() : null;
+    var name = (pset ? k.slice(i + 1) : k).toLowerCase();
+    var val = null;
+    if (pset && p.quantities && /^(qto_|basequantities$)/.test(pset)) {
+      for (var qk in p.quantities) if (qk.toLowerCase() === name && p.quantities[qk] != null && String(p.quantities[qk]).trim()) val = String(p.quantities[qk]).trim();
+      if (val != null) return val;
+    }
+    var ps = p.psets || {};
+    for (var sn in ps) {
+      if (pset && sn.toLowerCase() !== pset) continue;
+      var grp = ps[sn] || {};
+      for (var pk in grp) if (pk.toLowerCase() === name && grp[pk] != null && String(grp[pk]).trim()) val = String(grp[pk]).trim();
+    }
+    return val;
+  }
+  // Categorical colours: the data palette without amber / orange / yellow /
+  // lime hues (DESIGN.md: no amber anywhere). Numbers use a sequential ramp
+  // from light blue to deep green; "(none)" is the neutral --text-faint grey.
+  var _CC_PROP_PALETTE = ['#60a5fa','#f87171','#34d399','#c084fc','#22d3ee','#e879f9','#f472b6','#818cf8','#4ade80','#38bdf8','#a78bfa','#2dd4bf'];
+  var _CC_PROP_RAMP = ['#bfdbfe','#065f46'];
+  var _CC_PROP_NONE = '\u0000none';
+  var _CC_PROP_MAX_BINS = 8;
+  function _ccRampHex(t) {
+    var a = parseInt(_CC_PROP_RAMP[0].slice(1), 16), b = parseInt(_CC_PROP_RAMP[1].slice(1), 16);
+    function ch(x, sh) { return (x >> sh) & 255; }
+    var r = Math.round(ch(a,16) + (ch(b,16) - ch(a,16)) * t), g = Math.round(ch(a,8) + (ch(b,8) - ch(a,8)) * t), bl = Math.round(ch(a,0) + (ch(b,0) - ch(a,0)) * t);
+    return '#' + ((1 << 24) | (r << 16) | (g << 8) | bl).toString(16).slice(1);
+  }
+  function _ccTokenColor(name, fallback) {
+    try { var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim(); return v || fallback; } catch (e) { return fallback; }
+  }
+  function _ccPropNum(v) { return parseFloat(String(v).trim().replace(/^([+\-]?\d+),(\d+)/, '$1.$2')); }
+  function _ccFmtNum(n) { return String(Math.round(n * 1000) / 1000); }
+  // {key, numeric, order:[group key], groups:{gk:{label, count, items, hex, none}}}
+  // over the visible models; cached per (visible models, key).
+  var _ccPropGroupsMemo = {sig:null, els:[], out:null};
+  function _ccPropertyColorGroups(models, key) {
+    var vis = (models || []).filter(function(m) { return m && m.visible !== false; });
+    var sig = key + '|' + document.documentElement.getAttribute('data-theme') + '|' + vis.map(function(m) { return m.id + ':' + (m.elements ? m.elements.length : 0) + ':' + (m._propsVersion || 0); }).join(',');
+    var els = vis.map(function(m) { return m.elements; });
+    if (_ccPropGroupsMemo.sig === sig && _ccPropGroupsMemo.els.length === els.length && _ccPropGroupsMemo.els.every(function(e, i) { return e === els[i]; })) return _ccPropGroupsMemo.out;
+    var byVal = Object.create(null), none = [], vals = [];
+    vis.forEach(function(m) {
+      (m.elements || []).forEach(function(el) {
+        var v = _ccPropValue(el.props, key), ref = {expressId:el.expressId, modelId:m.id};
+        if (v == null) { none.push(ref); return; }
+        if (!byVal[v]) { byVal[v] = []; vals.push(v); }
+        byVal[v].push(ref);
+      });
+    });
+    var numeric = vals.length >= 2 && vals.every(function(v) { return /^\s*[+\-]?(\d+([.,]\d+)?|[.,]\d+)([eE][+\-]?\d+)?\s*[^\d\s]*\s*$/.test(v) && !isNaN(_ccPropNum(v)); });
+    var groups = {}, order = [];
+    if (numeric) {
+      var nums = vals.map(_ccPropNum), lo = Math.min.apply(null, nums), hi = Math.max.apply(null, nums);
+      if (vals.length <= _CC_PROP_MAX_BINS) {
+        vals.slice().sort(function(a, b) { return _ccPropNum(a) - _ccPropNum(b); }).forEach(function(v, i, arr) {
+          groups[v] = {label:v, count:byVal[v].length, items:byVal[v], hex:_ccRampHex(arr.length > 1 ? i / (arr.length - 1) : 0)};
+          order.push(v);
+        });
+      } else {
+        var w = (hi - lo) / _CC_PROP_MAX_BINS || 1;
+        for (var b = 0; b < _CC_PROP_MAX_BINS; b++) {
+          var a0 = lo + b * w, a1 = b === _CC_PROP_MAX_BINS - 1 ? hi : lo + (b + 1) * w;
+          groups['bin' + b] = {label:_ccFmtNum(a0) + ' – ' + _ccFmtNum(a1), count:0, items:[], hex:_ccRampHex(b / (_CC_PROP_MAX_BINS - 1))};
+          order.push('bin' + b);
+        }
+        vals.forEach(function(v) {
+          var bi = Math.min(_CC_PROP_MAX_BINS - 1, Math.floor((_ccPropNum(v) - lo) / w));
+          var g = groups['bin' + bi];
+          g.items = g.items.concat(byVal[v]); g.count += byVal[v].length;
+        });
+        order = order.filter(function(k) { return groups[k].count > 0; });
+      }
+    } else {
+      vals.sort(function(a, b) { return byVal[b].length - byVal[a].length || (a < b ? -1 : a > b ? 1 : 0); }).forEach(function(v, i) {
+        groups[v] = {label:v, count:byVal[v].length, items:byVal[v], hex:_CC_PROP_PALETTE[i % _CC_PROP_PALETTE.length]};
+        order.push(v);
+      });
+    }
+    if (none.length) {
+      groups[_CC_PROP_NONE] = {label:_cc_t('colorBy.none','(none)'), count:none.length, items:none, hex:_ccTokenColor('--text-faint', '#9ca3af'), none:true};
+      order.push(_CC_PROP_NONE);
+    }
+    var out = {key:key, numeric:numeric, order:order, groups:groups};
+    _ccPropGroupsMemo = {sig:sig, els:els, out:out};
+    return out;
   }
 
   // ── Viewpoint helpers ────────────────────────────────────────
@@ -24081,6 +24227,8 @@ function startApp() {
     }, [s.hiddenClasses, s.classifications]);
 
     var origColorsRef = useRef(null);
+    // colour by property also follows lazily merged psets and model visibility
+    var _propColorSig = s.colorByClass === 'byProperty' ? (s.models || []).map(function(m){ return m.id + ':' + (m._propsVersion || 0) + ':' + (m.visible !== false); }).join(',') : '';
     useEffect(function(){
       var S = state3d.current; if(!S.mg) return;
       var cls = s.classifications;
@@ -24103,14 +24251,18 @@ function startApp() {
         return;
       }
       var view=s.colorByClass;
-      var groups = cls&&cls[view]?cls[view]:{};
-      var gKeys = Object.keys(groups).sort(function(a,b){return (groups[b].count||0)-(groups[a].count||0)});
+      // colour by property: groups / order / colours from _ccPropertyColorGroups
+      // (every element is in a group — "(none)" in neutral grey, never ghosted)
+      var _pg = view==='byProperty' && s.colorByProp ? _ccPropertyColorGroups(s.models, s.colorByProp) : null;
+      var groups = _pg ? _pg.groups : (cls&&cls[view]?cls[view]:{});
+      var gKeys = _pg ? _pg.order : Object.keys(groups).sort(function(a,b){return (groups[b].count||0)-(groups[a].count||0)});
       var colorMap={};
       var _chunkColors={};                                              // [Stage 2B] modelId_eid → THREE.Color
       // byDiscipline: same discipline gets the same color regardless of which
       // one happens to have the most elements in this federation (DISC, not
       // rank). Every other view keeps the existing rank-indexed palette.
       var _groupHex = gKeys.map(function(k,idx){
+        if (_pg) return _pg.groups[k].hex;
         return (view==='byDiscipline' && DISC_COLOR_BY_ID[k]) ? DISC_COLOR_BY_ID[k] : CLASS_COLORS[idx%CLASS_COLORS.length];
       });
       var _classCol = _groupHex.map(function(h){ return new THREE.Color(h); });
@@ -24152,7 +24304,8 @@ function startApp() {
       });
       origColorsRef.current=saved;
       invalidate();
-    }, [s.colorByClass, s.classifications]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- s.models is read only for colour by property, keyed by _propColorSig (ids, props version, visibility)
+    }, [s.colorByClass, s.classifications, s.colorByProp, _propColorSig]);
 
     // Markers: one effect per marker kind, so a status edit never rebuilds
     // the comment pins and vice versa; _showClashMarkers itself keeps the
@@ -25290,23 +25443,47 @@ function startApp() {
   function ColorLegend(props) {
     var s = props.s;
     var view = s.colorByClass;
-    var groups = view && s.classifications ? s.classifications[view] || {} : {};
-    var gKeys = Object.keys(groups).sort(function(a,b){return (groups[b].count||0)-(groups[a].count||0);});
+    // The left panel floats over the canvas on desktop: the legend sits just
+    // right of it, so picking a colouring in the Navigator never hides it.
+    var lgRef = useRef(null);
+    var offSt = useState(0), leftOff = offSt[0], setLeftOff = offSt[1];
+    useEffect(function(){
+      if (!view) return;
+      function measure(){
+        var el = lgRef.current, lp = document.querySelector('.cc-left-panel'), host = el && el.offsetParent, off = 0;
+        if (host && lp && window.innerWidth > 768) { var r = lp.getBoundingClientRect(), h = host.getBoundingClientRect(); if (r.width > 0 && r.left < h.left + 8) off = Math.max(0, Math.round(r.right - h.left)); }
+        setLeftOff(function(p){ return p === off ? p : off; });
+      }
+      measure();
+      var lp = document.querySelector('.cc-left-panel');
+      var ro = (lp && typeof ResizeObserver === 'function') ? new ResizeObserver(measure) : null;
+      if (ro) ro.observe(lp);
+      window.addEventListener('resize', measure);
+      return function(){ if (ro) ro.disconnect(); window.removeEventListener('resize', measure); };
+    }, [view, s.tab, setLeftOff]);
+    var pg = view === 'byProperty' && s.colorByProp ? _ccPropertyColorGroups(s.models, s.colorByProp) : null;
+    var groups = pg ? pg.groups : view && s.classifications ? s.classifications[view] || {} : {};
+    var gKeys = pg ? pg.order : Object.keys(groups).sort(function(a,b){return (groups[b].count||0)-(groups[a].count||0);});
     if (!view || !gKeys.length) return null;
     var CLASS_COLORS = ['#60a5fa','#f87171','#34d399','#fbbf24','#c084fc','#fb923c','#22d3ee','#e879f9','#a3e635','#f472b6','#38bdf8','#facc15','#4ade80','#f97316','#818cf8'];
     var VIEW_LABELS = {byType:_cc_t('legend.ifcType','IFC Type'), byStorey:_cc_t('propBlock.storey','Storey'), byDiscipline:_cc_t('legend.discipline','Discipline'), byMaterial:_cc_t('propBlock.material','Material')};
     var CAP = 10;
     var shown = gKeys.slice(0, CAP);
     var extra = gKeys.length - shown.length;
-    return html`<div style=${{position:'absolute',bottom:'var(--space-3)',left:'var(--space-3)',background:'var(--overlay-bg-strong)',border:'1px solid var(--border-subtle)',borderRadius:'var(--radius-sm)',padding:'var(--space-2) var(--space-3)',pointerEvents:'none',maxWidth:220,zIndex:6}}>
-      <div style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-bold)',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--text-muted)',marginBottom:'var(--space-1)'}}>${VIEW_LABELS[view]||view}</div>
-      <div style=${{display:'flex',flexDirection:'column',gap:'2px'}}>
+    // colour by property: the legend lists EVERY value (scrolls), so its
+    // counts add up to the elements coloured; the key itself is data
+    if (pg) { shown = gKeys; extra = 0; }
+    return html`<div ref=${lgRef} data-cc-color-legend=${view} style=${{position:'absolute',bottom:'var(--space-3)',left:leftOff ? 'calc(var(--space-3) + ' + leftOff + 'px)' : 'var(--space-3)',background:'var(--overlay-bg-strong)',border:'1px solid var(--border-subtle)',borderRadius:'var(--radius-sm)',padding:'var(--space-2) var(--space-3)',pointerEvents:pg?'auto':'none',maxWidth:pg?260:220,maxHeight:pg?'40vh':null,overflowY:pg?'auto':null,zIndex:6}}>
+      ${pg
+        ? html`<div data-cc-data="1" title=${s.colorByProp} style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',color:'var(--text-muted)',marginBottom:'var(--space-1)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${s.colorByProp}</div>`
+        : html`<div style=${{fontSize:'var(--text-xs)',fontWeight:'var(--weight-bold)',textTransform:'uppercase',letterSpacing:'.08em',color:'var(--text-muted)',marginBottom:'var(--space-1)'}}>${VIEW_LABELS[view]||view}</div>`}
+      <div role=${pg?'list':null} style=${{display:'flex',flexDirection:'column',gap:'2px'}}>
         ${shown.map(function(k,idx){
           var grp = groups[k];
-          var hex = (view==='byDiscipline' && DISC_COLOR_BY_ID[k]) ? DISC_COLOR_BY_ID[k] : CLASS_COLORS[idx%CLASS_COLORS.length];
-          return html`<div key=${k} style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',fontSize:'var(--text-2xs)'}}>
-            <span style=${{width:8,height:8,borderRadius:'50%',background:hex,flexShrink:0}}></span>
-            <span style=${{color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${grp.label||k}</span>
+          var hex = pg ? (grp.none ? 'var(--text-faint)' : grp.hex) : (view==='byDiscipline' && DISC_COLOR_BY_ID[k]) ? DISC_COLOR_BY_ID[k] : CLASS_COLORS[idx%CLASS_COLORS.length];
+          return html`<div key=${k} role=${pg?'listitem':null} data-cc-legend-value=${pg?(grp.none?'':grp.label):null} data-cc-legend-count=${pg?grp.count:null} style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',fontSize:'var(--text-2xs)'}}>
+            <span data-cc-swatch="1" aria-hidden="true" style=${{width:8,height:8,borderRadius:pg?'var(--radius-xs)':'50%',background:hex,flexShrink:0}}></span>
+            <span data-cc-data=${pg&&!grp.none?'1':null} title=${grp.label||k} style=${{color:'var(--text-secondary)',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${grp.label||k}</span>
             <span style=${{color:'var(--text-faint)',fontFamily:'var(--font-mono)'}}>${grp.count||0}</span>
           </div>`;
         })}
@@ -25798,7 +25975,7 @@ function startApp() {
   // ── Project switching helpers ─────────────────────────────────
 
   function _hasProjectData(s) {
-    return s.models.length || s.clashes.length || s.issues.length;
+    return s.models.length || s.clashes.length || s.issues.length || (s.propertyRules||[]).length;
   }
 
   function _cloneSafe(v, depth) {
@@ -25868,7 +26045,7 @@ function startApp() {
   // array without changing anything that is saved).
   var _AUTOSAVE_SLICES = ['clashes','issues','rules','floors','viewpoints','measurements','filters',
     'lastDeltaSummary','runHistory','sheets','activeSheetId','sheetPins','markups',
-    'selectionSets','searchSets','assignmentRules','modelMeta','triage','deniedPairs'];
+    'selectionSets','searchSets','assignmentRules','modelMeta','triage','deniedPairs','propertyRules'];
   function _ccModelMeta(models) {
     return (models||[]).map(function(m){return {id:m.id,name:m.name,discipline:m.discipline,color:m.color,visible:m.visible,tag:m.tag||'',georef:m.georef||null};});
   }
@@ -25913,6 +26090,7 @@ function startApp() {
       // clash review facets / saved views / overview choice (autoOpen is per run)
       triage:s.triage ? Object.assign({}, s.triage, {autoOpen:false}) : undefined,
       deniedPairs:s.deniedPairs||{},
+      propertyRules:s.propertyRules||[],
       modelMeta:_ccModelMeta(s.models)
     }, 0);
     data.clashes = _ccCloneListCached(s.clashes);
@@ -26095,7 +26273,7 @@ function startApp() {
       // detected clashes, and project A's run history/comments/changelog
       // bled into project B's UI until the next full page reload.
       runHistory:[], selectionSets:[], searchSets:[], assignmentRules:[],
-      comments:[], changelog:[], deniedPairs:{}, lastIssueLifecycle:null,
+      comments:[], changelog:[], deniedPairs:{}, propertyRules:[], colorByProp:null, lastIssueLifecycle:null,
       triage:Object.assign({},INIT.triage), // facets / saved views are per project (restored by project-codec)
     }});
     d({t:A.UPD_PREFS, u:{showMarkers:false}});
@@ -29363,13 +29541,14 @@ function startApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on s.models; d is stable
     }, [s.models]);
     var hasCls = cls && Object.keys(cls).length>0;
-    var classView = viewMode!=='tree' && viewMode!=='spatial' ? viewMode : null;
+    // 'byProperty' is its own view (PropertyColorView), not a classification
+    var classView = viewMode!=='tree' && viewMode!=='spatial' && viewMode!=='byProperty' ? viewMode : null;
     var groups = classView && hasCls ? cls[classView] || {} : {};
     var keys = classView ? Object.keys(groups).sort(function(a,b){return (groups[b].count||0)-(groups[a].count||0)}).filter(function(k){return !treeSearch||groups[k].label.toLowerCase().indexOf(treeSearch.toLowerCase())!==-1;}) : [];
     var total = keys.reduce(function(sum,k){return sum+(groups[k].count||0)},0);
     var hiddenCount = classView ? keys.filter(function(k){return s.hiddenClasses[classView+':'+k]}).length : 0;
     var CLASS_COLORS = ['#60a5fa','#f87171','#34d399','#fbbf24','#c084fc','#fb923c','#22d3ee','#e879f9','#a3e635','#f472b6','#38bdf8','#facc15','#4ade80','#f97316','#818cf8'];
-    var VIEWS=[{id:'spatial',label:_cc_t('nav.hierarchy','Hierarchy'),title:_cc_t('nav.hierarchyTip','Project → Building → Storey')},{id:'tree',label:_cc_t('nav.flatList','Flat list'),title:_cc_t('nav.flatListTip','By storey, alphabetical')},{id:'byType',label:_cc_t('legend.ifcType','IFC Type')},{id:'byStorey',label:_cc_t('propBlock.storey','Storey')},{id:'byDiscipline',label:_cc_t('legend.discipline','Discipline')},{id:'byMaterial',label:_cc_t('propBlock.material','Material')}];
+    var VIEWS=[{id:'spatial',label:_cc_t('nav.hierarchy','Hierarchy'),title:_cc_t('nav.hierarchyTip','Project → Building → Storey')},{id:'tree',label:_cc_t('nav.flatList','Flat list'),title:_cc_t('nav.flatListTip','By storey, alphabetical')},{id:'byType',label:_cc_t('legend.ifcType','IFC Type')},{id:'byStorey',label:_cc_t('propBlock.storey','Storey')},{id:'byDiscipline',label:_cc_t('legend.discipline','Discipline')},{id:'byMaterial',label:_cc_t('propBlock.material','Material')},{id:'byProperty',label:_cc_t('nav.byProperty','Property'),title:_cc_t('nav.byPropertyTip','Values of one property, coloured in 3D')}];
     var _selProp = useState(null), selectedElProps=_selProp[0], setSelectedElProps=_selProp[1];
     var _ef = useState(null), explorerFocus=_ef[0], setExplorerFocus=_ef[1];
     var _ms = useState([]), multiSel=_ms[0], setMultiSel=_ms[1];
@@ -29518,7 +29697,7 @@ function startApp() {
     return html`<div style=${{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
       <div style=${{padding:'var(--space-2) var(--space-3)',borderBottom:'1px solid var(--border-subtle)',flexShrink:0,display:'flex',flexDirection:'column',gap:'var(--space-2)'}}>
         <div style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap'}}>
-          ${VIEWS.map(function(v){return html`<button class="cc-btn-press" key=${v.id} onClick=${function(){setViewMode(v.id)}}
+          ${VIEWS.map(function(v){return html`<button class="cc-btn-press" key=${v.id} data-cc-nav-view=${v.id} onClick=${function(){setViewMode(v.id)}}
             title=${v.title||v.label}
             style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:viewMode===v.id?'var(--accent)':'var(--bg-secondary)',color:viewMode===v.id?'var(--accent-contrast)':'var(--text-secondary)',fontWeight:viewMode===v.id?'var(--weight-semibold)':'var(--weight-medium)'}}>${v.label}</button>`})}
         </div>
@@ -29762,6 +29941,7 @@ function startApp() {
             children:storeyChildren
           });
         })}</ul>`}
+        ${viewMode==='byProperty' && html`<${PropertyColorView} s=${s} d=${d} filter=${treeSearch} />`}
         ${classView && !hasCls && html`<div class="cc-tv__empty">${_cc_t('nav.loadModelsToSeeClass','Load models to see classification')}</div>`}
         ${classView && keys.map(function(k, idx){
           var grp = groups[k];
@@ -34416,8 +34596,158 @@ function startApp() {
     </div>`;
   }
 
+  // ── Property rules (Data Quality, docs/INTERNALS.md §21.62) ──────────
+  // The coordinator's own rules: applies to (all / IFC types), Pset.Name,
+  // operator, value, severity, optional stage label (free text). Engine:
+  // window._ccRunPropertyRules (addons/data-quality.js); rules are project
+  // data (state.propertyRules, project-codec.js).
+  var _CC_PR_OPS = ['exists','notExists','eq','neq','contains','gte','lte','matches'];
+  var _CC_PR_VALUE_OPS = {eq:1, neq:1, contains:1, gte:1, lte:1, matches:1};
+  function _ccPrOpWord(op) {
+    switch (op) {
+      case 'exists': return _cc_t('dq.rules.op.exists','exists');
+      case 'notExists': return _cc_t('dq.rules.op.notExists','does not exist');
+      case 'eq': return _cc_t('dq.rules.op.eq','equals');
+      case 'neq': return _cc_t('dq.rules.op.neq','does not equal');
+      case 'contains': return _cc_t('dq.rules.op.contains','contains');
+      case 'gte': return _cc_t('dq.rules.op.gte','≥ (at least)');
+      case 'lte': return _cc_t('dq.rules.op.lte','≤ (at most)');
+      case 'matches': return _cc_t('dq.rules.op.matches','matches pattern');
+    }
+    return op;
+  }
+  function _ccPrOpShort(op) {
+    return op === 'gte' ? '≥' : op === 'lte' ? '≤' : op === 'eq' ? '=' : op === 'neq' ? '≠' : _ccPrOpWord(op);
+  }
+  function _ccPrSevWord(sev) {
+    return sev === 'critical' ? _cc_t('sev.critical','Critical') : sev === 'minor' ? _cc_t('sev.minor','Minor') : _cc_t('sev.major','Major');
+  }
+  function _ccPrTypes(r) { return Array.isArray(r && r.appliesTo) ? r.appliesTo : String((r && r.appliesTo) || '').split(/[\s,;]+/).filter(Boolean); }
+  function _ccPropRuleLabel(r) {
+    if (!r) return '';
+    var types = _ccPrTypes(r);
+    var txt = (r.prop || '') + ' ' + _ccPrOpShort(r.op) + (_CC_PR_VALUE_OPS[r.op] ? ' ' + (r.value || '') : '');
+    var scope = types.length ? types.join(', ') : _cc_t('dq.rules.allElements','all elements');
+    return (r.stage ? r.stage + ': ' : '') + txt + ' · ' + scope;
+  }
+  function _ccPrProblemText(code) {
+    switch (code) {
+      case 'prop': return _cc_t('dq.rules.problem.prop','Choose a property (PropertySet.Property).');
+      case 'value': return _cc_t('dq.rules.problem.value','Enter a value for this operator.');
+      case 'number': return _cc_t('dq.rules.problem.number','≥ and ≤ need a number.');
+      case 'pattern': return _cc_t('dq.rules.problem.pattern','This pattern is not allowed (it must be a simple regular expression).');
+    }
+    return '';
+  }
+  // Translated labels and "missing" details on an engine result (in place).
+  function _ccLabelRuleResults(res) {
+    if (!res) return res;
+    Object.keys(res).forEach(function(k) {
+      if (k.charAt(0) === '_') return;
+      var ch = res[k];
+      ch.label = _ccPropRuleLabel(ch.rule);
+      (ch.refs || []).forEach(function(it) { if (it.missing) it.detail = _cc_t('dq.rules.missing','missing'); });
+    });
+    return res;
+  }
+
+  function PropertyRuleEditor(props) {
+    var s = props.s, init = props.rule || {};
+    var stD = useState(function() {
+      return {appliesTo:_ccPrTypes(init).join(', '), prop:init.prop || '', op:init.op || 'exists', value:init.value || '',
+        severity:init.severity || 'major', stage:init.stage || '', enabled:init.enabled !== false};
+    }), dr = stD[0], setDr = stD[1];
+    // the picker lists what the loaded models carry — built only now, when
+    // the editor opens (cached per model element list)
+    var keys = useMemo(function() { return _ccPropertyKeys(s.models); }, [s.models]);
+    var types = useMemo(function() {
+      var t = {};
+      (s.models || []).forEach(function(m) { (m.elements || []).forEach(function(el) { var x = el.props && el.props.ifcType; if (x) t[x] = 1; }); });
+      return Object.keys(t).sort();
+    }, [s.models]);
+    function set(k, v) { setDr(function(p) { var n = Object.assign({}, p); n[k] = v; return n; }); }
+    var rule = {id:init.id || null, appliesTo:dr.appliesTo.split(/[\s,;]+/).filter(Boolean), prop:dr.prop.trim(), op:dr.op,
+      value:_CC_PR_VALUE_OPS[dr.op] ? dr.value : '', severity:dr.severity, stage:dr.stage.trim(), enabled:dr.enabled};
+    var problem = typeof window._ccPropertyRuleProblem === 'function' ? window._ccPropertyRuleProblem(rule) : (rule.prop ? null : 'prop');
+    var FIELD = {display:'flex',flexDirection:'column',gap:'var(--space-1)',fontSize:'var(--text-xs)',color:'var(--text-secondary)'};
+    var INP = Object.assign({}, S_INPUT, {fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-sm)'});
+    return html`<form data-cc-rule-editor="1" onSubmit=${function(e){ e.preventDefault(); if (!problem) props.onSave(Object.assign({}, rule, {id:rule.id || ('pr-' + uid())})); }}
+      style=${{display:'flex',flexDirection:'column',gap:'var(--space-2)',padding:'var(--space-2)',background:'var(--bg-primary)',borderTop:'1px solid var(--border-subtle)',borderBottom:'1px solid var(--border-subtle)'}}>
+      <label style=${FIELD}><span>${_cc_t('dq.rules.appliesTo','Applies to: IFC types, comma-separated (empty: all elements)')}</span>
+        <input data-cc-rule-field="types" list="cc-pr-types" value=${dr.appliesTo} placeholder=${_cc_t('dq.rules.allElementsCap','All elements')}
+          onInput=${function(e){ set('appliesTo', e.target.value); }} style=${INP} /></label>
+      <datalist id="cc-pr-types">${types.map(function(t){ return html`<option key=${t} value=${t}></option>`; })}</datalist>
+      <label style=${FIELD}><span>${_cc_t('dq.rules.property','Property')}</span>
+        <input data-cc-rule-field="prop" list="cc-pr-props" value=${dr.prop} placeholder=${_cc_t('dq.rules.propPlaceholder','PropertySet.Property')}
+          onInput=${function(e){ set('prop', e.target.value); }} style=${INP} /></label>
+      <datalist id="cc-pr-props">${keys.slice(0, 500).map(function(k){ return html`<option key=${k.key} value=${k.key}></option>`; })}</datalist>
+      <div style=${{display:'flex',gap:'var(--space-2)',flexWrap:'wrap'}}>
+        <label style=${Object.assign({}, FIELD, {flex:'1 1 8rem',minWidth:0})}><span>${_cc_t('dq.rules.operator','Condition')}</span>
+          <select data-cc-rule-field="op" value=${dr.op} onChange=${function(e){ set('op', e.target.value); }} style=${INP}>
+            ${_CC_PR_OPS.map(function(op){ return html`<option key=${op} value=${op}>${_ccPrOpWord(op)}</option>`; })}
+          </select></label>
+        ${_CC_PR_VALUE_OPS[dr.op] && html`<label style=${Object.assign({}, FIELD, {flex:'1 1 8rem',minWidth:0})}><span>${dr.op === 'matches' ? _cc_t('dq.rules.pattern','Pattern') : _cc_t('dq.rules.value','Value')}</span>
+          <input data-cc-rule-field="value" value=${dr.value} onInput=${function(e){ set('value', e.target.value); }} style=${INP} /></label>`}
+      </div>
+      <div style=${{display:'flex',gap:'var(--space-2)',flexWrap:'wrap'}}>
+        <label style=${Object.assign({}, FIELD, {flex:'1 1 6rem',minWidth:0})}><span>${_cc_t('dq.rules.severity','Severity')}</span>
+          <select data-cc-rule-field="severity" value=${dr.severity} onChange=${function(e){ set('severity', e.target.value); }} style=${INP}>
+            ${['minor','major','critical'].map(function(v){ return html`<option key=${v} value=${v}>${_ccPrSevWord(v)}</option>`; })}
+          </select></label>
+        <label style=${Object.assign({}, FIELD, {flex:'2 1 8rem',minWidth:0})}><span>${_cc_t('dq.rules.stage','Stage (optional, e.g. a LOD or phase)')}</span>
+          <input data-cc-rule-field="stage" value=${dr.stage} onInput=${function(e){ set('stage', e.target.value); }} style=${INP} /></label>
+      </div>
+      <label style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
+        <input type="checkbox" checked=${dr.enabled} onChange=${function(e){ set('enabled', e.target.checked); }} />${_cc_t('dq.rules.enabled','Rule is on')}</label>
+      ${problem && dr.prop && html`<div role="note" style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${_ccPrProblemText(problem)}</div>`}
+      <div style=${{display:'flex',gap:'var(--space-2)',flexWrap:'wrap'}}>
+        <button type="submit" data-cc-rule-save="1" disabled=${!!problem} style=${Object.assign({}, S_BTN_PRIMARY_SM, {cursor:problem?'not-allowed':'pointer',opacity:problem?0.5:1})}>${_cc_t('dq.rules.save','Save rule')}</button>
+        <button type="button" onClick=${props.onCancel} style=${S_BTN_SECONDARY_SM}>${_cc_t('common.cancel','Cancel')}</button>
+      </div>
+    </form>`;
+  }
+
+  // Values of one property across the visible models, coloured in 3D on
+  // request (Navigator "Property" view; legend: ColorLegend).
+  function PropertyColorView(props) {
+    var s = props.s, d = props.d, q = (props.filter || '').toLowerCase();
+    var keys = useMemo(function() { return _ccPropertyKeys(s.models); }, [s.models]);
+    var stK = useState(s.colorByProp || ''), key = stK[0], setKey = stK[1];
+    var pg = key ? _ccPropertyColorGroups(s.models, key) : null;
+    var active = !!key && s.colorByClass === 'byProperty' && s.colorByProp === key;
+    var total = pg ? pg.order.reduce(function(a, k) { return a + pg.groups[k].count; }, 0) : 0;
+    return html`<div data-cc-prop-color="1" style=${{display:'flex',flexDirection:'column',gap:'var(--space-2)',padding:'var(--space-2) var(--space-3)'}}>
+      <label style=${{display:'flex',flexDirection:'column',gap:'var(--space-1)',fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>
+        <span>${_cc_t('nav.propertyPick','Property to show')}</span>
+        <select data-cc-prop-key="1" value=${key} onChange=${function(e){ var k = e.target.value; setKey(k); if (s.colorByClass === 'byProperty') d({t:A.COLOR_BY_PROPERTY, v:k || null, keep:true}); }}
+          style=${Object.assign({}, S_INPUT, {fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-sm)'})}>
+          <option value="">${_cc_t('nav.propertyChoose','Choose a property')}</option>
+          ${keys.map(function(k){ return html`<option key=${k.key} value=${k.key}>${k.key}</option>`; })}
+        </select>
+      </label>
+      ${!keys.length && html`<div style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>${_cc_t('nav.propertyNone','The loaded models carry no properties.')}</div>`}
+      ${pg && html`<div style=${{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'var(--space-2)'}}>
+        <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${_cc_t('nav.propertyValues','{n} values · {e} elements',{n:pg.order.length, e:total})}</span>
+        <button class="cc-btn-press" data-cc-prop-color-btn="1" aria-pressed=${active?'true':'false'} onClick=${function(){ d({t:A.COLOR_BY_PROPERTY, v:key}); }}
+          style=${{...S_BTN,fontSize:'var(--text-2xs)',padding:'var(--space-1) var(--space-2)',background:active?'var(--accent)':'var(--bg-secondary)',color:active?'var(--accent-contrast)':'var(--text-secondary)',fontWeight:'var(--weight-medium)'}}
+          title=${_cc_t('nav.colorByPropertyTip','Colour elements by the values of this property')}>${_cc_t('nav.color','Color')}</button>
+      </div>`}
+      ${pg && html`<div role="list">${pg.order.filter(function(k){ return !q || String(pg.groups[k].label).toLowerCase().indexOf(q) !== -1; }).map(function(k){
+        var g = pg.groups[k];
+        return html`<div role="listitem" key=${k} style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) 0',borderBottom:'1px solid var(--border-subtle)'}}>
+          ${active && html`<span data-cc-swatch="1" aria-hidden="true" style=${{width:8,height:8,borderRadius:'var(--radius-xs)',background:g.none?'var(--text-faint)':g.hex,flexShrink:0}}></span>`}
+          <span data-cc-data=${g.none?null:'1'} title=${g.label} style=${{flex:1,minWidth:0,fontSize:'var(--text-xs)',color:g.none?'var(--text-muted)':'var(--text-primary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${g.label}</span>
+          <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)',fontFamily:'var(--font-mono)',flexShrink:0}}>${g.count}</span>
+        </div>`;
+      })}</div>`}
+    </div>`;
+  }
+
   function DataQualityPanel(props) {
     var s = props.s, d = props.d;
+    // property rules: last run's result (engine key 'rules') and the rule being edited
+    var prSt = useState(null), rulesRes = prSt[0], setRulesRes = prSt[1];
+    var prEdSt = useState(null), editingRule = prEdSt[0], setEditingRule = prEdSt[1];
     var qcSt = useState(null), qc = qcSt[0], setQc = qcSt[1];
     var bimSt = useState(null), bim = bimSt[0], setBim = bimSt[1];
     // National data standards from country packs: [{entry, res}] per run
@@ -34465,8 +34795,11 @@ function startApp() {
         var newQc = runDataQualityChecks(elements);
         var newBim = runBIMModelChecks(elements);
         var newStds = runStandardChecks(elements, scopeModels);
+        var newRules = (s.propertyRules || []).length && typeof window._ccRunPropertyRules === 'function'
+          ? _ccLabelRuleResults(window._ccRunPropertyRules(elements, s.propertyRules)) : null;
         if (typeof window._ccFlattenDQCounts === 'function') {
           var flatIn = {qc:newQc, bim:newBim};
+          if (newRules) flatIn.rules = newRules;
           newStds.forEach(function(x){ flatIn[x.entry.key] = x.res; });
           var flatNow = window._ccFlattenDQCounts(flatIn);
           setDqDelta(prevDqCounts && typeof window._ccDiffDQCounts === 'function' ? window._ccDiffDQCounts(flatNow, prevDqCounts) : null);
@@ -34475,6 +34808,7 @@ function startApp() {
         setQc(newQc);
         setBim(newBim);
         setStds(newStds);
+        setRulesRes(newRules);
         setExpanded({});
         setLastChecked(Date.now());
         setRunning(false);
@@ -34541,6 +34875,13 @@ function startApp() {
 
     function highlightCheckElements(checkObj) {
       if (!checkObj || !checkObj.ex || checkObj.ex.length === 0) return;
+      if (checkObj.refs) {
+        // property rules keep every failing element by model + expressId
+        var rIds = checkObj.refs.map(function(it){ return {expressId:it.expressId, modelId:it.modelId}; });
+        if (rIds.length && _ghostOthers) _ghostOthers(rIds);
+        invalidate();
+        return;
+      }
       var eids = [];
       (s.models||[]).forEach(function(m) {
         (m.elements||[]).forEach(function(el) {
@@ -34563,7 +34904,7 @@ function startApp() {
       var desc = 'Data quality check: '+(checkObj.label||checkKey)+'\n'
                  +'Affected elements: '+checkObj.count+'\n\n'
                  +sample.join('\n')+extra;
-      var gids = (checkObj.ex||[]).map(function(it){return it.gid;}).filter(Boolean);
+      var gids = (checkObj.refs||checkObj.ex||[]).map(function(it){return it.gid;}).filter(Boolean);
       d({t:A.ADD_ISSUE, v:{
         id:uid(), source:'data_quality', type:'soft', status:'open',
         title:(checkObj.label||checkKey)+' ('+checkObj.count+')',
@@ -34666,17 +35007,20 @@ function startApp() {
       function addRows(checks, keys) {
         keys.forEach(function(k) {
           var ch = checks && checks[k]; if (!ch || ch.count === 0) return;
-          (ch.ex||[]).forEach(function(it) {
-            rows.push([ch.label||k, ch.sev||'', ch.count, it.name||'', it.ifcType||'', it.storey||'', it.detail||'']);
+          // property rules list every failing element (refs), the others a sample (ex)
+          var list = ch.refs || ch.ex || [];
+          list.forEach(function(it) {
+            rows.push([ch.label||k, ch.severity||ch.sev||'', ch.count, it.name||'', it.ifcType||'', it.storey||'', it.detail||'']);
           });
-          if (ch.count > (ch.ex||[]).length) {
-            rows.push([ch.label||k, ch.sev||'', ch.count, '…+'+( ch.count-(ch.ex||[]).length)+' more','','','']);
+          if (ch.count > list.length) {
+            rows.push([ch.label||k, ch.sev||'', ch.count, '…+'+( ch.count-list.length)+' more','','','']);
           }
         });
       }
       addRows(qc, ['guidCollision','noGlobalId','proxy','genericName','duplicateName','noMaterial','noStorey','emptyGeometry','zeroLayers','unhostedOpenings','noProperties','noDescription']);
       addRows(bim, ['thicknessMismatch','noFireRating','noIsExternal','noLoadBearing','missingCommonPset','noClassification','noObjectType','invalidName','missingArea','missingVolume']);
       (stds||[]).forEach(function(x){ if (stdCounts(x)) addRows(x.res, stdKeys(x)); });
+      if (rulesRes) addRows(rulesRes, ruleKeys);
       var csv = rows.map(function(r){return r.map(function(c){return '"'+(String(c||'').replace(/"/g,'""'))+'"';}).join(',');}).join('\r\n');
       var a = document.createElement('a'); a.href = 'data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
       a.download = 'data-quality-'+new Date().toISOString().slice(0,10)+'.csv'; a.click();
@@ -34689,6 +35033,7 @@ function startApp() {
       addFromChecks(qc, ['guidCollision','noGlobalId','proxy','genericName','duplicateName','noMaterial','noStorey','emptyGeometry','zeroLayers','unhostedOpenings','noProperties','noDescription']);
       addFromChecks(bim, ['thicknessMismatch','noFireRating','noIsExternal','noLoadBearing','missingCommonPset','noClassification','noObjectType','invalidName','missingArea','missingVolume']);
       (stds||[]).forEach(function(x){ if (stdCounts(x)) addFromChecks(x.res, stdKeys(x)); });
+      if (rulesRes) addFromChecks(rulesRes, ruleKeys);
       if (created > 0) d({t:A.TAB, v:'issues'});
     }
 
@@ -34711,6 +35056,55 @@ function startApp() {
     // toward the top badge — it keeps its own section badge.
     (stds||[]).forEach(function(x){ if (stdCounts(x) && x.entry.std.badge !== false) totalStd += stdTotal(x); });
     var stdShown = (stds||[]).filter(stdCounts);
+    // property-rule results that ran (an invalid rule has no count)
+    var ruleKeys = rulesRes ? Object.keys(rulesRes).filter(function(k){ return k.charAt(0) !== '_' && !rulesRes[k].invalid; }) : [];
+    var totalRules = ruleKeys.reduce(function(a, k){ return a + (rulesRes[k].count || 0); }, 0);
+    totalStd += totalRules;
+    function saveRule(r) {
+      var exists = (s.propertyRules || []).some(function(x){ return x.id === r.id; });
+      if (exists) d({t:A.UPD_PROPERTY_RULE, id:r.id, u:r}); else d({t:A.ADD_PROPERTY_RULE, v:r});
+      setEditingRule(null); setRulesRes(null);
+    }
+    function deleteRule(id) { d({t:A.DEL_PROPERTY_RULE, id:id}); setRulesRes(null); if (editingRule && editingRule.id === id) setEditingRule(null); }
+    function exportRulesIDS() {
+      if (typeof window._ccExportIDS !== 'function') return;
+      var xml = window._ccExportIDS({title:_cc_t('dq.rules.title','Property rules'), propertyRules:s.propertyRules || [], rulesOnly:true});
+      _dlBlob(new Blob([xml], {type:'application/xml'}), 'property-rules-' + new Date().toISOString().slice(0,10) + '.ids');
+    }
+    function renderPropertyRules() {
+      var rules = s.propertyRules || [];
+      var open = sections.rules !== false;
+      var noIds = typeof window._ccPropertyRuleIDSProblem === 'function' ? rules.filter(function(r){ return r.enabled !== false && window._ccPropertyRuleIDSProblem(r) === 'pattern'; }).length : 0;
+      return html`<div data-cc-dq-rules="1">
+        ${secHeader(open, function(){toggleSection('rules');}, _cc_t('dq.rules.title','Property rules'),
+          totalRules > 0 ? html`<span class="cc-status-pill" style=${{background:'var(--color-warning-bg)',color:'var(--color-warning-fg)',letterSpacing:0}}>${totalRules}</span>` : null)}
+        ${open && html`<div>
+          ${rulesRes && ruleKeys.length > 0 && html`<div data-cc-rule-results="1">${renderCheckGroup(rulesRes, ruleKeys, 'Rules')}</div>`}
+          ${rules.length === 0 && !editingRule && html`<div style=${{padding:'var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:'var(--leading-base)'}}>${_cc_t('dq.rules.empty','No rules yet. A rule checks that elements carry a property, or a value for it, for example per LOD or project phase.')}</div>`}
+          ${rules.length > 0 && html`<div role="list" aria-label=${_cc_t('dq.rules.listAria','Your property rules')}>
+            ${rules.map(function(r){
+              var problem = typeof window._ccPropertyRuleProblem === 'function' ? window._ccPropertyRuleProblem(r) : null;
+              var off = r.enabled === false;
+              return html`<div role="listitem" key=${r.id} data-cc-rule=${r.id} style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)',borderBottom:'1px solid var(--border-subtle)'}}>
+                <div style=${{flex:1,minWidth:0,display:'flex',flexDirection:'column'}}>
+                  <span data-cc-data="1" title=${_ccPropRuleLabel(r)} style=${{fontSize:'var(--text-xs)',color:off?'var(--text-muted)':'var(--text-secondary)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>${_ccPropRuleLabel(r)}</span>
+                  <span style=${{fontSize:'var(--text-2xs)',color:'var(--text-muted)'}}>${_ccPrSevWord(r.severity)}${off ? ' · ' + _cc_t('dq.rules.off','off') : ''}${problem ? ' · ' + _ccPrProblemText(problem) : ''}</span>
+                </div>
+                <button type="button" onClick=${function(){ setEditingRule(r); }} style=${ROW_BTN}>${_cc_t('common.edit','Edit')}</button>
+                <button type="button" onClick=${function(){ deleteRule(r.id); }} aria-label=${_cc_t('dq.rules.deleteAria','Delete rule {label}',{label:_ccPropRuleLabel(r)})} style=${ROW_BTN}>${_cc_t('dq.rules.delete','Delete')}</button>
+              </div>`;
+            })}
+          </div>`}
+          ${editingRule
+            ? html`<${PropertyRuleEditor} key=${editingRule.id || 'new'} s=${s} rule=${editingRule} onSave=${saveRule} onCancel=${function(){ setEditingRule(null); }} />`
+            : html`<div style=${{display:'flex',gap:'var(--space-2)',flexWrap:'wrap',padding:'var(--space-2)'}}>
+                <button type="button" data-cc-rule-add="1" onClick=${function(){ setEditingRule({}); }} style=${S_BTN_SECONDARY_SM}>${_cc_t('dq.rules.add','Add rule')}</button>
+                ${rules.length > 0 && html`<button type="button" onClick=${exportRulesIDS} title=${_cc_t('dq.rules.exportIdsTitle','Download these rules as an IDS file for other tools')} style=${S_BTN_SECONDARY_SM}>${_cc_t('dq.rules.exportIds','Export as IDS')}</button>`}
+              </div>`}
+          ${noIds > 0 && html`<div role="note" style=${{padding:'0 var(--space-2) var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:'var(--leading-base)'}}>${noIds === 1 ? _cc_t('dq.rules.noIdsOne','One pattern rule uses regular-expression features IDS does not have; it is left out of the IDS file.') : _cc_t('dq.rules.noIds','{n} pattern rules use regular-expression features IDS does not have; they are left out of the IDS file.',{n:noIds})}</div>`}
+        </div>`}
+      </div>`;
+    }
     var stdOther = (stds||[]).filter(function(x){ return !stdCounts(x); });
 
     var SEV = {error:'var(--color-danger-fg)', warn:'var(--color-warning-fg)', info:'var(--color-info-fg)'};
@@ -34735,16 +35129,16 @@ function startApp() {
           var ch = checks[key]; if (!ch) return null;
           var col = SEV[ch.sev]||SEV.info;
           var isExp = expanded[key];
-          return html`<div key=${key} style=${{borderBottom:'1px solid var(--border-subtle)'}}>
+          return html`<div key=${key} data-cc-check=${key} style=${{borderBottom:'1px solid var(--border-subtle)'}}>
             <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)',padding:'var(--space-1) var(--space-2)'}}>
-              <span data-cc-status="1" style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',minWidth:'var(--space-6)',textAlign:'right',flexShrink:0,color:ch.count===0?'var(--color-success-fg)':col}}>${ch.count===0?'✓':ch.count}</span>
+              <span data-cc-status="1" data-cc-check-count=${ch.count} style=${{fontFamily:'var(--font-mono)',fontSize:'var(--text-xs)',fontWeight:'var(--weight-semibold)',minWidth:'var(--space-6)',textAlign:'right',flexShrink:0,color:ch.count===0?'var(--color-success-fg)':col}}>${ch.count===0?'✓':ch.count}</span>
               ${ch.count>0
                 ? html`<button type="button" aria-expanded=${isExp?'true':'false'} onClick=${function(){toggleExp(key);}}
                     style=${{...S_BTN,background:'none',padding:'var(--space-1) 0',flex:1,minWidth:0,textAlign:'left',display:'flex',alignItems:'center',gap:'var(--space-1)',fontSize:'var(--text-xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-base)'}}>
                     <span aria-hidden="true" style=${{fontSize:'var(--text-2xs)',color:'var(--text-faint)',flexShrink:0}}>${(isExp)?'▲':'▼'}</span>
-                    <span style=${{flex:1,minWidth:0}}>${ch.label}</span>
+                    <span style=${{flex:1,minWidth:0,overflowWrap:'anywhere'}}>${ch.label}</span>
                   </button>`
-                : html`<span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',flex:1,minWidth:0,lineHeight:'var(--leading-base)',paddingLeft:'var(--space-4)'}}>${ch.label}</span>`}
+                : html`<span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',flex:1,minWidth:0,lineHeight:'var(--leading-base)',paddingLeft:'var(--space-4)',overflowWrap:'anywhere'}}>${ch.label}</span>`}
               ${ch.count>0 && html`<button onClick=${function(){highlightCheckElements(ch);}}
                 title=${_cc_t('dq.highlightIn3D','Highlight in 3D')} style=${ROW_BTN}>${_cc_t('dq.threeD','3D')}</button>`}
               ${ch.count>0 && html`<button onClick=${function(){createIssueFromCheck(key, ch);}}
@@ -34851,16 +35245,16 @@ function startApp() {
               })}
             </div>
           </div>`}
-          ${std.note && html`<div style=${{padding:'var(--space-2) var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:'var(--leading-base)'}}>${std.note}</div>`}
+          ${std.note && html`<div style=${{padding:'var(--space-2) var(--space-2)',fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:'var(--leading-base)'}}>${_cc_t('country.' + x.entry.region + '.' + std.id + '.note', std.note)}</div>`}
         </div>`}
       </div>`;
     }
 
     return html`<div style=${{display:'flex',flexDirection:'column',flex:1,overflow:'hidden',minWidth:0}}>
       <div style=${{padding:'var(--space-2) var(--space-2)',borderBottom:'1px solid var(--border-subtle)',display:'flex',flexDirection:'column',gap:'var(--space-2)',flexShrink:0,minWidth:0}}>
-        <div style=${{display:'flex',gap:'var(--space-1)',alignItems:'center'}}>
+        <div style=${{display:'flex',gap:'var(--space-1)',alignItems:'center',flexWrap:'wrap'}}>
           <select value=${selectedModel} onChange=${function(e){setSelectedModel(e.target.value);}} aria-label=${_cc_t('dq.modelSelectLabel','Model to check')}
-            style=${{flex:'1 1 0',minWidth:0,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'inherit'}}>
+            style=${{flex:'1 1 8rem',minWidth:'8rem',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-primary)',color:'var(--text-primary)',border:'1px solid var(--border)',borderRadius:'var(--radius-xs)',fontFamily:'inherit'}}>
             <option value="all">${_cc_t('dq.allModels','All models')}</option>
             ${(s.models||[]).map(function(m){return html`<option key=${m.id} value=${m.id}>${m.name}</option>`})}
           </select>
@@ -34869,7 +35263,7 @@ function startApp() {
             color:totalIssues+totalBim+totalStd===0?'var(--color-success-fg)':'var(--color-warning-fg)',flexShrink:0}}>
             ${totalIssues+totalBim+totalStd===0?_cc_t('dq.allPassed','All passed'):_cc_t('dq.issuesCount','{n} issues',{n:totalIssues+totalBim+totalStd})}
           </span>`}
-          <button onClick=${runChecks} disabled=${isRunning || !hasModels} aria-busy=${isRunning?'true':'false'}
+          <button data-cc-dq-run="1" onClick=${runChecks} disabled=${isRunning || !hasModels} aria-busy=${isRunning?'true':'false'}
             style=${{...S_BTN_PRIMARY_SM,flexShrink:0,whiteSpace:'nowrap',cursor:(isRunning || !hasModels)?'not-allowed':'pointer',opacity:(isRunning || !hasModels)?0.5:1}}>
             ${isRunning ? _cc_t('dq.checking','Checking…') : qc ? _cc_t('dq.recheck','Re-check') : _cc_t('dq.runChecks','Run checks')}
           </button>
@@ -34914,6 +35308,8 @@ function startApp() {
         </div>`}
 
         ${stdShown.map(function(x){ return renderStandard(x); })}
+
+        ${renderPropertyRules()}
 
         ${stdOther.length > 0 && html`<${CcDisclosure} variant="item" style=${{borderBottom:'1px solid var(--border-subtle)',padding:'var(--space-1) var(--space-2)'}}
           title=${_cc_t('dq.otherStandards','National standards that don\u2019t apply here ({n})',{n:stdOther.length})}
@@ -39845,6 +40241,7 @@ function startApp() {
       },
       hiddenClasses: Object.assign({}, s.hiddenClasses||{}),
       colorByClass: s.colorByClass || null,
+      colorByProp: s.colorByClass === 'byProperty' ? (s.colorByProp || null) : null,
       renderStyle: (s.prefs && s.prefs.renderStyle) || 'standard',
       hiddenModelIds: (s.models||[]).filter(function(m){return m.visible===false;}).map(function(m){return m.id;})
     };
@@ -39866,7 +40263,8 @@ function startApp() {
     if (sv.renderStyle) d({t:A.UPD_PREFS, u:{renderStyle: sv.renderStyle}});
     if (sv.colorByClass !== undefined) {
       var s = window._ccLatestState || {};
-      if (s.colorByClass !== sv.colorByClass) d({t:A.COLOR_BY_CLASS, v: sv.colorByClass || ''});
+      if (sv.colorByClass === 'byProperty') { if (sv.colorByProp && (s.colorByClass !== 'byProperty' || s.colorByProp !== sv.colorByProp)) d({t:A.COLOR_BY_PROPERTY, v: sv.colorByProp, keep:true}); }
+      else if (s.colorByClass !== sv.colorByClass) d({t:A.COLOR_BY_CLASS, v: sv.colorByClass || ''});
     }
   }
   window._ccApplySmartView = _ccApplySmartView;
@@ -52178,7 +52576,7 @@ function startApp() {
     // models persist only as modelMeta: keyed on its signature (a string), so
     // a storey hide or any other non-persisted model change saves nothing
     // eslint-disable-next-line react-hooks/exhaustive-deps -- persist keyed on the data fields that matter; depending on the whole state would save on every hover/selection change
-    }, [s.clashes, s.issues, s.viewpoints, s.measurements, s.rules, _ccModelMetaSig(s.models), s.triage && s.triage.savedViews, s.triage && s.triage.facets, s.deniedPairs]);
+    }, [s.clashes, s.issues, s.viewpoints, s.measurements, s.rules, _ccModelMetaSig(s.models), s.triage && s.triage.savedViews, s.triage && s.triage.facets, s.deniedPairs, s.propertyRules]);
     // on pagehide and on visibilitychange→hidden because beforeunload is
     useEffect(function(){
       function flush() {

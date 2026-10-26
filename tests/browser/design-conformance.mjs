@@ -453,6 +453,16 @@ async function runVariant(variant, viewport, theme, mobile) {
   await page.evaluate(() => window._ccDispatch({ t: 'TAB', v: 'navigator' }));
   await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => /^(expand all|alles uitklappen)$/i.test(x.textContent.trim())); if (b) b.click(); });
   await surface(page, variant, 'navigator', mobile ? LEFT : LEFT.concat(['.cc-ai-panel']), o);
+  // navigator: colour by property (value list + on-canvas legend)
+  if (await page.$('[data-cc-nav-view=byProperty]')) {
+    await page.click('[data-cc-nav-view=byProperty]');
+    await page.selectOption('[data-cc-prop-key]', 'Pset_WallCommon.FireRating');
+    await page.click('[data-cc-prop-color-btn]');
+    await page.waitForSelector('[data-cc-color-legend]', { timeout: 5000 }).catch(() => {});
+    await surface(page, variant, 'colour-by-property', LEFT.concat(['[data-cc-color-legend]']), o);
+    await page.click('[data-cc-prop-color-btn]');
+    await page.click('[data-cc-nav-view=spatial]');
+  }
   // pre-run panel
   await page.evaluate(() => { window._ccDispatch({ t: 'UPD_PREFS', u: { preRunDontAsk: false } }); window._ccRunDetectionInteractive(); });
   const pre = await page.waitForSelector('[data-cc-prerun]', { timeout: 15_000 }).catch(() => null);
@@ -496,6 +506,16 @@ async function runVariant(variant, viewport, theme, mobile) {
   // data quality + accessibility
   await page.evaluate(() => window._ccDispatch({ t: 'TAB', v: 'dataquality' }));
   await surface(page, variant, 'data-quality', LEFT, o);
+  // data quality: property rules — a result row, the rule list and the open editor
+  await page.evaluate(() => window._ccDispatch({ t: 'SET_PROPERTY_RULES', v: [{ id: 'dc1', appliesTo: ['IfcWall'], prop: 'Pset_WallCommon.FireRating', op: 'exists', value: '', severity: 'major', stage: 'Stage A', enabled: true }] }));
+  await page.click('[data-cc-dq-run]');
+  await page.waitForSelector('[data-cc-rule-results]', { timeout: 30_000 }).catch(() => {});
+  await page.click('[data-cc-dq-rules] [data-cc-rule-add]').catch(() => {});
+  await page.evaluate(() => { const e = document.querySelector('[data-cc-dq-rules]'); if (e) e.scrollIntoView(); });
+  await surface(page, variant, 'data-quality-rules', LEFT, o);
+  await page.evaluate(() => { const e = document.querySelector('[data-cc-rule-editor]'); if (e) e.scrollIntoView(); });
+  await surface(page, variant, 'data-quality-rule-editor', LEFT, o);
+  await page.evaluate(() => window._ccDispatch({ t: 'SET_PROPERTY_RULES', v: [] }));
   await page.evaluate(() => window._ccDispatch({ t: 'TAB', v: 'accessibility' }));
   await surface(page, variant, 'accessibility', LEFT, o);
   await page.evaluate(() => window._ccDispatch({ t: 'TAB', v: null }));

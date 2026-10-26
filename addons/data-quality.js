@@ -293,10 +293,22 @@
   // and parameters. Patterns are strings compiled through the core's
   // safeRegex gate — a pack can only ever be bad data, never code.
 
-  function _findPropValue(psets, propName) {
+  // Value of a property by name (case-insensitive; the last non-empty one
+  // wins). With `psetName` only that property set is searched; a quantity
+  // set name (Qto_* / BaseQuantities) searches the loader's flattened
+  // quantities (their set names are not kept), as the IDS engine does.
+  function _findPropValue(psets, propName, psetName, quantities) {
     var val = null;
     var pl = propName.toLowerCase();
-    Object.keys(psets).forEach(function(ps) {
+    var only = psetName ? String(psetName).toLowerCase() : null;
+    if (only && quantities && /^(qto_|basequantities$)/i.test(psetName)) {
+      Object.keys(quantities).forEach(function(k) {
+        if (k.toLowerCase() === pl && quantities[k] != null && String(quantities[k]).trim()) val = String(quantities[k]).trim();
+      });
+      if (val != null) return val;
+    }
+    Object.keys(psets || {}).forEach(function(ps) {
+      if (only && ps.toLowerCase() !== only) return;
       var grp = psets[ps]||{};
       Object.keys(grp).forEach(function(k) {
         if (k.toLowerCase() === pl && grp[k] != null && String(grp[k]).trim()) val = String(grp[k]).trim();
@@ -640,12 +652,15 @@
       applicability:{entity:'IFCWALL'},
       requirement:{facet:'property',pset:'Pset_WallCommon',prop:'IsExternal',cardinality:'required'}});
 
+    // rulesOnly: just the coordinator's property rules (the file other tools get)
+    if (options && options.rulesOnly) specs = [];
+
     // Build XML
     var xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
     xml += '<ids xmlns="'+IDS_NS+'" xmlns:xs="'+XS_NS+'">\n';
     xml += '  <info>\n';
     xml += '    <title>'+_idsEsc(title)+'</title>\n';
-    xml += '    <description>Exported from ClashControl data quality checks</description>\n';
+    xml += '    <description>' + (options && options.rulesOnly ? 'Property rules exported from ClashControl' : 'Exported from ClashControl data quality checks') + '</description>\n';
     xml += '    <date>'+new Date().toISOString().slice(0,10)+'</date>\n';
     xml += '  </info>\n';
     xml += '  <specifications>\n';
@@ -673,6 +688,15 @@
       }
       xml += '      </requirements>\n';
       xml += '    </specification>\n';
+    });
+
+    // The coordinator's own property rules travel as IDS specifications
+    // (identifier = rule id); one IDS cannot say is left out with a note.
+    ((options && options.propertyRules) || []).forEach(function(r) {
+      if (!r || r.enabled === false) return;
+      var sx = propertyRuleToIDS(r);
+      if (sx) xml += sx;
+      else xml += '    <!-- ClashControl: property rule "' + _idsEsc(describePropertyRule(r)).replace(/--/g, '- -') + '" is not expressible in IDS -->\n';
     });
 
     xml += '  </specifications>\n';
@@ -838,7 +862,7 @@
       ok = ok && re.test(a);
     }
     if (R.minInclusive != null || R.maxInclusive != null || R.minExclusive != null || R.maxExclusive != null) {
-      var n = parseFloat(a);
+      var n = _num(a);
       if (isNaN(n)) return false;
       if (R.minInclusive != null) ok = ok && n >= R.minInclusive;
       if (R.maxInclusive != null) ok = ok && n <= R.maxInclusive;
@@ -1193,6 +1217,212 @@
     return { results: results, summary: summary };
   }
 
+  // ── User-authored property rules (docs/INTERNALS.md §21.62) ──────
+  // A coordinator's own rules, written in the Data Quality panel and kept
+  // as project data (state.propertyRules): "these IFC types must carry
+  // Pset.Name, (not) equal to / containing / ≥ / ≤ / matching a value",
+  // with a severity and an optional stage label the user types (a LOD or
+  // phase name — no built-in words). No property name is built in: the
+  // picker lists what the loaded models carry.
+  //
+  // Rule: {id, appliesTo:[IFC type…] ([] = every element), prop:'Pset.Name'
+  // (no dot = any property set), op, value, severity, stage, enabled}.
+  // Results use the same check-map shape as the other engines, keyed by
+  // rule id (engine key 'rules' in the panel's reconciliation), plus
+  // `refs` = every failing element (ex is capped for display).
+  var PR_OPS = ['exists', 'notExists', 'eq', 'neq', 'contains', 'gte', 'lte', 'matches'];
+  var PR_VALUE_OPS = { eq: 1, neq: 1, contains: 1, gte: 1, lte: 1, matches: 1 };
+  var PR_SEV = { critical: 'error', major: 'warn', minor: 'info' };
+  var PR_OP_TEXT = { exists: 'exists', notExists: 'does not exist', eq: '=', neq: '≠', contains: 'contains', gte: '≥', lte: '≤', matches: 'matches' };
+  var PR_EX_CAP = 50;
+
+  // Leading number of a value, so "2.5 m", "120mm" and "2,5 m" compare
+  // numerically (a comma between digits right at the start is a decimal comma).
+  function _num(v) {
+    if (typeof v === 'number') return v;
+    return parseFloat(String(v == null ? '' : v).trim().replace(/^([+\-]?\d+),(\d+)/, '$1.$2'));
+  }
+
+  function splitPropKey(key) {
+    var k = String(key || '').trim(), i = k.indexOf('.');
+    if (i <= 0 || i === k.length - 1) return { pset: null, name: k };
+    return { pset: k.slice(0, i), name: k.slice(i + 1) };
+  }
+
+  function normalizePropertyRule(r, idx) {
+    if (!r || typeof r !== 'object') return null;
+    var types = Array.isArray(r.appliesTo) ? r.appliesTo : String(r.appliesTo || '').split(/[\s,;]+/);
+    return {
+      id: String(r.id || ('rule' + (idx || 0))),
+      appliesTo: types.map(function(t) { return String(t || '').trim(); }).filter(Boolean),
+      prop: String(r.prop || '').trim(),
+      op: PR_OPS.indexOf(r.op) >= 0 ? r.op : 'exists',
+      value: r.value == null ? '' : String(r.value),
+      severity: PR_SEV[r.severity] ? r.severity : 'major',
+      stage: String(r.stage || '').trim(),
+      enabled: r.enabled !== false
+    };
+  }
+
+  // Why a rule cannot run: 'prop' | 'value' | 'number' | 'pattern' | null.
+  function propertyRuleProblem(r) {
+    var n = normalizePropertyRule(r);
+    if (!n || !splitPropKey(n.prop).name) return 'prop';
+    if (PR_VALUE_OPS[n.op] && !n.value.trim()) return 'value';
+    if ((n.op === 'gte' || n.op === 'lte') && isNaN(_num(n.value))) return 'number';
+    if (n.op === 'matches' && !_re(n.value, '')) return 'pattern';
+    return null;
+  }
+
+  function describePropertyRule(r) {
+    var n = normalizePropertyRule(r);
+    if (!n) return '';
+    var s = n.prop + ' ' + PR_OP_TEXT[n.op] + (PR_VALUE_OPS[n.op] ? ' ' + n.value : '');
+    if (n.appliesTo.length) s += ' (' + n.appliesTo.join(', ') + ')';
+    return (n.stage ? n.stage + ': ' : '') + s;
+  }
+
+  // One value against one rule: true = passes.
+  function _rulePasses(n, v, re) {
+    switch (n.op) {
+      case 'exists': return v != null;
+      case 'notExists': return v == null;
+      case 'eq': return v != null && _valEq(n.value, v);
+      case 'neq': return v == null || !_valEq(n.value, v);
+      case 'contains': return v != null && String(v).toLowerCase().indexOf(n.value.toLowerCase()) >= 0;
+      case 'gte': case 'lte': {
+        if (v == null) return false;
+        var a = _num(v), b = _num(n.value);
+        if (isNaN(a)) return false;
+        return n.op === 'gte' ? a >= b : a <= b;
+      }
+      case 'matches': return v != null && !!re && re.test(String(v));
+    }
+    return false;
+  }
+
+  function runPropertyRules(elements, rules) {
+    var out = { _total: (elements || []).length };
+    (rules || []).forEach(function(r, idx) {
+      var n = normalizePropertyRule(r, idx);
+      if (!n || !n.enabled) return;
+      var ch = { count: 0, total: 0, sev: PR_SEV[n.severity], severity: n.severity, stage: n.stage,
+        label: describePropertyRule(n), rule: n, ex: [], refs: [] };
+      out[n.id] = ch;
+      var problem = propertyRuleProblem(n);
+      if (problem) { ch.invalid = problem; return; }
+      var types = null;
+      if (n.appliesTo.length) { types = {}; n.appliesTo.forEach(function(t) { types[t.toUpperCase()] = true; }); }
+      var kv = splitPropKey(n.prop);
+      var re = n.op === 'matches' ? _re(n.value, '') : null;
+      (elements || []).forEach(function(el) {
+        var p = (el && el.props) || {};
+        if (types && !types[String(p.ifcType || '').toUpperCase()]) return;
+        ch.total++;
+        var v = _findPropValue(p.psets || {}, kv.name, kv.pset, p.quantities);
+        if (_rulePasses(n, v, re)) return;
+        ch.count++;
+        var it = { name: p.name || ('#' + el.expressId), gid: p.globalId || '', ifcType: p.ifcType || '', storey: p.storey || '',
+          modelId: el._modelId || null, expressId: el.expressId, detail: v == null ? '' : v, missing: v == null };
+        ch.refs.push(it);
+        if (ch.ex.length < PR_EX_CAP) ch.ex.push(it);
+      });
+    });
+    return out;
+  }
+
+  // ── Property rules → IDS 1.0 ──
+  // Literal text as an XSD pattern that is also the same JS pattern (the
+  // IDS engine runs XSD patterns as JS RegExps): metacharacters in a class
+  // or escaped the way both dialects read alike; `ci` spells every letter
+  // as [Xx] (XSD has no case-insensitive flag).
+  function _xsdLiteral(s, ci) {
+    var out = '';
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charAt(i), lo = c.toLowerCase(), up = c.toUpperCase();
+      if (ci && lo !== up && lo.length === 1 && up.length === 1) out += '[' + up + lo + ']';
+      else if ('.?*+(){}|$'.indexOf(c) >= 0) out += '[' + c + ']';
+      else if ('\\[]^-'.indexOf(c) >= 0) out += '\\' + c;
+      else out += c;
+    }
+    return out;
+  }
+  // A rule's JS pattern (unanchored test) as an XSD pattern (implicitly
+  // anchored), or null when it uses what XSD reads differently or lacks:
+  // (?…) groups, \b \w and other escapes, lazy quantifiers, anchors inside
+  // the pattern or together with alternation.
+  function _regexToXsd(src) {
+    var s = String(src || ''), body = '', inClass = false, lead = false, trail = false;
+    if (s.charAt(0) === '^') { lead = true; s = s.slice(1); }
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charAt(i);
+      if (c === '\\') {
+        var nx = s.charAt(i + 1);
+        if (!nx) return null;
+        if (nx === '$') body += '[$]';
+        else if ('\\.?*+(){}[]|^-nrtdDsS'.indexOf(nx) >= 0) body += c + nx;
+        else return null;
+        i++; continue;
+      }
+      if (inClass) { if (c === ']') inClass = false; body += c; continue; }
+      if (c === '[') { inClass = true; body += c; continue; }
+      if (c === '(' && s.charAt(i + 1) === '?') return null;
+      if ((c === '?' || c === '+' || c === '*' || c === '}') && s.charAt(i + 1) === '?') return null;
+      if (c === '$') { if (i === s.length - 1) { trail = true; continue; } return null; }
+      if (c === '^') return null;
+      body += c;
+    }
+    if (inClass) return null;
+    if ((lead || trail) && body.indexOf('|') >= 0) return null;
+    return (lead ? '' : '.*') + '(' + body + ')' + (trail ? '' : '.*');
+  }
+
+  // Why a rule cannot travel as IDS: 'invalid' | 'pattern' | null (it can).
+  function propertyRuleIDSProblem(r) {
+    var n = normalizePropertyRule(r);
+    if (!n || propertyRuleProblem(n)) return 'invalid';
+    if (n.op === 'matches' && _regexToXsd(n.value) == null) return 'pattern';
+    return null;
+  }
+
+  function _valueXml(tag, vs) {
+    if (!vs) return '';
+    if (vs.simple != null) return '<' + tag + '><simpleValue>' + _idsEsc(vs.simple) + '</simpleValue></' + tag + '>';
+    var x = '<' + tag + '><xs:restriction base="' + (vs.base || 'xs:string') + '">';
+    if (vs.enumeration) vs.enumeration.forEach(function(e) { x += '<xs:enumeration value="' + _idsEsc(e) + '"/>'; });
+    if (vs.pattern != null) x += '<xs:pattern value="' + _idsEsc(vs.pattern) + '"/>';
+    if (vs.minInclusive != null) x += '<xs:minInclusive value="' + _idsEsc(vs.minInclusive) + '"/>';
+    if (vs.maxInclusive != null) x += '<xs:maxInclusive value="' + _idsEsc(vs.maxInclusive) + '"/>';
+    return x + '</xs:restriction></' + tag + '>';
+  }
+
+  // One rule as an IDS <specification> (string), or '' when it can't be one.
+  function propertyRuleToIDS(r) {
+    if (propertyRuleIDSProblem(r)) return '';
+    var n = normalizePropertyRule(r), kv = splitPropKey(n.prop);
+    var ent = !n.appliesTo.length ? { pattern: 'IFC.*' }
+      : n.appliesTo.length === 1 ? { simple: n.appliesTo[0].toUpperCase() }
+      : { enumeration: n.appliesTo.map(function(t) { return t.toUpperCase(); }) };
+    var card = (n.op === 'notExists' || n.op === 'neq') ? 'prohibited' : 'required';
+    var val = null;
+    if (n.op === 'eq' || n.op === 'neq') val = { simple: n.value };
+    else if (n.op === 'contains') val = { pattern: '.*' + _xsdLiteral(n.value, true) + '.*' };
+    else if (n.op === 'gte') val = { base: 'xs:double', minInclusive: String(_num(n.value)) };
+    else if (n.op === 'lte') val = { base: 'xs:double', maxInclusive: String(_num(n.value)) };
+    else if (n.op === 'matches') val = { pattern: _regexToXsd(n.value) };
+    var desc = 'ClashControl property rule · severity: ' + n.severity + (n.stage ? ' · stage: ' + n.stage : '');
+    var x = '    <specification name="' + _idsEsc(describePropertyRule(n)) + '" identifier="' + _idsEsc(n.id) + '" description="' + _idsEsc(desc) + '" ifcVersion="IFC2X3 IFC4">\n';
+    x += '      <applicability minOccurs="0" maxOccurs="unbounded">\n';
+    x += '        <entity>' + _valueXml('name', ent) + '</entity>\n';
+    x += '      </applicability>\n';
+    x += '      <requirements>\n';
+    x += '        <property cardinality="' + card + '">' + _valueXml('propertySet', kv.pset ? { simple: kv.pset } : { pattern: '.*' }) +
+      _valueXml('baseName', { simple: kv.name }) + (val ? _valueXml('value', val) : '') + '</property>\n';
+    x += '      </requirements>\n';
+    x += '    </specification>\n';
+    return x;
+  }
+
   // ── IDS Import (summary) ─────────────────────────────────────────
   // Parses an IDS XML file and returns a human-readable summary of the
   // specifications (used to preview what a file contains). Built on the
@@ -1222,6 +1452,10 @@
   window._ccImportIDS = importIDS;
   window._ccParseIDS = parseIDSSpec;
   window._ccRunIDS = runIDSSpecs;
+  window._ccRunPropertyRules = runPropertyRules;
+  window._ccPropertyRuleProblem = propertyRuleProblem;
+  window._ccPropertyRuleIDSProblem = propertyRuleIDSProblem;
+  window._ccDescribePropertyRule = describePropertyRule;
 
   // ── ClashControl Quality Score (0–100) ───────────────────────────
   // Single-number summary across the existing data-quality + accessibility

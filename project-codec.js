@@ -34,6 +34,8 @@
       // denied memory: clashes a person denied are dropped by later runs
       // (identity key → {pair, point, ts, reason, by}); per project, shared
       deniedPairs: state.deniedPairs || {},
+      // the coordinator's own property rules (Data Quality, §21.62)
+      propertyRules: Array.isArray(state.propertyRules) ? state.propertyRules : [],
       // clash review: facet filters, search, saved views and the overview/list
       // choice — per project (autoOpen is per run and never stored)
       triage: serializeTriage(state),
@@ -104,6 +106,9 @@
       dispatch({t:actions.DENIED_SET, v:denied});
     }
     if (data.clashes) dispatch({t:actions.SET_CLASHES, v:data.clashes});
+    // Property rules are per project: a file without them (older) starts
+    // empty instead of keeping the previously open project's rules.
+    if (actions.SET_PROPERTY_RULES) dispatch({t:actions.SET_PROPERTY_RULES, v:Array.isArray(data.propertyRules) ? data.propertyRules : []});
     if (data.runHistory || data.lastDeltaSummary) dispatch({
       t:actions.LOAD_PROJECT_STATE,
       data:{runHistory:data.runHistory||[],lastDeltaSummary:data.lastDeltaSummary||null}
