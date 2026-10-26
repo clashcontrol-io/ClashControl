@@ -292,7 +292,7 @@ test('UI: the matrix is the DisciplineMatrixEditor, its strings are translated',
   assert.doesNotMatch(src, /_renderDisciplineMatrix/);
   const nl = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'locales', 'nl.json'), 'utf8')).strings;
   for (const k of ['matrix.mode.on', 'matrix.mode.off', 'matrix.mode.hard', 'matrix.mode.clearance', 'matrix.mode.default', 'matrix.severityAuto', 'matrix.exportTemplate', 'matrix.importTemplate', 'standards.disciplinePairRulesMoved']) {
-    assert.match(src, new RegExp("_cc_t\\('" + k.replace(/\./g, '\\.') + "'"), k);
+    assert.match(src, new RegExp("_cc_t\\('" + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "'"), k);
     assert.ok(nl[k], 'nl: ' + k);
   }
 });
