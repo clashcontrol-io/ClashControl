@@ -453,6 +453,26 @@ async function runVariant(variant, viewport, theme, mobile) {
   await page.evaluate(() => window._ccDispatch({ t: 'TAB', v: 'navigator' }));
   await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => /^(expand all|alles uitklappen)$/i.test(x.textContent.trim())); if (b) b.click(); });
   await surface(page, variant, 'navigator', mobile ? LEFT : LEFT.concat(['.cc-ai-panel']), o);
+  // run settings window: every section expanded, a matrix cell editor open,
+  // an exception rule switched on (the matrix + exceptions live here)
+  await page.evaluate(() => window._ccDispatch({ t: 'SHOW_RUN_MODAL', v: true }));
+  await page.waitForSelector('[aria-labelledby="cc-run-detection-title"]', { timeout: 10_000 }).catch(() => {});
+  await page.evaluate(async () => {
+    const root = document.querySelector('[aria-labelledby="cc-run-detection-title"]');
+    if (!root) return;
+    for (let pass = 0; pass < 3; pass++) {
+      root.querySelectorAll('details:not([open])').forEach((d) => { d.open = true; });
+      root.querySelectorAll('button[aria-expanded="false"]').forEach((b) => b.click());
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    const cell = root.querySelector('[data-cc-matrix] button');
+    if (cell) cell.click();
+    const ex = root.querySelector('[data-cc-exceptions] input[type=checkbox]');
+    if (ex && !ex.checked) ex.click();
+    await new Promise((r) => setTimeout(r, 200));
+  });
+  await surface(page, variant, 'run-settings', ['[aria-labelledby="cc-run-detection-title"]'], o);
+  await page.evaluate(() => window._ccDispatch({ t: 'SHOW_RUN_MODAL', v: false }));
   // pre-run panel
   await page.evaluate(() => { window._ccDispatch({ t: 'UPD_PREFS', u: { preRunDontAsk: false } }); window._ccRunDetectionInteractive(); });
   const pre = await page.waitForSelector('[data-cc-prerun]', { timeout: 15_000 }).catch(() => null);

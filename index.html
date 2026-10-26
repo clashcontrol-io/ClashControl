@@ -30102,6 +30102,10 @@ function startApp() {
     { f: 'new', stroke: 'var(--color-info)', w: 1.2, dash: '3 2' },
     { f: 'resolved', stroke: 'var(--text-primary)', w: 1, dash: '1 2' }
   ];
+  // The legend says each line's style in words (no drawn sample: no icons).
+  function _ccTrendLineWord(sr) {
+    return sr.dash === '3 2' ? _cc_t('trends.lineDashed', 'dashed') : sr.dash === '1 2' ? _cc_t('trends.lineDotted', 'dotted') : sr.w > 1.3 ? _cc_t('trends.lineBold', 'solid, bold') : _cc_t('trends.lineSolid', 'solid');
+  }
   function _ccTrendFieldLabel(f) {
     return ({ total: _cc_t('trends.total', 'Total'), open: _cc_t('trends.open', 'Open'), new: _cc_t('trends.new', 'New'), resolved: _cc_t('trends.resolved', 'Resolved') })[f] || f;
   }
@@ -30233,7 +30237,7 @@ function startApp() {
       </div>
       ${!model.allBreakdown && html`<div style=${S_NOTE}>${model.anyBreakdown ? _cc_t('trends.oldRuns', 'Runs from before this version have totals only; their breakdowns are gaps.') : _cc_t('trends.noBreakdowns', 'These runs have totals only. Run detection again to see trends per discipline pair, severity and assignee.')}</div>`}
       ${view === 'chart' && html`<div style=${{fontSize:'var(--text-2xs)',color:'var(--text-secondary)',display:'flex',gap:'var(--space-3)',flexWrap:'wrap'}} aria-hidden="true">
-        ${_CC_TREND_SERIES.map(function(sr) { return html`<span key=${sr.f} style=${{display:'inline-flex',alignItems:'center',gap:'var(--space-1)'}}><svg width="16" height="6" style=${{display:'block'}}><line x1="0" y1="3" x2="16" y2="3" stroke=${sr.stroke} stroke-width=${sr.w + 0.4} stroke-dasharray=${sr.dash}/></svg>${_ccTrendFieldLabel(sr.f)}</span>`; })}
+        ${_CC_TREND_SERIES.map(function(sr) { return html`<span key=${sr.f} style=${{color:sr.stroke}}>${_ccTrendFieldLabel(sr.f)} (${_ccTrendLineWord(sr)})</span>`; })}
       </div>`}
       ${view === 'chart' ? html`
         <section aria-label=${_cc_t('trends.allClashes', 'All clashes')}>
