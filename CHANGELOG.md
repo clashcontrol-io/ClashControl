@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.8.0 (2026-10-26)
+- Coordination on the level of the market leaders: matrix v2, lifecycle, auto re-run, penetrations, trends, grouping, model comparison, property rules (#720)
+
 ## v7.7.0 (2026-10-25)
 - Accuracy, speed, proportional actions, shared conflicts, grids, units (#719)
 
