@@ -1785,6 +1785,8 @@ function startApp() {
     showSpaces:_ccLoadPref('showSpaces',false),
     showGridLines:_ccLoadPref('showGridLines',true),
     preRunDontAsk:_ccLoadPref('preRunDontAsk',false), // pre-run suggestions panel: don't ask again
+    // clash list "Location" (nearby) grouping: clash points closer than this (metres) share a group
+    nearbyRadiusM:(function(){ var v=Number(_ccLoadPref('nearbyRadiusM',1.5)); return v>0&&v<=100?v:1.5; })(),
     // Re-check clashes automatically after a model changes (_ccScheduleAutoRerun): 'off' | 'replaced' (a same-name reload / Revit re-sync) | 'any' (every model load batch)
     autoRerun:(function(){ var v=null; try{ v=localStorage.getItem('cc_autoRerun'); }catch(e){} /* _ccPersistUI stores strings raw (not JSON) */ if(v&&v.charAt(0)==='"'){ try{ v=JSON.parse(v); }catch(e){} } return v==='off'||v==='any'||v==='replaced' ? v : 'replaced'; })(),
   };
@@ -1912,7 +1914,7 @@ function startApp() {
   // action's `u` payload. Was an inline array literal recreated on every
   // UPD_PREFS dispatch; named here so it can't silently drift from what it
   // actually does.
-  var PERSISTED_PREF_KEYS = ['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView','zoomSens','navInputMode','showSpaces','showGridLines','preRunDontAsk','autoRerun'];
+  var PERSISTED_PREF_KEYS = ['autoFlyTo','autoHighlight','showGrid','showAxes','showMarkers','hoverHighlight','outlineSelected','defaultPriority','defaultCategory','defaultStatus','defaultMaxGap','resetFiltersOnRun','renderStyle','unitScaleOverride','lightSettings','measureUnits','measurePrecision','measureMagnifier','measureCalibration','homeView','zoomSens','navInputMode','showSpaces','showGridLines','preRunDontAsk','autoRerun','nearbyRadiusM'];
   var A = {
     ADD_MODEL:'ADD_MODEL', DEL_MODEL:'DEL_MODEL', REPLACE_MODEL:'REPLACE_MODEL', UPD_MODEL:'UPD_MODEL',
     PARK_MODEL:'PARK_MODEL', UNPARK_MODEL:'UNPARK_MODEL', SET_AUTOPARK:'SET_AUTOPARK',
@@ -9677,7 +9679,7 @@ function startApp() {
       if (row) index[vi] = row;
     });
     return { bucketOf: bucketOf, counts: counts, total: o.total, visible: visible, ctx: ctx, fctx: fctx,
-      storeyNorm: o.storeyNorm, index: index, rowById: rowById, visibleModels: o.visibleModels, zoneGroups: zoneGroups, _visPos: o._visPos, _visKey: o._visKey, _rowAt: rowAt };
+      storeyNorm: o.storeyNorm, index: index, rowById: rowById, visibleModels: o.visibleModels, zoneGroups: zoneGroups, _visPos: o._visPos, _visKey: o._visKey, _rowAt: rowAt, genv: o.genv };
   }
   // Exactly what the triage model reads from the models (visibility,
   // storeys, storey unit) — a model edit that changes none of it (rename,
@@ -9699,7 +9701,10 @@ function startApp() {
     var L = _ccTriageLast;
     if (L && L.models === s.models && L.clashes === s.clashes && L.rules === s.rules && L.prefs === s.prefs) return L.out;
     var msig = _ccTriageModelsSig(s);
-    var sameModels = !!(L && _ccTriageSigSame(L.msig, msig));
+    // the grid / room facets read the models' grid lines and rooms (_ccGroupEnv:
+    // the same object while no model is added, replaced or removed)
+    var genv = _ccGroupEnv(s.models);
+    var sameModels = !!(L && _ccTriageSigSame(L.msig, msig) && L.out && L.out.genv === genv);
     if (sameModels && L.clashes === s.clashes && L.rules === s.rules) {
       _ccTriageLast = { clashes: s.clashes, rules: s.rules, models: s.models, prefs: s.prefs, msig: msig, out: L.out };
       return L.out;
@@ -9713,7 +9718,7 @@ function startApp() {
     // clash, hidden models included: a row depends on the clash, its bucket
     // and the normaliser only) are reused — a visibility toggle refiles
     // nothing and only re-selects the visible clashes.
-    var P = (L && L.clashes === s.clashes && L.rules === s.rules) ? L.out : null;
+    var P = (L && L.clashes === s.clashes && L.rules === s.rules && L.out && L.out.genv === genv) ? L.out : null;
     var sameStoreys = !!(L && L.msig && L.msig.length === msig.length && msig.every(function(e, i) { var o = L.msig[i]; return o[0] === e[0] && o[2] === e[2] && o[3] === e[3]; }));
     var vis = {}, stE = [], visKey = '';
     (s.models || []).forEach(function(m) {
@@ -9731,7 +9736,9 @@ function startApp() {
       severity: function(c) { return _ccDeterministicSeverity(c); },
       bucket: function(c) { return bucketOf.get(c.id) || 'review'; },
       storey: norm.label,
-      trade: function(c, side) { var i = side === 'A' ? 0 : 1; return (c.trades && c.trades[i]) || (c.disciplines && c.disciplines[i]) || 'other'; }
+      trade: function(c, side) { var i = side === 'A' ? 0 : 1; return (c.trades && c.trades[i]) || (c.disciplines && c.disciplines[i]) || 'other'; },
+      grid: function(c) { return _ccGroupGridOf(genv, c); },
+      space: function(c) { var sp = _ccGroupSpaceOf(genv, c); return sp ? sp.label : ''; }
     };
     // facet rows of every clash, aligned with s.clashes (_rowAt) and by id
     var rowAt, rowById;
@@ -9741,8 +9748,8 @@ function startApp() {
       rowAt = new Array(n); rowById = new Map();
       if (tcore) for (var ri = 0; ri < n; ri++) {
         var c = all[ri], h = _ccTriageRowCache.get(c);
-        if (!(h && h.bucketOf === bucketOf && h.norm === norm)) {
-          h = { row: tcore.indexItems([c], fctx)[0], bucketOf: bucketOf, norm: norm };
+        if (!(h && h.bucketOf === bucketOf && h.norm === norm && h.genv === genv)) {
+          h = { row: tcore.indexItems([c], fctx)[0], bucketOf: bucketOf, norm: norm, genv: genv };
           _ccTriageRowCache.set(c, h);
         }
         rowAt[ri] = h.row; rowById.set(c.id, h.row);
@@ -9762,7 +9769,7 @@ function startApp() {
       if (rv) index.push(rv);
     }
     var out = { bucketOf: bucketOf, counts: counts, total: visible.length, visible: visible, ctx: ctx, fctx: fctx,
-      storeyNorm: norm, index: index, rowById: rowById, visibleModels: vis, zoneGroups: zoneGroups, _visKey: visKey, _rowAt: rowAt };
+      storeyNorm: norm, index: index, rowById: rowById, visibleModels: vis, zoneGroups: zoneGroups, _visKey: visKey, _rowAt: rowAt, genv: genv };
     _ccTriageLast = { clashes: s.clashes, rules: s.rules, models: s.models, prefs: s.prefs, msig: msig, out: out };
     return out;
   }
@@ -32027,6 +32034,7 @@ function startApp() {
     // Not cached: the labels must follow a language switch.
     _CC_FACET_TITLES = {
       severity: _cc_t('facet.severity','Severity'), extent: _cc_t('facet.extent','Extent'), storey: _cc_t('facet.storey','Storey'),
+      grid: _cc_t('facet.grid','Grid'), space: _cc_t('facet.space','Room'),
       modelPair: _cc_t('facet.modelPair','Models'), trade: _cc_t('facet.trade','Trades'), typePair: _cc_t('facet.typePair','Element types'),
       status: _cc_t('facet.status','Status'), assignee: _cc_t('facet.assignee','Assignee'), bucket: _cc_t('facet.bucket','Bucket'), tag: _cc_t('facet.view','View')
     };
@@ -32037,6 +32045,8 @@ function startApp() {
     if (k === 'severity') return ({critical:_cc_t('sev.critical','Critical'),major:_cc_t('sev.major','Major'),minor:_cc_t('sev.minor','Minor'),info:_cc_t('sev.info','Info')})[v] || v;
     if (k === 'extent') return ({through:_cc_t('extent.through','Through'),'through-thin':_cc_t('extent.throughThin','Through (thin)'),partial:_cc_t('extent.partial','Partial'),graze:_cc_t('extent.graze','Graze'),unknown:_cc_t('extent.unknown','Depth unknown'),clearance:_cc_t('extent.clearance','Clearance'),contact:_cc_t('extent.contact','Contact'),'open-inside':_cc_t('extent.openInside','Inside an open shape'),duplicate:_cc_t('extent.duplicate','Duplicate')})[v] || v;
     if (k === 'storey') return v || _cc_t('facet.noStorey','No storey');
+    if (k === 'grid') return v || _cc_t('groupBy.noGrid','No grid');
+    if (k === 'space') return v || _cc_t('groupBy.noRoom','No room');
     if (k === 'trade') return String(v).split(' × ').map(function(x){ return _ccDisciplineLabel(x); }).join(' × ');
     if (k === 'status') return (STAT[v] && STAT[v].label) || v;
     if (k === 'assignee') return v || _cc_t('facet.unassigned','Unassigned');
@@ -32221,6 +32231,8 @@ function startApp() {
         var vals = tcore.orderedValues(k, counts, triage && triage.storeyNorm ? triage.storeyNorm.labels : [], k === 'modelPair' ? function(v){ return _ccModelPairLabel(v, names); } : null);
         (facets[k] || []).forEach(function(v){ if (vals.indexOf(v) === -1) vals.push(v); });
         if (!vals.length) return null;
+        // no grid lines / no rooms loaded: one "No grid" chip filters nothing
+        if ((k === 'grid' || k === 'space') && vals.length === 1 && vals[0] === '') return null;
         var limit = expanded[k] ? vals.length : 8;
         return html`<div key=${k} role="group" aria-label=${_ccFacetTitle(k)} data-cc-facet=${k} style=${{display:'flex',flexWrap:'wrap',gap:'var(--space-1)',alignItems:'center'}}>
           <span style=${{...LBL,minWidth:72}}>${_ccFacetTitle(k)}</span>
@@ -33168,7 +33180,7 @@ function startApp() {
         var selGrp  = grpArr.length  ? grpArr[0]  : 'none';
         var selSort = sortArr.length ? sortArr[0] : 'none';
         var secondaryGrpOpts = isClashTab
-          ? [['none','—'],['severity',_cc_t('groupBy.severity','Severity')],['storey',_cc_t('groupBy.storey','Storey')],['discipline',_cc_t('groupBy.discipline','Discipline')],['nearby',_cc_t('groupBy.nearby','Location')],['model',_cc_t('groupBy.model','Model')],['status',_cc_t('groupBy.status','Status')],['type',_cc_t('groupBy.type','Type')],['priority',_cc_t('groupBy.priority','Priority')],['assignee',_cc_t('groupBy.assignee','Assignee')]]
+          ? [['none','—'],['severity',_cc_t('groupBy.severity','Severity')],['storey',_cc_t('groupBy.storey','Storey')],['discipline',_cc_t('groupBy.discipline','Discipline')],['nearby',_cc_t('groupBy.nearby','Location')],['grid',_cc_t('groupBy.grid','Grid')],['space',_cc_t('groupBy.space','Room')],['zone',_cc_t('groupBy.zone','Zone')],['model',_cc_t('groupBy.model','Model')],['status',_cc_t('groupBy.status','Status')],['type',_cc_t('groupBy.type','Type')],['priority',_cc_t('groupBy.priority','Priority')],['assignee',_cc_t('groupBy.assignee','Assignee')]]
           : [['none','—'],['status',_cc_t('groupBy.status','Status')],['priority',_cc_t('groupBy.priority','Priority')],['category',_cc_t('groupBy.category','Category')],['assignee',_cc_t('groupBy.assignee','Assignee')]];
         var sortOptsList = isClashTab
           ? [['none',_cc_t('sortBy.none','None')],['severity_desc',_cc_t('sortBy.severity_desc','Severity (high first)')],['severity_asc',_cc_t('sortBy.severity_asc','Severity (low first)')],['spatial',_cc_t('sortBy.spatial','Spatial')],['distance_asc',_cc_t('sortBy.distance_asc','Gap (small first)')],['distance_desc',_cc_t('sortBy.distance_desc','Gap (large first)')],['priority_desc',_cc_t('sortBy.priority_desc','Priority (high first)')],['storey_asc',_cc_t('sortBy.storey_asc','Storey A–Z')],['storey_desc',_cc_t('sortBy.storey_desc','Storey Z–A')],['name_asc',_cc_t('sortBy.name_asc','Name A–Z')],['name_desc',_cc_t('sortBy.name_desc','Name Z–A')],['date_desc',_cc_t('sortBy.date_desc','Date (newest)')],['date_asc',_cc_t('sortBy.date_asc','Date (oldest)')]]
@@ -33201,13 +33213,8 @@ function startApp() {
                 ${smartGrpOpts.map(function(g){return html`<option key=${g[0]} value=${g[0]}>${g[1]}</option>`})}
               </select>
             </label>`}
-            ${!isGrouped && html`<label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:'1 1 9rem',minWidth:0}}>
-              <span style=${DL}>${_cc_t('issues.groupBy','by')}</span>
-              <select value=${selGrp==='cluster'||selGrp==='element'?'none':selGrp} style=${{...DS,flex:1,minWidth:0}}
-                onChange=${function(e){var v=e.target.value;d({t:grpAction,v:v==='none'?[]:[v]});}}>
-                ${secondaryGrpOpts.map(function(g){return html`<option key=${g[0]} value=${g[0]}>${g[1]}</option>`})}
-              </select>
-            </label>`}
+            ${!isGrouped && html`<${ClashGroupLevels} levels=${grpArr} opts=${secondaryGrpOpts} d=${d} action=${grpAction} DS=${DS} DL=${DL}
+              radius=${s.prefs.nearbyRadiusM} clashes=${s.clashes} models=${s.models} />`}
             <label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:'1 1 9rem',minWidth:0}}>
               <span style=${DL}>${_cc_t('issues.sort','Sort')}</span>
               <select value=${selSort} style=${{...DS,flex:1,minWidth:0}}
@@ -33238,7 +33245,7 @@ function startApp() {
       ${!isExplorerTab && !isStandardsTab && items.length>0 && html`<${BulkActionBar} s=${s} d=${d} items=${items} isClash=${isClashTab} />`}
 
       <div class="cc-issue-group" data-cc-clash-list=${isClashTab ? '1' : null} style=${isClashTab ? null : {display:'contents'}}>
-      ${!isExplorerTab && !isStandardsTab && html`<${VirtualList} items=${items} reviewGroups=${isClashTab ? reviewModel : null} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${listModels} storeyLabel=${isClashTab && triage ? triage.fctx.storey : null} groupBy=${isClashTab?s.clashGroupBy:s.issueGroupBy} sortBy=${isClashTab?s.clashSortBy:s.issueSortBy} selectMode=${s.selectMode} selected=${s.selected} trainingMode=${s.trainingMode} triageResults=${s.triageResults}
+      ${!isExplorerTab && !isStandardsTab && html`<${VirtualList} items=${items} reviewGroups=${isClashTab ? reviewModel : null} activeId=${s.activeId} d=${d} isClash=${isClashTab} prefs=${s.prefs} models=${listModels} storeyLabel=${isClashTab && triage ? triage.fctx.storey : null} groupBy=${isClashTab?s.clashGroupBy:s.issueGroupBy} nearbyRadius=${isClashTab?s.prefs.nearbyRadiusM:null} sortBy=${isClashTab?s.clashSortBy:s.issueSortBy} selectMode=${s.selectMode} selected=${s.selected} trainingMode=${s.trainingMode} triageResults=${s.triageResults}
         emptyCtx=${{
           hasModel: (s.models||[]).length > 0,
           detecting: !!s.detecting,
@@ -36137,7 +36144,214 @@ function startApp() {
   window._ccPluralizeWord = _ccPluralizeWord;
   window._ccElementGroupSummary = _ccElementGroupSummary;
 
-  function _groupKeyFor(it, groupKey, modelsById, spatialMap, elementDegreeMap) {
+  // ── Grouping v2: grid / room / zone / property value (docs/INTERNALS.md §21.61) ──
+  // Group keys that read the loaded models, not only the clash. One group
+  // environment per set of loaded models (ids, element arrays, grid lines;
+  // never visibility, so hiding a model regroups and refiles nothing): the
+  // grid lines of every model, a room index built once from the IfcSpace
+  // element boxes, an element lookup per model and per-clash memos
+  // (WeakMaps), so a list rebuild works out each clash's grid / room / zone /
+  // property value once. Shared by the clash list (groupAndSort) and the
+  // triage facets ('grid', 'space'). Pure apart from _ccGridRef /
+  // _ccIsSpaceEl (tests/grouping-v2.test.js extracts this block).
+  var _CC_GROUP_ENV_KEYS = { grid: 1, space: 1, zone: 1 };
+  var _CC_PROP_GROUP_PREFIX = 'property:';
+  function _ccIsPropGroupKey(g) { return typeof g === 'string' && g.indexOf(_CC_PROP_GROUP_PREFIX) === 0 && g.length > _CC_PROP_GROUP_PREFIX.length; }
+  function _ccGroupKeyNeedsEnv(g) { return _CC_GROUP_ENV_KEYS[g] === 1 || _ccIsPropGroupKey(g); }
+  var _ccGroupEnvLast = null;
+  function _ccGroupEnv(models) {
+    var ms = models || [], L = _ccGroupEnvLast;
+    var propSig = ms.map(function(m) { return m._propsVersion || 0; }).join(',');
+    if (L && L.src.length === ms.length) {
+      var same = true;
+      for (var i = 0; i < ms.length && same; i++) { var q = L.src[i], m = ms[i]; same = q.id === m.id && q.elements === (m.elements || q.elements) && q.gridLines === (m.gridLines || null); }
+      if (same) {
+        // lazily merged psets landed: only the property values are stale
+        if (L.propSig !== propSig) { L.propSig = propSig; L.props = new Map(); }
+        return L;
+      }
+    }
+    _ccGroupEnvLast = { src: ms.map(function(m) { return { id: m.id, elements: m.elements || [], gridLines: m.gridLines || null }; }),
+      lines: null, spaces: null, elMaps: new Map(), grid: new WeakMap(), space: new WeakMap(), zone: new WeakMap(), props: new Map(), propSig: propSig };
+    return _ccGroupEnvLast;
+  }
+  // Clash point [x, y, z] (scene metres, Y up) or null.
+  function _ccClashXYZ(c) {
+    var p = c && c.point;
+    if (!p) return null;
+    var x = p.x != null ? p.x : p[0], y = p.y != null ? p.y : p[1], z = p.z != null ? p.z : p[2];
+    return (typeof x === 'number' && typeof y === 'number' && typeof z === 'number' && isFinite(x) && isFinite(y) && isFinite(z)) ? [x, y, z] : null;
+  }
+  // Nearest grid intersection ("C-4") of the clash point over the grid lines
+  // of every loaded model; '' without grid lines or a point.
+  function _ccGroupGridOf(env, c) {
+    if (env.grid.has(c)) return env.grid.get(c);
+    if (!env.lines) {
+      env.lines = [];
+      env.src.forEach(function(m) { (m.gridLines || []).forEach(function(g) { if (g && g.pts && g.pts.length >= 4) env.lines.push(g); }); });
+    }
+    var p = env.lines.length ? _ccClashXYZ(c) : null;
+    var r = p ? _ccGridRef(env.lines, p[0], p[2]) : null;
+    var v = r ? r.label : '';
+    env.grid.set(c, v);
+    return v;
+  }
+  // Room index: every IfcSpace with a box, filed in 4 m plan cells (a room
+  // spanning more than 256 cells goes on a short list tested every time).
+  // Labels are the room names; two rooms of one name on different storeys
+  // get the storey added ("Room 1 · Level 2").
+  var _CC_SPACE_CELL_M = 4;
+  function _ccSpaceIndex(env) {
+    if (env.spaces) return env.spaces;
+    var list = [], nameCount = {};
+    env.src.forEach(function(m) {
+      (m.elements || []).forEach(function(el) {
+        if (!_ccIsSpaceEl(el) || !el.box || !el.box.min || !el.box.max) return;
+        var a = el.box.min, b = el.box.max;
+        if (!(a.x <= b.x && a.y <= b.y && a.z <= b.z)) return;
+        var p = el.props || {};
+        var name = String(p.name || p.longName || ('IfcSpace #' + el.expressId)).trim();
+        nameCount[name] = (nameCount[name] || 0) + 1;
+        list.push({ el: el, modelId: m.id, b: [a.x, a.y, a.z, b.x, b.y, b.z], name: name, storey: String(p.storey || ''),
+          vol: (b.x - a.x) * (b.y - a.y) * (b.z - a.z), label: '' });
+      });
+    });
+    var cells = new Map(), big = [];
+    list.forEach(function(s, i) {
+      s.label = nameCount[s.name] > 1 && s.storey ? s.name + ' · ' + s.storey : s.name;
+      var x0 = Math.floor(s.b[0] / _CC_SPACE_CELL_M), x1 = Math.floor(s.b[3] / _CC_SPACE_CELL_M);
+      var z0 = Math.floor(s.b[2] / _CC_SPACE_CELL_M), z1 = Math.floor(s.b[5] / _CC_SPACE_CELL_M);
+      if ((x1 - x0 + 1) * (z1 - z0 + 1) > 256) { big.push(i); return; }
+      for (var x = x0; x <= x1; x++) for (var z = z0; z <= z1; z++) {
+        var k = x + ',' + z, arr = cells.get(k);
+        if (arr) arr.push(i); else cells.set(k, [i]);
+      }
+    });
+    env.spaces = { list: list, cells: cells, big: big };
+    return env.spaces;
+  }
+  // The room containing the clash point (box containment, 1 mm tolerance;
+  // nested rooms: the smallest, then the first label) or null.
+  function _ccGroupSpaceOf(env, c) {
+    if (env.space.has(c)) return env.space.get(c);
+    var idx = _ccSpaceIndex(env), p = idx.list.length ? _ccClashXYZ(c) : null, best = null;
+    if (p) {
+      var E = 0.001;
+      var test = function(i) {
+        var s = idx.list[i], b = s.b;
+        if (p[0] < b[0] - E || p[0] > b[3] + E || p[1] < b[1] - E || p[1] > b[4] + E || p[2] < b[2] - E || p[2] > b[5] + E) return;
+        if (!best || s.vol < best.vol || (s.vol === best.vol && s.label < best.label)) best = s;
+      };
+      (idx.cells.get(Math.floor(p[0] / _CC_SPACE_CELL_M) + ',' + Math.floor(p[2] / _CC_SPACE_CELL_M)) || []).forEach(test);
+      idx.big.forEach(test);
+    }
+    env.space.set(c, best);
+    return best;
+  }
+  // The element of one side of a clash (model id + express id).
+  function _ccGroupElOf(env, modelId, eid) {
+    if (eid == null) return null;
+    for (var i = 0; i < env.src.length; i++) {
+      var m = env.src[i];
+      if (modelId != null && m.id !== modelId) continue;
+      var map = env.elMaps.get(m.id);
+      if (!map) { map = new Map(); m.elements.forEach(function(el) { map.set(el.expressId, el); }); env.elMaps.set(m.id, map); }
+      var el = map.get(eid);
+      if (el) return el;
+    }
+    return null;
+  }
+  function _ccZoneNamesOfEl(el) {
+    var out = [];
+    ((el && el.props && el.props.groups) || []).forEach(function(g) {
+      if (g && g.cls === 'IfcZone') { var n = String(g.name || g.objectType || 'IfcZone'); if (out.indexOf(n) < 0) out.push(n); }
+    });
+    return out;
+  }
+  // Zone of a clash: the IfcZone(s) of side A, else side B, else of the room
+  // around the clash point, else a side that IS a zone volume (role 'zone',
+  // clash-discipline-core.js) by its name; '' when none.
+  function _ccGroupZoneOf(env, c) {
+    if (env.zone.has(c)) return env.zone.get(c);
+    var eA = _ccGroupElOf(env, c.modelAId, c.elemA), eB = _ccGroupElOf(env, c.modelBId, c.elemB);
+    var z = _ccZoneNamesOfEl(eA);
+    if (!z.length) z = _ccZoneNamesOfEl(eB);
+    if (!z.length) { var sp = _ccGroupSpaceOf(env, c); if (sp) z = _ccZoneNamesOfEl(sp.el); }
+    if (!z.length) {
+      [eA, eB].forEach(function(e) {
+        if (!z.length && e && e._ccCls && e._ccCls.role === 'zone') z = [String((e.props && e.props.name) || (e.props && e.props.ifcType) || 'zone')];
+      });
+    }
+    var v = z.slice().sort().join(', ');
+    env.zone.set(c, v);
+    return v;
+  }
+  // 'Pset.Name' → the property's value on these props, or null when missing
+  // or empty. A property set name may itself contain dots: every split is
+  // tried, the first set that has the property wins.
+  function _ccPropValueOf(props, key) {
+    var ps = props && props.psets;
+    if (!ps || !key) return null;
+    for (var i = key.indexOf('.'); i > 0; i = key.indexOf('.', i + 1)) {
+      var set = ps[key.slice(0, i)], name = key.slice(i + 1);
+      if (set && typeof set === 'object' && Object.prototype.hasOwnProperty.call(set, name)) {
+        var v = set[name];
+        if (v != null && typeof v === 'object') v = v.value != null ? v.value : null;
+        if (v != null && String(v).trim() !== '') return String(v).trim();
+      }
+    }
+    return null;
+  }
+  // Value of property 'Pset.Name' on side A, else side B; null when neither.
+  function _ccGroupPropOf(env, c, key) {
+    var memo = env.props.get(key);
+    if (!memo) { memo = new WeakMap(); env.props.set(key, memo); }
+    if (memo.has(c)) return memo.get(c);
+    var eA = _ccGroupElOf(env, c.modelAId, c.elemA);
+    var v = _ccPropValueOf(eA && eA.props, key);
+    if (v == null) { var eB = _ccGroupElOf(env, c.modelBId, c.elemB); v = _ccPropValueOf(eB && eB.props, key); }
+    memo.set(c, v);
+    return v;
+  }
+  // 'Pset.Name' of every property on the clashing elements (each element once,
+  // the first maxClashes clashes), most common first, then by name — the
+  // property picker builds it only when it opens.
+  function _ccClashPropertyNames(clashes, models, maxClashes) {
+    var env = _ccGroupEnv(models), seen = new Set(), count = {};
+    var list = clashes || [], n = Math.min(list.length, maxClashes > 0 ? maxClashes : 5000);
+    function add(el) {
+      if (!el || seen.has(el)) return;
+      seen.add(el);
+      var ps = el.props && el.props.psets;
+      if (!ps) return;
+      Object.keys(ps).forEach(function(set) {
+        var s = ps[set];
+        if (!s || typeof s !== 'object') return;
+        Object.keys(s).forEach(function(name) { var k = set + '.' + name; count[k] = (count[k] || 0) + 1; });
+      });
+    }
+    for (var i = 0; i < n; i++) {
+      var c = list[i];
+      add(_ccGroupElOf(env, c.modelAId, c.elemA));
+      add(_ccGroupElOf(env, c.modelBId, c.elemB));
+    }
+    return Object.keys(count).sort(function(a, b) { return (count[b] - count[a]) || (a < b ? -1 : a > b ? 1 : 0); });
+  }
+  // Group labels of the v2 keys (the "none" ones sort last, _ccGroupNoneLabels).
+  function _ccGroupNoneLabels() {
+    return [_cc_t('groupBy.noGrid', 'No grid'), _cc_t('groupBy.noRoom', 'No room'), _cc_t('groupBy.noZone', 'No zone'), _cc_t('groupBy.noValue', '(none)')];
+  }
+  function _ccGroupEnvLabel(it, groupKey, env) {
+    if (groupKey === 'grid') { var g = _ccGroupGridOf(env, it); return g ? _cc_t('clash.gridAt', 'Grid {g}', { g: g }) : _cc_t('groupBy.noGrid', 'No grid'); }
+    if (groupKey === 'space') { var s = _ccGroupSpaceOf(env, it); return s ? s.label : _cc_t('groupBy.noRoom', 'No room'); }
+    if (groupKey === 'zone') return _ccGroupZoneOf(env, it) || _cc_t('groupBy.noZone', 'No zone');
+    var v = _ccGroupPropOf(env, it, groupKey.slice(_CC_PROP_GROUP_PREFIX.length));
+    return v != null ? v : _cc_t('groupBy.noValue', '(none)');
+  }
+  window._ccClashPropertyNames = _ccClashPropertyNames;
+
+  function _groupKeyFor(it, groupKey, modelsById, spatialMap, elementDegreeMap, env) {
+    if (env && _ccGroupKeyNeedsEnv(groupKey)) return _ccGroupEnvLabel(it, groupKey, env);
     switch(groupKey) {
       case 'storey': return it.elemAStorey || it.elemBStorey || it.storey || 'Unknown';
       case 'discipline': return (it.disciplines||[]).sort().join(' \u2194 ') || 'Unknown';
@@ -36205,7 +36419,9 @@ function startApp() {
     // 'nearby' needs every item's location at once (union-find), unlike every
     // other groupBy dimension which only looks at the item itself — compute
     // it once here rather than per-item inside _groupKeyFor.
-    var spatialMap = groupByArr.indexOf('nearby') !== -1 ? _ccSpatialClusterMap(items) : null;
+    var spatialMap = groupByArr.indexOf('nearby') !== -1 ? _ccSpatialClusterMap(items, opts.nearbyRadius) : null;
+    // grid / room / zone / property keys read the models (memoised per clash)
+    var groupEnv = groupByArr.some(_ccGroupKeyNeedsEnv) ? _ccGroupEnv(opts.models) : null;
     // 'element' (root-cause grouping) needs every item's degree at once too
     // (which element touches the most others), computed once for the same
     // reason as spatialMap above.
@@ -36213,7 +36429,7 @@ function startApp() {
     if (opts.degOut && elementDegreeMap) opts.degOut.deg = elementDegreeMap; // the incremental path continues from it
     var groupMap = {};
     items.forEach(function(it) {
-      var parts = groupByArr.map(function(g){ return _groupKeyFor(it, g, modelsById, spatialMap, elementDegreeMap); });
+      var parts = groupByArr.map(function(g){ return _groupKeyFor(it, g, modelsById, spatialMap, elementDegreeMap, groupEnv); });
       var k = parts.join(' \u2502 '); // use │ as separator (visually distinct, rare in names)
       if (!groupMap[k]) groupMap[k] = [];
       groupMap[k].push(it);
@@ -36231,12 +36447,15 @@ function startApp() {
       _gs.sort(function(a, b){ return (b._w - a._w) || _ccElemGroupTieCmp(a, b); });
       return _gs.map(function(g){ return { label: g.label, items: g.items }; });
     }
+    // the v2 keys' "No room" / "No grid" \u2026 groups go after the real values
+    var noneLast = groupEnv ? _ccGroupNoneLabels() : null;
     var keys = Object.keys(groupMap).sort(function(a,b){
       var pa=a.split(' \u2502 '), pb=b.split(' \u2502 ');
       for (var i=0;i<Math.max(pa.length,pb.length);i++){
+        if (noneLast) { var xa=noneLast.indexOf(pa[i])!==-1, xb=noneLast.indexOf(pb[i])!==-1; if (xa!==xb) return xa?1:-1; }
         var na=parseFloat(pa[i]||''), nb=parseFloat(pb[i]||'');
         if(!isNaN(na)&&!isNaN(nb)){var r=na-nb;if(r!==0)return r;}
-        else{var r=(pa[i]||'').localeCompare(pb[i]||'');if(r!==0)return r;}
+        else{var r=noneLast?(pa[i]||'').localeCompare(pb[i]||'',undefined,{numeric:true}):(pa[i]||'').localeCompare(pb[i]||'');if(r!==0)return r;}
       }
       return 0;
     });
@@ -36756,6 +36975,81 @@ function startApp() {
     facets: function(st) { var tm = _ccTriageModel(st); return window._ccClashTriageCore.facetCounts(tm.index, (st.triage && st.triage.facets) || {}); },
     groups: function(items) { return groupAndSort(items, ['element'], []); }
   };
+  // ── Clash list grouping levels (grouping v2, docs/INTERNALS.md §21.61) ──
+  // "by [Storey] then [Grid] then [—]": up to three levels, applied in order.
+  // "Property…" opens a picker of the Pset.Name properties found on the
+  // clashing elements (the list is built only when the picker opens); a
+  // radius input (metres, pref nearbyRadiusM) follows when a level is
+  // "Location" (nearby).
+  var _CC_GROUP_MAX_LEVELS = 3;
+  function ClashGroupPropertyPicker(props) {
+    var names = useMemo(function(){ return _ccClashPropertyNames(props.clashes, props.models); }, [props.clashes, props.models]);
+    return html`<div data-cc-group-prop-picker="1" role="group" aria-label=${_cc_t('groupBy.propertyPick','Group by property')}
+      style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:'1 1 100%',minWidth:0}}>
+      ${names.length ? html`<select autoFocus data-cc-group-prop-select="1" aria-label=${_cc_t('groupBy.propertyPick','Group by property')} value=""
+          style=${{...props.DS,flex:1,minWidth:0}}
+          onChange=${function(e){ if (e.target.value) props.onPick(e.target.value); }}
+          onKeyDown=${function(e){ if (e.key === 'Escape') { e.stopPropagation(); props.onCancel(); } }}>
+          <option value="">${_cc_t('groupBy.propertyChoose','Choose a property…')}</option>
+          ${names.slice(0, 500).map(function(n){ return html`<option key=${n} value=${n}>${n}</option>`; })}
+        </select>`
+      : html`<span style=${{...props.DL,whiteSpace:'normal'}}>${_cc_t('groupBy.propertyNone','The clashing elements carry no properties')}</span>`}
+      <button type="button" onClick=${props.onCancel} style=${S_BTN_GHOST_SM}>${_cc_t('common.cancel','Cancel')}</button>
+    </div>`;
+  }
+  function ClashGroupLevels(props) {
+    var levels = (props.levels || []).filter(function(g){ return g && g !== 'none' && g !== 'element' && g !== 'cluster'; });
+    var d = props.d, DS = props.DS, DL = props.DL;
+    var pk = useState(-1), pickFor = pk[0], setPickFor = pk[1];
+    var rd = useState(null), radiusDraft = rd[0], setRadiusDraft = rd[1];
+    var radius = props.radius > 0 ? props.radius : 1.5;
+    function setLevels(next) {
+      d({t: props.action, v: next.filter(function(g, j){ return g && g !== 'none' && next.indexOf(g) === j; })});
+    }
+    function onLevel(i, v) {
+      if (v === 'property') { setPickFor(i); return; }
+      var next = levels.slice();
+      if (v === 'none') next.splice(i, 1); else next[i] = v;
+      setLevels(next);
+    }
+    function commitRadius() {
+      if (radiusDraft == null) return;
+      var v = parseFloat(String(radiusDraft).replace(',', '.'));
+      setRadiusDraft(null);
+      if (v > 0 && v <= 100 && v !== radius) d({t: A.UPD_PREFS, u: {nearbyRadiusM: Math.round(v * 100) / 100}});
+    }
+    // a trailing "then —" select adds the next level
+    var rows = levels.length < _CC_GROUP_MAX_LEVELS ? levels.concat(['none']) : levels;
+    return html`<div data-cc-group-levels="1" style=${{display:'contents'}}>
+      ${rows.map(function(cur, i){
+        var used = levels.filter(function(g, j){ return j !== i; });
+        var opts = props.opts.filter(function(o){ return used.indexOf(o[0]) === -1; });
+        opts = opts.concat([['property', _cc_t('groupBy.property','Property…')]]);
+        if (_ccIsPropGroupKey(cur)) opts = opts.concat([[cur, _cc_t('groupBy.propertyOf','Property: {name}',{name: cur.slice(_CC_PROP_GROUP_PREFIX.length)})]]);
+        return html`<label key=${'lvl' + i} style=${{display:'flex',alignItems:'center',gap:'var(--space-1)',flex:'1 1 9rem',minWidth:0}}>
+          <span style=${DL}>${i === 0 ? _cc_t('issues.groupBy','by') : _cc_t('groupBy.then','then')}</span>
+          <select data-cc-group-level=${i} value=${cur} style=${{...DS,flex:1,minWidth:0}}
+            onChange=${function(e){ onLevel(i, e.target.value); }}>
+            ${opts.map(function(o){ return html`<option key=${o[0]} value=${o[0]}>${o[1]}</option>`; })}
+          </select>
+        </label>`;
+      })}
+      ${levels.indexOf('nearby') !== -1 && html`<label style=${{display:'flex',alignItems:'center',gap:'var(--space-1)'}}>
+        <span style=${DL}>${_cc_t('groupBy.radius','Radius (m)')}</span>
+        <input type="number" data-cc-nearby-radius="1" min="0.1" max="100" step="0.5" inputMode="decimal"
+          value=${radiusDraft != null ? radiusDraft : String(radius)}
+          aria-label=${_cc_t('groupBy.radiusAria','Location grouping radius in metres')}
+          onInput=${function(e){ setRadiusDraft(e.target.value); }}
+          onBlur=${commitRadius}
+          onKeyDown=${function(e){ e.stopPropagation(); if (e.key === 'Enter') commitRadius(); else if (e.key === 'Escape') setRadiusDraft(null); }}
+          style=${{...S_INPUT,width:'4.5rem',fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)'}} />
+      </label>`}
+      ${pickFor !== -1 && html`<${ClashGroupPropertyPicker} clashes=${props.clashes} models=${props.models} DS=${DS} DL=${DL}
+        onCancel=${function(){ setPickFor(-1); }}
+        onPick=${function(name){ var next = levels.slice(); next[Math.min(pickFor, next.length)] = _CC_PROP_GROUP_PREFIX + name; setPickFor(-1); setLevels(next); }} />`}
+    </div>`;
+  }
+
   // One group header of the clash/issue list (root-cause "By element" card,
   // AI cluster card or the plain header of any other grouping). Memoised on
   // stable props (the group object is reused by VirtualList while its items
@@ -36993,7 +37287,12 @@ function startApp() {
     var rawItemsProp=props.items, activeId=props.activeId, d=props.d, isClash=props.isClash, prefs=props.prefs, models=props.models||_VL_NO_MODELS;
     var rowModelsRef = useRef(null);
     var rowModels = _ccStableModels(rowModelsRef, models, false); // rows never show a model name
-    var groupModels = [].concat(props.groupBy || []).indexOf('model') !== -1 ? models : null;
+    // what the groups read from the models: the names ('model'), or the
+    // elements / grid lines / lazy props (grid, room, zone, property — the
+    // stable rowModels, so a visibility toggle or colour change regroups nothing)
+    var _gbArr = [].concat(props.groupBy || []);
+    var groupModels = _gbArr.indexOf('model') !== -1 ? models : (_gbArr.some(_ccGroupKeyNeedsEnv) ? rowModels : null);
+    var nearbyRadius = _gbArr.indexOf('nearby') !== -1 ? (props.nearbyRadius || null) : null;
     var triageResults = props.triageResults || {};
     var storeyLabel = props.storeyLabel || null; // normalised storey names for the group headers
     var groupBy = props.groupBy || 'none';
@@ -37148,7 +37447,7 @@ function startApp() {
       }
       if (!next) {
         var degOut = elem ? {} : null;
-        next = _ccStabilizeGroups(prevGroupsRef.current, groupAndSort(items, groupBy, sortBy, {models: models, degOut: degOut}));
+        next = _ccStabilizeGroups(prevGroupsRef.current, groupAndSort(items, groupBy, sortBy, {models: models, degOut: degOut, nearbyRadius: nearbyRadius}));
         eg = elem ? _ccElementGroupState(items, next, degOut.deg) : null;
       }
       prevGroupsRef.current = next;
@@ -37156,7 +37455,7 @@ function startApp() {
       if (_CC_RENDER_COUNT && isClash) window.__ccListGroups = { items: items, groups: next };
       return next;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the models only name the groups of a 'model' grouping (groupModels)
-    }, [items, groupBy, sortBy, groupModels, props.reviewGroups]);
+    }, [items, groupBy, sortBy, groupModels, nearbyRadius, props.reviewGroups]);
     var flatItems = useMemo(function(){
       if(!groups) return items;
       var flat = [];

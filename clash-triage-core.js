@@ -112,7 +112,10 @@
   // One value per clash and facet (single-valued, so per-facet counts add
   // up to the items matching every other facet). 'tag' is the only
   // multi-valued key: the suggested views' predicates.
-  var FACETS = ['severity', 'extent', 'storey', 'modelPair', 'trade', 'typePair', 'status', 'assignee', 'bucket'];
+  // 'grid' (nearest grid intersection, "C-4") and 'space' (the room around
+  // the clash point) come from the context (ctx.grid / ctx.space, which read
+  // the models); '' when unknown.
+  var FACETS = ['severity', 'extent', 'storey', 'grid', 'space', 'modelPair', 'trade', 'typePair', 'status', 'assignee', 'bucket'];
   var SEV_RANK = { critical: 3, major: 2, minor: 1, info: 0 };
   function _nice(t) { return String(t || 'Element').replace(/^Ifc/i, '').replace(/([a-z])([A-Z])/g, '$1 $2') || 'Element'; }
   function _pair(a, b, sep) { a = String(a || '?'); b = String(b || '?'); return a === b ? a : (a < b ? a + sep + b : b + sep + a); }
@@ -179,7 +182,7 @@
     if (!changed) return values;
     return out.filter(function(v, i, a) { return a.indexOf(v) === i; }).sort();
   }
-  // ctx: { severity(c), bucket(c), storey(modelId, name), trade(c, side) } —
+  // ctx: { severity(c), bucket(c), storey(modelId, name), trade(c, side), grid(c), space(c) } —
   // no model names: the model pair is keyed by ids (modelPairKey)
   function facetValues(c, ctx) {
     ctx = ctx || {};
@@ -216,6 +219,8 @@
       severity: sev,
       extent: ext,
       storey: stA || stB || '',
+      grid: ctx.grid ? String(ctx.grid(c) || '') : '',
+      space: ctx.space ? String(ctx.space(c) || '') : '',
       modelPair: modelPairKey(c),
       trade: _pair(tA || 'other', tB || 'other', ' × '),
       typePair: _pair(_nice(c.elemAType), _nice(c.elemBType), ' × '),

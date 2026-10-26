@@ -82,6 +82,21 @@ test('grid-bucket boundary: points just across a cell edge but within radius sti
   assert.equal(map.get('a'), map.get('b'));
 });
 
+test('a wider radius (pref nearbyRadiusM) merges what the default keeps apart; null / 0 / negative fall back to 1.5 m', () => {
+  const items = [clash('a', [0, 0, 0]), clash('b', [3, 0, 0]), clash('c', [6, 0, 0])];
+  const def = _ccSpatialClusterMap(items);
+  assert.equal(new Set(def.values()).size, 3);
+  const wide = _ccSpatialClusterMap(items, 3.5);
+  assert.equal(new Set(wide.values()).size, 1);
+  [null, 0, -2].forEach((r) => assert.deepEqual([..._ccSpatialClusterMap(items, r)], [...def]));
+});
+
+test('labels are deterministic for the same input and radius', () => {
+  const items = [clash('a', [0, 0, 0]), clash('b', [9, 0, 0]), clash('c', [0.5, 0, 0]), clash('d', [9.5, 0, 0])];
+  assert.deepEqual([..._ccSpatialClusterMap(items, 2)], [..._ccSpatialClusterMap(items, 2)]);
+  assert.deepEqual([..._ccSpatialClusterMap(items, 2)].map((e) => e.join('=')), ['a=Area 01', 'b=Area 02', 'c=Area 01', 'd=Area 02']);
+});
+
 test('empty input returns an empty map without throwing', () => {
   const map = _ccSpatialClusterMap([]);
   assert.equal(map.size, 0);
