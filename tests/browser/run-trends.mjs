@@ -200,9 +200,9 @@ try {
   if (process.env.CC_TRENDS_SHOT) await page.locator('.cc-left-panel').screenshot({ path: process.env.CC_TRENDS_SHOT + '-table.png' }).catch(() => {});
   const table = await page.evaluate(() => {
     const out = {};
-    for (const tr of document.querySelectorAll('[data-cc-trend-table="pair"] tr[data-cc-trend-row]')) {
+    for (const tr of document.querySelectorAll('[data-cc-trend-table="pair"] [data-cc-trend-row]')) {
       const o = {};
-      for (const td of tr.querySelectorAll('td[data-f]')) o[td.getAttribute('data-f')] = +td.textContent;
+      for (const td of tr.querySelectorAll('td[data-f]')) o[td.getAttribute('data-f')] = parseInt(td.textContent, 10); // "12 (−3)": value + change vs the run before
       out[tr.getAttribute('data-cc-trend-row')] = o;
     }
     return out;

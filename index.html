@@ -30185,23 +30185,29 @@ function startApp() {
         title=${opts.active ? _cc_t('trends.pairUnfilter', 'Show every discipline pair in the clash list') : _cc_t('trends.pairFilter', 'Show only this discipline pair in the clash list')}
         style=${{...S_BTN,...CARD,cursor:'pointer',border:'1px solid ' + (opts.active ? 'var(--accent)' : 'var(--border-subtle)'),background:opts.active ? 'var(--accent-bg)' : 'var(--bg-secondary)'}}>${inner}</button>`;
     }
+    // Narrow-panel table: each row's label spans the full width, its numbers
+    // sit on the line below in fields.length narrow columns; the previous run
+    // is a change next to the main number ("12 (−3)"), not its own column.
+    function delta(c, p, f) {
+      if (!c || !p) return '';
+      var dv = (c[f] || 0) - (p[f] || 0);
+      return dv === 0 ? '' : ' (' + (dv > 0 ? '+' : '−') + Math.abs(dv) + ')';
+    }
     function table(rows, labelOf, fields, caption, dim) {
-      return html`<div style=${{overflowX:'auto'}}><table data-cc-trend-table=${dim} style=${{width:'100%',borderCollapse:'collapse',fontSize:'var(--text-xs)'}}>
+      var main = fields[0] === 'open' ? 'open' : 'total';
+      return html`<table data-cc-trend-table=${dim} style=${{width:'100%',tableLayout:'fixed',borderCollapse:'collapse',fontSize:'var(--text-xs)'}}>
         <caption style=${{...S_SECTION_LABEL,textAlign:'left',padding:'var(--space-1) 0'}}>${caption}</caption>
         <thead><tr>
-          <th scope="col" style=${TH}>${dim === 'pair' ? _cc_t('trends.colPair', 'Discipline pair') : dim === 'severity' ? _cc_t('trends.colSeverity', 'Severity') : dim === 'assignee' ? _cc_t('trends.colAssignee', 'Assignee') : _cc_t('trends.colRun', 'Clashes')}</th>
-          ${fields.map(function(f) { return html`<th key=${f} scope="col" style=${{...TH,textAlign:'right'}}>${_ccTrendFieldLabel(f)}</th>`; })}
-          <th scope="col" style=${{...TH,textAlign:'right'}}>${_cc_t('trends.colPrevious', 'Before')}</th>
+          ${fields.map(function(f) { return html`<th key=${f} scope="col" style=${{...TH,textAlign:'right',whiteSpace:'normal',overflowWrap:'anywhere'}}>${_ccTrendFieldLabel(f)}</th>`; })}
         </tr></thead>
-        <tbody>${rows.map(function(r) {
-          var c = last(r.cells), p = prev(r.cells), main = fields[0] === 'open' ? 'open' : 'total';
-          return html`<tr key=${r.key} data-cc-trend-row=${r.key}>
-            <th scope="row" style=${{...TD,fontWeight:'var(--weight-regular)',textAlign:'left',minWidth:'6rem'}}>${labelOf(r.key)}</th>
-            ${fields.map(function(f) { return html`<td key=${f} data-f=${f} style=${TDN}>${c ? (c[f] == null ? 0 : c[f]) : '–'}</td>`; })}
-            <td style=${TDN}>${p ? (p[main] == null ? 0 : p[main]) : '–'}</td>
-          </tr>`;
-        })}</tbody>
-      </table></div>`;
+        ${rows.map(function(r) {
+          var c = last(r.cells), p = prev(r.cells);
+          return html`<tbody key=${r.key} data-cc-trend-row=${r.key}>
+            <tr><th scope="rowgroup" colSpan=${fields.length} style=${{...TD,borderBottom:'none',fontWeight:'var(--weight-medium)',textAlign:'left',paddingBottom:0}}>${labelOf(r.key)}</th></tr>
+            <tr>${fields.map(function(f) { return html`<td key=${f} data-f=${f} style=${TDN}>${c ? (c[f] == null ? 0 : c[f]) : '–'}${f === main ? delta(c, p, f) : ''}</td>`; })}</tr>
+          </tbody>`;
+        })}
+      </table>`;
     }
     var pairLabel = function(k) { return _ccFacetValueLabel('trade', k); };
     var sevLabel = function(k) { return _ccFacetValueLabel('severity', k); };
