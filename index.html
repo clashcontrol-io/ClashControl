@@ -30099,7 +30099,7 @@ function startApp() {
   var _CC_TREND_SERIES = [
     { f: 'total', stroke: 'var(--text-muted)', w: 1, dash: null },
     { f: 'open', stroke: 'var(--accent)', w: 1.6, dash: null },
-    { f: 'new', stroke: 'var(--color-info)', w: 1.2, dash: '3 2' },
+    { f: 'new', stroke: 'var(--text-secondary)', w: 1.2, dash: '3 2' },
     { f: 'resolved', stroke: 'var(--text-primary)', w: 1, dash: '1 2' }
   ];
   // The legend says each line's style in words (no drawn sample: no icons).
@@ -31061,24 +31061,24 @@ function startApp() {
     var mA = rules.modelA, mB = rules.modelB;
     var bothAll = (mA==='all'||mA==null) && (mB==='all'||mB==null);
     function labelList(v){
-      if (v==='all'||v==null) return 'all';
+      if (v==='all'||v==null) return _cc_t('rulesSummary.all','all');
       var arr = Array.isArray(v) ? v : [v];
       if (arr.length === 0) return '∅';
       if (arr.length === 1) return _modelSelectLabel(arr[0], models||[]);
       if (arr.length === 2) return _modelSelectLabel(arr[0], models||[]) + ' + ' + _modelSelectLabel(arr[1], models||[]);
-      return arr.length + ' selections';
+      return _cc_t('rulesSummary.selections','{n} selections',{n:arr.length});
     }
     var scopePart;
-    if (nModels === 0) scopePart = 'no models loaded';
-    else if (bothAll) scopePart = nModels + ' model' + (nModels===1?'':'s') + ', all-vs-all';
+    if (nModels === 0) scopePart = _cc_t('rulesSummary.noModels','no models loaded');
+    else if (bothAll) scopePart = nModels === 1 ? _cc_t('rulesSummary.oneModelAll','1 model, all-vs-all') : _cc_t('rulesSummary.modelsAll','{n} models, all-vs-all',{n:nModels});
     else scopePart = labelList(mA) + ' ↔ ' + labelList(mB);
     var typePart;
-    if (!rules.hard) typePart = 'Soft clashes ' + (rules.minGap||0) + '–' + (rules.maxGap||100) + ' mm';
-    else if ((rules.maxGap||0) > 0) typePart = 'Hard + near miss ' + (rules.maxGap||0) + ' mm';
-    else typePart = 'Hard clashes';
+    if (!rules.hard) typePart = _cc_t('rulesSummary.soft','Soft clashes {min}–{max} mm',{min:rules.minGap||0,max:rules.maxGap||100});
+    else if ((rules.maxGap||0) > 0) typePart = _cc_t('rulesSummary.hardNear','Hard + near miss {mm} mm',{mm:rules.maxGap||0});
+    else typePart = _cc_t('rulesSummary.hard','Hard clashes');
     var selfPart = '';
     if (rules.excludeSelf === false || rules.selfClashModels === 'all' || (Array.isArray(rules.selfClashModels) && rules.selfClashModels.length>0)) {
-      selfPart = ' · self-clash on';
+      selfPart = ' · ' + _cc_t('rulesSummary.selfOn','self-clash on');
     }
     return typePart + ' · ' + scopePart + selfPart;
   }
@@ -31295,7 +31295,7 @@ function startApp() {
           </div>
           <div style=${{flex:1,minWidth:0}}>
             <div id="cc-run-detection-title" style=${{fontFamily:'var(--font-display)',fontSize:'var(--text-lg)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)',lineHeight:'var(--leading-tight)'}}>${_cc_t('run.title','Run clash detection')}</div>
-            <div style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',marginTop:'2px'}}>${summary}</div>
+            <div style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',overflowWrap:'anywhere',marginTop:'2px'}}>${summary}</div>
           </div>
           <button onClick=${close} style=${S_MODAL_CLOSE} aria-label=${_cc_t('run.closeAria','Close Run detection')}>✕</button>
         </div>
