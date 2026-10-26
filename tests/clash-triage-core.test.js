@@ -81,6 +81,32 @@ test('facet values are single-valued; counts of each facet add up to the items m
   }
 });
 
+test('grid and room facets come from the context; empty without it; filters, counts and saved views use them', () => {
+  assert.ok(t.FACETS.includes('grid') && t.FACETS.includes('space'));
+  const its = items(60);
+  // grid: "A-1" / "B-1" / none by index; room: two rooms and none
+  const gctx = Object.assign({}, ctx, {
+    grid: (c) => ['A-1', 'B-1', null][+c.id.slice(1) % 3],
+    space: (c) => ['Room 1', '', 'Room 2', 'Room 1'][+c.id.slice(1) % 4],
+  });
+  const v0 = t.facetValues(its[0], ctx);
+  assert.equal(v0.grid, '');
+  assert.equal(v0.space, '');
+  const idx = t.indexItems(its, gctx);
+  assert.deepEqual(idx.slice(0, 4).map((r) => [r.v.grid, r.v.space]), [['A-1', 'Room 1'], ['B-1', ''], ['', 'Room 2'], ['A-1', 'Room 1']]);
+  const counts = t.facetCounts(idx, {}, ['grid', 'space']);
+  assert.deepEqual(counts.grid, { 'A-1': 20, 'B-1': 20, '': 20 });
+  assert.deepEqual(counts.space, { 'Room 1': 30, '': 15, 'Room 2': 15 });
+  const sel = t.applyFacets(idx, { grid: ['A-1'], space: ['Room 1'] });
+  assert.ok(sel.length > 0 && sel.every((c) => +c.id.slice(1) % 3 === 0 && [0, 3].includes(+c.id.slice(1) % 4)));
+  // AND across: the room counts under a grid filter add up to that grid's items
+  const under = t.facetCounts(idx, { grid: ['B-1'] }, ['space']);
+  assert.equal(Object.values(under.space).reduce((a, b) => a + b, 0), 20);
+  const v = t.normaliseView({ name: 'Bay A-1', facets: { grid: ['A-1'], space: ['Room 1'] } });
+  assert.deepEqual(v.facets, { grid: ['A-1'], space: ['Room 1'] });
+  assert.ok(t.matchesFacets(idx[0].v, v.facets) && !t.matchesFacets(idx[1].v, v.facets));
+});
+
 test('OR inside a facet, AND across facets', () => {
   const idx = t.indexItems(items(120), ctx);
   const a = t.applyFacets(idx, { severity: ['critical'] }).length, b = t.applyFacets(idx, { severity: ['major'] }).length;

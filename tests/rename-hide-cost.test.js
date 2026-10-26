@@ -222,7 +222,7 @@ test('reducer wrapper migrates name-valued model pairs in the facets and saved v
 test('wiring: the list and the review set group incrementally, the triage model ignores names, visibility is outside the pass cache', () => {
   const vl = slice('  function VirtualList(props) {', '    if(items.length===0) {');
   assert.match(vl, /_ccElementGroupsDelta\(pin\.eg, items\)/);
-  assert.match(vl, /groupAndSort\(items, groupBy, sortBy, \{models: models, degOut: degOut\}\)/);
+  assert.match(vl, /groupAndSort\(items, groupBy, sortBy, \{models: models, degOut: degOut, nearbyRadius: nearbyRadius\}\)/);
   assert.match(vl, /_ccBuildConflictRows\(items, groups, collapsed, groupLimits, isClusterGroup, rowSegRef\.current\)/);
   const rev = slice('  function _ccReviewModel(s) {', '  // ── Truthful empty/filtered states');
   assert.match(rev, /_ccElementGroupsDelta\(L\.eg, clashes\)/);

@@ -64,6 +64,7 @@ test('PERSISTED_PREF_KEYS is exactly the set the UPD_PREFS reducer case iterates
     'unitScaleOverride', 'lightSettings', 'measureUnits', 'measurePrecision',
     'measureMagnifier', 'measureCalibration', 'homeView', 'zoomSens',
     'navInputMode', 'showSpaces', 'showGridLines', 'preRunDontAsk', 'autoRerun',
+    'nearbyRadiusM',
   ]);
 });
 
