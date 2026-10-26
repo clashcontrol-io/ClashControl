@@ -611,22 +611,172 @@
   // sub-discipline counts as "same discipline" as every other MEP element
   // (the pre-sub-discipline behaviour), and an unresolved pipe ('piping') is
   // the same trade as heating / plumbing / fire pipes.
+  //
+  // Coordination matrix v2 (rules.matrixRules, one cell = one rule): at each
+  // level the cell's rule (matrixRules[key]) is read before the legacy
+  // boolean (disciplineMatrix[key]), so old projects and the pressure
+  // harness, which only carry the boolean, resolve exactly as before.
   function disciplinePairEnabled(discA, discB, rules) {
     rules = rules || {};
     var pairKey = discA < discB ? discA + ':' + discB : discB + ':' + discA;
-    var dm = rules.disciplineMatrix;
+    var dm = rules.disciplineMatrix, mr = rules.matrixRules, r;
+    if (mr && (r = mr[pairKey]) && MODE_OK[r.mode]) return r.mode !== 'off';
     if (dm && dm[pairKey] !== undefined) return dm[pairKey] !== false;
     var tA = topOf(discA), tB = topOf(discB);
     if (tA !== discA || tB !== discB) {
       var tKey = tA < tB ? tA + ':' + tB : tB + ':' + tA;
+      if (mr && (r = mr[tKey]) && MODE_OK[r.mode]) return r.mode !== 'off';
       if (dm && dm[tKey] !== undefined) return dm[tKey] !== false;
     }
+    return _defaultPairEnabled(discA, discB, tA, tB, rules);
+  }
+  function _defaultPairEnabled(discA, discB, tA, tB, rules) {
     if (tA !== tB) return true;
     if (rules.excludeSameDiscipline === false) return true;
     var sA = subOf(discA), sB = subOf(discB);
     if (!sA || !sB || sA === sB) return false;
     if ((sA === 'piping' || sB === 'piping') && SUB_FAMILY[sA] === SUB_FAMILY[sB]) return false;
     return true;
+  }
+
+  // ── Coordination matrix v2: one cell = one rule ──
+  // rules.matrixRules['structural:mep.ventilation'] =
+  //   { mode: 'off'|'on'|'hard'|'clearance', gapMm: number|null,
+  //     severity: null|'minor'|'major'|'critical', note: '' }
+  // mode 'on' = tested with the run's own settings (what a cell without a
+  // rule does when the default turns it on); 'hard' = tested with gap 0 (no
+  // clearance check for this pair); 'clearance' = tested with gapMm as the
+  // pair's clearance (null gapMm = the run's max gap). A rule with an unknown
+  // mode is ignored (the level below decides).
+  var MODE_OK = { off: true, on: true, hard: true, clearance: true };
+  var SEVERITY_OK = { minor: true, major: true, critical: true };
+  var MATRIX_MODES = Object.freeze(['on', 'off', 'hard', 'clearance']);
+  var MATRIX_SEVERITIES = Object.freeze(['minor', 'major', 'critical']);
+  function matrixCellKey(a, b) { return a < b ? a + ':' + b : b + ':' + a; }
+  function _gapOk(g) { return typeof g === 'number' && isFinite(g) && g >= 0; }
+  // A clean copy of one cell rule, or null when it is not a rule.
+  function normalizeCellRule(r) {
+    if (!r || typeof r !== 'object' || !MODE_OK[r.mode]) return null;
+    var g = r.gapMm == null || r.gapMm === '' ? null : +r.gapMm;
+    return {
+      mode: r.mode,
+      gapMm: r.mode === 'clearance' && _gapOk(g) ? g : null,
+      severity: SEVERITY_OK[r.severity] ? r.severity : null,
+      note: typeof r.note === 'string' ? r.note.slice(0, 500) : ''
+    };
+  }
+  // A clean matrixRules map: valid keys ('a:b' sorted, known shape) and rules.
+  function normalizeMatrixRules(mr) {
+    var out = {};
+    if (!mr || typeof mr !== 'object') return out;
+    Object.keys(mr).forEach(function(k) {
+      var parts = String(k).split(':');
+      if (parts.length !== 2 || !parts[0] || !parts[1]) return;
+      var r = normalizeCellRule(mr[k]);
+      if (r) out[matrixCellKey(parts[0], parts[1])] = r;
+    });
+    return out;
+  }
+  // The rule that decides a discipline pair, with the same precedence as
+  // disciplinePairEnabled: exact cell (rule, then legacy boolean) > top-level
+  // cell (rule, then legacy boolean) > default. Always returns
+  // { mode, gapMm, severity, note, key, level } — level is 'exact' | 'top' |
+  // 'default', key the cell that decided ('default': the exact cell key).
+  function cellRule(discA, discB, rules) {
+    rules = rules || {};
+    var mr = rules.matrixRules, dm = rules.disciplineMatrix;
+    var k = matrixCellKey(discA, discB);
+    var tA = topOf(discA), tB = topOf(discB);
+    var keys = [[k, 'exact']];
+    if (tA !== discA || tB !== discB) keys.push([matrixCellKey(tA, tB), 'top']);
+    for (var i = 0; i < keys.length; i++) {
+      var key = keys[i][0], r = mr && normalizeCellRule(mr[key]);
+      if (r) return { mode: r.mode, gapMm: r.gapMm, severity: r.severity, note: r.note, key: key, level: keys[i][1] };
+      if (dm && dm[key] !== undefined) return { mode: dm[key] !== false ? 'on' : 'off', gapMm: null, severity: null, note: '', key: key, level: keys[i][1] };
+    }
+    return { mode: _defaultPairEnabled(discA, discB, tA, tB, rules) ? 'on' : 'off', gapMm: null, severity: null, note: '', key: k, level: 'default' };
+  }
+  // The pair's clearance from the matrix in mm: gapMm of a 'clearance' cell,
+  // 0 for a 'hard' cell, null when the cell does not set one (the run's max
+  // gap applies). The engine combines it as: type-pair tolerance > this >
+  // max gap (see _pairGapMFor in index.html).
+  function pairGapMm(discA, discB, rules) {
+    var c = cellRule(discA, discB, rules);
+    if (c.mode === 'hard') return 0;
+    if (c.mode === 'clearance' && c.gapMm != null) return c.gapMm;
+    return null;
+  }
+  // The severity a cell sets for its clashes (null = derived as usual).
+  function pairSeverity(discA, discB, rules) {
+    var c = cellRule(discA, discB, rules);
+    return c.mode === 'off' ? null : c.severity;
+  }
+  // Largest gap any cell can ask for (mm) — the broad-phase margin must cover it.
+  function maxCellGapMm(rules) {
+    var mr = rules && rules.matrixRules, m = 0;
+    if (!mr || typeof mr !== 'object') return 0;
+    Object.keys(mr).forEach(function(k) {
+      var r = normalizeCellRule(mr[k]);
+      if (r && r.mode === 'clearance' && r.gapMm != null && r.gapMm > m) m = r.gapMm;
+    });
+    return m;
+  }
+  // True when some cell changes a pair's gap ('hard' or a 'clearance' gap) /
+  // sets a severity — lets the engine skip the per-pair lookup otherwise.
+  function matrixSetsGaps(rules) {
+    var mr = rules && rules.matrixRules;
+    if (!mr || typeof mr !== 'object') return false;
+    return Object.keys(mr).some(function(k) {
+      var r = normalizeCellRule(mr[k]);
+      return !!r && (r.mode === 'hard' || (r.mode === 'clearance' && r.gapMm != null));
+    });
+  }
+  function matrixSetsSeverity(rules) {
+    var mr = rules && rules.matrixRules;
+    if (!mr || typeof mr !== 'object') return false;
+    return Object.keys(mr).some(function(k) { var r = normalizeCellRule(mr[k]); return !!r && !!r.severity; });
+  }
+  // The former Standards panel's discipline-pair rules (localStorage
+  // cc_standard_pair_rules: [{discipline_a, discipline_b, clearance_mm,
+  // hard_always_flagged}], disciplines from its own list) as matrix cells:
+  // a clearance > 0 becomes a 'clearance' cell, 0 a 'hard' cell, a rule
+  // without a clearance carries nothing and is skipped. 'mechanical' maps
+  // to the MEP cell, 'electrical' to the electrical trade. First rule per
+  // cell wins (the old lookup did the same).
+  var _STD_DISC = { mechanical: 'mep', electrical: 'mep.electrical', structural: 'structural', architectural: 'architectural', civil: 'civil', other: 'other' };
+  function matrixRulesFromStandardPairRules(list) {
+    var out = {};
+    if (!Array.isArray(list)) return out;
+    list.forEach(function(r) {
+      if (!r || typeof r !== 'object') return;
+      var a = _STD_DISC[String(r.discipline_a || '').toLowerCase()], b = _STD_DISC[String(r.discipline_b || '').toLowerCase()];
+      if (!a || !b) return;
+      var k = matrixCellKey(a, b);
+      if (out[k]) return;
+      var g = r.clearance_mm === '' || r.clearance_mm == null ? NaN : +r.clearance_mm;
+      if (!_gapOk(g)) return;
+      out[k] = g > 0 ? { mode: 'clearance', gapMm: g, severity: null, note: '' } : { mode: 'hard', gapMm: null, severity: null, note: '' };
+    });
+    return out;
+  }
+  // Matrix template (export / import as JSON).
+  function matrixTemplate(rules) {
+    rules = rules || {};
+    var dm = {};
+    Object.keys(rules.disciplineMatrix || {}).forEach(function(k) { dm[k] = rules.disciplineMatrix[k] !== false; });
+    return { kind: 'clashcontrol.matrix', version: 1, matrixRules: normalizeMatrixRules(rules.matrixRules), disciplineMatrix: dm };
+  }
+  // Parsed template -> { matrixRules, disciplineMatrix } or null when it is not one.
+  function readMatrixTemplate(obj) {
+    if (!obj || typeof obj !== 'object' || obj.kind !== 'clashcontrol.matrix' || !obj.matrixRules || typeof obj.matrixRules !== 'object') return null;
+    var dm = {};
+    if (obj.disciplineMatrix && typeof obj.disciplineMatrix === 'object') {
+      Object.keys(obj.disciplineMatrix).forEach(function(k) {
+        var p = String(k).split(':');
+        if (p.length === 2 && p[0] && p[1]) dm[matrixCellKey(p[0], p[1])] = obj.disciplineMatrix[k] !== false;
+      });
+    }
+    return { matrixRules: normalizeMatrixRules(obj.matrixRules), disciplineMatrix: dm };
   }
 
   function matrixSkipsSameDiscipline(eA, mA, eB, mB, sameModel, rules) {
@@ -795,6 +945,20 @@
     elementRole: elementRole,
     matrixKeyOf: matrixKeyOf,
     disciplinePairEnabled: disciplinePairEnabled,
+    matrixModes: MATRIX_MODES,
+    matrixSeverities: MATRIX_SEVERITIES,
+    matrixCellKey: matrixCellKey,
+    normalizeCellRule: normalizeCellRule,
+    normalizeMatrixRules: normalizeMatrixRules,
+    cellRule: cellRule,
+    pairGapMm: pairGapMm,
+    pairSeverity: pairSeverity,
+    maxCellGapMm: maxCellGapMm,
+    matrixSetsGaps: matrixSetsGaps,
+    matrixSetsSeverity: matrixSetsSeverity,
+    matrixRulesFromStandardPairRules: matrixRulesFromStandardPairRules,
+    matrixTemplate: matrixTemplate,
+    readMatrixTemplate: readMatrixTemplate,
     matrixSkipsSameDiscipline: matrixSkipsSameDiscipline,
     detectDiscipline: detectDiscipline,
     classifyElement: classifyElement,

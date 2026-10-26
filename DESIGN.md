@@ -23,15 +23,15 @@ the tokens below rather than introducing one-off colors, sizes, or spacings.
   lives in CSS custom properties at the top of `index.html` and a small set of
   shared style-object constants near `S_BTN`. Components are inline-composed
   with token references — no separate component library.
-- **Themes:** dark (`:root`) is the default; light (`[data-theme=light]`) is a
+- **Themes:** light (`:root`) is the default; dark (`[data-theme=dark]`) is a
   full peer with mirrored tokens.
 
 ---
 
 ## 2. Color Palette & Roles
 
-All colors below live as CSS custom properties in `index.html` `:root` (dark)
-and `[data-theme=light]`. **Never** hand-pick a hex in component code; pull
+All colors below live as CSS custom properties in `index.html` `:root` (light)
+and `[data-theme=dark]`. **Never** hand-pick a hex in component code; pull
 from a token.
 
 ### Surfaces
@@ -64,15 +64,29 @@ from a token.
 | `--border`         | `#334155` | `#d1d5db` | Strong dividers, modal edges     |
 | `--border-subtle`  | `#1e293b` | `#e2e8f0` | List rows, internal separators   |
 
-### Status (semantic — always use these for success/warning/danger/info)
-| Role        | `--color-{role}` | `--color-{role}-fg` | `--color-{role}-bg` | `--color-{role}-border`             |
-|-------------|------------------|---------------------|---------------------|-------------------------------------|
-| `success`   | `#22c55e`        | `#34d399`           | `#052e16`           | `rgba(34,197,94,.35)`               |
-| `warning`   | `#f59e0b`        | `#fbbf24`           | `#422006`           | `rgba(245,158,11,.35)`              |
-| `danger`    | `#ef4444`        | `#fca5a5`           | `#450a0a`           | `rgba(239,68,68,.4)`                |
-| `info`      | `#3b82f6`        | `#93c5fd`           | `#172554`           | `rgba(59,130,246,.35)`              |
+### Status (semantic — always use these for success/danger/info)
 
-(Light theme provides equivalents that swap fg/bg lightness to remain legible.)
+**No amber anywhere in the UI.** The `warning` role exists for older code
+but resolves to the neutral tokens (`--color-warning` → `--text-muted`,
+`-fg` → `--text-secondary`, `-bg` → `--bg-tertiary`, `-border` →
+`--border`; the same for `--pill-amber*`, `--sev-major`,
+`--progress-warn`). Never add an amber/orange/yellow hex to chrome — a
+problem is said in words, in a neutral note.
+
+Values as they are in `index.html` (light `:root` / dark `[data-theme=dark]`):
+
+| Role      | `--color-{role}`      | `-fg`                 | `-bg`                 | `-border`                                   |
+|-----------|-----------------------|-----------------------|-----------------------|---------------------------------------------|
+| `success` | `#16a34a` / `#22c55e` | `#15803d` / `#34d399` | `#f0fdf4` / `#052e16` | `rgba(22,163,74,.2)` / `rgba(34,197,94,.35)` |
+| `warning` | neutral (see above)   | neutral               | neutral               | neutral                                     |
+| `danger`  | `#dc2626` / `#ef4444` | `#b91c1c` / `#fca5a5` | `#fef2f2` / `#450a0a` | `rgba(220,38,38,.2)` / `rgba(239,68,68,.4)` |
+| `info`    | `#1a6b4a` / `#4d9e75` | `#155c3e` / `#6dba8e` | `#ecf7f2` / `#0d2b1e` | `rgba(26,107,74,.2)` / `rgba(77,158,117,.35)` |
+
+`info` is the accent green family, not blue. So it is never a way to tell
+something apart from `success`: where two states must read differently next
+to "success" (e.g. the model version comparison: added vs changed), use a
+neutral text token for the second one — the comparison draws changed
+elements in `--text-primary` and its legend uses the same tokens.
 
 ### Scene & overlays
 | Token                 | Purpose                                |
@@ -177,8 +191,15 @@ translate-Y micro-interaction.
 | Secondary | `var(--bg-secondary)`            | `var(--text-secondary)`| `1px solid var(--border)`                        |
 | Ghost     | `none`                           | `var(--text-muted)`    | none                                             |
 | Danger    | `var(--color-danger)`            | `#fff`                 | none                                             |
+| Danger (quiet) | `none`                      | `var(--color-danger-fg)` | none — `S_BTN_DANGER_GHOST_SM`, a destructive action in a dense row (Remove a model) |
 | Success   | `var(--color-success-bg)`        | `var(--color-success-fg)` | `1px solid var(--color-success-border)`       |
 | Info      | `var(--color-info-bg)`           | `var(--color-info-fg)` | `1px solid var(--color-info-border)`             |
+
+**Hierarchy in a panel:** one Primary per panel (Models: "Add model"; Data
+quality: "Run checks"). Every other action is Secondary (`S_BTN_SECONDARY_SM`),
+undo-type actions (Reset, Remove from map, Hide changes) are Ghost, and an
+action keeps the same variant in every state — never a filled slab in one
+state and a text link in another.
 
 **States:** `:hover` lightens background by one step; `:focus-visible` adds a
 2px `--accent` outline (`outline-offset: 2px`); `:active` applies
@@ -189,6 +210,7 @@ translate-Y micro-interaction.
 ```js
 S_INPUT = {
   width: '100%',
+  boxSizing: 'border-box',   // padding + border inside the 100%, never wider than its column
   background: 'var(--bg-tertiary)',
   color: 'var(--text-primary)',
   fontSize: 'var(--text-md)',
@@ -211,6 +233,13 @@ the hover state. Active rows use `S_LIST_ROW_ACTIVE` (a 2px accent left
 border and `var(--bg-secondary)` background). Padding is
 `var(--space-3) var(--space-3)`; bottom border is `--border-subtle`. Title
 uses `--text-sm`/`--weight-medium`; description `--text-xs`/`--text-faint`.
+
+### Inline notes (`S_NOTE`)
+
+- Every inline note — context ("the other sharing mode is in use") or a
+  problem to act on (not syncing, records refused, feature unavailable in
+  this browser) — is `S_NOTE`: `--text-secondary` on `--bg-tertiary`,
+  `--border-subtle`. The words carry the meaning; no amber, no status tint.
 
 ### Status pills (`cc-status-pill`)
 
@@ -241,6 +270,11 @@ Required ARIA: `role="dialog"`, `aria-modal="true"`,
 `aria-label="Close …"`. Escape closes the modal via a window keydown
 listener registered in `useEffect`.
 
+Initial focus: a dialog whose first control is the close `×` focuses its own
+card on open (`_ccUseFocusTrap(ref, true, {initialFocus:'container'})`, card
+`tabindex="-1"`, no outline), so the × never shows a ring until the user
+tabs to it; Tab then moves to the first control.
+
 Card width defaults: 440 (form modals), 480 (settings), 460 (welcome).
 Border radius `var(--radius-lg)`, shadow `var(--shadow-lg)`. Body padding
 `var(--space-5)`; header padding `var(--space-4) var(--space-5)`.
@@ -257,7 +291,25 @@ border, `var(--radius-md)` corner, `var(--shadow-md)` elevation, and an
 
 Active tab gets a 2px `var(--accent)` left border (vertical rail) or bottom
 border (horizontal). Inactive tabs use `var(--text-muted)`; active uses
-`var(--text-primary)`. Hover transitions over `var(--duration-fast)`.
+`var(--text-primary)`. Hover transitions over `var(--duration-fast)`. Nothing
+else marks the active tab — no dot or glyph before the label. `role="tablist"`
+/ `role="tab"` + `aria-selected`.
+
+### Disclosure (`CcDisclosure`)
+
+Anything that opens and closes in place (property sets, Location, a data
+quality check's elements, section headers) is a `<button>` with
+`aria-expanded` (+ `aria-controls`). Its marker is the text it always had
+(▶ / ▼, or ▲ / ▼ in the data-quality panel) — no icon is added for it.
+`CcDisclosure` variants: `title` (`S_SUBTITLE`) and `item` (`--text-xs`
+semibold, `--text-secondary`).
+
+### Label / value rows
+
+Inspector and model-card rows give the label column one fixed share
+(`flex: 0 0 38%`, wrapping) so a long label ("Predefined type") wraps instead
+of pushing its value out of line with the rows around it. Values are plain
+text; mono only for counts, IDs, keys and measured values.
 
 ### Toggles (`Toggle` component in SettingsModal)
 
@@ -273,10 +325,22 @@ border (horizontal). Inactive tabs use `var(--text-muted)`; active uses
   other bucket as an underlined text button ("· 79 only touch (contact)",
   "· 21 adjacent by design (wall–slab, wall–beam …)"). A shown bucket gets
   `--accent-bg` + a 1px `--accent` border and a ✓, and `aria-pressed`.
-  Never colour-only. Under it, the run's one-line summary ("132 clashes ·
+  Never colour-only. Each entry is set as unbreakable parts ("· 21
+  adjacent by design" + "(wall–slab, wall–beam …)"): the row wraps
+  left-aligned between entries, or at most before an entry's parenthesis,
+  never mid-phrase; "Show all" / "Review only" follows in the same row.
+  Under it, the run's one-line summary ("132 clashes ·
   132 open · 0 resolved") as a `--text-xs`/`--text-muted` caption; the
   rest of the run statistics (AI summary, stats/delta chips, model matrix)
   sit in one native `<details>` "Run details", closed by default.
+- **Sidebar layout**: everything above the grouping row (bucket bar, run
+  caption, left-out notice, Run details, search + `List | Overview N`,
+  suggested views) is one region (`[data-cc-clash-head]`) that scrolls on
+  its own once taller than its share; the grouping row and the list below
+  it always stay in view (the list keeps ≥ 35 % of the panel). The search
+  takes the full width when the panel is too narrow for it and the view
+  toggle on one line, with a short placeholder ("Filter clashes…"; the
+  example query is its tooltip).
 - **Sidebar list** while the overview is open: bucket bar, left-out notice,
   search + `List | Overview N`, then the grouping row — the facets live in
   the overview only (one filter surface). Rare list actions (Select
@@ -289,7 +353,8 @@ border (horizontal). Inactive tabs use `var(--text-muted)`; active uses
   `--font-mono`/`--text-2xs`/`--text-muted`. Facet groups are `role="group"`
   rows with a section-header label. Active filters repeat as removable
   pills ("Severity: Critical ×", `aria-label` "Remove filter …"); "shown /
-  total" is a `role="status"` live region.
+  total" is a `role="status"` live region set as a plain `--text-xs` /
+  `--text-muted` caption (body font, tabular numerals — not mono).
   - In the sidebar the facet panel is a native `<details>`.
   - In the overview (`compact`) there is one Suggested chip strip (max 6,
     then "+N more"; saved views follow), one action row (Filters button,
@@ -323,8 +388,18 @@ border (horizontal). Inactive tabs use `var(--text-muted)`; active uses
   are filed in other buckets" + "show all".
   `.cc-overview` sits between the floating panels on desktop and is a
   fixed sheet above the panel on phones.
-- Group headers in the list use the same right-pointing chevron SVG as the
-  model clash matrix (rotated 90° when open), never ▼/▶ glyphs.
+- Group headers in the list use the existing chevron of the model clash
+  matrix (rotated 90° when open). A
+  root-cause header is the toggle (chevron, title + member count, then a
+  `--text-xs` meta line: severity pill, extent, storey, open count) with
+  the group actions (Accept all, Set status…) on their own row under it,
+  left-aligned with the title; controls wrap rather than cut a label.
+- **Clash rows**: title `--text-sm`/`--weight-medium` (two lines max) with
+  the status pill (label from the status table, translated) on its first
+  line; under it one `--text-xs`/`--text-muted` meta line with the clash
+  number and the markers (New, Auto, AI, note) — no line of its own for a
+  lone marker. Expand / collapse buttons are the ▼ / ▲ text they always had,
+  with an `aria-label`.
 - Snapshot pictures themselves are 3D renders, not chrome: the A/B pair
   colours match the viewport's clash-focus colours, the context is a fixed
   light ghost so a BCF/PDF picture looks the same in either theme.
@@ -333,11 +408,12 @@ border (horizontal). Inactive tabs use `var(--text-muted)`; active uses
 
 ### Iconography & button labels
 
-- **No emoji in the UI.** Icons are inline SVGs (`stroke="currentColor"`,
-  1.5–2px stroke, 11–16px) so they inherit theme colors — emoji render
-  with their own colors on every platform and break the monochrome
-  chrome. Established unicode tool glyphs (`⎙` print) are grandfathered;
-  don't add new ones.
+- **No icons added to the UI.** Don't introduce icons — not SVG, not icon
+  fonts, not emoji — and don't swap existing text markers (▼ ▶ ✕ ✓ ⚠ …)
+  for icons: a control says what it does in words. The icons that are
+  already there (toolbar, left rail, header, search / filter / eye in
+  lists) stay as they are; nothing new joins them.
+- **No emoji in the UI.**
 - Button labels are plain language, sentence case, no marketing words
   ("free"/"gratis") — pricing/positioning lives on the website, not in
   chrome. Source or scope goes in parentheses: "3D omgeving — NL (PDOK)".
@@ -453,7 +529,7 @@ this scale.
 
 1. **Open `index.html`** — that is the only source file.
 2. **Pull tokens, don't pick values.** If you need a new token, add it to
-   `:root` *and* `[data-theme=light]` first.
+   `:root` (light) *and* `[data-theme=dark]` first.
 3. **Reuse `S_BTN`, `S_INPUT`, `S_LIST_ROW`, `S_BACKDROP`, `S_MODAL_*`,
    `S_OVERLAY`, `cc-status-pill`, `cc-overlay-chrome`** before composing
    anything new.

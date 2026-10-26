@@ -224,6 +224,7 @@ test('snapshot + later changes = the same state as all changes (incl. conflicts)
 // read a snapshot yet must never lose a change or a conflict: once it sees
 // the current folder, its log equals the log of every change ever written.
 test('deleting covered files never loses a change or a conflict for a client that has not seen the snapshot', () => {
+  let skipped = 0;
   for (let seed = 1; seed <= 40; seed++) {
     let x = seed * 7919 >>> 0;
     const rnd = () => ((x = (Math.imul(x, 1664525) + 1013904223) >>> 0) / 4294967296);
@@ -233,20 +234,30 @@ test('deleting covered files never loses a change or a conflict for a client tha
     const clients = ['ann', 'ben', 'cas', 'dan'].map((u) => ({ ...client(u), applied: new Set(), seq: 0, snaps: [] }));
     const written = [];
     let now = 0;
+    function readFile(c, view, n) { c.read(L.parseChangeFile(view.get(n).body).changes); c.applied.add(n); }
     function sync(c, view) {
-      // newest snapshots first; a snapshot marks the files it covers as applied
+      // newest snapshots first; a snapshot marks the files it covers as
+      // applied. Like the addon: a snapshot whose head covers only what the
+      // client has — after reading up to 3 missing covered files itself — is
+      // NOT read (skipped by its head), which must never lose a change.
       const names = [...view.keys()];
       names.filter((n) => n.startsWith('snapshot-') && !c.applied.has(n)).sort().reverse().forEach((n) => {
+        if (c.applied.has(n)) return;
+        const head = L.parseSnapshotHead(JSON.stringify(view.get(n).body).slice(0, 4096));
+        assert.ok(head, 'a snapshot head is readable from its first bytes');
+        let missing = head.files.concat(head.snapshots).filter((x) => !c.applied.has(x));
+        if (missing.length && missing.length <= 3 && missing.every((x) => x.startsWith('changes/') && view.has(x))) {
+          missing.forEach((x) => readFile(c, view, x));
+          missing = [];
+        }
+        if (!missing.length) { c.applied.add(n); skipped++; return; }
         const s = L.parseSnapshot(view.get(n).body);
         c.read(s.changes);
         c.applied.add(n);
         s.files.forEach((f) => c.applied.add(f));
         s.snapshots.forEach((f) => c.applied.add(f));
       });
-      names.filter((n) => n.startsWith('changes/') && !c.applied.has(n)).forEach((n) => {
-        c.read(L.parseChangeFile(view.get(n).body).changes);
-        c.applied.add(n);
-      });
+      names.filter((n) => n.startsWith('changes/') && !c.applied.has(n)).forEach((n) => readFile(c, view, n));
     }
     for (let step = 0; step < 220; step++) {
       now += 1 + Math.floor(rnd() * 5);
@@ -271,7 +282,7 @@ test('deleting covered files never loses a change or a conflict for a client tha
         const files = [...c.applied].filter((n) => n.startsWith('changes/') && folder.has(n));
         const snaps = [...c.applied].filter((n) => n.startsWith('snapshot-') && folder.has(n));
         const name = L.snapshotName(c.user, now);
-        folder.set(name, { body: JSON.parse(JSON.stringify(L.buildSnapshot(c.log, { by: c.user, ts: now, files, snapshots: snaps }))) });
+        folder.set(name, { body: JSON.parse(JSON.stringify(L.buildSnapshot(c.log, { by: c.user, ts: now, files, snapshots: snaps, compacts: true }))) });
         c.applied.add(name);
         c.snaps.push({ name, by: c.user, ts: now, files, snapshots: snaps });
       } else {
@@ -294,6 +305,28 @@ test('deleting covered files never loses a change or a conflict for a client tha
     sync(nc, folder);
     assert.strictEqual(L.digest(nc.log), L.digest(full), 'seed ' + seed + ' newcomer');
   }
+  assert.ok(skipped > 50, 'the head-skip path was exercised (' + skipped + ' snapshots skipped)');
+});
+
+test('snapshot head: what it covers, from the first bytes; any other layout reads whole', () => {
+  const log = L.createLog();
+  L.addChanges(log, [L.makeChange(log, { id: 'a.1', user: 'ann', ts: 1, kind: 'clash', key: 'k', field: 'status', value: 'x' })]);
+  const text = JSON.stringify(L.buildSnapshot(log, { by: 'ann', ts: 7, compacts: true, files: ['changes/ann/b.json', 'changes/ann/a.json'], snapshots: ['snapshot-00000000000001-ben.json'] }));
+  assert.equal(L.parseSnapshotHead(JSON.stringify(L.buildSnapshot(log, { by: 'ann', ts: 7 }))), null, 'not a compaction (a migration snapshot brings its own changes) → read whole');
+  assert.deepStrictEqual(L.parseSnapshotHead(text.slice(0, text.indexOf('"changes":[') )), { by: 'ann', ts: 7, files: ['changes/ann/a.json', 'changes/ann/b.json'], snapshots: ['snapshot-00000000000001-ben.json'] });
+  assert.ok(L.parseSnapshot(JSON.parse(text)), 'still one JSON object for every version');
+  assert.equal(L.parseSnapshotHead(text.slice(0, 40)), null, 'head cut short → read whole');
+  const old = JSON.stringify({ _cc: 'ClashControl.sharedSnapshot', v: 1, by: 'ann', ts: 1, names: {}, files: [], snapshots: [], conflicts: [], changes: [] });
+  assert.equal(L.parseSnapshotHead(old), null, 'the older key order → read whole');
+});
+
+test('planCleanup waits until the author\'s sync client was online after the snapshot (a teammate\'s file arrived onlineMs later)', () => {
+  const snaps = [{ name: 'snapshot-00000000000100-ann.json', by: 'ann', ts: 100, files: ['changes/ben/b-000001.json'], snapshots: [] }];
+  const present = { presentFiles: ['changes/ben/b-000001.json'], presentSnapshots: ['snapshot-00000000000100-ann.json'] };
+  const base = { me: 'ann', now: 10_000, graceMs: 10, onlineMs: 50, snapshots: snaps, ...present };
+  assert.deepStrictEqual(L.planCleanup({ ...base, teammateSeenAt: 0 }).files, [], 'no teammate file since: nothing removed');
+  assert.deepStrictEqual(L.planCleanup({ ...base, teammateSeenAt: 149 }).files, [], 'too soon after the snapshot');
+  assert.deepStrictEqual(L.planCleanup({ ...base, teammateSeenAt: 150 }).files, ['changes/ben/b-000001.json']);
 });
 
 test('planCleanup: only the author, only after the grace period, only covered items', () => {
@@ -476,7 +509,7 @@ test('viewpoint records keep camera / section / clip / name and never the pictur
 
 test('migrateLegacyRows: decisions of the old per-issue rows, deterministic ids', () => {
   const rows = [
-    { id: 'c1', data: { id: 'c1', globalIdA: 'A', globalIdB: 'B', point: [0, 0, 0], status: 'resolved', priority: 'normal', assignee: '' }, updated_by: 'Ann', updated_at: '2026-10-01T00:00:00Z' },
+    { id: 'c1', data: { id: 'c1', source: 'auto', globalIdA: 'A', globalIdB: 'B', point: [0, 0, 0], status: 'resolved', priority: 'normal', assignee: '' }, updated_by: 'Ann', updated_at: '2026-10-01T00:00:00Z' },
     { id: 'iss_2', data: { id: 'iss_2', title: 'Leak', status: 'open', _updatedAt: 'x' }, updated_by: 'Ben', updated_at: '2026-10-02T00:00:00Z' },
   ];
   const opts = { projectId: 'P-1', identityKey: (c) => c.globalIdA + '|' + c.globalIdB };
@@ -485,6 +518,26 @@ test('migrateLegacyRows: decisions of the old per-issue rows, deterministic ids'
   assert.deepStrictEqual(m1.changes.map((r) => [r.target.kind, r.target.key, r.field]), [['clash', 'A|B', 'status'], ['issue', 'iss_2', 'created']]);
   assert.ok(!('_updatedAt' in m1.changes[1].value));
   assert.notDeepStrictEqual(L.migrateLegacyRows(rows, { projectId: 'P-2', identityKey: opts.identityKey }).changes[0].id, m1.changes[0].id);
+});
+
+test('migrateLegacyRows: clash or issue is decided by the row\'s source, exactly (never by the GlobalId pair)', () => {
+  const at = '2026-10-01T00:00:00Z';
+  const row = (id, d) => ({ id, data: Object.assign({ id }, d), updated_by: 'Ann', updated_at: at });
+  const rows = [
+    row('c-auto', { source: 'auto', globalIdA: 'A', globalIdB: 'B', point: [0, 0, 0], status: 'resolved' }),             // browser detection
+    row('c-local', { source: 'local_engine', globalIdA: 'C', globalIdB: 'D', point: [1, 0, 0], priority: 'high' }),       // local engine
+    row('c-vis', { source: 'visibility_check', globalIdA: 'E', globalIdB: 'F', point: [2, 0, 0], assignee: 'Bo' }),       // visibility
+    row('c-cov', { source: 'visibility_coverage', globalIdA: 'G', globalIdB: null, point: [3, 0, 0], status: 'closed' }), // one element only
+    row('i-bridge', { title: 'From the assistant', globalIdA: 'H', globalIdB: 'J', point: [4, 0, 0], status: 'open' }),   // Smart Bridge issue: no source, GlobalId pair
+    row('iss_9', { source: 'clash', title: 'Confirmed', globalIdA: 'A', globalIdB: 'B', status: 'open' }),                 // confirm-created issue
+    row('i-bcf', { source: 'bcf_import', title: 'BCF', status: 'open' }),
+  ];
+  const m = L.migrateLegacyRows(rows, { projectId: 'P', identityKey: (c) => c.globalIdA + '|' + c.globalIdB });
+  assert.deepStrictEqual(m.changes.map((r) => [r.target.kind, r.target.key, r.field]), [
+    ['clash', 'A|B', 'status'], ['clash', 'C|D', 'priority'], ['clash', 'E|F', 'assignee'],
+    ['issue', 'i-bridge', 'created'], ['issue', 'iss_9', 'created'], ['issue', 'i-bcf', 'created'],
+  ]);
+  assert.deepStrictEqual(m.skipped, { clashWithoutGlobalIds: 1 }, 'a clash with no cross-machine identity is counted, never keyed on a meaningless id');
 });
 
 test('ids come from the cryptographic generator: right length and alphabet, never Math.random', () => {

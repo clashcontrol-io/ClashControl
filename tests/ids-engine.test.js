@@ -314,3 +314,64 @@ test('round-trip: our own exportIDS output parses and executes', () => {
   const r = w._ccRunIDS(parsed.specs, models([el(1, { ifcType: 'IfcWall', material: 'Concrete', storey: 'L1', description: 'd' })]));
   assert.ok(r.summary.total > 0, 'executed checks');
 });
+
+// User-authored property rules (§21.62) travel as IDS specifications: export
+// → parse → run gives each rule's exact failing elements, for every operator
+// IDS can express. Not expressible (left out with an XML comment): a
+// "matches" pattern using what XSD lacks or reads differently ((?…) groups,
+// \b \w, lazy quantifiers, anchors inside / with alternation).
+test('round-trip: property rules exported as IDS fail the same elements', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'addons', 'data-quality.js'), 'utf8');
+  const w = { _ccCountryPackCore: require('../country-pack-core.js') };
+  new Function('window', src)(w);
+  const E = (id, ifcType, psets, extra) => ({ expressId: id, _modelId: 'm1', props: Object.assign({ globalId: 'G' + id, name: 'E' + id, ifcType, psets }, extra || {}) });
+  const els = [
+    E(1, 'IfcWall', { Pset_WallCommon: { FireRating: 'EI 60', Width: '120 mm', Note: 'a.b$c' } }),
+    E(2, 'IfcWall', { Pset_WallCommon: { FireRating: 'ei 30', Width: '2,5 m', Note: 'A.B$C' } }),
+    E(3, 'IfcWall', { Pset_WallCommon: { Width: '90mm' } }),
+    E(4, 'IfcWallStandardCase', { Pset_WallCommon: { FireRating: 'EI 90', Width: 'thick' } }),
+    E(5, 'IfcSlab', { Other: { FireRating: 'REI 120' } }, { quantities: { GrossArea: 12 } }),
+    E(6, 'IfcSlab', {}, { quantities: { GrossArea: 4 } }),
+    E(7, 'IfcDoor', {}),
+  ];
+  const rules = [
+    { id: 'r-exists', prop: 'Pset_WallCommon.FireRating', op: 'exists', severity: 'critical', stage: 'Stage A' },
+    { id: 'r-any', prop: 'FireRating', op: 'exists' },
+    { id: 'r-not', appliesTo: ['IfcSlab'], prop: 'Pset_WallCommon.FireRating', op: 'notExists' },
+    { id: 'r-eq', appliesTo: ['IfcWall', 'IfcWallStandardCase'], prop: 'Pset_WallCommon.FireRating', op: 'eq', value: 'EI 60' },
+    { id: 'r-neq', prop: 'Pset_WallCommon.FireRating', op: 'neq', value: 'EI 60' },
+    { id: 'r-contains', prop: 'Pset_WallCommon.FireRating', op: 'contains', value: 'Ei ' },
+    { id: 'r-contains-meta', prop: 'Pset_WallCommon.Note', op: 'contains', value: '.b$' },
+    { id: 'r-gte', appliesTo: ['IfcWall', 'IfcWallStandardCase'], prop: 'Pset_WallCommon.Width', op: 'gte', value: '100' },
+    { id: 'r-lte', appliesTo: ['IfcWall'], prop: 'Pset_WallCommon.Width', op: 'lte', value: '2.5' },
+    { id: 'r-qto', appliesTo: ['IfcSlab'], prop: 'BaseQuantities.GrossArea', op: 'gte', value: '10' },
+    { id: 'r-match', prop: 'Pset_WallCommon.FireRating', op: 'matches', value: '^EI \\d+$' },
+    { id: 'r-match-free', prop: 'Pset_WallCommon.FireRating', op: 'matches', value: '[0-9]0' },
+    { id: 'r-match-alt', prop: 'Pset_WallCommon.FireRating', op: 'matches', value: 'EI 6|EI 9' },
+    { id: 'r-no-ids', prop: 'Pset_WallCommon.FireRating', op: 'matches', value: '\\bEI' },
+  ];
+  const direct = w._ccRunPropertyRules(els, rules);
+  const xml = w._ccExportIDS({ title: 'Rules', propertyRules: rules });
+  assert.match(xml, /property rule ".*\\bEI" is not expressible in IDS/);
+  const parsed = w._ccParseIDS(xml);
+  assert.equal(parsed.error, undefined);
+  const byId = {};
+  parsed.specs.forEach((s) => { if (s.identifier) byId[s.identifier] = s; });
+  assert.equal(byId['r-no-ids'], undefined);
+  assert.equal(w._ccPropertyRuleIDSProblem(rules[rules.length - 1]), 'pattern');
+  assert.match(byId['r-exists'].description, /severity: critical · stage: Stage A/);
+  let compared = 0;
+  rules.slice(0, -1).forEach((r) => {
+    const spec = byId[r.id];
+    assert.ok(spec, 'spec for ' + r.id);
+    const run = w._ccRunIDS([spec], models(els));
+    assert.equal(Object.values(run.summary.bySpec)[0].unchecked, 0, r.id + ' fully checkable');
+    const viaIds = run.results.map((x) => x.elementId).sort((a, b) => a - b);
+    const want = direct[r.id].refs.map((x) => x.expressId).sort((a, b) => a - b);
+    assert.deepStrictEqual(viaIds, want, r.id + ': IDS fails the same elements');
+    compared++;
+  });
+  assert.equal(compared, 13);
+  // the planted cases really fail something (the comparison is not vacuous)
+  assert.ok(direct['r-contains-meta'].count === 5 && direct['r-gte'].count === 3 && direct['r-match-alt'].count === 5 && direct['r-neq'].count === 1);
+});

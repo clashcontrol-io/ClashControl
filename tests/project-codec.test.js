@@ -86,7 +86,8 @@ test('restore emits the exact action order and restores models only as geometry 
 test('minimal legacy exports still emit only model and rules actions', () => {
   const emitted = [];
   codec.restoreProject({_cc:'ClashControl',models:[],rules:{}}, (action)=>emitted.push(action), actions);
-  assert.deepEqual(emitted, [{t:'UPD_RULES',u:{}}]);
+  // per-project rule maps a file lacks start empty (never the previously open project's)
+  assert.deepEqual(emitted, [{t:'UPD_RULES',u:{disciplineMatrix:{},matrixRules:{},toleranceByTypePair:{},roleChoices:{}}}]);
 });
 
 // Bug 9: comments were never included in the serialized project file, so
@@ -124,4 +125,57 @@ test('serializeProject keeps parked models as model stubs (found by the pressure
   const data = codec.serializeProject(state({parkedModels:[{id:'p',name:'Parked',discipline:'architectural',color:'#abcdef',tag:''}]}), '1', 't');
   assert.deepEqual(data.models.map((m)=>m.id), ['m','p']);
   assert.equal(data.models[1].name, 'Parked');
+});
+
+test('a project without matrix / tolerance maps does not inherit the open project\'s', () => {
+  let rules = { maxGap: 50, matrixRules: { 'mep:structural': { mode: 'clearance', gapMm: 100 } }, toleranceByTypePair: { 'IfcWall|IfcPipeSegment': 20 } };
+  const dispatch = (a) => { if (a.t === 'UPD_RULES') rules = Object.assign({}, rules, a.u); };
+  codec.restoreProject({ _cc: 'ClashControl', models: [], rules: { maxGap: 25 } }, dispatch, actions);
+  assert.equal(rules.maxGap, 25);
+  assert.deepEqual(rules.matrixRules, {});
+  assert.deepEqual(rules.toleranceByTypePair, {});
+  // a file that has them keeps its own
+  codec.restoreProject({ _cc: 'ClashControl', models: [], rules: { matrixRules: { 'a:b': { mode: 'off' } } } }, dispatch, actions);
+  assert.deepEqual(rules.matrixRules, { 'a:b': { mode: 'off' } });
+});
+
+// Run history with breakdowns (clash-history-core.js): old entries (run
+// totals only) and new ones (v + byPair / bySeverity / byAssignee / byBucket)
+// round-trip through the project file unchanged, side by side.
+test('runHistory entries with and without breakdowns round-trip unchanged', () => {
+  const H = require('../clash-history-core');
+  const old = {ts:1,total:3,open:3,newCount:3,persisting:0,autoResolved:0};
+  const cur = H.entry([{id:'a',status:'open',trades:['structural','mep.ventilation'],_delta:'new',assignee:'Ann'}],
+    {ts:2,newCount:1,persisting:0,autoResolved:3,issuesResolved:1}, {severity:()=>'major',bucket:()=>'review'});
+  const out = JSON.parse(JSON.stringify(codec.serializeProject(state({runHistory:[old,cur]}), 'v', 't')));
+  assert.deepEqual(out.runHistory, [old, cur]);
+  const emitted = [];
+  codec.restoreProject(out, (action)=>emitted.push(action), actions);
+  const lp = emitted.find((action)=>action.t==='LOAD_PROJECT_STATE');
+  assert.deepEqual(lp.data.runHistory, [old, cur]);
+  assert.equal(H.hasBreakdown(lp.data.runHistory[0]), false);
+  assert.equal(H.hasBreakdown(lp.data.runHistory[1]), true);
+  assert.deepEqual(H.series(lp.data.runHistory, 'pair', 'mep.ventilation × structural'), [null, {total:1,open:1,new:1,resolved:0}]);
+  assert.deepEqual(H.runSeries(lp.data.runHistory).map((r)=>r.total), [3, 1]);
+});
+
+test('property rules round-trip through the project file; an older file restores none', () => {
+  const rules = [
+    {id:'pr1', appliesTo:['IfcWall'], prop:'Pset_WallCommon.FireRating', op:'exists', value:'', severity:'critical', stage:'Stage 2', enabled:true},
+    {id:'pr2', appliesTo:[], prop:'Pset_SlabCommon.Width', op:'gte', value:'200 mm', severity:'minor', stage:'', enabled:false},
+  ];
+  const out = JSON.parse(JSON.stringify(codec.serializeProject(state({propertyRules:rules}), 'v', 't')));
+  assert.deepEqual(out.propertyRules, rules);
+  const acts = Object.assign({}, actions, {SET_PROPERTY_RULES:'SET_PROPERTY_RULES'});
+  const seen = [];
+  codec.restoreProject(out, (a)=>seen.push(a), acts);
+  const set = seen.filter((a)=>a.t==='SET_PROPERTY_RULES');
+  assert.equal(set.length, 1);
+  assert.deepEqual(set[0].v, rules);
+  const old = codec.serializeProject(state(), 'v', 't');
+  delete old.propertyRules;
+  const seen2 = [];
+  codec.restoreProject(JSON.parse(JSON.stringify(old)), (a)=>seen2.push(a), acts);
+  assert.deepEqual(seen2.find((a)=>a.t==='SET_PROPERTY_RULES').v, []);
+  assert.deepEqual(codec.serializeProject(state(), 'v', 't').propertyRules, []);
 });

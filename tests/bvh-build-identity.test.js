@@ -6,7 +6,9 @@
 // and closest points) — must be exactly the one the comparator sort built.
 // This suite rebuilds the reference with the original comparator sort and
 // compares node for node on meshes with many key ties, -0, infinities and
-// NaN (the NaN case falls back to the comparator sort by design).
+// NaN (the NaN case uses the comparator sort with NaN last, _ccNanLastCmp —
+// the order the Rust engine's `nan_last` gives; the old a - b comparator was
+// no consistent order with NaN, and made Rust's sort panic).
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -16,9 +18,10 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 const s = src.indexOf('  function _bvhStableSort(');
 const e = src.indexOf('  function _getBVH(el)');
 assert.ok(s !== -1 && e > s, 'BVH builder markers are stale');
-const cur = new Function(src.slice(s, e) + '; return { _buildBVHForTris, _bvhStableSort };')();
+const cur = new Function(src.slice(s, e) + '; return { _buildBVHForTris, _bvhStableSort, _ccNanLastCmp };')();
+// the comparator sort: a - b (one order on keys without NaN), NaN last
 const refSrc = src.slice(s, e).replace('_bvhStableSort(indices, lo, hi, keys, axis);',
-  'indices.subarray(lo, hi).sort(function(a,b){ return keys[a*3+axis] - keys[b*3+axis]; });');
+  'indices.subarray(lo, hi).sort(keys.nan ? function(a,b){ return _ccNanLastCmp(keys[a*3+axis], keys[b*3+axis]); } : function(a,b){ return keys[a*3+axis] - keys[b*3+axis]; });');
 assert.notStrictEqual(refSrc, src.slice(s, e), 'sort call site not found');
 const ref = new Function(refSrc + '; return { _buildBVHForTris };')();
 
@@ -60,6 +63,28 @@ test('degenerate keys: -0, infinities (stable sort) and NaN (comparator fallback
     const t = mesh(n, 7 + k * 13 + n, k % 2 ? 4 : 0, sets[k].concat(sets[k], sets[k]));
     const d = sameTree(cur._buildBVHForTris(t).root, ref._buildBVHForTris(t).root, 'root');
     assert.strictEqual(d, null, `set ${k} n=${n}: ${d}`);
+  }
+});
+
+test('NaN keys: a stable sort puts them last, NaN == NaN, the rest ascending (= Rust nan_last)', () => {
+  const cmp = cur._ccNanLastCmp, v = [NaN, -1, -0, 0, 1, Infinity, -Infinity];
+  for (const a of v) for (const b of v) {
+    if (a === a && b === b) assert.strictEqual(cmp(a, b), a < b ? -1 : a > b ? 1 : 0);
+    assert.strictEqual(cmp(a, b), -cmp(b, a) || 0);
+  }
+  const r = rng(5);
+  for (const n of [5, 17, 300, 3000]) {
+    const keys = new Float64Array(n * 3);
+    for (let i = 0; i < keys.length; i++) keys[i] = r() < 0.3 ? NaN : Math.floor(r() * 6);
+    keys.nan = true; // set by _buildBVHForTris when any key is NaN
+    const idx = new Int32Array(n); for (let i = 0; i < n; i++) idx[i] = i;
+    cur._bvhStableSort(idx, 0, n, keys, 1);
+    const k = Array.from(idx, (i) => keys[i * 3 + 1]);
+    const firstNaN = k.findIndex((x) => x !== x);
+    if (firstNaN !== -1) assert.ok(k.slice(firstNaN).every((x) => x !== x), 'NaN last');
+    const fin = firstNaN === -1 ? k : k.slice(0, firstNaN);
+    for (let i = 1; i < fin.length; i++) assert.ok(fin[i - 1] <= fin[i], 'ascending');
+    for (let i = 1; i < n; i++) if (Object.is(k[i - 1], k[i]) || (k[i] !== k[i] && k[i - 1] !== k[i - 1])) assert.ok(idx[i - 1] < idx[i], 'stable on ties');
   }
 });
 

@@ -279,7 +279,8 @@ test('project codec: serialize∘restore is idempotent and keeps clashes/issues/
     assert.deepEqual(s1.clashes, JSON.parse(JSON.stringify(clashes)));
     assert.deepEqual(s1.issues, JSON.parse(JSON.stringify(issues)));
     assert.equal(s1.rules.minOverlapVolM3, 0, 'the legacy 1e-5 default migrates to 0');
-    assert.deepEqual(Object.assign({}, s1.rules, { minOverlapVolM3: rules.minOverlapVolM3 }), JSON.parse(JSON.stringify(rules)));
+    // per-project rule maps a project lacks are restored empty (project-codec PROJECT_RULE_MAPS)
+    assert.deepEqual(Object.assign({}, s1.rules, { minOverlapVolM3: rules.minOverlapVolM3 }), JSON.parse(JSON.stringify(Object.assign({ disciplineMatrix: {}, matrixRules: {}, toleranceByTypePair: {}, roleChoices: {} }, rules))));
     assert.equal(s1.viewpoints[0].snapshot, undefined, 'snapshots are not persisted');
     assert.deepEqual(s1.models.map((m) => m.id), models.map((m) => m.id));
   }

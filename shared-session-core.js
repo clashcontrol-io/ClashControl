@@ -31,6 +31,11 @@
   }
 
   var NOTE_FIELDS = ['text', 'resolved'];
+  // A clash's shared fields: the decision fields plus the deny reason
+  // (docs/INTERNALS.md §21.58). Who denied and when come from the status
+  // record itself (author, ts), so two people denying is never a conflict;
+  // two different reasons are.
+  var CLASH_EXTRA_FIELDS = ['deniedReason'];
   var VIEWPOINT_FIELDS = ['name'];
   var hasOwn = function(o, k) { return Object.prototype.hasOwnProperty.call(o, k); };
   /** @param {any} v */
@@ -41,6 +46,7 @@
    *   src:string, userId:string, writer:string, projectKey:string,
    *   dispatch:(a:any)=>void, getState:()=>any,
    *   identityKey?:(c:any)=>(string|null),
+   *   aliasKey?:(c:any)=>(string|null),
    *   i18n?:(k:string, en:string, vars?:any)=>string,
    *   storage?:any, outboxPrefix?:string,
    *   onRecorded?:(why:string)=>void, onConflicts?:(n:number)=>void,
@@ -54,10 +60,14 @@
     var outbox = [];                 // own records not stored yet (log record objects)
     var inflight = Object.create(null);
     var written = Object.create(null);
+    // Own records the store refused (malformed / over a size cap). They stay
+    // in the local log — this user's view keeps their edit — but teammates
+    // never get them, so the user is told: id → {id, kind, key, field, reason, ts}.
+    var rejected = Object.create(null);
     var n = 0, recorded = false;
     var last = { clashes: null, issues: null, comments: null, viewpoints: null };
-    /** @type {{clashes:any, map:Map<string, any[]>}} */
-    var clashIndex = { clashes: null, map: new Map() };
+    /** @type {{clashes:any, map:Map<string, any[]>, alias:Map<string, any[]>}} */
+    var clashIndex = { clashes: null, map: new Map(), alias: new Map() };
     var pendingScan = [];            // issue lists before a confirm (their new issues get published)
     var stats = { dispatches: 0, records: 0, projected: 0 };
     var now = env.now || function() { return Date.now(); };
@@ -73,6 +83,15 @@
       if (!c) return null;
       if (c._identityKey) return c._identityKey;
       return env.identityKey ? env.identityKey(c) : null;
+    }
+    // A second key a clash is known under in the log: the GlobalId form of
+    // its identity, which old shared records (api/project.js migration) and
+    // older app versions used before UniqueIds were preferred. Fields known
+    // under the current key win; the alias only fills the rest.
+    function aliasOf(c) {
+      if (!c || !env.aliasKey) return null;
+      var a = env.aliasKey(c);
+      return a && a !== clashKey(c) ? a : null;
     }
     function newId() { return env.writer + '.' + (++n); }
 
@@ -162,11 +181,13 @@
     // for batch actions, the id set it applies to.
     function note(a, prev, batchIds) {
       if (!a || !prev) return false;
-      var F = C.DECISION_FIELDS, conflictedTargets = [];
+      var F = C.DECISION_FIELDS, CF = F.concat(CLASH_EXTRA_FIELDS), conflictedTargets = [];
       recorded = false;
       function clashEdit(c, u) {
         var key = clashKey(c);
-        F.forEach(function(f) { if (u && hasOwn(u, f)) { record('clash', key, f, u[f], c[f]); if ((c._sharedConflict || []).length) conflictedTargets.push(C.targetKey('clash', key)); } });
+        CF.forEach(function(f) { if (u && hasOwn(u, f)) { record('clash', key, f, u[f], c[f]); if ((c._sharedConflict || []).length) conflictedTargets.push(C.targetKey('clash', key)); } });
+        // reopening a denied clash clears its reason (the reducer does the same)
+        if (u && hasOwn(u, 'status') && u.status !== 'denied' && c.status === 'denied' && !hasOwn(u, 'deniedReason') && c.deniedReason) record('clash', key, 'deniedReason', '', c.deniedReason);
       }
       function issueEdit(it, u) {
         F.forEach(function(f) { if (u && hasOwn(u, f)) record('issue', it.id, f, u[f], it[f]); });
@@ -184,6 +205,8 @@
         if (a.u.status === 'confirmed') pendingScan.push(prev.issues || []);
       } else if (t === 'CLASH_BATCH_RESTORE' && a.prev) {
         (prev.clashes || []).forEach(function(x) { if (a.prev[x.id]) clashEdit(x, a.prev[x.id]); });
+        // undo / redo of a run's linked-issue changes (status, re-check comment)
+        if (a.issuePrev) (prev.issues || []).forEach(function(x) { if (a.issuePrev[x.id]) issueEdit(x, a.issuePrev[x.id]); });
       } else if (t === 'UPD_ISSUE' && a.u) {
         var it = (prev.issues || []).find(function(x) { return x.id === a.id; });
         if (it) issueEdit(it, a.u);
@@ -281,6 +304,7 @@
           if (v == null || DEF[f].indexOf(v) !== -1) return;
           seedOne('clash', key, f, v, DEF[f][0]);
         });
+        if (c.status === 'denied' && c.deniedReason) seedOne('clash', key, 'deniedReason', c.deniedReason, '');
       });
       (st.issues || []).forEach(function(it) {
         if (!it || !it.id || C.fieldState(log, C.groupKey('issue', it.id, 'created'))) return;
@@ -323,14 +347,21 @@
     /** @returns {Map<string, any[]>} */
     function clashesByKey(st) {
       if (clashIndex.clashes === st.clashes) return clashIndex.map;
-      var map = new Map();
+      var map = new Map(), alias = new Map();
       (st.clashes || []).forEach(function(c) {
         var k = clashKey(c);
         if (!k) return;
         var arr = map.get(k); if (arr) arr.push(c); else map.set(k, [c]);
+        var a = aliasOf(c);
+        if (a) { var al = alias.get(a); if (al) al.push(c); else alias.set(a, [c]); }
       });
-      clashIndex = { clashes: st.clashes, map: map };
+      clashIndex = { clashes: st.clashes, map: map, alias: alias };
       return map;
+    }
+    // Local clashes a clash target applies to: by current key or by alias.
+    function clashesFor(st, key) {
+      var main = clashesByKey(st).get(key) || [], al = clashIndex.alias.get(key);
+      return al ? main.concat(al) : main;
     }
     function mergeList(local, ts, prefix) {
       var byId = new Map(), changed = false;
@@ -347,31 +378,76 @@
       return Array.from(byId.values()).sort(function(a, b) { return (a.ts || 0) - (b.ts || 0); });
     }
     function isDeleted(ts) { var del = ts.fields.deleted; return !!(del && del.known && del.value === true); }
+    // A viewpoint captured for an issue goes with it: the reducer drops them
+    // together and only the issue's delete is recorded. So a viewpoint whose
+    // issue is deleted in the log is not shown, and projecting an issue
+    // projects its viewpoints too (Keep after a delete brings them back).
+    function issueGone(crV) {
+      var link = crV && crV.known && crV.value ? crV.value.linkedId : null;
+      return !!link && isDeleted(C.targetState(log, 'issue', link));
+    }
+    // issue key → viewpoint target keys, rebuilt only when the log grew
+    var vpByIssue = { size: -1, map: new Map() };
+    function viewpointsOfIssues() {
+      if (vpByIssue.size === log.size) return vpByIssue.map;
+      var map = new Map(), pre = C.targetKey('viewpoint', '');
+      Object.keys(log.targets).forEach(function(tk) {
+        if (tk.indexOf(pre) !== 0) return;
+        var fs = C.fieldState(log, C.groupKey('viewpoint', tk.slice(pre.length), 'created'));
+        var link = fs && fs.known && fs.value ? fs.value.linkedId : null;
+        if (!link) return;
+        var arr = map.get(link); if (arr) arr.push(tk); else map.set(link, [tk]);
+      });
+      vpByIssue = { size: log.size, map: map };
+      return map;
+    }
+    function withIssueViewpoints(tks) {
+      var pre = C.targetKey('issue', ''), out = null, map = null;
+      tks.forEach(function(tk) {
+        if (tk.indexOf(pre) !== 0) return;
+        map = map || viewpointsOfIssues();
+        var vs = map.get(tk.slice(pre.length));
+        if (vs) { out = out || new Set(tks); vs.forEach(function(v) { out.add(v); }); }
+      });
+      return out || tks;
+    }
     // Puts the shared value of every field of the given targets (and their
     // conflict markers) on the local clashes / issues / notes / viewpoints.
     // Dispatches only what differs (all `_fromSync`). Returns the number of
     // dispatches.
     function project(tks, st) {
       if (!st || !tks || !tks.size) return 0;
-      var F = C.DECISION_FIELDS, restore = {}, nRestore = 0, cnt = 0;
+      tks = withIssueViewpoints(tks);
+      var F = C.DECISION_FIELDS, CF = F.concat(CLASH_EXTRA_FIELDS), restore = {}, nRestore = 0, cnt = 0;
       var issues = new Map(); (st.issues || []).forEach(function(i) { issues.set(i.id, i); });
       var notes = new Map(); (st.comments || []).forEach(function(c) { notes.set(c.id, c); });
       var vps = new Map(); (st.viewpoints || []).forEach(function(v) { vps.set(v.id, v); });
-      var byKey = clashesByKey(st);
       function dd(a) { d(a); cnt++; }
       tks.forEach(function(tk) {
         var i = tk.indexOf('\u0001'), kind = tk.slice(0, i), key = tk.slice(i + 1);
         var ts = C.targetState(log, kind, key), mk = markers(ts), sig = markerSig(mk);
         if (kind === 'clash') {
-          (byKey.get(key) || []).forEach(function(c) {
+          clashesFor(st, key).forEach(function(c) {
             var patch = {}, any = false;
-            F.forEach(function(f) {
-              var fs = ts.fields[f];
+            // current key first, the GlobalId alias for what it does not know
+            var mk0 = clashKey(c), al = aliasOf(c);
+            var tsMain = mk0 === key ? ts : C.targetState(log, 'clash', mk0);
+            var tsAl = al ? (al === key ? ts : C.targetState(log, 'clash', al)) : null;
+            CF.forEach(function(f) {
+              var fs = tsMain.fields[f];
+              if ((!fs || !fs.known) && tsAl) fs = tsAl.fields[f];
               if (!fs || !fs.known) return;
               if (f === 'status' && c.status === 'auto_resolved') return; // the geometry says it is gone
               if (!C.same(c[f], fs.value)) { patch[f] = fs.value; any = true; }
+              // a teammate's deny: who and when are the status record's own
+              if (f === 'status' && fs.value === 'denied' && !fs.conflicted && fs.heads && fs.heads.length) {
+                var h = fs.heads[fs.heads.length - 1];
+                if (h.user !== env.userId && c.deniedAt !== h.ts) { patch.deniedBy = who(h); patch.deniedAt = h.ts; any = true; }
+              }
             });
-            if (markerSig(c._sharedConflict) !== sig) { patch._sharedConflict = mk; any = true; }
+            var cmk = tsAl ? (markers(tsMain) || []).concat(markers(tsAl) || []) : markers(tsMain);
+            if (cmk && !cmk.length) cmk = undefined;
+            if (markerSig(c._sharedConflict) !== markerSig(cmk)) { patch._sharedConflict = cmk; any = true; }
             if (any) { restore[c.id] = patch; nRestore++; }
           });
         } else if (kind === 'issue') {
@@ -404,13 +480,13 @@
           if (anyN) dd({ t: 'UPD_COMMENT', id: key, u: patchN, _fromSync: true });
         } else if (kind === 'viewpoint') {
           var crV = ts.fields.created, lv = vps.get(key);
-          if (isDeleted(ts)) { if (lv) dd({ t: 'DEL_VIEWPOINT', id: key, _fromSync: true }); return; }
+          if (isDeleted(ts) || issueGone(crV)) { if (lv) dd({ t: 'DEL_VIEWPOINT', id: key, _fromSync: true }); return; }
           var patchV = {}, anyV = false;
           VIEWPOINT_FIELDS.forEach(function(f) { var fs = ts.fields[f]; if (fs && fs.known && (!lv || !C.same(lv[f], fs.value))) { patchV[f] = fs.value; anyV = true; } });
           if (!lv) {
             if (!crV || !crV.known || !crV.value) return;
             var v = Object.assign({}, crV.value);
-            if (v.linkedClash) { var lc = (byKey.get(v.linkedClash) || [])[0]; v.linkedId = lc ? lc.id : null; delete v.linkedClash; }
+            if (v.linkedClash) { var lc = clashesFor(st, v.linkedClash)[0]; v.linkedId = lc ? lc.id : null; delete v.linkedClash; }
             dd({ t: 'ADD_VIEWPOINT', v: Object.assign(v, patchV, { id: key, _sharedConflict: mk }), _fromSync: true });
             return;
           }
@@ -425,10 +501,10 @@
     // Teammates' changes in the History of each clash / issue.
     function history(recs, st) {
       if (!st) return;
-      var byKey = clashesByKey(st), out = [];
+      var out = [];
       recs.forEach(function(r) {
         if (r.user === env.userId || r.target.kind === 'viewpoint') return;
-        var targetId = r.target.kind === 'clash' ? ((byKey.get(r.target.key) || [])[0] || {}).id : r.target.key;
+        var targetId = r.target.kind === 'clash' ? (clashesFor(st, r.target.key)[0] || {}).id : r.target.key;
         if (!targetId) return;
         out.push({ id: r.id, ts: r.ts, user: who(r), type: r.target.kind === 'clash' ? 'clash_update' : (r.field === 'created' ? 'issue_created' : r.field === 'deleted' ? (r.value === true ? 'issue_deleted' : 'issue_update') : 'issue_update'),
           targetId: targetId, field: r.field, value: (r.value && typeof r.value === 'object') ? (r.value.title || r.value.text || r.value.name || '') : r.value });
@@ -485,6 +561,27 @@
       saveOutbox();
     }
     function release(batch) { (batch || []).forEach(function(r) { delete inflight[r.id]; }); }
+    // The store refused these (`[{id, reason}]`): taken out of the outbox
+    // like a stored record (retrying gives the same answer), kept in the
+    // local log, and listed until the user dismisses them. Returns how many
+    // were not known as refused yet.
+    function reject(list) {
+      var fresh = 0;
+      (list || []).forEach(function(x) {
+        if (!x || typeof x.id !== 'string') return;
+        var r = log.changes[x.id];
+        delete inflight[x.id];
+        written[x.id] = true;
+        if (rejected[x.id]) return;
+        rejected[x.id] = { id: x.id, kind: r ? r.target.kind : null, key: r ? r.target.key : null, field: r ? r.field : null,
+          reason: typeof x.reason === 'string' ? x.reason.slice(0, 40) : 'malformed', ts: r ? r.ts : null };
+        fresh++;
+      });
+      if (fresh) { outbox = outbox.filter(function(r) { return !rejected[r.id]; }); saveOutbox(); }
+      return fresh;
+    }
+    function rejectedList() { return Object.keys(rejected).map(function(id) { return Object.assign({}, rejected[id]); }); }
+    function dismissRejected() { rejected = Object.create(null); }
     function clearMarkers() {
       var st = state();
       if (!st) return;
@@ -503,6 +600,7 @@
       note: note, observe: observe, resolve: resolve, seed: seed,
       ingest: ingest, sync: sync, project: project,
       takeBatch: takeBatch, done: done, release: release,
+      reject: reject, rejected: rejectedList, dismissRejected: dismissRejected,
       pending: function() { return outbox.length; },
       outbox: function() { return outbox.slice(); },
       saveOutbox: saveOutbox, adoptOutboxes: adoptOutboxes,
@@ -532,9 +630,30 @@
     return hit;
   }
 
+  // ── One sharing mode at a time ────────────────────────────────────
+  // The folder and the project key each keep their own log; with both
+  // linked, one log's values and conflict markers would overwrite the
+  // other's on the same item, and a teammate on only one of them never
+  // sees the other's decisions. So a transport claims the link before it
+  // starts (the folder before it touches the folder, the cloud before its
+  // first pull) and a claim held by the other mode is refused — the UI
+  // says which mode is linked and how to leave it.
+  /** @type {{src:string, label:string}|null} */
+  var holder = null;
+  /** @param {string} src @param {string} [label] @returns {{src:string, label:string}|null} the other mode's claim, or null when the link is ours */
+  function claimLink(src, label) {
+    if (holder && holder.src !== src) return { src: holder.src, label: holder.label };
+    holder = { src: src, label: label || '' };
+    return null;
+  }
+  /** @param {string} src */
+  function releaseLink(src) { if (holder && holder.src === src) holder = null; }
+  function linkHolder() { return holder ? { src: holder.src, label: holder.label } : null; }
+
   return Object.freeze({
     contractVersion: 1,
     NOTE_FIELDS: NOTE_FIELDS,
+    CLASH_EXTRA_FIELDS: CLASH_EXTRA_FIELDS,
     VIEWPOINT_FIELDS: VIEWPOINT_FIELDS,
     createSession: createSession,
     register: register,
@@ -542,6 +661,9 @@
     sessions: function() { return sessions.slice(); },
     noteAll: noteAll,
     observeAll: observeAll,
-    resolve: resolveAny
+    resolve: resolveAny,
+    claimLink: claimLink,
+    releaseLink: releaseLink,
+    linkHolder: linkHolder
   });
 }));

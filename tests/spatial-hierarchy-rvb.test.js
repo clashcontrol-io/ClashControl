@@ -100,3 +100,42 @@ test('extractSpatialHierarchy: a model with no zones returns an empty zones arra
   const h = extractSpatialHierarchy(api, 0);
   assert.deepEqual(h.zones, []);
 });
+
+// The parts of an aggregate element (IfcRoof -> IfcSlab, IfcStair -> flights
+// and landings, nested assemblies) and elements contained in an IfcSpace get
+// the storey of the element / space above them; they used to land in
+// "(No storey)". Direct containment wins; site / building level stays none.
+test('extractStoreys: aggregate parts and space contents inherit the storey above them', () => {
+  const { extractStoreys, IFC } = loadFns();
+  const ref = (v) => ({ value: v });
+  const api = fakeApi(
+    { [IFC.IFCBUILDINGSTOREY]: [1, 2], [IFC.IFCRELCONTAINEDINSPATIALSTRUCTURE]: [100, 101, 102, 103], [IFC.IFCRELAGGREGATES]: [201, 200, 202, 203, 204, 205] },
+    {
+      1: { Name: 'L0', Elevation: 0 }, 2: { Name: 'L1', Elevation: 3 },
+      100: { RelatingStructure: ref(2), RelatedElements: [ref(10), ref(20), ref(33)] }, // roof 10, stair 20 and part 33 on L1
+      101: { RelatingStructure: ref(50), RelatedElements: [ref(60)] },                 // furniture 60 in space 50
+      102: { RelatingStructure: ref(90), RelatedElements: [ref(70)] },                 // 70 contained in the building
+      103: { RelatingStructure: ref(1), RelatedElements: [ref(34)] },                  // 34 contained in L0 directly
+      200: { RelatingObject: ref(10), RelatedObjects: [ref(11), ref(12)] },            // roof slabs
+      201: { RelatingObject: ref(20), RelatedObjects: [ref(21), ref(22)] },            // stair flight + landing (rel listed first)
+      202: { RelatingObject: ref(22), RelatedObjects: [ref(23)] },                     // a part of a part
+      203: { RelatingObject: ref(1), RelatedObjects: [ref(50)] },                      // space 50 in L0
+      204: { RelatingObject: ref(30), RelatedObjects: [ref(31), ref(34)] },            // assembly 30 nowhere; 34 contained in L0 wins
+      205: { RelatingObject: ref(40), RelatedObjects: [ref(41)] },                     // cycle 40 <-> 41, no storey
+      // a malformed cycle must not hang
+    },
+  );
+  api.GetLineIDsWithType = ((orig) => (m, t) => (t === IFC.IFCRELAGGREGATES ? { size: () => 7, get: (i) => [201, 200, 202, 203, 204, 205, 206][i] } : orig(m, t)))(api.GetLineIDsWithType);
+  const lines = { 206: { RelatingObject: ref(41), RelatedObjects: [ref(40)] } };
+  const getLine = api.GetLine; api.GetLine = (m, id) => lines[id] || getLine(m, id);
+  const { map } = extractStoreys(api, 0);
+  assert.equal(map[11], 'L1'); assert.equal(map[12], 'L1');
+  assert.equal(map[21], 'L1'); assert.equal(map[22], 'L1'); assert.equal(map[23], 'L1', 'parts of parts too, whatever the relation order');
+  assert.equal(map[33], 'L1', 'direct containment kept');
+  assert.equal(map[50], 'L0', 'rooms aggregated into their storey');
+  assert.equal(map[60], 'L0', 'contents of a space');
+  assert.equal(map[34], 'L0', 'direct containment wins over the parent');
+  assert.equal(map[70], undefined, 'contained in the building: no storey');
+  assert.equal(map[31], undefined, 'an assembly with no storey gives none');
+  assert.equal(map[40], undefined); assert.equal(map[41], undefined);
+});

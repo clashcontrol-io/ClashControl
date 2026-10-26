@@ -499,3 +499,28 @@ test('seeded min-distance: JS === WASM === Engine, and === unseeded below the se
   eng.free();
   assert.ok(below > 100 && beyond > 100, 'fixture covers both sides of the seed (below=' + below + ', beyond=' + beyond + ', n=' + n + ')');
 });
+
+// A NaN coordinate in a mesh used to make the WASM BVH split sort panic
+// (the comparator was no total order), which poisoned the instance for every
+// later call. Both engines now sort NaN keys last (`nan_last` /
+// `_ccNanLastCmp`): no panic, and the answers stay EXACTLY the JS reference.
+test('meshes with NaN coordinates: no panic, intersect + min-distance EXACTLY equal, the instance keeps working', async () => {
+  const mod = await loadWasm();
+  const js = loadJsReference();
+  const rnd = mulberry32(4711);
+  const eng = new mod.Engine();
+  const withNaN = (t, share) => { const c = new Float32Array(t); for (let i = 0; i < c.length; i++) if (rnd() < share) c[i] = NaN; return c; };
+  for (let i = 0; i < 120; i++) {
+    const share = [0.002, 0.02, 0.2][i % 3];
+    const tA = withNaN(box(0, 2, 0, 1, 0, 1, 4 + (i % 5)), share);
+    const tB = withNaN(cyl(-1, 3, 0.5, 0.5, 0.3 + 0.01 * (i % 7), 12 + (i % 9), 3 + (i % 4)), share);
+    assertIntersectParity(js, mod, 'nan' + i, tA, tB);
+    const jd = js._ccJsMeshIntersectRef.minDist(tA, tB), wd = Array.from(mod.mesh_min_distance(tA, tB));
+    assert.deepStrictEqual(wd.map(String), jd.map(String), `nan${i}: min-distance must be EXACTLY equal`);
+    eng.register(2 * i, tA); eng.register(2 * i + 1, tB);
+    assert.deepStrictEqual(Array.from(eng.intersect(2 * i, 2 * i + 1) || []), Array.from(mod.mesh_intersect_raw(tA, tB)), `nan${i}: Engine.intersect`);
+  }
+  // still healthy after all of that
+  assertIntersectParity(js, mod, 'after-nan', box(0, 1, 0, 1, 0, 1, 2), box(0.5, 1.5, 0.5, 1.5, 0.5, 1.5, 2));
+  eng.free();
+});

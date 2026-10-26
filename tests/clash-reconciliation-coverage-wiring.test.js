@@ -102,7 +102,7 @@ test('_ccCoverageModelIds never throws on missing rules/models', () => {
 // 2-arg call shape existing callers/tests still use.
 function loadReconciliationWrapper(candidateCore) {
   const start = source.indexOf('var _ccIdentityCore = window._ccClashIdentityCore;');
-  const end = source.indexOf('\n\n', source.indexOf('function mergeDetectionResults(newClashes, prevClashes, coverageModelIds)', start));
+  const end = source.indexOf('\n\n', source.indexOf('function mergeDetectionResults(newClashes, prevClashes, coverageModelIds, deniedMemory)', start));
   assert.ok(start >= 0 && end > start, 'reconciliation wiring block not found');
   const window = { _ccClashIdentityCore: require('../clash-identity-core'), _ccClashReconciliationCore: candidateCore };
   return new Function('window', source.slice(start, end) + ';return {mergeDetectionResults};')(window);
@@ -112,6 +112,7 @@ function capture(candidateCore) {
   let capturedDeps;
   const { mergeDetectionResults } = loadReconciliationWrapper({
     mergeDetectionResults: (next, prev, deps) => { capturedDeps = deps; return {clashes: [], deltaSummary: {}}; },
+    makeDeniedMatcher: () => () => false,
   });
   return { mergeDetectionResults, deps: () => capturedDeps };
 }
@@ -164,7 +165,7 @@ test('mergeDetectionResults wrapper omits coverage for the legacy 2-arg call sha
 // commit-guarded detectClashesAsync call site builds it via
 // _ccCoverageModelIds before the result reaches the reducer.
 test('the MERGE_CLASHES reducer case passes a.coverageModelIds into mergeDetectionResults', () => {
-  assert.match(source, /mergeDetectionResults\(a\.v, a\.t===A\.MERGE_CLASHES\?s\.clashes:\[\], a\.coverageModelIds\)/);
+  assert.match(source, /mergeDetectionResults\(a\.v, a\.t===A\.MERGE_CLASHES\?s\.clashes:\[\], a\.coverageModelIds, s\.deniedPairs\)/);
 });
 
 test('_ccCommitDetectionResult promotes coverageModelIds from either detectionSettings or opts onto the dispatched action', () => {

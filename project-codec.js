@@ -31,6 +31,11 @@
       assignmentRules: state.assignmentRules || [],
       changelog: state.changelog || [],
       comments: state.comments || [],
+      // denied memory: clashes a person denied are dropped by later runs
+      // (identity key → {pair, point, ts, reason, by}); per project, shared
+      deniedPairs: state.deniedPairs || {},
+      // the coordinator's own property rules (Data Quality, §21.62)
+      propertyRules: Array.isArray(state.propertyRules) ? state.propertyRules : [],
       // clash review: facet filters, search, saved views and the overview/list
       // choice — per project (autoOpen is per run and never stored)
       triage: serializeTriage(state),
@@ -52,7 +57,29 @@
     if (!data._cc || data._cc !== 'ClashControl') throw new Error('Not a ClashControl project file.');
   }
 
-  function restoreProject(data, dispatch, actions) {
+  // Rule maps that belong to one project (never carried over from another).
+  var PROJECT_RULE_MAPS = ['disciplineMatrix', 'matrixRules', 'toleranceByTypePair', 'roleChoices'];
+
+  /** @param {any} v */
+  function isDeniedMemory(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+  // The old per-browser store (`cc_denied_clashes`: element pair → {point,
+  // ts}) as denied memory. Keyed `legacy:<pair>` — the old store had no
+  // identity key; matching uses pair + point either way.
+  /** @param {any} store */
+  function importLegacyDenied(store) {
+    /** @type {any} */
+    var out = {};
+    if (!isDeniedMemory(store)) return out;
+    Object.keys(store).forEach(function(pair) {
+      var e = store[pair];
+      if (!pair || !e || !Array.isArray(e.point) || e.point.length < 3) return;
+      out['legacy:' + pair] = {pair: pair, point: [+e.point[0] || 0, +e.point[1] || 0, +e.point[2] || 0], ts: +e.ts || 0, reason: '', by: ''};
+    });
+    return out;
+  }
+
+  /** @param {any} data @param {(a:any)=>void} dispatch @param {any} actions @param {{legacyDenied?:any}} [opts] */
+  function restoreProject(data, dispatch, actions, opts) {
     data.models.forEach(function(model) {
       dispatch({t:actions.ADD_MODEL, v:Object.assign({}, model, {meshes:[],elements:[],_stub:true})});
     });
@@ -61,8 +88,27 @@
     // contact classification; it dropped genuine small penetrations, so a
     // project saved with the old default loads with the new one (0 = off).
     if (rules && rules.minOverlapVolM3 === 1e-5) rules = Object.assign({}, rules, {minOverlapVolM3: 0});
+    // Rules merge into the current ones (UPD_RULES), so a per-project rule
+    // map the file lacks (older projects) would keep the previously open
+    // project's cells / tolerances / choices. Those maps start empty.
+    if (rules) {
+      var maps = {};
+      PROJECT_RULE_MAPS.forEach(function(k) { if (!(k in rules)) maps[k] = {}; });
+      if (Object.keys(maps).length) rules = Object.assign({}, rules, maps);
+    }
     dispatch({t:actions.UPD_RULES, u:rules});
+    // Before the clashes: a restored list drops what is denied, as it always
+    // did with the per-browser store. A file saved before the denied memory
+    // was project state has no `deniedPairs`: it gets the old store's
+    // entries (opts.legacyDenied) once — saved again, it carries its own.
+    if (actions.DENIED_SET) {
+      var denied = isDeniedMemory(data.deniedPairs) ? data.deniedPairs : importLegacyDenied(opts && opts.legacyDenied);
+      dispatch({t:actions.DENIED_SET, v:denied});
+    }
     if (data.clashes) dispatch({t:actions.SET_CLASHES, v:data.clashes});
+    // Property rules are per project: a file without them (older) starts
+    // empty instead of keeping the previously open project's rules.
+    if (actions.SET_PROPERTY_RULES) dispatch({t:actions.SET_PROPERTY_RULES, v:Array.isArray(data.propertyRules) ? data.propertyRules : []});
     if (data.runHistory || data.lastDeltaSummary) dispatch({
       t:actions.LOAD_PROJECT_STATE,
       data:{runHistory:data.runHistory||[],lastDeltaSummary:data.lastDeltaSummary||null}
@@ -87,6 +133,7 @@
     serializeProject: serializeProject,
     validateProject: validateProject,
     restoreProject: restoreProject,
+    importLegacyDenied: importLegacyDenied,
     serializeTriage: serializeTriage
   });
 }));

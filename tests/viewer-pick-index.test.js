@@ -241,6 +241,37 @@ test('sync: model add / remove / replace, ghost split-outs, moves, batch edits, 
   compareAll(idx, root, r, 100, 15, 'batch added', null);
 });
 
+test('sync: a leaf mesh that later gets (and loses) mesh children of its own — nested too', () => {
+  const idx = PI.create(THREE);
+  const root = buildScene(9, { spread: 12 });
+  const r = rng(909);
+  compareAll(idx, root, r, 60, 12, 'initial', null);
+  const leaf = root.children[1].children.find((o) => o.isMesh && !o.isInstancedMesh && !o.isBatchedMesh && !o.children.length);
+  const kid = new THREE.Mesh(new THREE.BoxGeometry(6, 6, 6), new THREE.MeshPhongMaterial({ side: THREE.DoubleSide }));
+  kid.matrix.makeTranslation(-2, 1, 0.5); kid.matrixAutoUpdate = false;
+  leaf.add(kid); root.updateMatrixWorld(true);
+  compareAll(idx, root, r, 150, 12, 'leaf got a mesh child', null);
+  const grandkid = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 4), new THREE.MeshPhongMaterial({ side: THREE.DoubleSide }));
+  grandkid.matrix.makeTranslation(3, -1, 0); grandkid.matrixAutoUpdate = false;
+  kid.add(grandkid); root.updateMatrixWorld(true);
+  compareAll(idx, root, r, 150, 12, 'the child got a child', null);
+  kid.remove(grandkid); root.updateMatrixWorld(true);
+  compareAll(idx, root, r, 100, 12, 'grandchild removed', null);
+  leaf.remove(kid); root.updateMatrixWorld(true);
+  compareAll(idx, root, r, 100, 12, 'child removed', null);
+});
+
+test('installMeshChildHook: a mesh\'s own add / remove reaches its nearest container, marked subtree; idempotent', () => {
+  PI.installMeshChildHook(THREE); PI.installMeshChildHook(THREE);
+  const g = new THREE.Group(), m = new THREE.Mesh(), c = new THREE.Mesh(), seen = [];
+  g.add(m);
+  g.addEventListener('childadded', (e) => seen.push(['add', e.child === m, !!e.subtree]));
+  g.addEventListener('childremoved', (e) => seen.push(['rm', e.child === m, !!e.subtree]));
+  m.add(c); m.remove(c);
+  g.add(new THREE.Group());   // an ordinary add on the container: three's own event, no subtree mark
+  assert.deepStrictEqual(seen, [['add', true, true], ['rm', true, true], ['add', false, false]]);
+});
+
 test('always-test objects (lines, points, custom raycast) keep three order', () => {
   const idx = PI.create(THREE);
   const root = buildScene(13, { spread: 8, models: 2 });

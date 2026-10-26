@@ -178,6 +178,9 @@ test('validation caps: malformed / oversized records are reported invalid and no
     assert.equal(r.status, 200);
     assert.equal(r.body.accepted, 1);
     assert.deepEqual(r.body.invalid.sort(), bad.map((b) => b.id).sort());
+    // each refusal says why, so the sender can tell its user
+    const why = Object.fromEntries(r.body.rejected.map((x) => [x.id, x.reason]));
+    assert.deepEqual(why, { 'u1.2': 'kind', 'u1.3': 'field', 'u1.4': 'value-too-large', 'u1.5': 'key-too-long', 'u1.6': 'user', 'u1.7': 'resolves', 'u1.8': 'malformed' });
     assert.equal(db.changes.get(p.id).length, 1);
     const many = new Array(501).fill(0).map((_, i) => Object.assign({}, ok, { id: 'm' + i }));
     const r2 = await call(handler, { method: 'PUT', query: { id: p.id }, body: { v: 2, user: 'u1', changes: many } });
@@ -217,8 +220,8 @@ test('lazy migration: a project\'s old shared_issues rows become records once, d
   try {
     // an old client created the project with initial issues (old POST shape)
     const r = await call(handler, { method: 'POST', body: { name: 'Old', user: 'Ann', issues: [
-      { id: 'c-123', status: 'resolved', priority: 'high', assignee: 'Ann', globalIdA: 'GA', globalIdB: 'GB', point: [0.1, 0.2, 0.3], title: 'Wall x duct' },
-      { id: 'c-124', status: 'open', priority: 'normal', globalIdA: 'GC', globalIdB: 'GD', point: [1, 1, 1], title: 'nothing decided' },
+      { id: 'c-123', source: 'auto', status: 'resolved', priority: 'high', assignee: 'Ann', globalIdA: 'GA', globalIdB: 'GB', point: [0.1, 0.2, 0.3], title: 'Wall x duct' },
+      { id: 'c-124', source: 'auto', status: 'open', priority: 'normal', globalIdA: 'GC', globalIdB: 'GD', point: [1, 1, 1], title: 'nothing decided' },
       { id: 'iss_77', status: 'open', title: 'Fire damper missing', source: 'manual', description: 'L2' },
     ] } });
     const pid = r.body.id;

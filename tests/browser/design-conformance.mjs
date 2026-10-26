@@ -3,7 +3,8 @@
 // (tests/fixtures/generate-building-ifc.js — architecture + structure + MEP,
 // IfcSite in NL), opens every main surface in light, dark and a 390 px phone,
 // and asserts on the RENDERED page (computed styles, not source text):
-//   clipped        text cut off by its own box or a clipping ancestor
+//   clipped        text cut off by its own box or a clipping ancestor, or a
+//                  control / count badge running past its panel's edge
 //                  (ellipsis is allowed only with a title, and never on a
 //                  control — see truncated-label)
 //   truncated-label  a button/tab/link whose label is cut off with an
@@ -29,6 +30,15 @@
 //                  controls drawn on top of each other
 //   untranslated   (non-English locale) common English UI words on controls
 //                  and headings — a mixed-language UI
+//   emoji          an emoji in UI text (DESIGN.md: no emoji, no added icons)
+//   amber          an amber / orange / yellow text, background or border
+//                  colour in chrome (DESIGN.md: no amber anywhere in the UI)
+//   cut-control    a <select> whose chosen option, or an empty input whose
+//                  placeholder, is wider than the box shows
+//   mono-prose     a sentence set in --font-mono (mono is for counts, IDs,
+//                  keys — not for "132 shown / 241 total")
+//   untranslated   also: English phrases in any non-data text ("not set",
+//                  "4 values", "Quality Score", …)
 //   diagnostics    "No diagnostics in the main UI": percentages, IFC class
 //                  names, file sizes / timings in the model card and the
 //                  inspector
@@ -226,6 +236,23 @@ function inPageChecker() {
             else if (cs.textOverflow !== 'ellipsis' && (tr.right > ar.right + 2 || tr.left < ar.left - 2) && getComputedStyle(anc).textOverflow !== 'ellipsis') add('clipped', el, 'text outside its clipping box horizontally');
           }
         }
+        // a control or field cut off by a clipping ancestor (a row or input
+        // wider than its panel: width 100% plus padding without border-box)
+        if (el.matches('input:not([type=checkbox]):not([type=radio]),select,textarea,button,.cc-tv__count')) {
+          // nearest ancestor that clips or scrolls: a vertical list that
+          // scrolls sideways hides the row end just the same
+          let anc = null;
+          // (a position:fixed box is clipped by none of its ancestors' overflow)
+          for (let a = el; a && a !== document.body; a = a.parentElement) {
+            const ac = getComputedStyle(a);
+            if (ac.position === 'fixed') break;
+            if (a !== el && !/^visible/.test(ac.overflowX)) { anc = a; break; }
+          }
+          // a deliberate sideways strip (scrolls in x, not in y: chip strip,
+          // phone bucket bar, phone settings tabs) may run past its edge
+          const strip = anc && /(auto|scroll)/.test(getComputedStyle(anc).overflowX) && anc.scrollHeight <= anc.clientHeight + 1;
+          if (anc && !strip) { const r = el.getBoundingClientRect(), ar = anc.getBoundingClientRect(); if (r.width > 0 && r.right > ar.right + 1 && r.left < ar.right) add('clipped', el, 'cut off at the right edge by ' + Math.round(r.right - ar.right) + ' px'); }
+        }
         if (el.matches(CONTROL)) {
           const lab = (el.innerText || '').trim();
           if (/^[^\s…]{1,8}…$/.test(lab)) add('truncated-label', el, 'label reads like a fragment');
@@ -249,6 +276,40 @@ function inPageChecker() {
         if (opts.uiLang && txt && el.matches('button,[role=tab],[role=menuitem],summary,label,th,h1,h2,h3,h4,legend,[role=status]') && !el.closest('[data-cc-card-idx],[data-cc-data]') && el.getAttribute('title') !== txt) {
           const hit = txt.match(/\b(the|and|show|hide|all on|all off|add|clear|run|export|import|settings|remove|close|save|load|select|none|levels?|rules|view|from|with|not drawn|use|enter|more|less|reset|apply|cancel|delete|edit|warnings?|search|placement)\b/i);
           if (hit) add('untranslated', el, 'English word "' + hit[0] + '" in a ' + opts.uiLang + ' UI');
+        }
+        // emoji as UI text
+        if (txt && !el.closest('[data-cc-card-idx],[data-cc-data],kbd,code,pre')) {
+          const g = txt.match(/\p{Emoji_Presentation}/u);
+          if (g) add('emoji', el, 'emoji "' + g[0] + '"');
+        }
+        // amber / orange / yellow in chrome (data swatches are content)
+        if (!el.closest('[data-cc-swatch]')) {
+          for (const [what, c] of [['color', txt ? cs.color : null], ['background', cs.backgroundColor], ['border', px(cs.borderTopWidth) > 0 ? cs.borderTopColor : null]]) {
+            const m = c && c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+            if (!m || (m[4] != null && +m[4] < 0.05)) continue;
+            const r = +m[1] / 255, g = +m[2] / 255, b = +m[3] / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+            if (mx - mn < 0.25 || mx !== r) continue;          // greyish, or not red-led
+            const h = (60 * ((g - b) / (mx - mn)) + 360) % 360;  // hue with red as max
+            if (h >= 20 && h <= 65) { add('amber', el, what + ' ' + c); break; }
+          }
+        }
+        // a select / placeholder wider than its box
+        if (el.matches('select,input:not([type]),input[type=text],input[type=search]')) {
+          const pad = px(cs.paddingLeft) + px(cs.paddingRight) + (el.matches('select') ? 18 : 0);
+          const shown = el.matches('select') ? (el.selectedOptions[0] ? el.selectedOptions[0].textContent.trim() : '') : (!el.value ? el.getAttribute('placeholder') || '' : '');
+          if (shown) {
+            const c = (window.__ccMeasure = window.__ccMeasure || document.createElement('canvas').getContext('2d'));
+            c.font = cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily;
+            const w = c.measureText(shown).width;
+            if (w > el.clientWidth - pad + 1) add('cut-control', el, '"' + shown.slice(0, 40) + '" needs ' + Math.round(w) + ' px, box shows ' + Math.round(el.clientWidth - pad));
+          }
+        }
+        // sentences in the mono face
+        if (txt && /mono/i.test(cs.fontFamily) && cs.textTransform !== 'uppercase' && !el.closest('kbd,code,pre,samp,[data-cc-data]') && (txt.match(/\b\p{L}{3,}\b/gu) || []).length >= 2 && !/^[\w.-]+@|^https?:|^[A-Z0-9]+-[\w]+$/.test(txt)) add('mono-prose', el, txt.slice(0, 50));
+        // English phrases in non-data text
+        if (opts.uiLang && txt && !el.closest('[data-cc-card-idx],[data-cc-data]') && el.getAttribute('title') !== txt) {
+          const hit = txt.match(/\b(not assigned|not set|could not|quality score|property sets?|\d+ values?|\d+ psets?|no data|unknown)\b/i);
+          if (hit) add('untranslated', el, 'English phrase "' + hit[0] + '" in a ' + opts.uiLang + ' UI');
         }
         // diagnostics in the default model card / inspector
         if (txt && el.closest('[data-cc-plain]')) {
@@ -316,7 +377,7 @@ async function load(page) {
   await page.evaluate(() => {
     const m = window._ccLatestState.models[0];
     window._ccDispatch({ t: 'UPD_MODEL', id: m.id, u: {
-      loaderWarnings: [{ code: 'boundaries-unplaced', message: 'Space boundaries could not be placed' }],
+      loaderWarnings: [{ code: 'space-boundaries-unplaced', severity: 'warning', reason: 'no-consistent-frame', total: 4, placed: 0, key: 'boundary.unplaced', message: 'Space boundaries could not be placed' }],
       stats: Object.assign({}, m.stats, { notDrawn: { total: 10, byReason: { transparent: 6, empty: 4 }, byType: { IfcSlab: 6, IfcSpace: 4 } } }),
     } });
   });
@@ -372,11 +433,25 @@ async function runVariant(variant, viewport, theme, mobile) {
     await surface(page, variant, 'project-menu', ['.cc-header-project'], Object.assign({}, o, { overflowRoots: false }));
     await projBtn.click();
   }
+  // a version comparison on the first model (model-diff-core.js): the model
+  // card's change summary + report buttons + colour legend, the Navigator's
+  // "Model changes" filter and its row labels are on the surfaces below
+  await page.evaluate(() => {
+    const core = window._ccModelDiffCore, m = window._ccLatestState.models[0];
+    const els = m.elements.filter((e) => e.props && e.props.globalId);
+    const ent = (e, props) => ({ gid: e.props.globalId, eid: e.expressId, props: props || e.props, geo: '' });
+    const oldE = els.slice(1).map((e, i) => ent(e, i === 0 ? Object.assign({}, e.props, { name: (e.props.name || '') + ' v1' }) : e.props));
+    oldE.push({ gid: 'ccDesignRemoved0000001', eid: -1, props: { ifcType: 'IfcWall', name: 'Removed wall' }, geo: '' });
+    const newE = els.map((e) => ent(e));
+    newE[2].geo = 'moved';
+    window._ccDispatch({ t: 'UPD_MODEL', id: m.id, u: { _version: 2, _versionDiff: core.diffModels(oldE, newE, { geometry: () => 'moved' }) } });
+  });
   // models panel: cards (one expanded) + geo placement
   await page.evaluate(() => window._ccDispatch({ t: 'SET_WORKSPACE', v: 'coordinate' }));
   await page.evaluate((m) => { if (!m && window._ccOpenModelsPanel) { window._ccDispatch({ t: 'TAB', v: null }); window._ccOpenModelsPanel(); } else window._ccDispatch({ t: 'TAB', v: 'models' }); }, mobile);
   await surface(page, variant, 'models', MODELS, o);
   await page.evaluate(() => { const b = document.querySelector('[data-cc-model-card] [data-cc-card-toggle]') || [...document.querySelectorAll('.cc-left-panel button,.cc-side-panel button')].find((x) => x.textContent.trim() === '▼'); if (b) b.click(); });
+  if (!await page.$('[data-cc-model-diff] [data-cc-model-diff-summary]')) pageErrors.push(variant + ': the open model card shows no version comparison');
   await surface(page, variant, 'model-card-open', MODELS, o);
   await page.evaluate(() => { const g = document.querySelector('[data-cc-geo]') || [...document.querySelectorAll('span')].find((x) => /^(geo placement|geo-plaatsing|locatie)$/i.test(x.textContent.trim())); if (g) g.scrollIntoView(); });
   await surface(page, variant, 'geo', MODELS, o);
@@ -388,6 +463,45 @@ async function runVariant(variant, viewport, theme, mobile) {
   });
   await page.evaluate(() => { const g = document.querySelector('[data-cc-geo]') || [...document.querySelectorAll('span')].find((x) => /^(geo placement|geo-plaatsing|locatie)$/i.test(x.textContent.trim())); if (g) g.scrollIntoView(); });
   await surface(page, variant, 'geo-default-site', MODELS, o);
+  // navigator: hierarchy expanded (count badges + eye buttons at the row end)
+  await page.evaluate(() => window._ccDispatch({ t: 'TAB', v: 'navigator' }));
+  await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => /^(expand all|alles uitklappen)$/i.test(x.textContent.trim())); if (b) b.click(); });
+  await surface(page, variant, 'navigator', mobile ? LEFT : LEFT.concat(['.cc-ai-panel']), o);
+  // run settings window: every section expanded, a matrix cell editor open,
+  // an exception rule switched on (the matrix + exceptions live here)
+  await page.evaluate(() => window._ccDispatch({ t: 'SHOW_RUN_MODAL', v: true }));
+  await page.waitForSelector('[aria-labelledby="cc-run-detection-title"]', { timeout: 10_000 }).catch(() => {});
+  await page.evaluate(async () => {
+    const root = document.querySelector('[aria-labelledby="cc-run-detection-title"]');
+    if (!root) return;
+    for (let pass = 0; pass < 3; pass++) {
+      root.querySelectorAll('details:not([open])').forEach((d) => { d.open = true; });
+      root.querySelectorAll('button[aria-expanded="false"]').forEach((b) => b.click());
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    const cell = root.querySelector('[data-cc-matrix] button');
+    if (cell) cell.click();
+    const ex = root.querySelector('[data-cc-exceptions] input[type=checkbox]');
+    if (ex && !ex.checked) ex.click();
+    await new Promise((r) => setTimeout(r, 200));
+  });
+  await surface(page, variant, 'run-settings', ['[aria-labelledby="cc-run-detection-title"]'], o);
+  await page.evaluate(() => window._ccDispatch({ t: 'SHOW_RUN_MODAL', v: false }));
+  // navigator: colour by property (value list + on-canvas legend)
+  if (await page.$('[data-cc-nav-view=byProperty]')) {
+    await page.click('[data-cc-nav-view=byProperty]');
+    await page.selectOption('[data-cc-prop-key]', 'Pset_WallCommon.FireRating');
+    await page.click('[data-cc-prop-color-btn]');
+    await page.waitForSelector('[data-cc-color-legend]', { timeout: 5000 }).catch(() => {});
+    await surface(page, variant, 'colour-by-property', LEFT.concat(['[data-cc-color-legend]']), o);
+    await page.click('[data-cc-prop-color-btn]');
+    await page.click('[data-cc-nav-view=spatial]');
+  }
+  // navigator: only added + changed elements (version comparison filter)
+  await page.evaluate(() => { const b = document.querySelector('[data-cc-nav-changed-mode="changed"]'); if (b) b.click(); });
+  if (!await page.$('[data-cc-nav-changed-mode="changed"][aria-pressed="true"]')) pageErrors.push(variant + ': no Navigator "Model changes" filter');
+  await surface(page, variant, 'navigator-changed', mobile ? LEFT : LEFT.concat(['.cc-ai-panel']), o);
+  await page.evaluate(() => { const b = document.querySelector('[data-cc-nav-changed-mode="all"]'); if (b) b.click(); });
   // pre-run panel
   await page.evaluate(() => { window._ccDispatch({ t: 'UPD_PREFS', u: { preRunDontAsk: false } }); window._ccRunDetectionInteractive(); });
   const pre = await page.waitForSelector('[data-cc-prerun]', { timeout: 15_000 }).catch(() => null);
@@ -402,6 +516,15 @@ async function runVariant(variant, viewport, theme, mobile) {
   await page.evaluate(() => { const d = document.querySelector('[data-cc-run-details]'); if (d) d.open = true; const b = document.querySelector('[data-cc-list-actions]'); if (b) b.click(); });
   await surface(page, variant, 'clash-list-menu', LEFT, o);
   await page.keyboard.press('Escape');
+  // Trends (run history per discipline pair / severity / assignee): charts, then the table view
+  await page.evaluate(() => { const r = document.querySelector('[data-cc-run-details]'); if (r) r.open = false; const d = document.querySelector('[data-cc-trends-details]'); if (d) d.open = true; });
+  await page.waitForSelector('[data-cc-trends]', { timeout: 5000 }).catch(() => {});
+  await page.evaluate(() => { const t = document.querySelector('[data-cc-trends]'); if (t) t.scrollIntoView(); });
+  await surface(page, variant, 'trends', LEFT, o);
+  await page.evaluate(() => { const b = document.querySelector('[data-cc-trends-view="table"]'); if (b) b.click(); });
+  await page.evaluate(() => { const t = document.querySelector('[data-cc-trend-table="pair"]'); if (t) t.scrollIntoView(); });
+  await surface(page, variant, 'trends-table', LEFT, o);
+  await page.evaluate(() => { const d = document.querySelector('[data-cc-trends-details]'); if (d) d.open = false; });
   // review overview + Filters popover
   await page.evaluate(() => window._ccDispatch({ t: 'TRIAGE_UPD', u: { view: 'overview' } }));
   await page.waitForSelector('[data-cc-overview]', { timeout: 10_000 }).catch(() => {});
@@ -422,9 +545,26 @@ async function runVariant(variant, viewport, theme, mobile) {
   // data quality + accessibility
   await page.evaluate(() => window._ccDispatch({ t: 'TAB', v: 'dataquality' }));
   await surface(page, variant, 'data-quality', LEFT, o);
+  // data quality: property rules — a result row, the rule list and the open editor
+  await page.evaluate(() => window._ccDispatch({ t: 'SET_PROPERTY_RULES', v: [{ id: 'dc1', appliesTo: ['IfcWall'], prop: 'Pset_WallCommon.FireRating', op: 'exists', value: '', severity: 'major', stage: 'Stage A', enabled: true }] }));
+  await page.click('[data-cc-dq-run]');
+  await page.waitForSelector('[data-cc-rule-results]', { timeout: 30_000 }).catch(() => {});
+  await page.click('[data-cc-dq-rules] [data-cc-rule-add]').catch(() => {});
+  await page.evaluate(() => { const e = document.querySelector('[data-cc-dq-rules]'); if (e) e.scrollIntoView(); });
+  await surface(page, variant, 'data-quality-rules', LEFT, o);
+  await page.evaluate(() => { const e = document.querySelector('[data-cc-rule-editor]'); if (e) e.scrollIntoView(); });
+  await surface(page, variant, 'data-quality-rule-editor', LEFT, o);
+  await page.evaluate(() => window._ccDispatch({ t: 'SET_PROPERTY_RULES', v: [] }));
   await page.evaluate(() => window._ccDispatch({ t: 'TAB', v: 'accessibility' }));
   await surface(page, variant, 'accessibility', LEFT, o);
   await page.evaluate(() => window._ccDispatch({ t: 'TAB', v: null }));
+  // share modal, both tabs
+  await page.evaluate(() => { window._ccDispatch({ t: 'SHARE', v: true }); window._ccDispatch({ t: 'SHARE_TAB', v: 'overview' }); });
+  await page.waitForSelector('[aria-labelledby=cc-share-title]', { timeout: 5000 }).catch(() => {});
+  await surface(page, variant, 'share-overview', ['[aria-labelledby=cc-share-title]'], o);
+  await page.evaluate(() => window._ccDispatch({ t: 'SHARE_TAB', v: 'comments' }));
+  await surface(page, variant, 'share-comments', ['[aria-labelledby=cc-share-title]'], o);
+  await page.evaluate(() => window._ccDispatch({ t: 'SHARE', v: false }));
   // settings, every tab
   await page.evaluate(() => window._ccDispatch({ t: 'SETTINGS', v: true }));
   await page.waitForSelector('[role=dialog] [role=tablist]', { timeout: 5000 }).catch(() => {});

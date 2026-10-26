@@ -194,6 +194,7 @@ const TAILS = {
   IFCDUCTSEGMENT: () => '$,.RIGIDSEGMENT.', IFCPIPESEGMENT: () => '$,.RIGIDSEGMENT.', IFCCABLECARRIERSEGMENT: () => '$,.CABLETRAYSEGMENT.',
   IFCDUCTFITTING: (o) => `$,${o.pre || '.BEND.'}`, IFCPIPEFITTING: (o) => `$,${o.pre || '.BEND.'}`, IFCCABLECARRIERFITTING: () => '$,.BEND.',
   IFCAIRTERMINAL: () => '$,.DIFFUSER.', IFCFLOWTERMINAL: () => '$', IFCBUILDINGELEMENTPROXY: () => '$,.NOTDEFINED.',
+  IFCLIGHTFIXTURE: () => '$,.DIRECTIONSOURCE.',
 };
 const PSET_NAME = {
   IFCWALL: 'Pset_WallCommon', IFCSLAB: 'Pset_SlabCommon', IFCCOLUMN: 'Pset_ColumnCommon', IFCBEAM: 'Pset_BeamCommon', IFCMEMBER: 'Pset_MemberCommon',
@@ -652,6 +653,56 @@ function generateBuilding(opts) {
       a: vb('M', 'IFCFLOWTERMINAL', 'P cabinet x-gap', x + 1.0501, x + 1.5, 0.5, 1.0, 0, 1.2), b: vb('A', 'IFCWALL', 'P wall x-gap', x + 0.8, x + 1, 0, 2, 0, 3) }));
     plant((x) => ({ name: 'parallel rectangular pipes 49.9 mm apart', category: 'clearance', distanceM: 0.0499, toleranceRelation: 'below',
       a: hr('M', 'IFCPIPESEGMENT', 'P pipe parallel A', 'x', x, 1, 1.5, 2, 0.1, 0.1), b: hr('S', 'IFCMEMBER', 'P member parallel', 'x', x, 1 + 0.1 + 0.0499, 1.5, 2, 0.1, 0.1) }));
+    // Opt-in (opts.openShell; the default output is unchanged): a box nested
+    // in a housing whose top is missing — a shape that is not closed, so it
+    // has no defined inside: an 'open-inside' finding to check, never a clash.
+    if (opts.openShell) {
+      plant((x) => {
+        const T = BOXT.filter((t, i) => i !== 2 && i !== 3); // drop the two top triangles
+        return { name: 'fitting inside an open-topped housing (no defined inside)', category: 'separate', openInside: true,
+          a: vb('M', 'IFCPIPEFITTING', 'P fitting in open housing', x + 0.8, x + 1.2, 0.8, 1.2, 0.8, 1.2),
+          b: tri('A', 'IFCBUILDINGELEMENTPROXY', 'P open-topped housing', boxV(x, x + 2, 0, 2, 0, 2), T) };
+      });
+    }
+    // Opt-in (opts.penetrations; the default output is unchanged): planted
+    // cases for the intersection exceptions and the required-provision check
+    // (clash-exceptions-core.js, tests/browser/penetration-rules.mjs).
+    // `exceptions` says where each case must land: with every rule off, with
+    // the straight-penetration / flush-fitting exception on, and whether the
+    // required-provision check reports it missing.
+    if (opts.penetrations) {
+      const LB = { props: { LoadBearing: true } };
+      const swall = (x, name) => vb('S', 'IFCWALL', name, x + 0.4, x + 0.6, -0.5, 2.5, 0, 3.0, LB);
+      const duct = (x, name) => hr('M', 'IFCDUCTSEGMENT', name, 'x', x - 1, 1.0, 1.6, 3, 0.6, 0.4);
+      plant((x) => ({ name: 'duct orthogonally through a structural wall, no opening', category: 'crossing',
+        exceptions: { off: 'review', penetration: 'penetration', fitting: 'review', missingProvision: true },
+        a: duct(x, 'E duct through wall without opening'), b: swall(x, 'E structural wall without opening') }));
+      plant((x) => {
+        const wall = swall(x, 'E structural wall with opening');
+        opening(S, wall[1], st.S, wall[1].pl, S.ax3([-0.5, 0, 1.6], [1, 0, 0], [0, 1, 0]), S.rect(0.66, 0.46), 1.0, 'E opening for duct', 'e-op1');
+        return { name: 'duct orthogonally through a structural wall, with its opening (30 mm all round)', category: 'clearance', distanceM: 0.03, opening: 'provided',
+          exceptions: { off: 'provided', penetration: 'provided', fitting: 'provided', missingProvision: false },
+          a: duct(x, 'E duct through wall opening'), b: wall };
+      });
+      plant((x) => {
+        const wall = swall(x, 'E structural wall with opening beside duct');
+        opening(S, wall[1], st.S, wall[1].pl, S.ax3([-0.5, 0.48, 1.6], [1, 0, 0], [0, 1, 0]), S.rect(0.3, 0.4), 1.0, 'E opening 30 mm beside duct', 'e-op2');
+        return { name: 'duct orthogonally through a structural wall, an opening 30 mm beside it', category: 'crossing',
+          exceptions: { off: 'review', penetration: 'penetration', fitting: 'review', missingProvision: false, missingWithinMm20: true },
+          a: duct(x, 'E duct beside its opening'), b: wall };
+      });
+      plant((x) => {
+        const a = Math.PI / 6, dir = [Math.sin(a), 0, Math.cos(a)], ref = [Math.cos(a), 0, -Math.sin(a)];
+        return { name: 'pipe oblique (30 deg) through a structural slab, no opening', category: 'crossing',
+          exceptions: { off: 'review', penetration: 'review', fitting: 'review', missingProvision: true },
+          a: ['M', element(M, 'IFCPIPESEGMENT', 'E oblique pipe through slab', st.M, st.M.pl, M.ax3([x + 0.5, 1.0, 0.3], dir, ref), [M.extrude(M.circ(0.05), 2.0)], 'SweptSolid', { sig: 'e-obl' })],
+          b: vb('S', 'IFCSLAB', 'E slab crossed by oblique pipe', x - 0.5, x + 2.5, 0, 2, 1.0, 1.25) };
+      });
+      plant((x) => ({ name: 'light fixture set flush into a ceiling', category: 'crossing',
+        exceptions: { off: 'review', penetration: 'review', fitting: 'fitting', missingProvision: false },
+        a: vb('M', 'IFCLIGHTFIXTURE', 'E recessed light', x + 0.7, x + 1.3, 0.7, 1.3, 2.8, 2.95),
+        b: vb('A', 'IFCCOVERING', 'E suspended ceiling', x - 0.5, x + 2.5, 0, 2, 2.8, 2.82, { pre: '.CEILING.' }) }));
+    }
   }
 
   if (planted && roles) {

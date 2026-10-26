@@ -25,7 +25,10 @@ const end = src.indexOf('\n  }', src.indexOf('  function _sweepAndPrune(grpA, gr
 const npStart = src.indexOf('  var _NON_PHYSICAL_TYPES = {');
 const npEnd = src.indexOf('\n  }', src.indexOf('  function _ccIsNonPhysicalEl(el) {', npStart)) + '\n  }'.length;
 assert.ok(npStart !== -1 && npEnd > npStart, '_ccIsNonPhysicalEl not found');
-const _sweepAndPrune = new Function(src.slice(npStart, npEnd) + '\n' + src.slice(start, end) + '; return _sweepAndPrune;')();
+const cmpStart = src.indexOf('  function _ccNanLastCmp(ka, kb) {');
+const cmpEnd = src.indexOf('\n  }', cmpStart) + '\n  }'.length;
+assert.ok(cmpStart !== -1, '_ccNanLastCmp not found');
+const _sweepAndPrune = new Function(src.slice(cmpStart, cmpEnd) + '\n' + src.slice(npStart, npEnd) + '\n' + src.slice(start, end) + '; return _sweepAndPrune;')();
 assert.equal(typeof _sweepAndPrune, 'function');
 
 function box(x, y, z, size) {

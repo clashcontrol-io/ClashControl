@@ -61,6 +61,16 @@ const pageErrors = [];
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
 await ctx.addInitScript(() => {
   try { localStorage.setItem('cc_consent_banner_seen', '1'); localStorage.setItem('cc_data_consent', 'denied'); localStorage.setItem('cc_data_consent_explicit', '1'); } catch (e) {}
+  // Never persist the linked folder's handle: here it is the origin-private
+  // file system's root (a stand-in no user can pick), and a second page
+  // restoring that handle from IndexedDB trips an internal assertion in some
+  // Chromium builds (the browser process exits on SIGTRAP). Both pages link
+  // the folder explicitly; reconnect-after-reload is not what this checks.
+  const put = IDBObjectStore.prototype.put;
+  IDBObjectStore.prototype.put = function (v, k) {
+    if (this.name === 'handles' && k === 'shared') return put.call(this, Object.assign({}, v, { dirHandle: null }), k);
+    return put.apply(this, arguments);
+  };
   // file-system cost counters: contents read (File.text), writes (createWritable)
   window.__fs = { text: 0, textBytes: 0, writes: [], getFile: 0 };
   const text = Blob.prototype.text;
@@ -325,6 +335,28 @@ try {
   // every change file in the folder was written once (no rewrites)
   const writes = [...(await A.evaluate(() => window.__fs.writes)), ...(await B.evaluate(() => window.__fs.writes))].filter((n) => n.endsWith('.json') && !n.startsWith('project-') && !n.startsWith('snapshot-'));
   check(new Set(writes).size === writes.length, 'no change file was written twice (' + writes.length + ' files)');
+  // ── compaction: A writes a snapshot of the log; B, which already has every
+  //    file it covers, reads only its head — never the whole snapshot ──
+  await tick(A); await tick(B);
+  const snapsBefore = Object.keys(await folder(A)).filter((n) => /snapshot-\d{14}-ualice/.test(n)).length;
+  await A.evaluate(async () => {
+    const cfg = window._ccSharedLog.config;
+    cfg.snapshotAt = 1; cfg.snapshotShare = 1e6;
+    for (let i = 0; i < 40 && window._ccSharedLog.stats.snapshotsWritten === 0; i++) await window._ccSharedLog.tick();
+    cfg.snapshotAt = 1e9;
+  });
+  const snapName = Object.keys(await folder(A)).filter((n) => /snapshot-\d{14}-ualice/.test(n)).sort().pop();
+  check(Object.keys(await folder(A)).filter((n) => /snapshot-\d{14}-ualice/.test(n)).length === snapsBefore + 1, 'page A wrote a compaction snapshot (' + snapName + ')');
+  const snapSize = (await folder(A))[snapName];
+  const before = await B.evaluate(() => ({ text: window.__fs.text, skipped: window._ccSharedLog.stats.snapshotsSkipped, d: window._ccSharedLog.stats.dispatches }));
+  await tick(B);
+  const after = await B.evaluate(() => ({ text: window.__fs.text, skipped: window._ccSharedLog.stats.snapshotsSkipped, d: window._ccSharedLog.stats.dispatches }));
+  check(after.skipped === before.skipped + 1 && after.text === before.text + 1 && after.d === before.d,
+    'page B skipped the snapshot by its head: one head read (not the ' + snapSize + '-byte body), nothing dispatched', JSON.stringify({ before, after }));
+  // a newcomer still reads it whole and gets the same state
+  const n0 = await A.evaluate(() => window._ccSharedLog.log().size);
+  check(n0 > 0 && n0 === await B.evaluate(() => window._ccSharedLog.log().size), 'both pages hold the same ' + n0 + ' records');
+
   files = await folder(A);
   console.log('folder: ' + Object.keys(files).sort().map((n) => n + ' ' + files[n] + ' B').join(', '));
 

@@ -113,6 +113,18 @@ const digest = () => page.evaluate(() => {
   }
   return out;
 });
+// Model version comparison: every element's geometry signature
+// (model-diff-core.js via _ccElementGeoSig), per model and element — a
+// restored model compared with its fresh load must show no change.
+const geoSigs = () => page.evaluate(() => {
+  const out = {};
+  for (const m of window._ccLatestState.models) {
+    const o = {};
+    for (const el of m.elements) o[el.expressId] = window._ccElementGeoSig(el);
+    out[m.name] = o;
+  }
+  return out;
+});
 const clashList = () => page.evaluate(() => window._ccLatestState.clashes.map((c) => {
   const o = {}; Object.keys(c).sort().forEach((k) => { if (!/^(id|createdAt|_?updatedAt|_runId|_runCount|_seenRuns|_lastSeen|_delta|_prev[A-Z]|history|_hist)/.test(k)) o[k] = c[k]; }); return JSON.stringify(o);
 }).sort());
@@ -173,7 +185,8 @@ const cacheBytes = () => page.evaluate(async () => {
 });
 
 try {
-  await page.goto('http://127.0.0.1:8768/', { waitUntil: 'domcontentloaded' });
+  // CC_GEO_V8=1: the same checks with the v8 (validated) geometry cache on
+  await page.goto('http://127.0.0.1:8768/' + (process.env.CC_GEO_V8 === '1' ? '?ccSafety=geoCacheV8' : ''), { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.ClashControl && typeof window._ccDispatch === 'function', null, { timeout: 60_000 });
   const names = [...files.keys()];
   await page.evaluate(async (names) => {
@@ -195,6 +208,7 @@ try {
   }, names.length);
   if (cacheKeys < names.length) throw new Error('geometry caches not written: ' + cacheKeys + ' of ' + names.length);
   const d0 = await digest();
+  const g0 = await geoSigs();
   const s0 = await sharing();
   const cb = await cacheBytes();
   report('every cache record stores shared geometries once (gs:1) and is smaller than the per-mesh layout',
@@ -213,18 +227,42 @@ try {
   // User Timing entry _geoSerialize records).
   const serialisedBefore = await page.evaluate(() => performance.getEntriesByName('cc:geoSerialize').length);
   const ids = await page.evaluate(() => window._ccLatestState.models.map((m) => m.id));
+  // "Can it be restored?" (asked at park time) reads keys + the stored
+  // validator verdict, never a geometry record (§6)
+  const verdicts = await page.evaluate(async () => {
+    const S = IDBObjectStore.prototype, g = S.get;
+    window.__geoGets = 0;
+    if (!S.__ccCounted) { S.get = function () { if (this.name === 'geoCache') window.__geoGets++; return g.apply(this, arguments); }; S.__ccCounted = true; }
+    const db = await new Promise((res) => { const r = indexedDB.open('ClashControlFiles'); r.onsuccess = () => res(r.result); });
+    const rows = await new Promise((res) => { const q = db.transaction('geoOk', 'readonly').objectStore('geoOk').getAll(); q.onsuccess = () => res(q.result); });
+    db.close();
+    return { v8: window._ccSafetyMigrations.isEnabled('geoCacheV8'), version: db.version, rows: rows.map((r) => r.ok) };
+  });
+  // v8 records are validated: each carries its verdict; unversioned ones are
+  // never validated (restorable = the record exists), so none is stored
+  report('geometry cache verdicts: v8 → one stored with each record (ok), else none', verdicts.version >= 5 &&
+    (verdicts.v8 ? verdicts.rows.length === names.length && verdicts.rows.every((x) => x === 1) : verdicts.rows.length === 0), JSON.stringify(verdicts));
+  const parkReads = [];
   for (const id of ids) {
+    await page.evaluate(() => { window.__geoGets = 0; });
     const parked = await page.evaluate((id) => window.ClashControl.parkModel(id), id);
+    parkReads.push(await page.evaluate(() => window.__geoGets));
     if (!parked) throw new Error('could not park ' + id);
     await page.waitForFunction((id) => (window._ccLatestState.parkedModels || []).some((p) => p.id === id), id, { timeout: 60_000 });
     await page.evaluate((id) => window.ClashControl.restoreModel(id), id);
     await page.waitForFunction((id) => !(window._ccLatestState.parkedModels || []).length && window._ccLatestState.models.some((m) => m.id === id), id, { timeout: 180_000 });
   }
+  report('parking read no geometry record (keys + verdict only)', parkReads.every((n) => n === 0), JSON.stringify(parkReads));
   const serialisedAfter = await page.evaluate(() => performance.getEntriesByName('cc:geoSerialize').length);
   report('every model was restored from its cache (no re-parse)', serialisedBefore === names.length && serialisedAfter === serialisedBefore, serialisedBefore + ' -> ' + serialisedAfter + ' serialisations');
   const d1 = await digest();
   const same = Object.keys(d0).length === Object.keys(d1).length && Object.keys(d0).every((k) => d1[k] && d1[k].h === d0[k].h && d1[k].vertices === d0[k].vertices && d1[k].elements === d0[k].elements);
   report('restored geometry is byte-identical to the fresh load (world positions + indices)', same, JSON.stringify({ fresh: d0, restored: d1 }));
+  const g1 = await geoSigs();
+  const sigDiff = [];
+  for (const k of Object.keys(g0)) for (const id of Object.keys(g0[k])) if (!g1[k] || g1[k][id] !== g0[k][id]) sigDiff.push(k + '#' + id);
+  report('version comparison: restored geometry signatures equal the fresh load (no false changes)', Object.keys(g0).length === names.length && sigDiff.length === 0 && Object.values(g0).every((o) => Object.values(o).some((x) => x)),
+    sigDiff.length + ' differ' + (sigDiff.length ? ': ' + sigDiff.slice(0, 5).join(', ') : ''));
   const s1 = await sharing();
   report('restored models share geometry exactly like the fresh load (partition, instancing, batching)', JSON.stringify(s1) === JSON.stringify(s0), JSON.stringify({ fresh: s0, restored: s1 }));
   const p1 = await pixels();
@@ -238,6 +276,24 @@ try {
   const diff = c0.filter((x, i) => x !== c1[i]).length;
   if (diff) { const a = JSON.parse(c0[0]), b = JSON.parse(c1[0]); console.log('FIELD DIFF', JSON.stringify(Object.keys(Object.assign({}, a, b)).filter((k) => JSON.stringify(a[k]) !== JSON.stringify(b[k])).map((k) => [k, a[k], b[k]])).slice(0, 1500)); }
   report('clash results after restore are identical to the fresh load', c0.length === c1.length && diff === 0, c0.length + ' vs ' + c1.length + ' clashes, ' + diff + ' differ');
+  // a v8 record stored before verdicts existed is read + validated as before
+  // (last: a park / restore changes the model order the checks above compare)
+  if (verdicts.v8) {
+  const legacy = await page.evaluate(async (id) => {
+    const db = await new Promise((res) => { const r = indexedDB.open('ClashControlFiles'); r.onsuccess = () => res(r.result); });
+    await new Promise((res) => { const tx = db.transaction('geoOk', 'readwrite'); tx.objectStore('geoOk').clear(); tx.oncomplete = res; });
+    db.close();
+    window.__geoGets = 0;
+    const parked = await window.ClashControl.parkModel(id);
+    const reads = window.__geoGets;
+    // restore once the park is in the state (as the loop above does)
+    await new Promise((res) => { (function w() { if ((window._ccLatestState.parkedModels || []).some((p) => p.id === id)) res(); else setTimeout(w, 50); })(); });
+    await window.ClashControl.restoreModel(id);
+    return { parked, reads };
+  }, ids[0]);
+  await page.waitForFunction((id) => !(window._ccLatestState.parkedModels || []).length && window._ccLatestState.models.some((m) => m.id === id), ids[0], { timeout: 180_000 });
+  report('a cache record without a stored verdict is read and validated once at park (as before)', legacy.parked === true && legacy.reads === 1, JSON.stringify(legacy));
+  }
   report('no uncaught page errors', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
 } catch (e) {
   report('test crashed', false, String(e && e.stack || e));

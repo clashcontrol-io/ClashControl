@@ -213,6 +213,148 @@ try {
     'after a reload, page B pulled from its cached cursor: only the 1 new record', JSON.stringify(gets));
   await B2.close();
 
+  // ── deny with a reason (§21.58): A denies (like the D key: no reason),
+  //    adds the reason in the row detail; B sees who / when / why as text,
+  //    and B's next run keeps it denied (project-state denied memory) ──
+  {
+    const showAll = (P) => P.evaluate(() => {
+      const core = window._ccClashClassificationCore;
+      window._ccDispatch({ t: 'TAB', v: 'clashes' });
+      window._ccDispatch({ t: 'UPD_FILTERS', u: { showHandled: true, showBuckets: (core && core.REVIEW_BUCKETS) || [] } });
+    });
+    await setStatus(A, K[1], 'denied');
+    const aId = byKey(await clashes(A), K[1]).id;
+    await showAll(A);
+    await A.evaluate((cid) => window._ccDispatch({ t: 'ACTIVE', id: cid }), aId);
+    await A.waitForSelector(`[data-cc-denial="${aId}"] [data-cc-denial-edit]`, { timeout: 10_000 });
+    check(/^Add reason$/.test((await A.textContent(`[data-cc-denial="${aId}"] [data-cc-denial-edit]`)).trim()), 'page A: a denied clash offers "Add reason"');
+    await A.click(`[data-cc-denial="${aId}"] [data-cc-denial-edit]`);
+    await A.fill(`[data-cc-denial="${aId}"] [data-cc-denial-input]`, 'Sleeve provided on site');
+    await A.click(`[data-cc-denial="${aId}"] [data-cc-denial-save]`);
+    await settle(A); await pull(B);
+    const bDen = await B.evaluate((k) => { const s = window._ccLatestState, c = s.clashes.find((x) => x._identityKey === k); return { st: c.status, reason: c.deniedReason, by: c.deniedBy, at: c.deniedAt, id: c.id, mem: s.deniedPairs[k] || null }; }, K[1]);
+    check(bDen.st === 'denied' && bDen.reason === 'Sleeve provided on site' && bDen.by === 'Alice' && bDen.at > 0, 'page B: the clash is denied with A\'s reason, by Alice', JSON.stringify(bDen));
+    check(!!bDen.mem && bDen.mem.reason === 'Sleeve provided on site', 'page B: the deny is in B\'s denied memory (project state)', JSON.stringify(bDen.mem));
+    await showAll(B);
+    await B.evaluate((cid) => window._ccDispatch({ t: 'ACTIVE', id: cid }), bDen.id);
+    const txt = await B.waitForSelector(`[data-cc-denial="${bDen.id}"] [data-cc-denial-text]`, { timeout: 10_000 }).then((el) => el.textContent(), () => '');
+    check(/^Denied by Alice on .+ — Sleeve provided on site$/.test(txt.trim()), 'page B: row detail says "Denied by Alice on <date> — reason"', txt);
+    // B re-runs: the pair stays denied — dropped from the result, memory kept
+    const runTs = await B.evaluate(() => { const ts = window._ccLatestState.lastDeltaSummary.ts; window._ccRunDetection(); return ts; });
+    await B.waitForFunction((t0) => !window._ccLatestState.detecting && window._ccLatestState.lastDeltaSummary.ts > t0, runTs, { timeout: 120_000, polling: 200 });
+    await pull(B);
+    const bAfter = await B.evaluate((k) => { const s = window._ccLatestState; return { open: s.clashes.filter((x) => x._identityKey === k && x.status !== 'denied').length, mem: !!s.deniedPairs[k] }; }, K[1]);
+    check(bAfter.open === 0 && bAfter.mem, 'page B: after B\'s own run the clash is still denied (not back as open)', JSON.stringify(bAfter));
+    await A.evaluate(() => window._ccDispatch({ t: 'ACTIVE', id: null }));
+    await B.evaluate(() => window._ccDispatch({ t: 'ACTIVE', id: null }));
+  }
+
+  // ── delete vs edit, then Keep: the issue's viewpoint (dropped by the
+  //    deleter's reducer together with the issue) comes back on both pages ──
+  await A.evaluate(() => {
+    window._ccDispatch({ t: 'ADD_ISSUE', v: { id: 'iss_vp_1', title: 'Duct through beam', status: 'open', priority: 'normal', createdAt: '2026-10-25' } });
+    window._ccDispatch({ t: 'ADD_VIEWPOINT', v: { id: 'vp_iss_1', name: 'Beam view', camera: { position: [5, 5, 5], target: [0, 0, 0], fov: 50 }, linkedId: 'iss_vp_1', createdAt: '2026-10-25' } });
+  });
+  await settle(A); await pull(B);
+  const hasVp = (P) => P.evaluate(() => window._ccLatestState.viewpoints.some((v) => v.id === 'vp_iss_1'));
+  check(await hasVp(B), 'page B got the issue\'s viewpoint');
+  await A.evaluate(() => window._ccDispatch({ t: 'DEL_ISSUE', id: 'iss_vp_1' }));
+  await B.evaluate(() => window._ccDispatch({ t: 'UPD_ISSUE', id: 'iss_vp_1', u: { status: 'resolved' } }));
+  await settle(A); await settle(B); await pull(A); await pull(B);
+  check(await hasVp(A) && await hasVp(B), 'delete in conflict: the viewpoint stays on both pages');
+  await B.evaluate(() => window._ccSharedResolve({ src: 'cloud', kind: 'issue', key: 'iss_vp_1', field: 'deleted', value: false }));
+  await settle(B); await pull(A); await pull(B);
+  for (const [P, who] of [[A, 'A'], [B, 'B']]) {
+    const st = await P.evaluate(() => ({ it: window._ccLatestState.issues.find((i) => i.id === 'iss_vp_1') || null, vp: window._ccLatestState.viewpoints.find((v) => v.id === 'vp_iss_1') || null }));
+    check(st.it && st.it.status === 'resolved' && st.vp && st.vp.linkedId === 'iss_vp_1', 'page ' + who + ': Keep restores the issue with the edit AND its viewpoint', JSON.stringify({ it: !!st.it, vp: st.vp && st.vp.linkedId }));
+  }
+
+  // ── a record the server refuses (over the 16 KB value cap) is not lost
+  //    silently: the sender is told which change and why (toast + Share
+  //    panel), it is never retried, the notice survives a reload until
+  //    dismissed, and the teammate never gets it ──
+  await A.evaluate(() => { window.__toasts.length = 0; window._ccDispatch({ t: 'ADD_ISSUE', v: { id: 'iss_big_1', title: 'Huge notes', description: 'x'.repeat(20000), status: 'open', priority: 'normal', createdAt: '2026-10-25' } }); });
+  await settle(A);
+  const rej = await A.evaluate(() => ({ st: window._ccCloudShare.status(), toasts: window.__toasts.slice() }));
+  check(rej.st.pending === 0 && rej.st.rejected.length === 1 && rej.st.rejected[0].reason === 'value-too-large' && rej.st.rejected[0].key === 'iss_big_1'
+    && rej.toasts.some((m) => /not shared/i.test(m)), 'refused record: listed with its reason, toast shown, not pending', JSON.stringify(rej));
+  const putsBefore = log.filter((x) => x.who === 'ualice0000001' && x.method === 'PUT').length;
+  await A.evaluate(() => window._ccCloudShare.push());
+  check(log.filter((x) => x.who === 'ualice0000001' && x.method === 'PUT').length === putsBefore, 'refused record is not retried');
+  await A.evaluate(() => window._ccDispatch({ t: 'SHARE', v: true }));
+  const rejNote = await A.waitForSelector('[data-cc-cloud-rejected]', { timeout: 5_000 }).then((el) => el.textContent(), () => '');
+  check(/too large to share/.test(rejNote) && /Huge notes/.test(rejNote), 'Share panel: which change was not shared and why', rejNote);
+  await A.evaluate(() => window._ccDispatch({ t: 'SHARE', v: false }));
+  await pull(B);
+  check(!(await B.evaluate(() => window._ccLatestState.issues.some((i) => i.id === 'iss_big_1'))), 'the teammate never got the refused record');
+  const A2 = await A.context().newPage();
+  A2.on('pageerror', (e) => pageErrors.push('A2: ' + e.message));
+  await A2.goto(url, { waitUntil: 'domcontentloaded' });
+  await A2.waitForFunction(() => window._ccCloudShare && window._ccCloudShare.status().lastSync, null, { timeout: 60_000 });
+  const rej2 = await A2.evaluate(() => window._ccCloudShare.status());
+  check(rej2.rejected.length === 1 && rej2.pending === 0, 'after a reload the notice is still there and nothing is re-sent', JSON.stringify(rej2.rejected));
+  await A2.evaluate(() => window._ccCloudShare.dismissRejected());
+  check((await A2.evaluate(() => window._ccCloudShare.status().rejected.length)) === 0, 'Dismiss clears the notice');
+  await A2.close();
+
+  // ── the Share panel's link (?p=KEY): a teammate who opens it is in the
+  //    project, and the key leaves the address bar ──
+  {
+    const ctxC = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    await ctxC.addInitScript(() => { try { localStorage.setItem('cc_consent_banner_seen', '1'); localStorage.setItem('cc_data_consent', 'denied'); localStorage.setItem('cc_data_consent_explicit', '1'); } catch (e) {} window.__ccSharedTestUser = 'ucarol0000003'; });
+    if (offlineDepsEnabled()) await routeOfflineDeps(ctxC, root);
+    await routeApi(ctxC, 'ucarol0000003');
+    const C = await ctxC.newPage();
+    C.on('pageerror', (e) => pageErrors.push('C: ' + e.message));
+    await C.goto(url + '?p=' + encodeURIComponent(pid), { waitUntil: 'domcontentloaded' });
+    const joined = await C.waitForFunction((k) => window._ccCloudShare && window._ccCloudShare.status().pid === k && !/[?&]p=/.test(location.search), pid, { timeout: 60_000 }).then(() => true, () => false);
+    const savedKey = await C.evaluate(() => localStorage.getItem('cc_sharedProjectId'));
+    check(joined && savedKey === pid, 'share link: opening ?p=KEY joins the project and clears the key from the address bar');
+    await ctxC.close();
+  }
+
+  // ── one sharing mode at a time (shared-session-core claimLink) ──
+  // With a project key linked, a shared folder cannot be linked (each mode
+  // keeps its own log; both at once would overwrite each other's values and
+  // markers) — and the other way round, with the reason shown.
+  await A.evaluate(() => window._ccActivateAddon('shared-project'));
+  await A.waitForFunction(() => window._ccSharedLog, null, { timeout: 30_000 });
+  const refused = await A.evaluate(async () => {
+    window.__toasts.length = 0;
+    const r = await window._ccSharedLog.link(await navigator.storage.getDirectory());
+    return { r, sess: !!window._ccSharedLog.session(), holder: window._ccSharedSessionCore.linkHolder(), toasts: window.__toasts.slice() };
+  });
+  check(refused.r === false && !refused.sess && refused.holder.src === 'cloud' && refused.toasts.some((m) => m.includes(pid)),
+    'project key linked: linking a folder is refused with the key named', JSON.stringify(refused));
+  await A.evaluate(() => window._ccDispatch({ t: 'SHARE', v: true }));
+  const shareNote = await A.waitForSelector('[data-cc-share-mode-note="cloud"]', { timeout: 5_000 }).catch(() => null);
+  const linkDisabled = await A.evaluate(() => [...document.querySelectorAll('button')].some((b) => /Link a shared folder/.test(b.textContent) && b.disabled));
+  check(!!shareNote && linkDisabled, 'Share panel: "Link a shared folder" disabled with the reason');
+  await A.evaluate(() => window._ccDispatch({ t: 'SHARE', v: false }));
+  // leave the key → the folder links; now the key is refused before any request
+  const nReq = () => log.filter((x) => x.who === 'ualice0000001').length;
+  await A.evaluate(() => { localStorage.removeItem('cc_sharedProjectId'); localStorage.removeItem('cc_sharedProjectName'); window._ccSharedStop(true); });
+  const linked = await A.evaluate(async () => {
+    const r = await window._ccSharedLog.link(await navigator.storage.getDirectory());
+    return { r, sess: !!window._ccSharedLog.session(), holder: window._ccSharedSessionCore.linkHolder(), sessions: window._ccSharedSessionCore.sessions().map((s) => s.src) };
+  });
+  check(linked.r === true && linked.sess && linked.holder.src === 'folder' && linked.sessions.join() === 'folder', 'after leaving the key the folder links (one session)', JSON.stringify(linked));
+  const r0 = nReq();
+  const join = await A.evaluate((k) => window._ccSharedJoin(k).then(() => 'joined', (e) => e.code), pid);
+  check(join === 'other_mode' && nReq() === r0, 'folder linked: joining a key is refused before any request');
+  // a key saved by an older version while the folder is linked does not sync
+  await A.evaluate((k) => { localStorage.setItem('cc_sharedProjectId', k); window._ccDispatch({ t: 'UPD_PREFS', u: { _sharedRefresh: Date.now() } }); }, pid);
+  await A.evaluate(() => window._ccDispatch({ t: 'SHARE', v: true }));
+  const paused = await A.waitForSelector('[data-cc-share-mode-note="cloud-paused"]', { timeout: 5_000 }).catch(() => null);
+  check(!!paused && !(await A.evaluate(() => window._ccCloudShare.session())) && nReq() === r0, 'saved key while the folder is linked: not syncing, the panel says why');
+  await A.evaluate(() => window._ccDispatch({ t: 'SHARE', v: false }));
+  // unlink the folder → the saved key starts syncing again
+  await A.evaluate(() => window._disconnectShared(window._ccDispatch));
+  await A.waitForFunction(() => !window._ccSharedLog.session(), null, { timeout: 10_000 });
+  await A.evaluate(() => window._ccDispatch({ t: 'UPD_PREFS', u: { _sharedRefresh: Date.now() } }));
+  await A.waitForFunction((k) => window._ccCloudShare.status().pid === k && window._ccSharedSessionCore.linkHolder().src === 'cloud', pid, { timeout: 10_000 })
+    .then(() => ok('folder unlinked: the saved key syncs again'), () => fail('folder unlinked: the saved key did not resume'));
+
   // ── never the old rejection path ──
   for (const [P, who] of [[A, 'A'], [B, 'B']]) {
     const t = await P.evaluate(() => window.__toasts);

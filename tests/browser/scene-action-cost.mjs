@@ -270,10 +270,11 @@ try {
   const renameBack = await act('renameBack', `window._ccDispatch({ t: 'UPD_MODEL', id: ${JSON.stringify(m0)}, u: { name: ${JSON.stringify(name0)} } })`);
   check(renameBack.summary === sum0, 'rename + rename back: review set as before');
   const visOff = await act('visOff', `window._ccDispatch({ t: 'UPD_MODEL', id: ${JSON.stringify(m0)}, u: { visible: false } })`);
-  // one grouping per consumer (list, review set): an incremental update while
-  // under a third of the items change, else the (cheaper) full regroup
-  check(visOff.walks === 0 && visOff.k.triageFull === 0 && visOff.k.triageRows === 0 && visOff.k.triageVis === 1 && visOff.k.groupAndSort + visOff.k.groupDelta <= 2,
-    'visibility toggle: no material / clipping walk; buckets + facet rows reused, one grouping per consumer ' + JSON.stringify(visOff.k) + (visOff.stacks.length ? ' ' + visOff.stacks[0] : ''));
+  // ONE grouping: the review set groups (incremental while under a third of
+  // the items change, else the cheaper full regroup) and the list, showing
+  // exactly the review set, takes those groups instead of grouping again
+  check(visOff.walks === 0 && visOff.k.triageFull === 0 && visOff.k.triageRows === 0 && visOff.k.triageVis === 1 && visOff.k.groupAndSort + visOff.k.groupDelta === 1 && visOff.k.groupShared === 1,
+    'visibility toggle: no material / clipping walk; buckets + facet rows reused, grouped once (the list reuses the review groups) ' + JSON.stringify(visOff.k) + (visOff.stacks.length ? ' ' + visOff.stacks[0] : ''));
   const visOn = await act('visOn', `window._ccDispatch({ t: 'UPD_MODEL', id: ${JSON.stringify(m0)}, u: { visible: true } })`);
   check(visOn.summary === sum0, 'visibility off + on: review set as before');
   // incremental (in place) triage after status edits = a from-scratch rebuild
@@ -439,20 +440,78 @@ try {
   check(style.wrong === 0, `Hidden Line: every hard-frame element is opaque by its own model's type (${style.checked} meshes, ${style.collisions} share an expressId with another model's window)`);
 
   // ── 9. restore visible + last-frame cull ──
+  // Every phase of the 8-frame cull counter (a periodic cull can land on
+  // the first frame after the move). Each step waits for the render burst
+  // to END, not a fixed time: under SwiftShader one frame of a whole-building
+  // view takes hundreds of ms, and the old fixed 500 ms wait sampled the
+  // scene before the burst's last frame — the one that culls (reproduced on
+  // the large generated building: 10 of 30 moves, all fixed by waiting for
+  // the burst; the 1 s wait only made it rarer).
   const cull = await page.evaluate(async () => {
     const S = window._ccState3d, b = window._ccElemsBBox();
-    S.camera.position.set(b.min.x - 1, b.min.y + 1.5, b.min.z - 1);
-    S.orbit.target.set(b.min.x + 2, b.min.y + 1, b.min.z + 2);
-    S.camera.lookAt(S.orbit.target); if (S.orbit.sync) S.orbit.sync();
-    window._ccInvalidate(3);
-    await new Promise((r) => setTimeout(r, 1000));
+    // the burst is over once two animation frames pass without a render
+    const idle = () => new Promise((r) => {
+      const info = S.renderer.info.render, t0 = performance.now();
+      let last = info.frame, still = 0;
+      (function f() {
+        if (info.frame !== last) { last = info.frame; still = 0; } else still++;
+        if (still >= 2 || performance.now() - t0 > 30000) r(); else requestAnimationFrame(f);
+      })();
+    });
+    const frames = (n) => new Promise((r) => { let k = 0; (function f() { if (++k > n) r(); else requestAnimationFrame(f); })(); });
     const snap = () => { const v = []; S.mg.traverse((o) => { if (o.isMesh && o.userData.expressId != null && !o.userData._isCCBatch) v.push(o.visible ? 1 : 0); }); return v.join(''); };
-    const a = snap();
-    S._lastCullCamKey = ''; S._forceCull = true; window._ccInvalidate(2);
-    await new Promise((r) => setTimeout(r, 1000));
-    return { same: a === snap(), culled: (snap().match(/0/g) || []).length };
+    const out = [];
+    for (let phase = 0; phase < 8; phase++) {
+      // a few frames first, to move the cull counter's phase
+      window._ccInvalidate(phase + 1); await frames(phase + 2); await idle();
+      const k = phase % 2;
+      S.camera.position.set(k ? b.max.x + 1 : b.min.x - 1, b.min.y + 1.5, k ? b.max.z + 1 : b.min.z - 1);
+      S.orbit.target.set(k ? b.max.x - 2 : b.min.x + 2, b.min.y + 1, k ? b.max.z - 2 : b.min.z + 2);
+      S.camera.lookAt(S.orbit.target); if (S.orbit.sync) S.orbit.sync();
+      window._ccInvalidate(3); await frames(6); await idle();
+      const a = snap();
+      S._lastCullCamKey = ''; S._forceCull = true; window._ccInvalidate(2); await frames(4); await idle();
+      const f = snap();
+      out.push({ phase, same: a === f, culled: (f.match(/0/g) || []).length });
+    }
+    return out;
   });
-  check(cull.same, `the last frame of a 3-frame camera move culls like a forced cull pass (${cull.culled} meshes culled)`);
+  check(cull.every((x) => x.same), `the last frame of a camera move culls like a forced cull pass, in every cull-counter phase ${JSON.stringify(cull)}`);
+  // Orthographic view (toolbar toggle): the size cutoff must measure the
+  // ortho view itself (screen share = size / view height × zoom). It
+  // measured distance from the perspective camera's position — here 2 km
+  // away, where the ortho camera was created — so elements many pixels wide
+  // on screen were culled as too small (also after any ortho pan / zoom).
+  const ortho = await page.evaluate(async () => {
+    const S = window._ccState3d, b = window._ccElemsBBox(), c = b.getCenter(new b.min.constructor());
+    const idle = () => new Promise((r) => { const info = S.renderer.info.render, t0 = performance.now(); let last = info.frame, still = 0; (function f() { if (info.frame !== last) { last = info.frame; still = 0; } else still++; if (still >= 2 || performance.now() - t0 > 30000) r(); else requestAnimationFrame(f); })(); });
+    const dir = new b.min.constructor(1, 0.8, 1.2).normalize();
+    S.orbit.target.copy(c);
+    S.camera.position.copy(c).addScaledVector(dir, 2000);
+    S.camera.lookAt(S.orbit.target); if (S.orbit.sync) S.orbit.sync(); if (S.orbit.apply) S.orbit.apply();
+    window._ccInvalidate(3); await idle();
+    const btn = [...document.querySelectorAll('button')].find((x) => /Perspective \/ Orthographic|Toggle projection/.test((x.title || '') + ' ' + (x.getAttribute('aria-label') || '')));
+    if (!btn) return { err: 'no projection toggle' };
+    btn.click(); await idle();
+    const cam = S.camera;
+    if (!cam.isOrthographicCamera) return { err: 'not orthographic' };
+    const size = b.getSize(new b.min.constructor());
+    cam.zoom = (cam.top - cam.bottom) / Math.max(size.x, size.y, size.z) / 1.2; cam.updateProjectionMatrix(); if (S.orbit.sync) S.orbit.sync();
+    window._ccInvalidate(3); await idle();
+    cam.updateMatrixWorld();
+    const pxPerM = S.renderer.domElement.height * cam.zoom / (cam.top - cam.bottom);
+    let hiddenWide = 0, shown = 0;
+    S.mg.traverse((o) => {
+      if (!o.isMesh || o.userData.expressId == null || o.userData._isCCBatch || o.userData._storeyHidden || o.userData._classHidden || (o.parent && !o.parent.visible)) return;
+      if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+      const sph = o.geometry.boundingSphere.clone().applyMatrix4(o.matrixWorld), p = sph.center.clone().project(cam);
+      if (Math.abs(p.x) > 0.95 || Math.abs(p.y) > 0.95 || Math.abs(p.z) > 1) return;
+      if (o.visible) shown++; else if (sph.radius * 2 * pxPerM > 3) hiddenWide++;
+    });
+    btn.click(); await idle();
+    return { hiddenWide, shown, back: !S.camera.isOrthographicCamera };
+  });
+  check(!ortho.err && ortho.hiddenWide === 0 && ortho.shown > 0 && ortho.back, 'orthographic view: nothing wider than 3 px on screen is culled as too small ' + JSON.stringify(ortho));
   const park = await page.evaluate(async (mid) => {
     window._ccDispatch({ t: 'UPD_MODEL', id: mid, u: { visible: false } });
     await new Promise((r) => setTimeout(r, 300));

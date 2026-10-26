@@ -80,7 +80,7 @@ test('BCF: shown export labels topics with the review item; cached snapshots bec
 
 test('triage state is per project: reset on switch, autosaved, in the project codec', () => {
   assert.match(src, /triage:Object\.assign\(\{\},INIT\.triage\), \/\/ facets \/ saved views are per project/);
-  assert.match(src, /'selectionSets','searchSets','assignmentRules','modelMeta','triage'\]/);
+  assert.match(src, /'selectionSets','searchSets','assignmentRules','modelMeta','triage','deniedPairs','propertyRules'\]/);
   assert.match(src, /TRIAGE_STATE:A\.TRIAGE_STATE, UPD_FILTERS:A\.UPD_FILTERS/);
   const codec = require('../project-codec');
   const out = codec.serializeProject({ rules: {}, models: [], clashes: [], issues: [], floors: [], filters: { search: 'duct' },

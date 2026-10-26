@@ -83,7 +83,7 @@ test('the intentional multi-self run is serialized only when concurrencyV2 is en
 
 test('Smart Bridge completion is emitted only after a guarded result commit', () => {
   const bridgeRun = between('window._ccRunDetection = function', '// Run a RULESET');
-  const commit = bridgeRun.indexOf('if (!_ccCommitDetectionResult(result, d, _runDs)) return;');
+  const commit = bridgeRun.indexOf('if (!_ccCommitDetectionResult(result, d, _runDs, _auto ? {auto:_auto} : undefined)) return;');
   const event = bridgeRun.indexOf("new CustomEvent('cc-detection-complete'");
   assert.ok(commit >= 0 && event > commit);
 });

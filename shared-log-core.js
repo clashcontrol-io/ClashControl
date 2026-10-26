@@ -401,7 +401,7 @@
   }
   /**
    * @param {any} log
-   * @param {{by:string, ts:number, files?:string[], snapshots?:string[]}} meta
+   * @param {{by:string, ts:number, files?:string[], snapshots?:string[], compacts?:boolean}} meta
    */
   function buildSnapshot(log, meta) {
     var changes = Object.keys(log.changes).map(function(id) { return log.changes[id]; }).sort(byTsId);
@@ -412,9 +412,33 @@
     });
     var names = {};
     Object.keys(log.names).sort().forEach(function(u) { names[u] = log.names[u]; });
-    return { _cc: 'ClashControl.sharedSnapshot', v: FORMAT, by: meta.by, ts: meta.ts, names: names,
-      files: (meta.files || []).slice().sort(), snapshots: (meta.snapshots || []).slice().sort(),
-      conflicts: conflicts, changes: changes };
+    // Key order matters: what the snapshot covers comes first, so a reader
+    // can read just that head (`parseSnapshotHead`) and skip a snapshot that
+    // covers only what it has. `compacts`: every change in it comes from
+    // what it covers (a compaction) — only such a snapshot may be skipped; a
+    // migration snapshot brings changes of its own. Still one JSON object —
+    // any version reads it.
+    /** @type {any} */
+    var out = { _cc: 'ClashControl.sharedSnapshot', v: FORMAT, by: meta.by, ts: meta.ts };
+    if (meta.compacts) out.compacts = true;
+    out.files = (meta.files || []).slice().sort();
+    out.snapshots = (meta.snapshots || []).slice().sort();
+    out.names = names; out.conflicts = conflicts; out.changes = changes;
+    return out;
+  }
+  // The head of a compaction snapshot (`_cc`, `v`, `by`, `ts`, `compacts`,
+  // `files`, `snapshots`) from the first bytes of its text, or null (not a
+  // compaction, an older layout, a head longer than the bytes given,
+  // anything unexpected → read it whole).
+  /** @param {string} text */
+  function parseSnapshotHead(text) {
+    var i = typeof text === 'string' ? text.indexOf(',"names":') : -1;
+    if (i < 0) return null;
+    var o;
+    try { o = JSON.parse(text.slice(0, i) + '}'); } catch (e) { return null; }
+    if (!o || o._cc !== 'ClashControl.sharedSnapshot' || o.compacts !== true || !Array.isArray(o.files) || !Array.isArray(o.snapshots)) return null;
+    function names(a) { return a.filter(function(x) { return typeof x === 'string'; }); }
+    return { by: String(o.by || ''), ts: Number(o.ts) || 0, files: names(o.files), snapshots: names(o.snapshots) };
   }
   /** @param {any} obj */
   function parseSnapshot(obj) {
@@ -425,13 +449,17 @@
   }
 
   // What may be deleted now. Only a snapshot's own author removes what it
-  // covers, and only once the snapshot is older than the grace period (time
-  // for cloud sync to deliver it everywhere). Covered change files and older
-  // snapshots only: their every change is inside the covering snapshot, so a
-  // client that never read them gets the same log from the snapshot. A file
-  // or snapshot that is not covered is never returned.
+  // covers, and only when (1) the snapshot is older than the grace period
+  // and (2) the author has since received a teammate's file at least
+  // `onlineMs` after writing the snapshot (`teammateSeenAt`, the author's
+  // own clock, like the snapshot's ts) — so the author's sync client was
+  // connected after the snapshot was written and had the chance to upload
+  // it before any delete. Covered change files and older snapshots only:
+  // their every change is inside the covering snapshot, so a client that
+  // never read them gets the same log from the snapshot. A file or snapshot
+  // that is not covered is never returned.
   /**
-   * @param {{me:string, now:number, graceMs:number,
+   * @param {{me:string, now:number, graceMs:number, onlineMs?:number, teammateSeenAt?:number,
    *   snapshots:{name:string, by:string, ts:number, files:string[], snapshots:string[]}[],
    *   presentFiles:string[], presentSnapshots:string[]}} o
    */
@@ -442,6 +470,7 @@
     (o.presentSnapshots || []).forEach(function(n) { presentS[n] = true; });
     (o.snapshots || []).forEach(function(s) {
       if (s.by !== o.me || !(o.now - s.ts >= o.graceMs) || !presentS[s.name]) return;
+      if (o.onlineMs != null && !((o.teammateSeenAt || 0) - s.ts >= o.onlineMs)) return;
       (s.files || []).forEach(function(f) { if (presentF[f]) files[f] = true; });
       (s.snapshots || []).forEach(function(n) { if (n !== s.name && presentS[n]) snaps[n] = true; });
     });
@@ -460,7 +489,9 @@
       if (k.charAt(0) === '_' || ISSUE_DROP[k]) return;
       var v = issue[k];
       if (v === undefined || typeof v === 'function') return;
-      if (typeof v === 'string' && v.length > 4000) return;
+      // pictures (data: URLs) stay local; long text is shared in full (a
+      // record over the store's size cap is refused and its author told —
+      // never cut short or dropped here without anyone knowing)
       if (typeof v === 'string' && /^data:/.test(v)) return;
       out[k] = v;
     });
@@ -549,15 +580,29 @@
   // priority / assignee keyed by the clash identity (from the row's
   // GlobalIds + point), every issue as `created`. Ids derive from project,
   // row and field, so two servers migrating at once insert the same records.
+  //
+  // Clash or issue — exact, from `source`. Every row the old client wrote
+  // (2026-04-06 … 2026-10-24) carried the item's `source`, and every clash
+  // ever created had one of LEGACY_CLASH_SOURCES (browser detection 'auto'
+  // since 2026-03-19, the local engine, the visibility checks); every issue
+  // had another value ('clash', 'manual', 'element', 'bcf_import', …) or
+  // none (Smart Bridge issues — which DO carry a GlobalId pair, so the pair
+  // says nothing). A clash row without both GlobalIds has no identity that
+  // another machine can match (its element ids are per load): it is counted
+  // in `skipped`, never keyed on a meaningless id. The key is the GlobalId
+  // form; a clash whose elements have Revit UniqueIds is keyed differently
+  // today ('u:…') and finds these records through the session's GlobalId
+  // alias (shared-session-core.js `aliasKey`).
+  var LEGACY_CLASH_SOURCES = { auto: 1, local_engine: 1, visibility_check: 1, visibility_coverage: 1 };
   /**
    * @param {{id:string, data:any, updated_by?:string, updated_at?:any}[]} rows
    * @param {{projectId:string, identityKey:(c:any)=>string}} opts
-   * @returns {{changes:any[], names:Object<string,string>}}
+   * @returns {{changes:any[], names:Object<string,string>, skipped:{clashWithoutGlobalIds:number}}}
    */
   function migrateLegacyRows(rows, opts) {
     /** @type {Object<string,string>} */
     var names = {};
-    var recs = [], pid = String(opts.projectId || '');
+    var recs = [], pid = String(opts.projectId || ''), skipped = { clashWithoutGlobalIds: 0 };
     (rows || []).forEach(function(row) {
       var d = row && (typeof row.data === 'string' ? JSON.parse(row.data) : row.data);
       if (!d || typeof d !== 'object' || !row.id) return;
@@ -573,8 +618,8 @@
         if (prev !== undefined) r.prev = prev;
         recs.push(r);
       }
-      var isIssue = /^iss[_-]/.test(rid) || !!d.source || !(d.globalIdA && d.globalIdB);
-      if (!isIssue) {
+      if (LEGACY_CLASH_SOURCES[d.source] === 1) {
+        if (!(d.globalIdA && d.globalIdB)) { skipped.clashWithoutGlobalIds++; return; }
         var key = opts.identityKey({ globalIdA: d.globalIdA, globalIdB: d.globalIdB, point: d.point });
         if (!key) return;
         if (d.status && d.status !== 'open' && d.status !== 'auto_resolved') add('clash', key, 'status', d.status, 'open');
@@ -584,7 +629,7 @@
       }
       add('issue', rid, 'created', issueRecord(d));
     });
-    return { changes: recs.map(normaliseChange).filter(Boolean), names: names };
+    return { changes: recs.map(normaliseChange).filter(Boolean), names: names, skipped: skipped };
   }
 
   // Random [a-z0-9] string from the platform's cryptographic generator. Ids
@@ -635,6 +680,7 @@
     parseSnapshotName: parseSnapshotName,
     buildSnapshot: buildSnapshot,
     parseSnapshot: parseSnapshot,
+    parseSnapshotHead: parseSnapshotHead,
     planCleanup: planCleanup,
     issueRecord: issueRecord,
     viewpointRecord: viewpointRecord,

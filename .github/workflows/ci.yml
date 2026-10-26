@@ -112,6 +112,9 @@ jobs:
       - name: Run cloud share check (real api/project.js on an in-memory db, conflicts on both pages, pulls fetch only new records)
         run: node tests/browser/cloud-share.mjs
 
+      - name: Run clash lifecycle check (a re-run resolves / reopens linked issues, undo restores them)
+        run: node tests/browser/clash-lifecycle.mjs
+
       - name: Run exact cache-restore check (restored geometry + clashes identical to a fresh load)
         run: node tests/browser/cache-restore-exact.mjs
 
@@ -205,8 +208,32 @@ jobs:
       - name: Run office fixture WASM vs. JS narrow-phase differential + known-count lock
         run: node tests/browser/office-clash-parity.mjs
 
+      - name: Inside an open shape — its own check bucket, never a hard clash, identical on JS / WASM / Engine / pool
+        run: node tests/browser/open-inside.mjs
+
+      - name: Intersection exceptions + required provisions — off is unchanged, planted cases filed, identical on JS / WASM / Engine / pool
+        run: node tests/browser/penetration-rules.mjs
+
+      - name: Property rules + colour by property — authored in the UI, counts / issue / CSV / IDS match, legend counts match the elements
+        run: node tests/browser/property-rules.mjs
+
+      - name: Coordination matrix cells — clearance / off / severity per discipline pair, identical on JS / WASM / Engine / pool
+        run: node tests/browser/matrix-rules.mjs
+
+      - name: Detection memory watchdog — caches / pool dropped with identical results; a stop commits nothing and says why
+        run: node tests/browser/detect-memory-guard.mjs
+
       - name: First-run narrow phase — main / main-js / pool-1 / pool-3 / pool-js give the identical clash list
         run: node tests/browser/first-run-cost.mjs
+
+      - name: Automatic re-check on model reload — one smart run equal to a manual run; none without a previous run or with the pref off
+        run: node tests/browser/auto-rerun.mjs
+
+      - name: Trends per discipline pair — history breakdowns match the clash list, Trends view + table, CSV / JSON export, old entries render
+        run: node tests/browser/run-trends.mjs
+
+      - name: Model version comparison — moved / reshaped / property / added / removed counts on the model card, Navigator filter, changed-elements view, CSV
+        run: node tests/browser/model-compare.mjs
 
       - name: Section planes follow a building rotated in plan
         run: node tests/browser/section-plane-alignment.mjs
@@ -225,6 +252,9 @@ jobs:
 
       - name: IfcGrid lines load (worker = fallback), draw, and locate clashes ("Grid B-1 · Level 0")
         run: node tests/browser/grid-lines.mjs
+
+      - name: Grouping v2 — clash list by grid, room, property value and location radius, levels combined; grid / room facets
+        run: node tests/browser/grouping-v2.mjs
 
       - name: UI follows selection / install / update / panel width by events, no polls
         run: node tests/browser/event-driven-ui.mjs

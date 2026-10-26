@@ -22,6 +22,18 @@ use crate::tri_tri;
 
 const LEAF_SIZE: usize = 4;
 
+/// Sort order for split / sweep keys: ascending, NaN last, NaN == NaN,
+/// -0 == +0 — a total preorder, so the stable sort never panics and every
+/// stable sort (Rust's here, the JS reference's `_ccNanLastCmp`) gives the
+/// same permutation. On keys without NaN it is exactly `partial_cmp`.
+#[inline]
+pub(crate) fn nan_last(a: f64, b: f64) -> std::cmp::Ordering {
+    match a.partial_cmp(&b) {
+        Some(o) => o,
+        None => a.is_nan().cmp(&b.is_nan()),
+    }
+}
+
 pub struct BvhNode {
     pub mn: [f32; 3],
     pub mx: [f32; 3],
@@ -143,9 +155,10 @@ impl BvhNode {
         // rounds each partial sum, turning strictly ordered centroids into
         // ties (or reversing them) — a different partition than the JS BVH.
         if has_nan {
-            // NaN keys: the comparator is not a total preorder, so the result
-            // depends on the algorithm — keep exactly the original call.
-            sub.sort_by(|&a, &b| keys[a * 3 + axis].partial_cmp(&keys[b * 3 + axis]).unwrap_or(std::cmp::Ordering::Equal));
+            // NaN keys sort last (`nan_last`, as the JS reference does). The
+            // old `unwrap_or(Equal)` comparator was not a total order: the
+            // std sort panicked on it and the order was algorithm-dependent.
+            sub.sort_by(|&a, &b| nan_last(keys[a * 3 + axis], keys[b * 3 + axis]));
         } else if !sub.windows(2).all(|w| keys[w[0] * 3 + axis] <= keys[w[1] * 3 + axis]) {
             // No NaN: `partial_cmp` is a total preorder (-0 == +0), so every
             // STABLE sort gives the one same permutation. Sorting (key, index)
@@ -154,7 +167,7 @@ impl BvhNode {
             // on the same axis) is left as is — the identity.
             scratch.clear();
             scratch.extend(sub.iter().map(|&i| (keys[i * 3 + axis], i)));
-            scratch.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            scratch.sort_by(|a, b| nan_last(a.0, b.0));
             for (d, s) in sub.iter_mut().zip(scratch.iter()) {
                 *d = s.1;
             }
@@ -264,6 +277,37 @@ pub fn traverse_pair(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // xorshift — deterministic test data without a dependency
+    fn rnd(state: &mut u64) -> f64 {
+        *state ^= *state << 13; *state ^= *state >> 7; *state ^= *state << 17;
+        (*state >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    #[test]
+    fn nan_last_is_a_total_preorder_with_nan_last() {
+        use std::cmp::Ordering::*;
+        let v = [f64::NAN, -1.0, -0.0, 0.0, 1.0, f64::INFINITY, f64::NEG_INFINITY];
+        for &a in &v { for &b in &v {
+            if !a.is_nan() && !b.is_nan() { assert_eq!(nan_last(a, b), a.partial_cmp(&b).unwrap()); }
+            assert_eq!(nan_last(a, b), nan_last(b, a).reverse());
+        } }
+        assert_eq!(nan_last(f64::NAN, f64::INFINITY), Greater);
+        assert_eq!(nan_last(f64::NAN, f64::NAN), Equal);
+    }
+
+    // A NaN coordinate used to make the split sort panic ("comparison does
+    // not implement a total order") and poison the WASM instance.
+    #[test]
+    fn build_with_nan_coordinates_never_panics() {
+        let mut s = 0x9e3779b97f4a7c15u64;
+        for &(n, every) in &[(40usize, 3usize), (600, 5), (5000, 7), (5000, 2)] {
+            let mut tris: Vec<f32> = (0..n * 9).map(|_| (rnd(&mut s) * 10.0 - 5.0) as f32).collect();
+            for i in (0..tris.len()).step_by(every * 4 + 1) { tris[i] = f32::NAN; }
+            let bvh = BvhNode::build(&tris);
+            match &bvh.kind { BvhKind::Inner { count, .. } => assert_eq!(*count, n), _ => panic!("inner root expected") }
+        }
+    }
 
     #[test]
     fn test_build_single_tri() {

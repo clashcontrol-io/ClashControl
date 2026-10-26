@@ -61,7 +61,8 @@ function bruteByEid(mg, eid) {
 
 test('per-model mesh index = S.mg traversal order under random scene edits (split-outs in place, the rest rebuilds)', () => {
   const r = rng(11);
-  const api = scene(THREE, {});
+  // the app's hook: a mesh's own children reach a container listener
+  const api = scene(THREE, { _ccViewerPickIndex: require('../viewer-pick-index.js') });
   const mg = new THREE.Group(); mg.userData._ccModelRoot = true;
   const groups = [];
   for (let g = 0; g < 3; g++) {
@@ -90,6 +91,13 @@ test('per-model mesh index = S.mg traversal order under random scene edits (spli
     else if (op < 0.8) { const c = g.children.find((x) => x.isMesh && !x.userData._isCCBatch); if (c) g.remove(c); }
     else if (op < 0.85) { g.add(plain(1 + Math.floor(r() * 25))); }                               // non-split root add → rebuild
     else if (op < 0.9) { const sub = g.children.find((x) => x.isGroup); if (sub && sub.children.length) sub.remove(sub.children[0]); }
+    else if (op < 0.95) {                                                                          // a mesh gets a mesh child (split-outs too)
+      const ms = []; g.traverse((x) => { if (x.isMesh && !x.userData._isCCBatch) ms.push(x); });
+      if (ms.length) ms[Math.floor(r() * ms.length)].add(plain(1 + Math.floor(r() * 25)));
+    } else {                                                                                       // … and loses one
+      const ms = []; g.traverse((x) => { if (x.isMesh && x.children.length) ms.push(x); });
+      if (ms.length) { const m = ms[Math.floor(r() * ms.length)]; m.remove(m.children[0]); }
+    }
     check('step ' + step);
   }
   // lookups after the scene settles cost no walk of the model
@@ -160,7 +168,7 @@ test('render-style type lookup is per model (expressIds repeat across models)', 
 
 // ── search narrowing ─────────────────────────────────────────────────────
 const searchSrc = between('  var _CC_FILTER_FILLER = {', '  function deriveFloors(clashes) {');
-const search = new Function(searchSrc + '; return { narrows: _ccSearchNarrows, matches: _ccFilterTextMatches };')();
+const search = new Function(searchSrc + '; return { narrows: _ccSearchNarrows, matches: _ccFilterTextMatches, step: _ccSearchStep };')();
 
 test('search narrowing is sound: every accepted pair only removes items (fuzz)', () => {
   const r = rng(3);
@@ -185,6 +193,29 @@ test('search narrowing is sound: every accepted pair only removes items (fuzz)',
   assert.ok(!search.narrows({ search: '12' }, { search: '123' }), 'a number can match the item number alone');
   assert.ok(!search.narrows({ search: 'wall' }, { search: 'wal' }), 'deleting widens');
   assert.ok(!search.narrows({ search: 'wa', status: 'all' }, { search: 'wal', status: 'open' }), 'another filter changed');
+});
+
+test('a narrowing step tests only the new tokens: same answer as the full query for every clash that passed the old one (fuzz)', () => {
+  const r = rng(5);
+  const alpha = ['wa', 'll', 'w', 's', 'beam', 'floor', 'floo', 'level', 'lev', '1', '12', '#', '#1', ' ', 'a', 'on', 'pipes', 'pipe', 'x', 'the'];
+  const word = () => { let w = ''; const n = 1 + Math.floor(r() * 3); for (let i = 0; i < n; i++) w += alpha[Math.floor(r() * alpha.length)]; return w; };
+  const hays = []; for (let i = 0; i < 300; i++) { let h = ''; for (let k = 0; k < 4; k++) h += word() + ' '; hays.push({ hay: h.toLowerCase(), n: Math.floor(r() * 200) }); }
+  let checked = 0;
+  for (let t = 0; t < 4000; t++) {
+    const qa = r() < 0.15 ? '' : word() + (r() < 0.4 ? ' ' + word() : '');
+    const qb = r() < 0.5 ? qa + alpha[Math.floor(r() * alpha.length)] : (r() < 0.5 ? qa + ' ' + word() : word());
+    const fa = { search: qa, status: 'all' }, fb = { search: qb, status: 'all' };
+    const st = search.step(fa, fb);
+    assert.equal(st.narrows, search.narrows(fa, fb));
+    if (!st.narrows) continue;
+    for (const h of hays) {
+      if (!search.matches(qa, h.hay, h.n)) continue;
+      checked++;
+      assert.equal(st.extraQ ? search.matches(st.extraQ, h.hay, h.n) : true, search.matches(qb, h.hay, h.n), JSON.stringify({ qa, qb, extra: st.extraQ, h }));
+    }
+  }
+  assert.ok(checked > 5000, 'the fuzz exercised the step path (' + checked + ')');
+  assert.equal(search.step({ search: 'wall d' }, { search: 'wall du' }).extraQ, 'du', 'typing on: only the changed token');
 });
 
 // ── clash markers ────────────────────────────────────────────────────────
@@ -242,7 +273,9 @@ test('scene effects key on what they read, not on s.models identity', () => {
   assert.match(html, /if \(!_planeOn && !S\._sectionPlaneWasOn\) \{ window\._ccCurrentSection = null; return; \}/);
   assert.doesNotMatch(html, /\}, \[s\.prefs\.renderStyle, s\.prefs\.theme, s\.models, s\.prefs\.lightSettings, !!s\.floorPlan\]\);/);
   // markers: one effect per kind
-  assert.match(html, /\}, \[s\.clashes, s\.prefs\.showMarkers\]\);/);
+  assert.match(html, /\}, \[markerClashes, s\.prefs\.showMarkers\]\);/);
+  // markers show what the list shows: hidden models' and handled clashes left out
+  assert.match(html, /var markerClashes = useMemo\(function\(\)\{[\s\S]{0,700}\}, \[s\.clashes, _mkVisKey, _mkShowHandled\]\);/);
   assert.match(html, /\}, \[s\.comments, s\.activeCommentId\]\);/);
   // plan frame: a small LRU, keyed by elements-array identity
   assert.match(html, /var _PLAN_FRAME_CACHE_MAX = 8;/);

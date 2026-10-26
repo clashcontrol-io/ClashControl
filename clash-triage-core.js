@@ -112,7 +112,10 @@
   // One value per clash and facet (single-valued, so per-facet counts add
   // up to the items matching every other facet). 'tag' is the only
   // multi-valued key: the suggested views' predicates.
-  var FACETS = ['severity', 'extent', 'storey', 'modelPair', 'trade', 'typePair', 'status', 'assignee', 'bucket'];
+  // 'grid' (nearest grid intersection, "C-4") and 'space' (the room around
+  // the clash point) come from the context (ctx.grid / ctx.space, which read
+  // the models); '' when unknown.
+  var FACETS = ['severity', 'extent', 'storey', 'grid', 'space', 'modelPair', 'trade', 'typePair', 'status', 'assignee', 'bucket'];
   var SEV_RANK = { critical: 3, major: 2, minor: 1, info: 0 };
   function _nice(t) { return String(t || 'Element').replace(/^Ifc/i, '').replace(/([a-z])([A-Z])/g, '$1 $2') || 'Element'; }
   function _pair(a, b, sep) { a = String(a || '?'); b = String(b || '?'); return a === b ? a : (a < b ? a + sep + b : b + sep + a); }
@@ -179,7 +182,7 @@
     if (!changed) return values;
     return out.filter(function(v, i, a) { return a.indexOf(v) === i; }).sort();
   }
-  // ctx: { severity(c), bucket(c), storey(modelId, name), trade(c, side) } —
+  // ctx: { severity(c), bucket(c), storey(modelId, name), trade(c, side), grid(c), space(c), changed(c) } —
   // no model names: the model pair is keyed by ids (modelPairKey)
   function facetValues(c, ctx) {
     ctx = ctx || {};
@@ -198,7 +201,13 @@
     if (c.type === 'hard' && ((runA && /Slab/.test(tyB) && _isVertical(c.bboxA)) || (runB && /Slab/.test(tyA) && _isVertical(c.bboxB)))) tags.push('riser-through-slab');
     if (sev === 'critical' && !c.assignee) tags.push('unassigned-critical');
     if (c.opening === 'partial' || c.provision === 'partial') tags.push('opening-too-small');
+    // "A requires B": a structural penetration without an opening / provision
+    // (clash-exceptions-core.js, rules.exceptions.requireProvision)
+    if (c.missingProvision) tags.push('missing-provision');
     if (c._delta === 'new') tags.push('new');
+    // on an element a model reload added or changed (model-diff-core.js:
+    // added / moved / reshaped / property change, ctx.changed reads the diffs)
+    if (ctx.changed && ctx.changed(c)) tags.push('changed-element');
     // a decision teammates changed at the same time in a shared folder
     // (addons/shared-project.js puts the conflict on the clash)
     if (c._sharedConflict && c._sharedConflict.length) tags.push('shared-conflict');
@@ -213,6 +222,8 @@
       severity: sev,
       extent: ext,
       storey: stA || stB || '',
+      grid: ctx.grid ? String(ctx.grid(c) || '') : '',
+      space: ctx.space ? String(ctx.space(c) || '') : '',
       modelPair: modelPairKey(c),
       trade: _pair(tA || 'other', tB || 'other', ' × '),
       typePair: _pair(_nice(c.elemAType), _nice(c.elemBType), ' × '),
@@ -276,8 +287,8 @@
   // own scale, storey by the normaliser's order, the rest by count.
   var ORDER = {
     severity: ['critical', 'major', 'minor', 'info'],
-    extent: ['through', 'through-thin', 'partial', 'graze', 'unknown', 'clearance', 'contact', 'duplicate', 'visibility', 'other'],
-    bucket: ['review', 'contact', 'provided', 'provision', 'zone', 'twice', 'embedded', 'finish', 'graze', 'adjacent', 'handled'],
+    extent: ['through', 'through-thin', 'partial', 'graze', 'unknown', 'clearance', 'contact', 'open-inside', 'duplicate', 'visibility', 'other'],
+    bucket: ['review', 'contact', 'openshape', 'provided', 'provision', 'penetration', 'fitting', 'zone', 'twice', 'embedded', 'finish', 'graze', 'adjacent', 'handled'],
     status: ['open', 'in_progress', 'accepted_needs_check', 'confirmed', 'resolved', 'closed', 'denied']
   };
   // labelOf (optional): the display label — ties in count are broken by it
@@ -306,8 +317,10 @@
     { id: 'riser-through-slab', label: 'Risers through slabs', facets: { tag: ['riser-through-slab'] } },
     { id: 'unassigned-critical', label: 'Unassigned critical', facets: { tag: ['unassigned-critical'] } },
     { id: 'opening-too-small', label: 'Openings too small', facets: { tag: ['opening-too-small'] } },
+    { id: 'missing-provision', label: 'Missing openings / provisions', facets: { tag: ['missing-provision'] } },
     { id: 'near-miss', label: 'Near misses', facets: { extent: ['clearance'], tag: ['near-miss'] } },
     { id: 'new', label: 'New since last run', facets: { tag: ['new'] } },
+    { id: 'changed-elements', label: 'Clashes on changed elements', facets: { tag: ['changed-element'] } },
     // offered whenever there are any, even when every item is in conflict
     { id: 'shared-conflict', label: 'Conflicts', facets: { tag: ['shared-conflict'] }, always: true }
   ];

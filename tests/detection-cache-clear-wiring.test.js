@@ -51,7 +51,8 @@ test('existing detection call sites are unaffected -- none pass a 4th arg, so cl
     .filter((m) => !m[1]) // exclude the function DEFINITION line itself
     .map((m) => m[2]);
   assert.ok(calls.length >= 6, 'expected multiple call sites to check');
-  const nonDefault = calls.filter((argsStr) => argsStr.split(',').length > 3 && !argsStr.includes('undefined, opts'));
+  // (_ccRunDetection's automatic re-check passes only {auto} — never clearCachesAfter)
+  const nonDefault = calls.filter((argsStr) => argsStr.split(',').length > 3 && !argsStr.includes('undefined, opts') && !/, _auto \? \{auto:_auto\} : undefined$/.test(argsStr));
   assert.deepEqual(nonDefault, [], 'no pre-existing call site may pass a 4th positional arg');
 });
 
@@ -71,7 +72,7 @@ test('detectClashesAsync itself is untouched by this slice -- the candidate arra
 test('the BVH LRU honours an explicit cap, counts evictions and drops the evicted caches', () => {
   const vm = require('node:vm');
   const start = html.indexOf('  var _bvhCacheMaxCached = null;');
-  const end = html.indexOf('  // Between-chunk heap-pressure relief');
+  const end = html.indexOf('  // ── BVH (Bounding Volume Hierarchy) for triangles');
   assert.ok(start !== -1 && end > start);
   const ctx = { window: {}, navigator: {}, performance: {} };
   vm.runInNewContext(html.slice(start, end) + '\nthis.api = { setO: function(n){ _bvhCacheMaxOverride = n; }, max: _BVH_CACHE_MAX_FN, evict: _bvhLRUEvict, lru: _bvhLRU, ev: function(){ return _bvhEvictions; } };', ctx);

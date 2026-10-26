@@ -822,7 +822,7 @@ mod bvh_build_equivalence_tests {
             let dy = mx[1] as f64 - mn[1] as f64;
             let dz = mx[2] as f64 - mn[2] as f64;
             let axis = if dx >= dy && dx >= dz { 0 } else if dy >= dz { 1 } else { 2 };
-            indices[lo..hi].sort_by(|&a, &b| keys[a * 3 + axis].partial_cmp(&keys[b * 3 + axis]).unwrap_or(std::cmp::Ordering::Equal));
+            indices[lo..hi].sort_by(|&a, &b| crate::bvh::nan_last(keys[a * 3 + axis], keys[b * 3 + axis]));
             out.push(count as f64);
             let mid = (lo + hi) / 2;
             rec(tris, keys, indices, lo, mid, out);

@@ -215,14 +215,14 @@ test('reducer wrapper migrates name-valued model pairs in the facets and saved v
   assert.equal(out.triage.savedViews[1], legacy.savedViews[1], 'untouched view kept');
   assert.equal(out.triage.activeViewId, 'v1');
   assert.equal(migrate(out), out, 'migrated: a no-op (same object)');
-  assert.match(src, /function _ccAppReducer\(s, a\) \{ return _ccMigrateTriageModelPairs\(reducer\(s, a\)\); \}/);
+  assert.match(src, /function _ccAppReducer\(s, a\) \{ return _ccFollowDeniedMemory\(s, _ccMigrateTriageModelPairs\(reducer\(s, a\)\), a\); \}/);
   assert.match(src, /useReducer\(_ccAppReducer, INIT\)/);
 });
 
 test('wiring: the list and the review set group incrementally, the triage model ignores names, visibility is outside the pass cache', () => {
   const vl = slice('  function VirtualList(props) {', '    if(items.length===0) {');
   assert.match(vl, /_ccElementGroupsDelta\(pin\.eg, items\)/);
-  assert.match(vl, /groupAndSort\(items, groupBy, sortBy, \{models: models, degOut: degOut\}\)/);
+  assert.match(vl, /groupAndSort\(items, groupBy, sortBy, \{models: models, degOut: degOut, nearbyRadius: nearbyRadius\}\)/);
   assert.match(vl, /_ccBuildConflictRows\(items, groups, collapsed, groupLimits, isClusterGroup, rowSegRef\.current\)/);
   const rev = slice('  function _ccReviewModel(s) {', '  // ── Truthful empty/filtered states');
   assert.match(rev, /_ccElementGroupsDelta\(L\.eg, clashes\)/);

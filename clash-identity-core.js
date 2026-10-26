@@ -25,9 +25,19 @@
     return pair + '@' + gx + ',' + gy + ',' + gz;
   }
 
+  // The identity a clash had before UniqueIds were preferred (GlobalIds +
+  // point) — what old shared records carry. Only a clash with a GlobalId
+  // pair has one; null when it equals the current key.
+  function computeGlobalIdKey(clash) {
+    if (!clash || !clash.globalIdA || !clash.globalIdB) return null;
+    var k = computeClashIdentityKey({ globalIdA: clash.globalIdA, globalIdB: clash.globalIdB, point: clash.point });
+    return k === computeClashIdentityKey(clash) ? null : k;
+  }
+
   return Object.freeze({
     contractVersion: 1,
     computeClashPair: computeClashPair,
-    computeClashIdentityKey: computeClashIdentityKey
+    computeClashIdentityKey: computeClashIdentityKey,
+    computeGlobalIdKey: computeGlobalIdKey
   });
 }));

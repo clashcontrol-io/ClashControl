@@ -94,6 +94,10 @@ test('results exist but every model with them is hidden', () => {
   const st = lib.emptyState(baseCtx({ rawCount: 5, visOnlyCount: 0, filteredCount: 0, hiddenModelCount: 2 }));
   assert.equal(st.key, 'hidden-by-visibility');
   assert.equal(st.action, 'show-models');
+  // names the hidden models that take part in a clash (not every hidden model)
+  const named = lib.emptyState(baseCtx({ rawCount: 5, visOnlyCount: 0, filteredCount: 0, hiddenModelNames: ['A-model'] }));
+  assert.match(named.hint, /A-model/);
+  assert.equal(named.vars.names, 'A-model');
 });
 
 test('results visible but text/dropdown filters hide everything', () => {
