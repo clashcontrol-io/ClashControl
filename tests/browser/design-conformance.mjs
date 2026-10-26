@@ -433,11 +433,25 @@ async function runVariant(variant, viewport, theme, mobile) {
     await surface(page, variant, 'project-menu', ['.cc-header-project'], Object.assign({}, o, { overflowRoots: false }));
     await projBtn.click();
   }
+  // a version comparison on the first model (model-diff-core.js): the model
+  // card's change summary + report buttons + colour legend, the Navigator's
+  // "Model changes" filter and its row labels are on the surfaces below
+  await page.evaluate(() => {
+    const core = window._ccModelDiffCore, m = window._ccLatestState.models[0];
+    const els = m.elements.filter((e) => e.props && e.props.globalId);
+    const ent = (e, props) => ({ gid: e.props.globalId, eid: e.expressId, props: props || e.props, geo: '' });
+    const oldE = els.slice(1).map((e, i) => ent(e, i === 0 ? Object.assign({}, e.props, { name: (e.props.name || '') + ' v1' }) : e.props));
+    oldE.push({ gid: 'ccDesignRemoved0000001', eid: -1, props: { ifcType: 'IfcWall', name: 'Removed wall' }, geo: '' });
+    const newE = els.map((e) => ent(e));
+    newE[2].geo = 'moved';
+    window._ccDispatch({ t: 'UPD_MODEL', id: m.id, u: { _version: 2, _versionDiff: core.diffModels(oldE, newE, { geometry: () => 'moved' }) } });
+  });
   // models panel: cards (one expanded) + geo placement
   await page.evaluate(() => window._ccDispatch({ t: 'SET_WORKSPACE', v: 'coordinate' }));
   await page.evaluate((m) => { if (!m && window._ccOpenModelsPanel) { window._ccDispatch({ t: 'TAB', v: null }); window._ccOpenModelsPanel(); } else window._ccDispatch({ t: 'TAB', v: 'models' }); }, mobile);
   await surface(page, variant, 'models', MODELS, o);
   await page.evaluate(() => { const b = document.querySelector('[data-cc-model-card] [data-cc-card-toggle]') || [...document.querySelectorAll('.cc-left-panel button,.cc-side-panel button')].find((x) => x.textContent.trim() === '▼'); if (b) b.click(); });
+  if (!await page.$('[data-cc-model-diff] [data-cc-model-diff-summary]')) pageErrors.push(variant + ': the open model card shows no version comparison');
   await surface(page, variant, 'model-card-open', MODELS, o);
   await page.evaluate(() => { const g = document.querySelector('[data-cc-geo]') || [...document.querySelectorAll('span')].find((x) => /^(geo placement|geo-plaatsing|locatie)$/i.test(x.textContent.trim())); if (g) g.scrollIntoView(); });
   await surface(page, variant, 'geo', MODELS, o);
@@ -483,6 +497,11 @@ async function runVariant(variant, viewport, theme, mobile) {
     await page.click('[data-cc-prop-color-btn]');
     await page.click('[data-cc-nav-view=spatial]');
   }
+  // navigator: only added + changed elements (version comparison filter)
+  await page.evaluate(() => { const b = document.querySelector('[data-cc-nav-changed-mode="changed"]'); if (b) b.click(); });
+  if (!await page.$('[data-cc-nav-changed-mode="changed"][aria-pressed="true"]')) pageErrors.push(variant + ': no Navigator "Model changes" filter');
+  await surface(page, variant, 'navigator-changed', mobile ? LEFT : LEFT.concat(['.cc-ai-panel']), o);
+  await page.evaluate(() => { const b = document.querySelector('[data-cc-nav-changed-mode="all"]'); if (b) b.click(); });
   // pre-run panel
   await page.evaluate(() => { window._ccDispatch({ t: 'UPD_PREFS', u: { preRunDontAsk: false } }); window._ccRunDetectionInteractive(); });
   const pre = await page.waitForSelector('[data-cc-prerun]', { timeout: 15_000 }).catch(() => null);

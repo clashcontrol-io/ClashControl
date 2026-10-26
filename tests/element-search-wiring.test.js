@@ -35,7 +35,8 @@ test('NavigatorPanel: the spatial (Hierarchy, default) view now filters elements
   assert.ok(spatialEnd !== -1, 'tree view block (used as the end boundary) not found');
   const spatialSrc = src.slice(spatialStart, spatialEnd);
   assert.ok(/var q = treeSearch\.toLowerCase\(\);/.test(spatialSrc), 'spatial view must compute q from treeSearch - it previously never did');
-  const matches = spatialSrc.match(/_elMatchesSearch\(el,\s*q\)/g) || [];
+  // _navElOk = the "changed elements" filter (model comparison), then _elMatchesSearch
+  const matches = spatialSrc.match(/_elMatchesSearch\(el,\s*q\)|_navElOk\(el,\s*q,\s*model\)/g) || [];
   assert.ok(matches.length >= 2, 'both the storey-grouped and no-storey element lists must filter through _elMatchesSearch');
 });
 
@@ -43,7 +44,8 @@ test('NavigatorPanel: the tree ("Flat list") view and its keyboard-nav duplicate
   const panelStart = src.indexOf('function NavigatorPanel(props) {');
   const panelEnd = src.indexOf('\n  function ', panelStart + 40);
   const panelSrc = src.slice(panelStart, panelEnd === -1 ? panelStart + 30000 : panelEnd);
-  const matches = panelSrc.match(/_elMatchesSearch\(el,\s*q\)/g) || [];
+  assert.match(panelSrc, /function _navElOk\(el, q, model\) \{[^}]*\}[^}]*return _elMatchesSearch\(el, q\);/, '_navElOk must end in the shared matcher');
+  const matches = panelSrc.match(/_elMatchesSearch\(el,\s*q\)|_navElOk\(el,\s*q,\s*model\)/g) || [];
   // spatial view (2) + tree view render (2) + tree view keyboard-nav duplicate (2) = 6
   assert.ok(matches.length >= 6, 'expected _elMatchesSearch to be used at least 6 times across NavigatorPanel (spatial x2, tree render x2, keyboard-nav x2), found ' + matches.length);
 });

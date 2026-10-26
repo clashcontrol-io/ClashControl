@@ -30,6 +30,7 @@ var PRECACHE = [
   'clash-triage-core.js',
   'clash-exceptions-core.js',
   'clash-history-core.js',
+  'model-diff-core.js',
   'country-pack-core.js',
   'project-codec.js',
   'storage-core.js',

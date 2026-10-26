@@ -914,6 +914,7 @@
 <script src="clash-triage-core.js" defer></script>
 <script src="clash-exceptions-core.js" defer></script>
 <script src="clash-history-core.js" defer></script>
+<script src="model-diff-core.js" defer></script>
 <script src="project-codec.js" defer></script>
 <script src="storage-core.js" defer></script>
 <script src="shared-log-core.js" defer></script>
@@ -2725,7 +2726,7 @@ function startApp() {
         _clearElCaches(_pkm);
         var _stub = {
           id:_pkm.id, name:_pkm.name, discipline:_pkm.discipline, color:_pkm.color,
-          tag:_pkm.tag||'', _version:_pkm._version,
+          tag:_pkm.tag||'', _version:_pkm._version, _versionDiff:_pkm._versionDiff||undefined,
           elementCount:(_pkm.elements||[]).length, meshCount:(_pkm.meshes||[]).length,
           stats:_pkm.stats||null, _parkedAt:a.at||0
         };
@@ -3217,6 +3218,25 @@ function startApp() {
     return !!(e && (e.name === 'QuotaExceededError' || e.name === 'QUOTA_EXCEEDED_ERR' || e.code === 22));
   }
 
+  // Merge fields into a stored model file's meta (e.g. the refined version
+  // comparison once the lazy psets landed); no record = nothing to do.
+  function idbUpdateFileMeta(id, patch) {
+    return _openIDB().then(function(db) {
+      return new Promise(function(resolve, reject) {
+        var tx = db.transaction(IDB_STORE, 'readwrite');
+        var store = tx.objectStore(IDB_STORE);
+        var getReq = store.get(id);
+        getReq.onsuccess = function() {
+          var rec = getReq.result;
+          if (!rec) return;
+          rec.meta = Object.assign({}, rec.meta || {}, patch);
+          store.put(rec);
+        };
+        tx.oncomplete = function() { resolve(); };
+        tx.onerror = function(e) { reject(e.target.error); };
+      });
+    });
+  }
   function idbSaveFile(id, name, buffer, projectId, sidecarData, meta) {
     // Models on disk are the offline story — ask the browser to protect
     // them from storage-pressure eviction (one-time, silent if denied).
@@ -3682,6 +3702,7 @@ function startApp() {
           stats: result.stats || stub.stats || {}
         }, _ccSemanticModelFields(result));
         if (stub._version) restoredModel._version = stub._version;
+        if (stub._versionDiff) restoredModel._versionDiff = stub._versionDiff;
         // ADD_MODEL merges persisted modelMeta (visibility/discipline/color) and
         // clears the parked stub; UNPARK_MODEL is a belt-and-suspenders cleanup.
         if (window._ccDispatch) { window._ccDispatch({ t: A.ADD_MODEL, v: restoredModel }); window._ccDispatch({ t: A.UNPARK_MODEL, id: id }); }
@@ -9689,7 +9710,7 @@ function startApp() {
       if (row) index[vi] = row;
     });
     return { bucketOf: bucketOf, counts: counts, total: o.total, visible: visible, ctx: ctx, fctx: fctx,
-      storeyNorm: o.storeyNorm, index: index, rowById: rowById, visibleModels: o.visibleModels, zoneGroups: zoneGroups, _visPos: o._visPos, _visKey: o._visKey, _rowAt: rowAt, genv: o.genv };
+      storeyNorm: o.storeyNorm, index: index, rowById: rowById, visibleModels: o.visibleModels, zoneGroups: zoneGroups, _visPos: o._visPos, _visKey: o._visKey, _rowAt: rowAt, genv: o.genv, denv: o.denv };
   }
   // Exactly what the triage model reads from the models (visibility,
   // storeys, storey unit) — a model edit that changes none of it (rename,
@@ -9698,12 +9719,12 @@ function startApp() {
   // labelled from the current names when drawn (_ccModelPairLabel).
   function _ccTriageModelsSig(s) {
     return (s.models || []).map(function(m) {
-      return [m.id, m.visible !== false, m.storeyData, m.storeyData && m.storeyData.length ? _ccStoreyUnitScale(m, s.prefs) : 0];
+      return [m.id, m.visible !== false, m.storeyData, m.storeyData && m.storeyData.length ? _ccStoreyUnitScale(m, s.prefs) : 0, m._versionDiff || null];
     });
   }
   function _ccTriageSigSame(a, b) {
     if (!a || !b || a.length !== b.length) return false;
-    for (var i = 0; i < a.length; i++) for (var j = 0; j < 4; j++) if (a[i][j] !== b[i][j]) return false;
+    for (var i = 0; i < a.length; i++) for (var j = 0; j < 5; j++) if (a[i][j] !== b[i][j]) return false;
     return true;
   }
   var _ccTriageRowCache = new WeakMap(); // clash → { row, bucketOf, norm }
@@ -9714,7 +9735,9 @@ function startApp() {
     // the grid / room facets read the models' grid lines and rooms (_ccGroupEnv:
     // the same object while no model is added, replaced or removed)
     var genv = _ccGroupEnv(s.models);
-    var sameModels = !!(L && _ccTriageSigSame(L.msig, msig) && L.out && L.out.genv === genv);
+    // the "changed element" tag reads the models' version comparisons
+    var denv = _ccChangedElementsEnv(s.models);
+    var sameModels = !!(L && _ccTriageSigSame(L.msig, msig) && L.out && L.out.genv === genv && L.out.denv === denv);
     if (sameModels && L.clashes === s.clashes && L.rules === s.rules) {
       _ccTriageLast = { clashes: s.clashes, rules: s.rules, models: s.models, prefs: s.prefs, msig: msig, out: L.out };
       return L.out;
@@ -9728,7 +9751,7 @@ function startApp() {
     // clash, hidden models included: a row depends on the clash, its bucket
     // and the normaliser only) are reused — a visibility toggle refiles
     // nothing and only re-selects the visible clashes.
-    var P = (L && L.clashes === s.clashes && L.rules === s.rules && L.out && L.out.genv === genv) ? L.out : null;
+    var P = (L && L.clashes === s.clashes && L.rules === s.rules && L.out && L.out.genv === genv && L.out.denv === denv) ? L.out : null;
     var sameStoreys = !!(L && L.msig && L.msig.length === msig.length && msig.every(function(e, i) { var o = L.msig[i]; return o[0] === e[0] && o[2] === e[2] && o[3] === e[3]; }));
     var vis = {}, stE = [], visKey = '';
     (s.models || []).forEach(function(m) {
@@ -9748,7 +9771,8 @@ function startApp() {
       storey: norm.label,
       trade: function(c, side) { var i = side === 'A' ? 0 : 1; return (c.trades && c.trades[i]) || (c.disciplines && c.disciplines[i]) || 'other'; },
       grid: function(c) { return _ccGroupGridOf(genv, c); },
-      space: function(c) { var sp = _ccGroupSpaceOf(genv, c); return sp ? sp.label : ''; }
+      space: function(c) { var sp = _ccGroupSpaceOf(genv, c); return sp ? sp.label : ''; },
+      changed: denv ? function(c) { return window._ccModelDiffCore.clashOnChanged(c, denv); } : null
     };
     // facet rows of every clash, aligned with s.clashes (_rowAt) and by id
     var rowAt, rowById;
@@ -9758,8 +9782,8 @@ function startApp() {
       rowAt = new Array(n); rowById = new Map();
       if (tcore) for (var ri = 0; ri < n; ri++) {
         var c = all[ri], h = _ccTriageRowCache.get(c);
-        if (!(h && h.bucketOf === bucketOf && h.norm === norm && h.genv === genv)) {
-          h = { row: tcore.indexItems([c], fctx)[0], bucketOf: bucketOf, norm: norm, genv: genv };
+        if (!(h && h.bucketOf === bucketOf && h.norm === norm && h.genv === genv && h.denv === denv)) {
+          h = { row: tcore.indexItems([c], fctx)[0], bucketOf: bucketOf, norm: norm, genv: genv, denv: denv };
           _ccTriageRowCache.set(c, h);
         }
         rowAt[ri] = h.row; rowById.set(c.id, h.row);
@@ -9779,7 +9803,7 @@ function startApp() {
       if (rv) index.push(rv);
     }
     var out = { bucketOf: bucketOf, counts: counts, total: visible.length, visible: visible, ctx: ctx, fctx: fctx,
-      storeyNorm: norm, index: index, rowById: rowById, visibleModels: vis, zoneGroups: zoneGroups, _visKey: visKey, _rowAt: rowAt, genv: genv };
+      storeyNorm: norm, index: index, rowById: rowById, visibleModels: vis, zoneGroups: zoneGroups, _visKey: visKey, _rowAt: rowAt, genv: genv, denv: denv };
     _ccTriageLast = { clashes: s.clashes, rules: s.rules, models: s.models, prefs: s.prefs, msig: msig, out: out };
     return out;
   }
@@ -28723,8 +28747,11 @@ function startApp() {
               var modelId;
               if (existing) {
                 modelId = existing.id;
-                var versionDiff = computeModelDiff(existing.elements, result.elements);
-                console.log('%c[Model Diff] ' + baseName + ' v' + ((existing._version||1)+1) + ': +' + versionDiff.summary.added + ' added, -' + versionDiff.summary.removed + ' removed, ~' + versionDiff.summary.modified + ' modified, =' + versionDiff.summary.unchanged + ' unchanged', 'color:#60a5fa;font-weight:bold');
+                // compared while both versions' meshes are live; the
+                // property part is refined once the lazy psets land (below)
+                var _vdSession = window._ccModelDiffCore ? _ccVersionDiffSession(existing.elements, result.elements) : null;
+                var versionDiff = _vdSession ? _vdSession.diff : null;
+                _gcEvent('model-diff');
                 d({t:A.REPLACE_MODEL, id:modelId, v:Object.assign(_ccSemanticModelFields(result), {id:modelId, name:baseName,
                   discipline:existing.discipline||disc, color:existing.color||col,
                   visible:existing.visible!==false, tag:existing.tag||'',
@@ -28742,6 +28769,21 @@ function startApp() {
               job.committed(modelId, result.elements);
               if (existing) _autoRr.replaced++; else _autoRr.loaded++;
               if (result.stats && result.stats.loadedScope) _autoRr.partial = true;
+              // the version comparison with the property sets (registered
+              // before the auto re-check waits on the same signal)
+              var _vdRefined = null;
+              if (_vdSession) job.afterProps(function() {
+                try { _vdRefined = _vdSession.refine(); } catch (e) { console.warn('[Model Diff] refine failed', e); return; }
+                _vdSession = null;
+                // the reload may not be committed to the live state yet (props
+                // already complete): wait for it, never touch a later version
+                var _vdTries = 0;
+                (function _vdApply() {
+                  var _lm = ((window._ccLatestState||{}).models||[]).find(function(m){ return m.id === modelId; });
+                  if (_lm && _lm.elements === result.elements) { d({t:A.UPD_MODEL, id:modelId, u:{_versionDiff:_vdRefined}}); return; }
+                  if (++_vdTries < 100) setTimeout(_vdApply, 50);
+                })();
+              });
               _autoRr.props.push(new Promise(function(res) { job.afterProps(res); }));
               consoleElementProfile(baseName, (result.stats&&result.stats.loadType)||'IFC', result.elements);
               var _verMeta = existing ? {_version:(existing._version||1)+1, _versionDiff:versionDiff} : {_version:1};
@@ -28750,6 +28792,9 @@ function startApp() {
               // rather than storing an empty detached buffer.
               var _persistDone = f.arrayBuffer().then(function(persistBuf) {
                 return idbSaveFile(modelId, f.name, persistBuf, s.activeProject||'default', null, _verMeta);
+              });
+              if (existing) job.afterProps(function() {
+                _persistDone.then(function() { if (_vdRefined) return idbUpdateFileMeta(modelId, {_versionDiff:_vdRefined}); }).catch(function(){});
               });
               // Cache geometry for fast project-switch restore — full loads
               // only: a storey-scoped result would restore as a partial
@@ -29437,17 +29482,16 @@ function startApp() {
         ${m.discipline==='other' && m.tag && html`<div style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)'}}>
           ${_cc_t('modelCard.usePrefix','Use')} <code style=${{fontSize:'var(--text-xs)',background:'var(--bg-tertiary)',padding:'0 var(--space-1)',borderRadius:'var(--radius-xs)'}}>tag:${m.tag}</code> ${_cc_t('modelCard.inClashRulesSuffix','in clash detection rules')}
         </div>`}
-        ${m._versionDiff && html`<div style=${{borderTop:'1px solid var(--border-subtle)',paddingTop:'var(--space-2)',display:'flex',flexDirection:'column',gap:'var(--space-2)'}}>
+        ${m._versionDiff && html`<div data-cc-model-diff=${m.id} style=${{borderTop:'1px solid var(--border-subtle)',paddingTop:'var(--space-2)',display:'flex',flexDirection:'column',gap:'var(--space-2)'}}>
           <span style=${{fontSize:'var(--text-sm)',fontWeight:'var(--weight-semibold)',color:'var(--text-primary)'}}>${_cc_t('modelCard.versionDiffTitle','Changes since version {prev}',{prev:(m._version-1)||1})}</span>
-          <span style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)'}}>${[
-            m._versionDiff.summary.added>0 ? _cc_t('modelCard.addedCount','{n} added',{n:m._versionDiff.summary.added}) : null,
-            m._versionDiff.summary.removed>0 ? _cc_t('modelCard.removedCount','{n} removed',{n:m._versionDiff.summary.removed}) : null,
-            m._versionDiff.summary.modified>0 ? _cc_t('modelCard.modifiedCount','{n} changed',{n:m._versionDiff.summary.modified}) : null
-          ].filter(Boolean).join(' · ') || _cc_t('modelCard.noChanges','No changes')}</span>
-          <div style=${{display:'flex',gap:'var(--space-2)'}}>
+          <span data-cc-model-diff-summary="1" style=${{fontSize:'var(--text-xs)',color:'var(--text-secondary)',lineHeight:'var(--leading-base)'}}>${_ccDiffSummaryParts(m._versionDiff.summary).join(' · ') || _cc_t('modelCard.noChanges','No changes')}</span>
+          <div style=${{display:'flex',gap:'var(--space-2)',flexWrap:'wrap'}}>
             <button onClick=${function(){showModelDiff(m);}} style=${S_BTN_SECONDARY_SM}>${_cc_t('modelCard.showChanges','Show changes')}</button>
             <button onClick=${function(){clearModelDiff(m);}} style=${S_BTN_GHOST_SM}>${_cc_t('modelCard.hideChanges','Hide changes')}</button>
+            ${m._versionDiff.records && html`<button data-cc-model-diff-report="1" onClick=${function(){_ccModelDiffReport(m);}} style=${S_BTN_GHOST_SM}>${_cc_t('modelCard.diffReport','Report')}</button>`}
+            ${m._versionDiff.records && html`<button data-cc-model-diff-csv="1" onClick=${function(){_ccExportModelDiffCsv(m);}} style=${S_BTN_GHOST_SM}>${_cc_t('modelCard.diffCsv','Export CSV')}</button>`}
           </div>
+          <span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',lineHeight:'var(--leading-base)'}}>${_cc_t('modelCard.diffColours','Show changes colours the 3D view: added elements green, changed elements blue, the rest faded.')}</span>
         </div>`}
         <div style=${{display:'flex',gap:'var(--space-2)',borderTop:'1px solid var(--border-subtle)',paddingTop:'var(--space-2)'}}>
           ${!(m.stats&&m.stats.source==='revit-direct') && html`<button onClick=${function(){if(window._ccParkModel)window._ccParkModel(m.id);}}
@@ -29549,6 +29593,32 @@ function startApp() {
     var hiddenCount = classView ? keys.filter(function(k){return s.hiddenClasses[classView+':'+k]}).length : 0;
     var CLASS_COLORS = ['#60a5fa','#f87171','#34d399','#fbbf24','#c084fc','#fb923c','#22d3ee','#e879f9','#a3e635','#f472b6','#38bdf8','#facc15','#4ade80','#f97316','#818cf8'];
     var VIEWS=[{id:'spatial',label:_cc_t('nav.hierarchy','Hierarchy'),title:_cc_t('nav.hierarchyTip','Project → Building → Storey')},{id:'tree',label:_cc_t('nav.flatList','Flat list'),title:_cc_t('nav.flatListTip','By storey, alphabetical')},{id:'byType',label:_cc_t('legend.ifcType','IFC Type')},{id:'byStorey',label:_cc_t('propBlock.storey','Storey')},{id:'byDiscipline',label:_cc_t('legend.discipline','Discipline')},{id:'byMaterial',label:_cc_t('propBlock.material','Material')},{id:'byProperty',label:_cc_t('nav.byProperty','Property'),title:_cc_t('nav.byPropertyTip','Values of one property, coloured in 3D')}];
+    // "Changed elements" filter: after a model reload (version comparison,
+    // model-diff-core.js) show every element, only added + changed ones, or
+    // only added ones. Rows of a reloaded model say what changed.
+    var _chg = useState('all'), chgMode=_chg[0], setChgMode=_chg[1];
+    var hasDiff = s.models.some(function(m){ return m.visible!==false && m._versionDiff; });
+    var chgOn = hasDiff && chgMode!=='all';
+    var chgSets = useMemo(function(){
+      var core = window._ccModelDiffCore, out = {};
+      s.models.forEach(function(m){
+        var dv = m._versionDiff;
+        if (!dv || !core) return;
+        var kind = new Map();
+        if (dv.records) dv.records.forEach(function(r){ if (r.kind !== 'removed') kind.set(r.eid, r.kind); });
+        else { (dv.modified||[]).forEach(function(id){ kind.set(id, 'changed'); }); (dv.added||[]).forEach(function(id){ kind.set(id, 'added'); }); }
+        out[m.id] = { keep: chgMode==='all' ? null : core.filterIds(dv, chgMode), kind: kind };
+      });
+      return out;
+    }, [s.models, chgMode]);
+    function _navElOk(el, q, model) {
+      if (chgOn) { var cs = chgSets[model.id]; if (!cs || !cs.keep || !cs.keep.has(el.expressId)) return false; }
+      return _elMatchesSearch(el, q);
+    }
+    function _navSecondary(el, p, model) {
+      var t = p.ifcType||_cc_t('nav.element','Element'), cs = chgSets[model.id], k = cs && cs.kind.get(el.expressId);
+      return k ? t + ' · ' + (k === 'changed' ? _cc_t('modelCard.legendChanged','Changed') : _ccDiffKindLabel(k)) : t;
+    }
     var _selProp = useState(null), selectedElProps=_selProp[0], setSelectedElProps=_selProp[1];
     var _ef = useState(null), explorerFocus=_ef[0], setExplorerFocus=_ef[1];
     var _ms = useState([]), multiSel=_ms[0], setMultiSel=_ms[1];
@@ -29606,8 +29676,8 @@ function startApp() {
           Object.keys(storeyGroups).sort().forEach(function(st){
             var sKey='s_'+model.id+'_'+st;
             var els=storeyGroups[st];
-            var filtered=q?els.filter(function(el){return _elMatchesSearch(el,q);}):els;
-            if(q&&filtered.length===0) return;
+            var filtered=(q||chgOn)?els.filter(function(el){return _navElOk(el,q,model);}):els;
+            if((q||chgOn)&&filtered.length===0) return;
             nodes.push({key:sKey,type:'storey',model:model,storey:st});
             if(!expanded[sKey]) return;
             filtered.slice(0,q?1000:200).forEach(function(el){
@@ -29618,7 +29688,7 @@ function startApp() {
             var nsKey='s_'+model.id+'_none';
             nodes.push({key:nsKey,type:'storey',model:model,storey:'(No storey)'});
             if(expanded[nsKey]){
-              noStorey.filter(function(el){return _elMatchesSearch(el,q);}).slice(0,q?500:100).forEach(function(el){
+              noStorey.filter(function(el){return _navElOk(el,q,model);}).slice(0,q?500:100).forEach(function(el){
                 nodes.push({key:'e_'+model.id+'_'+el.expressId,type:'element',model:model,element:el});
               });
             }
@@ -29662,7 +29732,7 @@ function startApp() {
       document.addEventListener('keydown', onKey);
       return function(){document.removeEventListener('keydown', onKey);};
     // eslint-disable-next-line react-hooks/exhaustive-deps -- toggle uses a functional setExpanded (identity does not matter) and every other value the handler reads is in the deps
-    },[s.tab, viewMode, s.models, expanded, treeSearch, explorerFocus]);
+    },[s.tab, viewMode, s.models, expanded, treeSearch, explorerFocus, chgOn, chgSets]);
 
     // ── PatternFly tree-view node helper ──
     function tvNode(opts) {
@@ -29709,6 +29779,14 @@ function startApp() {
             <button class="cc-btn-press" onClick=${expandAll} style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border-subtle)'}}>${_cc_t('nav.expandAll','Expand all')}</button>
             <button class="cc-btn-press" onClick=${function(){setExpanded({});}} style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',border:'1px solid var(--border-subtle)'}}>${_cc_t('nav.collapseAll','Collapse all')}</button>
           </div>`}
+          ${hasDiff && (viewMode==='tree'||viewMode==='spatial') && html`<div data-cc-nav-changed="1" role="group" aria-label=${_cc_t('nav.changedFilter','Model changes')} style=${{display:'flex',gap:'var(--space-1)',flexWrap:'wrap',alignItems:'center'}}>
+            <span style=${{fontSize:'var(--text-xs)',color:'var(--text-muted)',marginRight:'var(--space-1)'}}>${_cc_t('nav.changedFilter','Model changes')}</span>
+            ${[['all',_cc_t('nav.changedAll','All elements')],['changed',_cc_t('nav.changedOnly','Added and changed')],['added',_cc_t('nav.addedOnly','Added')]].map(function(o){
+              var on = chgMode===o[0];
+              return html`<button key=${o[0]} class="cc-btn-press" data-cc-nav-changed-mode=${o[0]} aria-pressed=${on?'true':'false'} onClick=${function(){ setChgMode(o[0]); if (o[0]!=='all') expandAll(); }}
+                style=${{...S_BTN,fontSize:'var(--text-xs)',padding:'var(--space-1) var(--space-2)',background:on?'var(--accent)':'var(--bg-secondary)',color:on?'var(--accent-contrast)':'var(--text-secondary)',border:'1px solid var(--border-subtle)',fontWeight:on?'var(--weight-semibold)':'var(--weight-medium)'}}>${o[1]}</button>`;
+            })}
+          </div>`}
         </div>
         ${classView && total>0 && html`<div style=${{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <div style=${{display:'flex',alignItems:'center',gap:'var(--space-2)'}}>
@@ -29745,7 +29823,7 @@ function startApp() {
               key:eKey, level:level,
               icon:'▪', iconColor:'var(--text-muted)',
               label:p.name||('#'+el.expressId),
-              secondary:p.ifcType||_cc_t('nav.element','Element'),
+              secondary:_navSecondary(el,p,model),
               hasChildren:false,
               selected:explorerFocus===eKey,
               multiSelected:multiSel.some(function(r){return r.expressId===el.expressId && r.modelId===model.id;}),
@@ -29784,7 +29862,7 @@ function startApp() {
                     children:[].concat(
                       (model.storeyData||[]).map(function(sd){
                         var stKey='st_'+model.id+'_'+sd.name;
-                        var stEls = q ? (_mIdx.storeyGroups[sd.name]||[]).filter(function(el){return _elMatchesSearch(el,q);}) : (_mIdx.storeyGroups[sd.name] || []);
+                        var stEls = (q||chgOn) ? (_mIdx.storeyGroups[sd.name]||[]).filter(function(el){return _navElOk(el,q,model);}) : (_mIdx.storeyGroups[sd.name] || []);
                         var stIsOpen = !!expanded[stKey];
                         // Model-scoped key — see the visibility-application
                         // effect's 'byStorey:<modelId>::<name>' handling.
@@ -29812,7 +29890,7 @@ function startApp() {
                         });
                       }),
                       function(){
-                        var noSt = q ? (_mIdx.noStorey||[]).filter(function(el){return _elMatchesSearch(el,q);}) : (_mIdx.noStorey || []);
+                        var noSt = (q||chgOn) ? (_mIdx.noStorey||[]).filter(function(el){return _navElOk(el,q,model);}) : (_mIdx.noStorey || []);
                         if(!noSt.length) return [];
                         var nsKey='st_'+model.id+'_none';
                         var nsIsOpen = !!expanded[nsKey];
@@ -29856,7 +29934,7 @@ function startApp() {
               key:eKey, level:level,
               icon:'▪', iconColor:'var(--text-muted)',
               label:p.name||('#'+el.expressId),
-              secondary:p.ifcType||_cc_t('nav.element','Element'),
+              secondary:_navSecondary(el,p,model),
               count:hasChildren?elChildren.length:undefined,
               hasChildren:hasChildren, expanded:!!expanded[cKey],
               selected:explorerFocus===eKey,
@@ -29883,12 +29961,12 @@ function startApp() {
           }
           var mIsOpen = !!expanded[mKey];
           var storeyChildren = [];
-          if (mIsOpen || q) {
+          if (mIsOpen || q || chgOn) {
             storeyKeys.forEach(function(st){
               var sKey='s_'+model.id+'_'+st;
               var els=storeyGroups[st];
-              var filtered = q ? els.filter(function(el){return _elMatchesSearch(el,q);}) : els;
-              if(q && filtered.length===0) return;
+              var filtered = (q||chgOn) ? els.filter(function(el){return _navElOk(el,q,model);}) : els;
+              if((q||chgOn) && filtered.length===0) return;
               var sIsOpen = !!expanded[sKey];
               var topLevel = sIsOpen ? filtered.filter(function(el){ return !_hasParent[el.expressId]; }) : null;
               // Model-scoped — see the spatial-view storey node above.
@@ -29913,7 +29991,7 @@ function startApp() {
             });
             if(noStorey.length>0){
               var nsKey='s_'+model.id+'_none';
-              var nsFiltered = noStorey.filter(function(el){return _elMatchesSearch(el,q);});
+              var nsFiltered = noStorey.filter(function(el){return _navElOk(el,q,model);});
               if(nsFiltered.length>0){
                 var nsIsOpen = !!expanded[nsKey];
                 var _nsCap = q ? 500 : 100;
@@ -32240,7 +32318,7 @@ function startApp() {
   }
   function _ccSuggestedLabel(id, label) {
     return ({'structural-penetration':_cc_t('view.structuralPenetration','Structural penetrations'),'riser-through-slab':_cc_t('view.riserThroughSlab','Risers through slabs'),
-      'unassigned-critical':_cc_t('view.unassignedCritical','Unassigned critical'),'opening-too-small':_cc_t('view.openingTooSmall','Openings too small'),'missing-provision':_cc_t('view.missingProvision','Missing openings / provisions'),'near-miss':_cc_t('view.nearMiss','Near misses'),'new':_cc_t('view.new','New since last run'),'shared-conflict':_cc_t('view.sharedConflict','Conflicts')})[id] || label;
+      'unassigned-critical':_cc_t('view.unassignedCritical','Unassigned critical'),'opening-too-small':_cc_t('view.openingTooSmall','Openings too small'),'missing-provision':_cc_t('view.missingProvision','Missing openings / provisions'),'near-miss':_cc_t('view.nearMiss','Near misses'),'new':_cc_t('view.new','New since last run'),'changed-elements':_cc_t('view.changedElements','Clashes on changed elements'),'shared-conflict':_cc_t('view.sharedConflict','Conflicts')})[id] || label;
   }
   function _ccToggleFacet(facets, k, v) {
     var cur = (facets[k] || []).slice(), i = cur.indexOf(v);
@@ -33450,81 +33528,221 @@ function startApp() {
     </div>`;
   }
 
-  // ── Model Version Diffing ──────────────────────────────────────────
-
-  function _propHash(p) {
-    if (!p) return '';
-    var parts = [p.ifcType||'', p.name||'', p.objectType||'', p.material||'', p.storey||''];
-    if (p.quantities) {
-      Object.keys(p.quantities).sort().forEach(function(k) { parts.push(k + '=' + p.quantities[k]); });
-    }
-    if (p.psets) {
-      Object.keys(p.psets).sort().forEach(function(setName) {
-        var ps = p.psets[setName];
-        Object.keys(ps).sort().forEach(function(k) { parts.push(setName + '.' + k + '=' + ps[k]); });
-      });
-    }
-    return parts.join('|');
+  // ── Model version comparison (model-diff-core.js, INTERNALS §21.63) ──
+  // An element's mesh parts for the diff core: local positions, index and
+  // world matrix of every mesh (off-scene batch proxies: matrixWorld from
+  // .matrix, like the smart re-run hash).
+  function _ccElementGeoParts(el) {
+    return (el.meshes || []).map(function(m) {
+      var g = m.geometry, pos = g && g.attributes && g.attributes.position, idx = g && g.index;
+      var n = pos ? pos.count : 0, arr;
+      if (pos && !pos.isInterleavedBufferAttribute && pos.itemSize === 3 && pos.array && pos.array.length >= n * 3) arr = pos.array.length === n * 3 ? pos.array : pos.array.subarray(0, n * 3);
+      else { arr = new Float64Array(n * 3); for (var i = 0; i < n; i++) { arr[i * 3] = pos.getX(i); arr[i * 3 + 1] = pos.getY(i); arr[i * 3 + 2] = pos.getZ(i); } }
+      var ia = idx && idx.array ? (idx.array.length === idx.count ? idx.array : idx.array.subarray(0, idx.count)) : null;
+      try { m.updateWorldMatrix(true, false); } catch (e) {}
+      return { pos: arr, index: ia, matrix: m.matrixWorld ? m.matrixWorld.elements : null, _pos: pos, _idx: idx };
+    });
   }
-
+  // Geometry signature of an element (world space, see model-diff-core.js),
+  // cached per element while every mesh's position / index attribute (+ its
+  // version) and world matrix are unchanged.
+  var _ccGeoSigCache = new WeakMap();
+  function _ccElementGeoSig(el) {
+    var core = window._ccModelDiffCore;
+    if (!core) return '';
+    var ms = el.meshes || [], e = _ccGeoSigCache.get(el), i, k;
+    if (e && e.n === ms.length) {
+      var ok = true;
+      for (i = 0; i < ms.length && ok; i++) {
+        var m = ms[i], g = m.geometry, pos = g && g.attributes && g.attributes.position, idx = g && g.index, key = e.keys[i];
+        try { m.updateWorldMatrix(true, false); } catch (x) {}
+        var me = m.matrixWorld && m.matrixWorld.elements;
+        if (key.p !== pos || key.pv !== (pos && pos.version) || key.i !== idx || key.iv !== (idx && idx.version) || !me) { ok = false; break; }
+        for (k = 0; k < 16; k++) if (key.m[k] !== me[k]) { ok = false; break; }
+      }
+      if (ok) return e.sig;
+    }
+    var parts = _ccElementGeoParts(el);
+    var sig = core.geometrySignature(parts);
+    _ccGeoSigCache.set(el, { n: ms.length, sig: sig, keys: parts.map(function(p) {
+      return { p: p._pos, pv: p._pos && p._pos.version, i: p._idx, iv: p._idx && p._idx.version, m: p.matrix ? Array.prototype.slice.call(p.matrix) : [] };
+    }) });
+    return sig;
+  }
+  window._ccElementGeoSig = _ccElementGeoSig;
+  // One comparison of a reloaded model with the version it replaces. Built
+  // while both versions' meshes are live (the moment of the reload); the
+  // geometry verdicts are kept, so refine() — called once the new version's
+  // lazily merged property sets have landed — only re-compares properties
+  // (re-read from the new elements). Old elements are not kept (their props
+  // objects are).
+  function _ccVersionDiffSession(oldElements, newElements) {
+    var core = window._ccModelDiffCore;
+    function entries(els) {
+      var out = [];
+      (els || []).forEach(function(el) {
+        var gid = el.props && el.props.globalId;
+        if (gid) out.push({ gid: gid, eid: el.expressId, props: el.props, geo: _ccElementGeoSig(el), el: el });
+      });
+      return out;
+    }
+    var oldE = entries(oldElements), newE = entries(newElements), geoMemo = {};
+    // signatures differ: same within rounding / moved / reshaped (kept, so
+    // refine() never needs the old meshes again)
+    function geometry(o, n) {
+      if (!(o.gid in geoMemo)) {
+        var r = 'reshaped';
+        try { if (o.el && n.el) r = core.compareGeometry(_ccElementGeoParts(o.el), _ccElementGeoParts(n.el)); } catch (e) { r = 'reshaped'; }
+        geoMemo[o.gid] = r;
+      }
+      return geoMemo[o.gid];
+    }
+    var diff = core.diffModels(oldE, newE, { geometry: geometry });
+    oldE.forEach(function(e) { e.el = null; });
+    return { diff: diff, refine: function() {
+      newE.forEach(function(e) { if (e.el) e.props = e.el.props; e.el = null; });
+      return core.diffModels(oldE, newE, { geometry: geometry });
+    } };
+  }
   function computeModelDiff(oldElements, newElements) {
     _gcEvent('model-diff');
-    var oldByGid = {}, newByGid = {};
-    (oldElements || []).forEach(function(el) {
-      var gid = el.props && el.props.globalId;
-      if (gid) oldByGid[gid] = el;
-    });
-    (newElements || []).forEach(function(el) {
-      var gid = el.props && el.props.globalId;
-      if (gid) newByGid[gid] = el;
-    });
-
-    var added = [], removed = [], modified = [], unchanged = [];
-    Object.keys(newByGid).forEach(function(gid) {
-      if (!oldByGid[gid]) {
-        added.push(newByGid[gid].expressId);
-      } else {
-        var oldHash = _propHash(oldByGid[gid].props);
-        var newHash = _propHash(newByGid[gid].props);
-        if (oldHash !== newHash) {
-          modified.push(newByGid[gid].expressId);
-        } else {
-          unchanged.push(newByGid[gid].expressId);
-        }
-      }
-    });
-    Object.keys(oldByGid).forEach(function(gid) {
-      if (!newByGid[gid]) {
-        removed.push(oldByGid[gid].expressId);
-      }
-    });
-
-    return {
-      added: added,
-      removed: removed,
-      modified: modified,
-      unchanged: unchanged,
-      summary: {
-        added: added.length,
-        removed: removed.length,
-        modified: modified.length,
-        unchanged: unchanged.length,
-        ts: new Date().toISOString()
-      }
-    };
+    if (!window._ccModelDiffCore) return null;
+    return _ccVersionDiffSession(oldElements, newElements).diff;
   }
+  // The diffs as expressId sets per model, for the Navigator filter and the
+  // "changed element" clash tag: { modelId: Set(added + changed ids) } or
+  // null — memoised on the diff objects.
+  var _ccDiffEnvLast = { key: null, env: null };
+  function _ccChangedElementsEnv(models) {
+    var diffs = (models || []).map(function(m) { return m._versionDiff || null; });
+    var L = _ccDiffEnvLast;
+    if (L.key && L.key.length === diffs.length && L.key.every(function(x, i) { return x === diffs[i]; })) return L.env;
+    var env = null, core = window._ccModelDiffCore;
+    (models || []).forEach(function(m) {
+      var ids = core && m._versionDiff ? core.filterIds(m._versionDiff, 'changed') : null;
+      if (ids && ids.size) { env = env || {}; env[m.id] = ids; }
+    });
+    _ccDiffEnvLast = { key: diffs, env: env };
+    return env;
+  }
+  // Change-kind and property words (report, CSV, Navigator rows).
+  function _ccDiffKindLabel(k) {
+    return ({added:_cc_t('diff.kind.added','Added'),removed:_cc_t('diff.kind.removed','Removed'),moved:_cc_t('diff.kind.moved','Moved'),reshaped:_cc_t('diff.kind.reshaped','Reshaped'),
+      properties:_cc_t('diff.kind.properties','Properties changed'),'moved+properties':_cc_t('diff.kind.movedProps','Moved, properties changed'),'reshaped+properties':_cc_t('diff.kind.reshapedProps','Reshaped, properties changed')})[k] || k;
+  }
+  function _ccDiffPropLabel(k) {
+    return ({name:_cc_t('propBlock.name','Name'),description:_cc_t('diff.prop.description','Description'),objectType:_cc_t('diff.prop.objectType','Object type'),ifcType:_cc_t('legend.ifcType','IFC Type'),
+      predefinedType:_cc_t('diff.prop.predefinedType','Predefined type'),tag:_cc_t('diff.prop.tag','Tag'),storey:_cc_t('propBlock.storey','Storey'),material:_cc_t('propBlock.material','Material'),
+      phase:_cc_t('diff.prop.phase','Phase'),workset:_cc_t('diff.prop.workset','Workset'),designOption:_cc_t('diff.prop.designOption','Design option')})[k] || k;
+  }
+  // "12 added · 3 removed · 8 moved or reshaped · 20 property changes"
+  // (a diff stored before the geometry split: "… · 5 changed").
+  function _ccDiffSummaryParts(sm) {
+    if (!sm) return [];
+    var out = [];
+    if (sm.added > 0) out.push(_cc_t('modelCard.addedCount','{n} added',{n:sm.added}));
+    if (sm.removed > 0) out.push(_cc_t('modelCard.removedCount','{n} removed',{n:sm.removed}));
+    if (sm.geometry == null) { if (sm.modified > 0) out.push(_cc_t('modelCard.modifiedCount','{n} changed',{n:sm.modified})); return out; }
+    if (sm.geometry > 0) out.push(_cc_t('modelCard.geometryCount','{n} moved or reshaped',{n:sm.geometry}));
+    if (sm.properties > 0) out.push(sm.properties === 1 ? _cc_t('modelCard.propertyCountOne','1 property change') : _cc_t('modelCard.propertyCount','{n} property changes',{n:sm.properties}));
+    return out;
+  }
+  function _ccDiffCsvLabels() {
+    return { kind: _ccDiffKindLabel, prop: _ccDiffPropLabel,
+      header: [_cc_t('diff.col.globalId','GlobalId'), _cc_t('legend.ifcType','IFC Type'), _cc_t('propBlock.name','Name'), _cc_t('diff.col.change','Change'), _cc_t('diff.col.property','Property'), _cc_t('diff.col.old','Old value'), _cc_t('diff.col.new','New value')] };
+  }
+  function _ccModelDiffCsv(model) {
+    var core = window._ccModelDiffCore, diff = model && model._versionDiff;
+    if (!core || !diff || !diff.records) return '';
+    return core.toCsv(diff, _ccDiffCsvLabels());
+  }
+  function _ccExportModelDiffCsv(model) {
+    var csv = _ccModelDiffCsv(model);
+    if (!csv) { if (window._ccToast) window._ccToast(_cc_t('diff.noDetail','This comparison has no element detail. Reload the model to compare again.')); return; }
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = String(model.name || 'model').replace(/[^\w.-]+/g, '_') + '-v' + (model._version || 1) + '-changes.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function() { URL.revokeObjectURL(a.href); }, 1000);
+    _gcEvent('model-diff-export', 'csv');
+  }
+  // Printable comparison report: the same new-window / window.print()
+  // pattern as the clash report. Words only, no colour markers.
+  function _ccModelDiffReportHtml(model) {
+    var diff = model && model._versionDiff;
+    if (!diff) return '';
+    var sm = diff.summary || {}, recs = diff.records || [], ROW_CAP = 2000;
+    var parts = _ccDiffSummaryParts(sm);
+    var cards = [['added', sm.added], ['removed', sm.removed], ['moved', sm.moved], ['reshaped', sm.reshaped], ['properties', sm.properties]]
+      .filter(function(x) { return x[1] != null; })
+      .map(function(x) { return '<div class="card" data-kind="'+x[0]+'"><b>'+x[1]+'</b><span>'+esc(x[0] === 'properties' ? _cc_t('diff.card.properties','property changes') : _ccDiffKindLabel(x[0]).toLowerCase())+'</span></div>'; }).join('');
+    var rows = recs.slice(0, ROW_CAP).map(function(r) {
+      var pc = (r.props || []).map(function(p) { return esc(_ccDiffPropLabel(p.k))+': '+esc(p.o === '' ? '–' : p.o)+' → '+esc(p.n === '' ? '–' : p.n); }).join('<br>');
+      return '<tr data-gid="'+esc(r.gid)+'" data-kind="'+esc(r.kind)+'"><td class="mono">'+esc(r.gid)+'</td><td>'+esc(r.type)+'</td><td>'+esc(r.name)+'</td><td>'+esc(_ccDiffKindLabel(r.kind))+'</td><td>'+pc+'</td></tr>';
+    }).join('');
+    var now = new Date();
+    return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+esc(_cc_t('diff.reportTitle','Model comparison')+' — '+(model.name||''))+'</title><style>'
+      + 'body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;margin:0;padding:24px 32px;background:#fff}'
+      + 'h1{font-size:22px;margin:0 0 2px}h2{font-size:15px;margin:26px 0 8px;border-bottom:2px solid #4d9e75;padding-bottom:4px}'
+      + '.sub{color:#6b7280;font-size:12px;margin-bottom:18px}.cards{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}'
+      + '.card{border:1px solid #d1d5db;border-radius:8px;padding:10px 16px;min-width:90px}.card b{display:block;font-size:22px}.card span{font-size:11px;color:#6b7280}'
+      + 'table{border-collapse:collapse;width:100%;font-size:12px}th{text-align:left;background:#f1f5f9;padding:5px 8px;border-bottom:2px solid #d1d5db}'
+      + 'td{padding:4px 8px;border-bottom:1px solid #e2e8f0;vertical-align:top}.mono{font-family:ui-monospace,monospace}'
+      + '.foot{margin-top:30px;font-size:10px;color:#6b7280}.toolbar{position:sticky;top:0;background:#fff;padding:8px 0;border-bottom:1px solid #e2e8f0;margin-bottom:14px}'
+      + '.toolbar button{background:#4d9e75;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer}'
+      + '@media print{.noprint{display:none}body{padding:0 8px}}'
+      + '</style></head><body>'
+      + '<div class="toolbar noprint"><button onclick="window.print()">'+esc(_cc_t('diff.print','Print / Save as PDF'))+'</button></div>'
+      + '<h1>'+esc(_cc_t('diff.reportTitle','Model comparison'))+' — '+esc(model.name||'')+'</h1>'
+      + '<div class="sub">'+esc(_cc_t('modelCard.versionDiffTitle','Changes since version {prev}',{prev:((model._version||2)-1)||1}))+' · '+esc(now.toLocaleString())+'</div>'
+      + '<div class="cards">'+cards+'</div>'
+      + '<div class="sub" data-cc-diff-summary="1">'+esc(parts.join(' · ') || _cc_t('diff.noChanges','No changes'))+'</div>'
+      + (sm.psetsCompared === false ? '<div class="sub">'+esc(_cc_t('diff.psetsNotCompared','Property sets were not compared: they were not loaded on both versions.'))+'</div>' : '')
+      + '<h2>'+esc(_cc_t('diff.changedElements','Changed elements'))+(recs.length > ROW_CAP ? ' ('+esc(_cc_t('diff.firstN','first {n}',{n:ROW_CAP}))+')' : '')+'</h2>'
+      + (diff.records ? '<table><tr><th>'+esc(_cc_t('diff.col.globalId','GlobalId'))+'</th><th>'+esc(_cc_t('legend.ifcType','IFC Type'))+'</th><th>'+esc(_cc_t('propBlock.name','Name'))+'</th><th>'+esc(_cc_t('diff.col.change','Change'))+'</th><th>'+esc(_cc_t('diff.col.properties','Changed properties (old → new)'))+'</th></tr>'+rows+'</table>'
+        : '<div class="sub">'+esc(_cc_t('diff.noDetail','This comparison has no element detail. Reload the model to compare again.'))+'</div>')
+      + '<div class="foot">ClashControl '+esc((window.CC_VERSION&&window.CC_VERSION.v)||'')+'</div>'
+      + '</body></html>';
+  }
+  function _ccModelDiffReport(model) {
+    var h = _ccModelDiffReportHtml(model);
+    if (!h) return;
+    _gcEvent('model-diff-report');
+    var w = window.open('', '_blank');
+    if (!w) { if (window._ccToast) window._ccToast(_cc_t('toast.popupBlockedAllowPopupsTo','Popup blocked — allow popups to open the report')); return; }
+    w.document.write(h);
+    w.document.close();
+  }
+  function _ccModelById(id) { return ((window._ccLatestState || {}).models || []).find(function(x) { return x.id === id; }) || null; }
+  window._ccModelDiffCsv = function(modelId) { var m = _ccModelById(modelId); return m ? _ccModelDiffCsv(m) : ''; };
+  window._ccModelDiffReportHtml = function(modelId) { var m = _ccModelById(modelId); return m ? _ccModelDiffReportHtml(m) : ''; };
 
+  // 3D diff colours: added --color-success and removed --color-danger, read
+  // from the live theme each time the diff is shown; changed stays the
+  // DESIGN.md --color-info blue (#3b82f6) — the live --color-info token is
+  // the accent green, which would make "changed" look like "added";
+  // unchanged = the ghost. Never amber.
   var _diffMatAdded = new THREE.MeshBasicMaterial({color: 0x22c55e, transparent: true, opacity: 0.7, depthWrite: false});
   var _diffMatRemoved = new THREE.MeshBasicMaterial({color: 0xef4444, transparent: true, opacity: 0.5, depthWrite: false});
   var _diffMatModified = new THREE.MeshBasicMaterial({color: 0x3b82f6, /* --color-info: no amber in the UI */ transparent: true, opacity: 0.7, depthWrite: false});
   var _diffMatUnchanged = new THREE.MeshBasicMaterial({color: 0x334155, transparent: true, opacity: 0.08, depthWrite: false});
+  function _ccDiffTokenColors() {
+    try {
+      var cs = getComputedStyle(document.documentElement);
+      [[_diffMatAdded, '--color-success'], [_diffMatRemoved, '--color-danger']].forEach(function(x) {
+        var v = String(cs.getPropertyValue(x[1]) || '').trim();
+        if (/^#[0-9a-f]{3,8}$/i.test(v) || /^rgb/i.test(v)) x[0].color.setStyle(v);
+      });
+    } catch (e) {}
+  }
 
   function showModelDiff(model) {
     var diff = model._versionDiff;
     if (!diff) return;
+    _ccDiffTokenColors();
     var addedSet = {}; diff.added.forEach(function(id) { addedSet[id] = true; });
     var modifiedSet = {}; diff.modified.forEach(function(id) { modifiedSet[id] = true; });
-    var unchangedSet = {}; diff.unchanged.forEach(function(id) { unchangedSet[id] = true; });
 
     (model.elements || []).forEach(function(el) {
       (el.meshes || []).forEach(function(mesh) {
@@ -33533,8 +33751,6 @@ function startApp() {
           mesh.material = _diffMatAdded;
         } else if (modifiedSet[el.expressId]) {
           mesh.material = _diffMatModified;
-        } else if (unchangedSet[el.expressId]) {
-          mesh.material = _diffMatUnchanged;
         } else {
           mesh.material = _diffMatUnchanged;
         }
