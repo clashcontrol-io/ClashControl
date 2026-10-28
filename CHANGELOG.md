@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.9.0 (2026-10-28)
+- State scope: section survives refresh / mode switches; selection, isolation, undo and sharing links stay in their project (#722)
+
 ## v7.8.1 (2026-10-28)
 - Viewer: mirrored elements inside out, orbit drag past the top view, invisible idle drag handles (#721)
 
