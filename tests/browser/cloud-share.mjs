@@ -80,6 +80,15 @@ async function openUser(uid, name) {
     try { localStorage.setItem('cc_consent_banner_seen', '1'); localStorage.setItem('cc_data_consent', 'denied'); localStorage.setItem('cc_data_consent_explicit', '1'); localStorage.setItem('cc_username', n); } catch (e) {}
     window.__ccSharedTestUser = u;
     window.__toasts = [];
+    // The linked folders here are origin-private (navigator.storage); some
+    // Chromium builds exit (SIGTRAP) when such a handle is READ back from
+    // IndexedDB, so it is never persisted (tests/browser/shared-folder.mjs).
+    // A project switch reconnects from the handles saved on the page.
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (v, k) {
+      if (this.name === 'handles' && typeof k === 'string' && /^shared(:|$)/.test(k)) return put.call(this, Object.assign({}, v, { dirHandle: null }), k);
+      return put.apply(this, arguments);
+    };
   }, [uid, name]);
   if (offlineDepsEnabled()) await routeOfflineDeps(ctx, root);
   await routeApi(ctx, uid);
@@ -96,6 +105,10 @@ async function openUser(uid, name) {
     // pulls are driven by hand; pushes go out 100 ms after an edit
     window._ccCloudShare.config({ pullMs: 1e9, pushDelay: 100 });
   });
+  await loadFederation(page);
+  return page;
+}
+async function loadFederation(page) {
   await page.evaluate(async () => {
     for (const [p, n] of [['/__a.ifc', 'arch.ifc'], ['/__b.ifc', 'struct.ifc']]) {
       const buf = await (await fetch(p)).arrayBuffer();
@@ -105,8 +118,9 @@ async function openUser(uid, name) {
   });
   await page.evaluate(() => window._ccRunDetection());
   await page.waitForFunction(() => { const s = window._ccLatestState; return !s.detecting && s.clashes.length > 0; }, null, { timeout: 120_000, polling: 200 });
-  return page;
 }
+// a local project switch has finished restoring
+const switchedTo = (p, id) => p.waitForFunction((x) => { const s = window._ccLatestState; return s.activeProject === x && !s.switchingProject; }, id, { timeout: 60_000 });
 const settle = (p) => p.waitForFunction(() => window._ccCloudShare.status().pending === 0, null, { timeout: 10_000 }).then(() => p.evaluate(() => window._ccCloudShare.push()));
 const pull = (p) => p.evaluate(() => window._ccCloudShare.pull().then(() => true));
 const clashes = (p) => p.evaluate(() => window._ccLatestState.clashes.map((c) => ({ id: c.id, key: c._identityKey, status: c.status, conflict: c._sharedConflict || null })));
@@ -308,7 +322,7 @@ try {
     C.on('pageerror', (e) => pageErrors.push('C: ' + e.message));
     await C.goto(url + '?p=' + encodeURIComponent(pid), { waitUntil: 'domcontentloaded' });
     const joined = await C.waitForFunction((k) => window._ccCloudShare && window._ccCloudShare.status().pid === k && !/[?&]p=/.test(location.search), pid, { timeout: 60_000 }).then(() => true, () => false);
-    const savedKey = await C.evaluate(() => localStorage.getItem('cc_sharedProjectId'));
+    const savedKey = await C.evaluate(() => { const l = window._ccShareLink.get(); return l && l.id; });
     check(joined && savedKey === pid, 'share link: opening ?p=KEY joins the project and clears the key from the address bar');
     await ctxC.close();
   }
@@ -333,7 +347,7 @@ try {
   await A.evaluate(() => window._ccDispatch({ t: 'SHARE', v: false }));
   // leave the key → the folder links; now the key is refused before any request
   const nReq = () => log.filter((x) => x.who === 'ualice0000001').length;
-  await A.evaluate(() => { localStorage.removeItem('cc_sharedProjectId'); localStorage.removeItem('cc_sharedProjectName'); window._ccSharedStop(true); });
+  await A.evaluate(() => { window._ccShareLink.clear(); window._ccSharedStop(true); });
   const linked = await A.evaluate(async () => {
     const r = await window._ccSharedLog.link(await navigator.storage.getDirectory());
     return { r, sess: !!window._ccSharedLog.session(), holder: window._ccSharedSessionCore.linkHolder(), sessions: window._ccSharedSessionCore.sessions().map((s) => s.src) };
@@ -342,8 +356,8 @@ try {
   const r0 = nReq();
   const join = await A.evaluate((k) => window._ccSharedJoin(k).then(() => 'joined', (e) => e.code), pid);
   check(join === 'other_mode' && nReq() === r0, 'folder linked: joining a key is refused before any request');
-  // a key saved by an older version while the folder is linked does not sync
-  await A.evaluate((k) => { localStorage.setItem('cc_sharedProjectId', k); window._ccDispatch({ t: 'UPD_PREFS', u: { _sharedRefresh: Date.now() } }); }, pid);
+  // a key saved (by an older version) while the folder is linked does not sync
+  await A.evaluate((k) => { window._ccShareLink.set({ id: k, name: '' }); window._ccDispatch({ t: 'UPD_PREFS', u: { _sharedRefresh: Date.now() } }); }, pid);
   await A.evaluate(() => window._ccDispatch({ t: 'SHARE', v: true }));
   const paused = await A.waitForSelector('[data-cc-share-mode-note="cloud-paused"]', { timeout: 5_000 }).catch(() => null);
   check(!!paused && !(await A.evaluate(() => window._ccCloudShare.session())) && nReq() === r0, 'saved key while the folder is linked: not syncing, the panel says why');
@@ -354,6 +368,47 @@ try {
   await A.evaluate(() => window._ccDispatch({ t: 'UPD_PREFS', u: { _sharedRefresh: Date.now() } }));
   await A.waitForFunction((k) => window._ccCloudShare.status().pid === k && window._ccSharedSessionCore.linkHolder().src === 'cloud', pid, { timeout: 10_000 })
     .then(() => ok('folder unlinked: the saved key syncs again'), () => fail('folder unlinked: the saved key did not resume'));
+
+  // ── a shared project belongs to ONE local project (INTERNALS §21.64) ──
+  // Alice opens another local project with the same models: the key stops
+  // syncing there — no session, no request — and an edit there is not
+  // recorded into the team's log; back in the first project the key syncs
+  // again. A folder linked in the second project detaches when she leaves it
+  // and reconnects by itself when she comes back.
+  {
+    const A_ID = 'ualice0000001';
+    const projOne = await A.evaluate(() => window._ccLatestState.activeProject);
+    const stored0 = (db.changes.get(pid) || []).length;
+    const two = await A.evaluate(() => window.ClashControl.projects.create('Local two'));
+    await switchedTo(A, two);
+    const req0 = log.filter((x) => x.who === A_ID).length;
+    await loadFederation(A);
+    await setStatus(A, K[1], 'resolved');
+    await A.waitForTimeout(800); // > push delay
+    const inTwo = await A.evaluate(() => ({ pid: window._ccCloudShare.status().pid, sessions: window._ccSharedSessionCore.sessions().map((s) => s.src), link: window._ccShareLink.get(), holder: window._ccSharedSessionCore.linkHolder() }));
+    check(inTwo.pid === null && inTwo.sessions.length === 0 && inTwo.link === null && inTwo.holder === null,
+      'another local project: the first project\'s shared key does not sync there', JSON.stringify(inTwo));
+    check(log.filter((x) => x.who === A_ID).length === req0 && (db.changes.get(pid) || []).length === stored0,
+      'an edit in the other local project sends nothing to the team\'s shared project');
+    // link a folder in project two, then go back to project one
+    const folder = await A.evaluate(async () => window._ccSharedLog.link(await (await navigator.storage.getDirectory()).getDirectoryHandle('local-two', { create: true })));
+    check(folder === true, 'project two links its own shared folder');
+    await A.evaluate((id) => window.ClashControl.projects.switchTo(id), projOne);
+    await switchedTo(A, projOne);
+    const back = await A.waitForFunction((k) => window._ccCloudShare.status().pid === k, pid, { timeout: 30_000 }).then(() => true, () => false);
+    const inOne = await A.evaluate(() => ({ folder: !!window._ccSharedLog.session(), holder: window._ccSharedSessionCore.linkHolder(), sessions: window._ccSharedSessionCore.sessions().map((s) => s.src) }));
+    check(back && !inOne.folder && inOne.holder && inOne.holder.src === 'cloud' && inOne.sessions.join() === 'cloud',
+      'back in project one: its key syncs again, project two\'s folder is not linked here', JSON.stringify(inOne));
+    await A.evaluate((id) => window.ClashControl.projects.switchTo(id), two);
+    await switchedTo(A, two);
+    const re = await A.waitForFunction(() => !!window._ccSharedLog.session(), null, { timeout: 30_000 }).then(() => true, () => false);
+    const inTwoAgain = await A.evaluate(() => ({ pid: window._ccCloudShare.status().pid, holder: window._ccSharedSessionCore.linkHolder() }));
+    check(re && inTwoAgain.pid === null && inTwoAgain.holder && inTwoAgain.holder.src === 'folder',
+      'back in project two: its folder reconnects by itself, the key stays with project one', JSON.stringify(inTwoAgain));
+    await A.evaluate((id) => window.ClashControl.projects.switchTo(id), projOne);
+    await switchedTo(A, projOne);
+    await A.waitForFunction((k) => window._ccCloudShare.status().pid === k, pid, { timeout: 30_000 }).catch(() => {});
+  }
 
   // ── never the old rejection path ──
   for (const [P, who] of [[A, 'A'], [B, 'B']]) {

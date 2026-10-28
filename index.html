@@ -3845,6 +3845,8 @@ function startApp() {
   // both orphaned the project's localStorage keys (chat history) forever.
   function _ccDeleteProjectStorage(projectId) {
     try { localStorage.removeItem('cc_chat_msgs_' + projectId); } catch (e) {}
+    _ccClearShareLink(projectId); // its shared-project key (the shared project itself stays on the server)
+    if (typeof window._ccSharedFolderForget === 'function') window._ccSharedFolderForget(projectId); // and its linked folder
     return Promise.all([
       idbDeleteProjectFiles(projectId),
       idbDeleteProjectData(projectId)
@@ -4891,6 +4893,35 @@ function startApp() {
   function setActiveProjectId(id) {
     try { localStorage.setItem('cc_activeProject', id); } catch(e) {}
   }
+  // ── A shared project (cloud key) belongs to ONE local project ── INTERNALS §21.64
+  // Stored per local project (`cc_sharedProject@<local id>` → {id, name,
+  // editKey}). Leaving a local project stops its sync; opening one that is
+  // shared starts its own (`cc-project-leave` / _sharedStartPolling). The key
+  // used to be per browser, so it kept syncing the shared project of project
+  // A — reading and writing its change log — while project B was open. The
+  // old per-browser keys are adopted once by the project open at the time.
+  var _CC_SHARE_LINK_LS = 'cc_sharedProject@';
+  function _ccShareLink(localPid) {
+    try {
+      var v = JSON.parse(localStorage.getItem(_CC_SHARE_LINK_LS + (localPid || getActiveProjectId())) || 'null');
+      return v && typeof v.id === 'string' && v.id ? v : null;
+    } catch (e) { return null; }
+  }
+  function _ccSetShareLink(link, localPid) {
+    try { localStorage.setItem(_CC_SHARE_LINK_LS + (localPid || getActiveProjectId()), JSON.stringify({id:link.id, name:link.name || '', editKey:link.editKey || null})); } catch (e) {}
+  }
+  function _ccClearShareLink(localPid) {
+    try { localStorage.removeItem(_CC_SHARE_LINK_LS + (localPid || getActiveProjectId())); } catch (e) {}
+  }
+  (function _ccAdoptLegacyShareLink() {
+    try {
+      var id = localStorage.getItem('cc_sharedProjectId');
+      if (id && !_ccShareLink()) _ccSetShareLink({id:id, name:localStorage.getItem('cc_sharedProjectName') || '', editKey:localStorage.getItem('cc_sharedProjectEditKey') || null});
+      ['cc_sharedProjectId', 'cc_sharedProjectName', 'cc_sharedProjectEditKey'].forEach(function(k){ localStorage.removeItem(k); });
+    } catch (e) {}
+  })();
+  // for the share panels and the ?p= join link (outside this scope)
+  window._ccShareLink = { get: function(localPid){ return _ccShareLink(localPid); }, set: _ccSetShareLink, clear: _ccClearShareLink };
   function ensureDefaultProject() {
     var list = getProjects();
     if(!list.find(function(p){return p.id==='default';})){
@@ -26330,6 +26361,11 @@ function startApp() {
     });
   }
 
+  // The open project's data and models are back (boot and project switch):
+  // what follows the project — its sharing link — attaches now.
+  function _ccProjectRestored() {
+    setTimeout(function(){ try { window.dispatchEvent(new Event('cc-project-restored')); } catch (e) {} }, 0);
+  }
   // ── Project file restoration (standalone, usable from App) ─────
   function _restoreProjectFilesGlobal(projectId, d) {
     var pid = projectId || 'default';
@@ -26378,7 +26414,7 @@ function startApp() {
     }).then(function(){
       return idbGetProjectFiles(pid);
     }).then(function(stored){
-      if(!stored.length) { d({t:A.SWITCHING_PROJECT, v:false}); return; }
+      if(!stored.length) { d({t:A.SWITCHING_PROJECT, v:false}); _ccProjectRestored(); return; }
       var chain = Promise.resolve();
       stored.forEach(function(entry){
         _ccNoteFileSidecar(entry.id, entry);
@@ -26458,6 +26494,7 @@ function startApp() {
       });
       chain.then(function(){
         d({t:A.SWITCHING_PROJECT, v:false});
+        _ccProjectRestored();
         // Re-enter walk mode at the saved pose if the previous session was
         // walking when the page was refreshed. Deferred so the model's
         // auto-fit / fly-to settles first; walk enter then overrides the
@@ -26482,6 +26519,12 @@ function startApp() {
   }
 
   function _switchProject(newProjId, s, d) {
+    // First, before any dispatch: the sharing sessions of the project being
+    // left detach (cloud key and shared folder), so neither the reset below
+    // nor the next project's restore is recorded into this project's shared
+    // log. The next project's own link starts once its restore is done
+    // (cc-project-restored / _sharedStartPolling).
+    try { window.dispatchEvent(new Event('cc-project-leave')); } catch (e) {}
     d({t:A.SWITCHING_PROJECT, v:true});
     _saveCurrentProjectData(s, {force:true});
     if(window._ccClearScene) window._ccClearScene();
@@ -40988,10 +41031,14 @@ function startApp() {
     function unlink(){ if(window._disconnectShared) window._disconnectShared(d); }
 
     // Quick Share via project key (no folder, no upload, no login)
-    var stKey = useState(function(){ try{return localStorage.getItem('cc_sharedProjectId')||'';}catch(e){return '';} });
+    // the shared project of the OPEN local project (_ccShareLink)
+    var stKey = useState(function(){ var l = _ccShareLink(); return l ? l.id : ''; });
     var pKey = stKey[0], setPKey = stKey[1];
-    var stKeyName = useState(function(){ try{return localStorage.getItem('cc_sharedProjectName')||'';}catch(e){return '';} });
+    var stKeyName = useState(function(){ var l = _ccShareLink(); return l ? l.name : ''; });
     var pKeyName = stKeyName[0], setPKeyName = stKeyName[1];
+    useEffect(function(){ var l = _ccShareLink(); setPKey(l ? l.id : ''); setPKeyName(l ? l.name : ''); },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setPKey / setPKeyName are useState setters (stable identity)
+    [s.activeProject]);
     var stCopied = useState(''); var copiedKind = stCopied[0], setCopiedKind = stCopied[1];
     var stCreating = useState(false); var creating=stCreating[0], setCreating=stCreating[1];
     var stCreateOpen = useState(false); var createOpen=stCreateOpen[0], setCreateOpen=stCreateOpen[1];
@@ -41054,7 +41101,7 @@ function startApp() {
         });
     }
     function leaveKey(){
-      try { localStorage.removeItem('cc_sharedProjectId'); localStorage.removeItem('cc_sharedProjectName'); } catch(e){}
+      _ccClearShareLink();
       if (typeof window._ccSharedStop === 'function') window._ccSharedStop(true);
       setPKey(''); setPKeyName('');
     }
@@ -41110,7 +41157,7 @@ function startApp() {
                 ${cloudSt.rejected.length > 5 && html`<div>${_cc_t('share.rejectedMore','and {n} more', {n: cloudSt.rejected.length - 5})}</div>`}
                 <button data-cc-cloud-rejected-dismiss="1" onClick=${function(){ if (window._ccCloudShare) window._ccCloudShare.dismissRejected(); }} style=${{...btnGhost,marginTop:'var(--space-1)'}}>${_cc_t('common.dismiss','Dismiss')}</button>
               </div>`}
-              ${folderHolds && html`<div data-cc-share-mode-note="cloud-paused" style=${{...S_NOTE,marginBottom:'var(--space-2)'}}>${_cc_t('share.keyPausedFolder','Not syncing: this browser shares the project through the folder {folder}. Only one sharing mode works at a time — unlink the folder to sync with this key, or leave the key.', {folder: linkHolder.label || '—'})}</div>`}
+              ${folderHolds && html`<div data-cc-share-mode-note="cloud-paused" style=${{...S_NOTE,marginBottom:'var(--space-2)'}}>${_cc_t('share.keyPausedFolder','Not syncing: this project is shared through the folder {folder}. Only one sharing mode works at a time — unlink the folder to sync with this key, or leave the key.', {folder: linkHolder.label || '—'})}</div>`}
               ${cloudSt.conflicts > 0 && html`<div data-cc-cloud-conflict-count="1" class="cc-status-pill" style=${{display:'inline-block',marginBottom:'var(--space-2)',textTransform:'none',letterSpacing:0,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)'}}>
                 ${cloudSt.conflicts === 1 ? _cc_t('sharedConflict.countOne', '1 conflict to resolve') : _cc_t('sharedConflict.countMany', '{n} conflicts to resolve', {n: cloudSt.conflicts})}
               </div>`}
@@ -42503,15 +42550,14 @@ function startApp() {
             style=${{...S_INPUT,width:140,fontSize:'var(--text-sm)',textAlign:'right'}} />
         </div>
         ${function(){
-          var spId = null;
-          try { spId = localStorage.getItem('cc_sharedProjectId'); } catch(e) {}
+          var spLink = _ccShareLink(), spId = spLink ? spLink.id : null;
           var holder = _ccShareLinkHolder(), folderHolds = !!(holder && holder.src === 'folder');
           return html`<div>
             ${spId && html`<div style=${TROW}>
               <div>
                 <div style=${TLBL}>${_cc_t('settings.shared.projectKey','Project Key')}</div>
                 <div style=${TSUB}>${_cc_t('settings.shared.projectKeySub','Share this key with your team. Issue status, priority, assignee, title and description sync automatically.')}</div>
-                ${folderHolds && html`<div data-cc-share-mode-note="cloud-paused" style=${{...S_NOTE,marginTop:'var(--space-1)'}}>${_cc_t('share.keyPausedFolder','Not syncing: this browser shares the project through the folder {folder}. Only one sharing mode works at a time — unlink the folder to sync with this key, or leave the key.', {folder: holder.label || '—'})}</div>`}
+                ${folderHolds && html`<div data-cc-share-mode-note="cloud-paused" style=${{...S_NOTE,marginTop:'var(--space-1)'}}>${_cc_t('share.keyPausedFolder','Not syncing: this project is shared through the folder {folder}. Only one sharing mode works at a time — unlink the folder to sync with this key, or leave the key.', {folder: holder.label || '—'})}</div>`}
               </div>
               <div style=${{display:'flex',gap:'var(--space-1)',alignItems:'center',flexShrink:0}}>
                 <code style=${{fontSize:'var(--text-xs)',background:'var(--bg-secondary)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-mono)',color:'var(--accent)'}}>${spId}</code>
@@ -42519,7 +42565,7 @@ function startApp() {
                   style=${{...S_BTN,padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'var(--text-xs)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)'}}>${_cc_t('settings.shared.copy','Copy')}</button>
                 <button onClick=${function(){if(window._ccSharedPull)window._ccSharedPull();}}
                   style=${{...S_BTN,padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'var(--text-xs)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)'}}>${_cc_t('share.syncNow','Sync now')}</button>
-                <button onClick=${function(){try{localStorage.removeItem('cc_sharedProjectId');localStorage.removeItem('cc_sharedProjectName');}catch(e){}if(window._ccSharedStop)window._ccSharedStop(true);d({t:A.UPD_PREFS,u:{_sharedRefresh:Date.now()}});}}
+                <button onClick=${function(){_ccClearShareLink();if(window._ccSharedStop)window._ccSharedStop(true);d({t:A.UPD_PREFS,u:{_sharedRefresh:Date.now()}});}}
                   style=${{...S_BTN,padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--color-danger-fg)',fontSize:'var(--text-xs)',border:'1px solid var(--color-danger-border)',borderRadius:'var(--radius-sm)'}}>${_cc_t('share.leave','Leave')}</button>
                 ${function(){
                   // Only the creator's browser holds the editKey (set once,
@@ -42527,8 +42573,7 @@ function startApp() {
                   // naturally creator-only: nobody who only joined by key
                   // ever sees this button. The stored editKey was otherwise
                   // completely unused by the client.
-                  var editKey = null;
-                  try { editKey = localStorage.getItem('cc_sharedProjectEditKey'); } catch(e) {}
+                  var editKey = spLink && spLink.editKey;
                   if (!editKey) return null;
                   return html`<button onClick=${function(){
                     if (!confirm(_cc_t('share.deleteConfirm','Delete this shared project for everyone? This removes every synced issue and cannot be undone.'))) return;
@@ -45320,9 +45365,8 @@ function startApp() {
     synced: false, seeded: false, conflicts: 0, lastSync: null,
     stats: { pulls: 0, pushes: 0, changesIn: 0, changesOut: 0 } };
 
-  function _sharedProjectId() {
-    try { return localStorage.getItem('cc_sharedProjectId') || null; } catch(e) { return null; }
-  }
+  // the shared project of the open local project (_ccShareLink)
+  function _sharedProjectId() { var l = _ccShareLink(); return l ? l.id : null; }
   // The same per-browser id the shared folder uses (random, never personal).
   function _cloudUserId() {
     if (typeof window.__ccSharedTestUser === 'string' && window.__ccSharedTestUser) return window.__ccSharedTestUser;
@@ -45545,6 +45589,12 @@ function startApp() {
   function _sharedStopPolling(leave) { _cloudLeave(!!leave); }
 
   window.addEventListener('pagehide', function() { if (_cloud.sess && _cloud.sess.pending()) { _cloud.sess.saveOutbox(); _cloudPush(); } });
+  // Leaving the local project: its shared project stops syncing here (the
+  // outbox keeps unsent records for the next time it is open).
+  window.addEventListener('cc-project-leave', function() {
+    if (_cloud.sess && _cloud.sess.pending()) _cloud.sess.saveOutbox();
+    _sharedStopPolling(true);
+  });
 
   // Create / join are refused while a shared folder holds the link (one
   // sharing mode at a time) — before anything is created on the server.
@@ -45564,12 +45614,8 @@ function startApp() {
     })
       .then(function(r){ if (!r.ok) throw new Error('create failed'); return r.json(); })
       .then(function(data){
-        try {
-          localStorage.setItem('cc_sharedProjectId', data.id);
-          localStorage.setItem('cc_sharedProjectName', data.name);
-          // Creator-held; the API requires it for DELETE (never share it with the project key)
-          if (data.editKey) localStorage.setItem('cc_sharedProjectEditKey', data.editKey);
-        } catch(e) {}
+        // editKey: creator-held; the API requires it for DELETE (never share it with the project key)
+        _ccSetShareLink({id:data.id, name:data.name, editKey:data.editKey || null});
         _sharedStartPolling();
         return data;
       });
@@ -45581,10 +45627,7 @@ function startApp() {
     return fetch('/api/project?id=' + encodeURIComponent(key) + '&v=2&limit=1')
       .then(function(r){ if (!r.ok) { var e = new Error(); e.status = r.status; throw e; } return r.json(); })
       .then(function(data){
-        try {
-          localStorage.setItem('cc_sharedProjectId', key);
-          localStorage.setItem('cc_sharedProjectName', data.project.name);
-        } catch(e) {}
+        _ccSetShareLink({id:key, name:data.project.name});
         _sharedStartPolling();
         return data;
       });
@@ -45596,8 +45639,7 @@ function startApp() {
   function _sharedDeleteProject() {
     var key = _sharedProjectId();
     if (!key) return Promise.resolve(false);
-    var editKey = null;
-    try { editKey = localStorage.getItem('cc_sharedProjectEditKey'); } catch(e) {}
+    var link = _ccShareLink(), editKey = link && link.id === key ? link.editKey : null;
     if (!editKey) return Promise.resolve(false);
     return fetch('/api/project?id=' + encodeURIComponent(key) + '&scope=project', {
       method: 'DELETE',
@@ -45608,11 +45650,7 @@ function startApp() {
         if (ok) {
           _sharedStopPolling(true);
           _cloudCacheDrop(key);
-          try {
-            localStorage.removeItem('cc_sharedProjectId');
-            localStorage.removeItem('cc_sharedProjectName');
-            localStorage.removeItem('cc_sharedProjectEditKey');
-          } catch(e) {}
+          _ccClearShareLink();
         }
         return ok;
       })
@@ -52822,7 +52860,8 @@ function startApp() {
     var _prevMeasN = (window._ccMeasurementsRef||[]).length;
     window._ccMeasurementsRef = s.measurements;  // exposed for render loop label projection
     if ((s.measurements||[]).length !== _prevMeasN && typeof invalidate === 'function') invalidate(2);
-    try { if (typeof _sharedStartPolling === 'function') _sharedStartPolling(); } catch(e){}
+    // the open project's shared project — not while a switch is restoring
+    try { if (!s.switchingProject && typeof _sharedStartPolling === 'function') _sharedStartPolling(); } catch(e){}
     // A confirm creates its issue inside the reducer: the shared sessions
     // publish such issues once the new issues array is committed.
     useEffect(function(){
@@ -53952,9 +53991,9 @@ function startApp() {
         var toast = function (m, kind) { if (typeof window._ccToast === 'function') window._ccToast(m, kind); };
         var dropKey = function () { try { var u = new URL(location.href); u.searchParams.delete('p'); history.replaceState(null, '', u.pathname + u.search + u.hash); } catch (e) {} };
         var cur = null;
-        try { cur = localStorage.getItem('cc_sharedProjectId'); } catch (e) {}
+        try { var curLink = window._ccShareLink && window._ccShareLink.get(); cur = curLink ? curLink.id : null; } catch (e) {}
         if (cur === wantKey) { dropKey(); return; }
-        if (cur && !window.confirm(t('share.linkSwitch', 'This browser is in the shared project {cur}. Switch to {key}?', { cur: cur, key: wantKey }))) { dropKey(); return; }
+        if (cur && !window.confirm(t('share.linkSwitch', 'This project is in the shared project {cur}. Switch it to {key}?', { cur: cur, key: wantKey }))) { dropKey(); return; }
         window._ccSharedJoin(wantKey).then(function (data) {
           toast(t('share.joinedFromLink', 'Joined the shared project “{name}”.', { name: (data && data.project && data.project.name) || wantKey }), 'success');
           try { window._ccDispatch({ t: 'UPD_PREFS', u: { _sharedRefresh: Date.now() } }); } catch (e) {}

@@ -118,3 +118,22 @@ test('_ccPickView picks exactly the view keys', () => {
   assert.deepEqual(v.hiddenClasses, { a: true });
   assert.ok(!('clashes' in v) && !('workspace' in v));
 });
+
+test('a shared project (cloud key / folder) belongs to one local project', () => {
+  // the cloud key: stored per local project; the old per-browser keys are only read to adopt them
+  const legacyReads = src.match(/localStorage\.getItem\('cc_sharedProject(Id|Name|EditKey)'\)/g) || [];
+  const adopt = src.slice(src.indexOf('(function _ccAdoptLegacyShareLink() {'), src.indexOf('window._ccShareLink = {'));
+  assert.equal(legacyReads.length, (adopt.match(/localStorage\.getItem\('cc_sharedProject(Id|Name|EditKey)'\)/g) || []).length, 'cc_sharedProject* read outside the one-time adoption');
+  assert.doesNotMatch(src, /localStorage\.setItem\('cc_sharedProject(Id|Name|EditKey)'/);
+  assert.match(src, /function _sharedProjectId\(\) \{ var l = _ccShareLink\(\); return l \? l\.id : null; \}/);
+  // leaving a project detaches its sharing BEFORE any dispatch of the switch
+  const sw = src.slice(src.indexOf('function _switchProject(newProjId, s, d) {'));
+  assert.ok(sw.indexOf("dispatchEvent(new Event('cc-project-leave'))") < sw.indexOf('d({t:A.SWITCHING_PROJECT, v:true});'));
+  assert.match(src, /if \(!s\.switchingProject && typeof _sharedStartPolling === 'function'\) _sharedStartPolling\(\);/);
+  // the folder: one saved handle per local project, detached on leave, reconnected after the restore
+  const addon = fs.readFileSync(path.join(__dirname, '..', 'addons', 'shared-project.js'), 'utf8');
+  assert.match(addon, /function _handleKey\(pid\) \{ return 'shared:' \+ \(pid \|\| _localPid\(\)\); \}/);
+  assert.match(addon, /window\.addEventListener\('cc-project-leave', _detach\);/);
+  assert.match(addon, /window\.addEventListener\('cc-project-restored'/);
+  assert.doesNotMatch(addon, /objectStore\('handles'\)\.(put|delete)\([^)]*'shared'\)/);
+});
