@@ -30,8 +30,8 @@
   // vector — not the orbit `target`, which the caller may have set
   // somewhere the camera wasn't yet looking, e.g. a just-clicked element's
   // bbox centre) by the identical (yaw, pitch) rotation derived from a
-  // (dx,dy) pixel delta, then applies a soft polar clamp so the view can
-  // approach the pole smoothly instead of freezing dead.
+  // (dx,dy) pixel delta, with the pitch clamped so the view direction stays
+  // within [minPhi, maxPhi] of vertical (yaw keeps working at the limit).
   //
   // This is a rigid rotation of the camera (as a physical object: position
   // + orientation) about the pivot. For any fixed point P, its camera-local
@@ -66,22 +66,20 @@
     var rx = fy*0-fz*1, ry = fz*0-fx*0, rz = fx*1-fy*0; // forward × (0,1,0)
     var rlen = Math.sqrt(rx*rx+ry*ry+rz*rz);
     if (rlen < 1e-8) { rx=1; ry=0; rz=0; } else { rx/=rlen; ry/=rlen; rz/=rlen; }
+    // Polar clamp on the PITCH ANGLE, so the step stays one rigid rotation:
+    // phi = angle of the camera→target direction (-forward) from +Y (the
+    // original sph.phi semantics); pitching about forward × up adds exactly
+    // `pitch` to it. Kept in [minPhi,maxPhi]; a view already outside (the
+    // view cube's top view sits at phi ≈ 0.0005) may only move back inward,
+    // never jump. Clamping forward AFTER rotating used to leave the position
+    // swung by the full pitch while the view direction stopped — at the pole
+    // further dragging slid the picture and dollied toward the pivot.
+    var phi0 = Math.acos(Math.max(-1, Math.min(1, -fy)));
+    var lo = Math.min(0, minPhi - phi0), hi = Math.max(0, maxPhi - phi0);
+    if (pitch < lo) pitch = lo; else if (pitch > hi) pitch = hi;
     rotBoth(rx, ry, rz, pitch);
-    // Soft polar clamp: phi = angle of the camera→target direction (-forward)
-    // from +Y, matching the original sph.phi semantics, kept in [minPhi,maxPhi].
     var flen2 = Math.sqrt(fwd.x*fwd.x+fwd.y*fwd.y+fwd.z*fwd.z) || 1;
-    var ny = fwd.y/flen2;
-    var phi = Math.acos(Math.max(-1, Math.min(1, -ny)));
-    if (phi < minPhi || phi > maxPhi) {
-      var clamped = Math.max(minPhi, Math.min(maxPhi, phi));
-      var horiz = Math.sqrt(Math.max(0, flen2*flen2 - fwd.y*fwd.y));
-      var hx = horiz > 1e-6 ? fwd.x/horiz : 1, hz = horiz > 1e-6 ? fwd.z/horiz : 0;
-      var newNy = -Math.cos(clamped);
-      var newHoriz = Math.sqrt(Math.max(0, 1 - newNy*newNy));
-      fwd = { x: hx*newHoriz, y: newNy, z: hz*newHoriz };
-    } else {
-      fwd = { x: fwd.x/flen2, y: fwd.y/flen2, z: fwd.z/flen2 };
-    }
+    fwd = { x: fwd.x/flen2, y: fwd.y/flen2, z: fwd.z/flen2 };
     return { camPos: { x: pivot.x+offset.x, y: pivot.y+offset.y, z: pivot.z+offset.z }, forward: fwd };
   }
 

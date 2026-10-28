@@ -131,3 +131,47 @@ test('rotate-around-axis: 90deg rotation of (1,0,0) around Y axis gives (0,0,-1)
   const r = M._ccRotateAroundAxis({x:1,y:0,z:0}, 0,1,0, Math.PI/2);
   assert.ok(Math.abs(r.x) < 1e-9 && Math.abs(r.y) < 1e-9 && Math.abs(r.z - (-1)) < 1e-9, JSON.stringify(r));
 });
+
+// Rigid-rotation invariants: the camera→pivot distance and the angle between
+// the view direction and the pivot ray are unchanged by any orbit step.
+function rigidCheck(camPos, forward, pivot, dx, dy) {
+  const s = M._ccOrbitDragStep(camPos, forward, pivot, dx, dy, 0.007, 0.05, Math.PI-0.05);
+  const toP0 = { x: pivot.x-camPos.x, y: pivot.y-camPos.y, z: pivot.z-camPos.z };
+  const toP1 = { x: pivot.x-s.camPos.x, y: pivot.y-s.camPos.y, z: pivot.z-s.camPos.z };
+  assert.ok(Math.abs(Math.hypot(toP0.x, toP0.y, toP0.z) - Math.hypot(toP1.x, toP1.y, toP1.z)) < 1e-6, 'camera-pivot distance preserved');
+  const cos = (a, b) => { const na = norm(a), nb = norm(b); return na.x*nb.x + na.y*nb.y + na.z*nb.z; };
+  assert.ok(Math.abs(cos(forward, toP0) - cos(s.forward, toP1)) < 1e-9, 'pivot keeps its place relative to the view direction');
+  return s;
+}
+
+test('orbit drag at the pole stays a rigid rotation (no slide / dolly past the clamp)', () => {
+  // View-cube top view: phi = 0.0005, below the drag's minPhi of 0.05.
+  const phiTop = 0.0005, theta = 0.3, r = 40;
+  const pivot = { x: 2, y: 0, z: -1 };
+  const camPos = { x: pivot.x + r*Math.sin(phiTop)*Math.sin(theta), y: pivot.y + r*Math.cos(phiTop), z: pivot.z + r*Math.sin(phiTop)*Math.cos(theta) };
+  const forward = norm({ x: pivot.x-camPos.x, y: pivot.y-camPos.y, z: pivot.z-camPos.z });
+  const offPivot = { x: pivot.x + 5, y: pivot.y, z: pivot.z + 3 }; // cursor-pivot away from screen centre
+  for (const [dx, dy] of [[0, 30], [0, -30], [40, 0], [25, 25], [-25, -25]]) {
+    rigidCheck(camPos, forward, pivot, dx, dy);
+    rigidCheck(camPos, forward, offPivot, dx, dy);
+  }
+  // Dragging further over the pole does nothing to the pitch (no jump either).
+  const s = rigidCheck(camPos, forward, offPivot, 0, 200);
+  const phi = Math.acos(Math.max(-1, Math.min(1, -s.forward.y)));
+  assert.ok(Math.abs(phi - phiTop) < 1e-6, `phi ${phi} should stay at ${phiTop}`);
+  // Dragging away from the pole tilts the view back down.
+  const s2 = rigidCheck(camPos, forward, offPivot, 0, -50);
+  const phi2 = Math.acos(Math.max(-1, Math.min(1, -s2.forward.y)));
+  assert.ok(phi2 > 0.3, `phi ${phi2} should move away from the pole`);
+});
+
+test('orbit drag stops exactly at the polar limit while staying rigid', () => {
+  const camPos = { x: 0, y: 30, z: 20 };
+  const pivot = { x: 4, y: 0, z: 1 };
+  const forward = norm({ x: -camPos.x, y: -camPos.y, z: -camPos.z });
+  const s = rigidCheck(camPos, forward, pivot, 0, 5000);
+  const phi = Math.acos(Math.max(-1, Math.min(1, -s.forward.y)));
+  const s2 = rigidCheck(camPos, forward, pivot, 0, -5000);
+  const phi2 = Math.acos(Math.max(-1, Math.min(1, -s2.forward.y)));
+  assert.ok(Math.abs(Math.min(phi, phi2) - 0.05) < 1e-6 || Math.abs(Math.max(phi, phi2) - (Math.PI-0.05)) < 1e-6);
+});

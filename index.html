@@ -6379,6 +6379,40 @@ function startApp() {
 
   var _ccLoadGeneration = 0; // bumped by _ccAbortLoading to invalidate in-progress loads; loads snapshot it so concurrent batches coexist
 
+  // Mirrored placements (negative-determinant matrix, e.g. a mirrored wall or
+  // door) reverse a triangle's on-screen winding. three.js compensates only
+  // for the OBJECT matrix (frontFace flips when matrixWorld.determinant() < 0),
+  // never for per-instance InstancedMesh / BatchedMesh matrices — so a mirrored
+  // instance renders inside out: FrontSide styles (shaded / rendered / hidden
+  // line) cull its near faces and show the far ones ("the backside
+  // disappears"), DoubleSide lights it from behind (dark). Mirrored instances
+  // therefore draw a copy of the geometry with every triangle's winding
+  // reversed; normals stay as they are (the mirror maps them correctly).
+  function _ccIsMirrored(m4) { return m4.determinant() < 0; }
+  function _ccWindingFlippedGeo(geo) {
+    var g = geo.clone();
+    if (g.index) {
+      var ix = g.index.array;
+      for (var i = 0; i + 2 < ix.length; i += 3) { var t = ix[i + 1]; ix[i + 1] = ix[i + 2]; ix[i + 2] = t; }
+      g.index.needsUpdate = true;
+    } else {
+      Object.keys(g.attributes).forEach(function(name) {
+        var a = g.attributes[name], arr = a.array, sz = a.itemSize;
+        if (a.isInterleavedBufferAttribute || !arr) return;
+        for (var v = 0; v + 2 < a.count; v += 3) {
+          for (var c = 0; c < sz; c++) {
+            var j1 = (v + 1) * sz + c, j2 = (v + 2) * sz + c, tmp = arr[j1];
+            arr[j1] = arr[j2]; arr[j2] = tmp;
+          }
+        }
+        a.needsUpdate = true;
+      });
+    }
+    // clone() shares userData by reference — never mark the source geometry.
+    g.userData = Object.assign({}, geo.userData, { _ccWindingFlipped: true });
+    return g;
+  }
+
   // ── GPU instancing ──  See docs/INTERNALS.md § 21.10
   function _buildInstancedMeshes(elements, meshes) {
     if (!THREE.InstancedMesh) return {meshes:meshes, groups:0, instanced:0};
@@ -6387,7 +6421,10 @@ function startApp() {
       (el.meshes || []).forEach(function(m) {
         var ik = m.userData._instKey;
         if (!ik || m.userData._ccSpace) return;
-        if (!candidates[ik]) candidates[ik] = {geo:m.geometry, mat:m.material, entries:[]};
+        // Mirrored placements get their own group (winding-flipped geometry).
+        var mir = _ccIsMirrored(m.matrix);
+        if (mir) ik += '|mirrored';
+        if (!candidates[ik]) candidates[ik] = {geo:m.geometry, mat:m.material, mirrored:mir, entries:[]};
         candidates[ik].entries.push({mesh:m, expressId:el.expressId});
       });
     });
@@ -6399,7 +6436,7 @@ function startApp() {
       var grp = candidates[ik];
       if (grp.entries.length < INST_THRESHOLD) return;
       var N = grp.entries.length;
-      var iMesh = new THREE.InstancedMesh(grp.geo, grp.mat, N);
+      var iMesh = new THREE.InstancedMesh(grp.mirrored ? _ccWindingFlippedGeo(grp.geo) : grp.geo, grp.mat, N);
       iMesh.frustumCulled = false;
       iMesh.userData.instanceExprIds = [];
       grp.entries.forEach(function(entry, i) {
@@ -6491,7 +6528,8 @@ function startApp() {
       var g = m.geometry, mat = m.material;
       if (!g || !g.index || !g.attributes.position) return;
       if (!_matOk(mat)) return;
-      candidates.push({ mesh: m });
+      m.updateMatrix();
+      candidates.push({ mesh: m, mirrored: _ccIsMirrored(m.matrix) });
     });
     var pathological = candidates.length >= _CC_BATCH_MIN_MESHES ||
       (window._ccForceBatch && candidates.length > 0); // test hook for CI
@@ -6523,16 +6561,21 @@ function startApp() {
     // distinct geometries only. The windows themselves (which item goes to
     // which batch) are measured exactly as before.
     var _lean = _ccLeanMemory();
-    var win = { count:0, verts:0, idx:0, items:[], uv:0, ui:0, seen: _lean ? new Set() : null }, wins = [win];
+    // A mirrored mesh adds its source geometry's winding-flipped copy — a
+    // distinct geometry of its own (seenMirrored), never deduplicated against
+    // the unflipped one.
+    function _newWin() { return { count:0, verts:0, idx:0, items:[], uv:0, ui:0, seen: _lean ? new Set() : null, seenMirrored: _lean ? new Set() : null }; }
+    var win = _newWin(), wins = [win];
     candidates.forEach(function(c) {
       var g = (c.mesh || c.inst).geometry;
       var v = g.attributes.position.count, ix = g.index.count;
       var n = c.inst ? c.inst.count : 1;
       if (win.count + n > _CC_BATCH_MAX_INST || win.verts + v > _CC_BATCH_MAX_VERTS || win.idx + ix > _CC_BATCH_MAX_IDX) {
-        win = { count:0, verts:0, idx:0, items:[], uv:0, ui:0, seen: _lean ? new Set() : null }; wins.push(win);
+        win = _newWin(); wins.push(win);
       }
       win.count += n; win.verts += v; win.idx += ix; win.items.push(c);
-      if (_lean && !win.seen.has(g)) { win.seen.add(g); win.uv += v; win.ui += ix; }
+      var seenSet = _lean ? (c.mirrored ? win.seenMirrored : win.seen) : null;
+      if (seenSet && !seenSet.has(g)) { seenSet.add(g); win.uv += v; win.ui += ix; }
     });
     var nBatched = 0;
     var _tmpIM = new THREE.Matrix4();
@@ -6541,10 +6584,23 @@ function startApp() {
       var b = _newBatch(w);
       var _col = new THREE.Color();
       var gidOf = w.seen ? new Map() : null; // source geometry → batch geometry id (leanMemory)
+      var gidOfMirrored = new Map();         // source geometry → id of its winding-flipped copy
       function _addGeo(g) {
         if (!gidOf) return b.addGeometry(g);
         var id = gidOf.get(g);
         if (id === undefined) { id = b.addGeometry(g); gidOf.set(g, id); }
+        return id;
+      }
+      // A mirrored plain mesh draws a winding-flipped copy (see
+      // _ccWindingFlippedGeo); the copy is only needed for the upload.
+      function _addMirroredGeo(g) {
+        var id = gidOfMirrored.get(g);
+        if (id === undefined) {
+          var fg = _ccWindingFlippedGeo(g);
+          id = b.addGeometry(fg);
+          fg.dispose();
+          gidOfMirrored.set(g, id);
+        }
         return id;
       }
       w.items.forEach(function(c) {
@@ -6569,9 +6625,8 @@ function startApp() {
             return;
           }
           var m = c.mesh;
-          var gid = _addGeo(m.geometry);
+          var gid = c.mirrored ? _addMirroredGeo(m.geometry) : _addGeo(m.geometry);
           var iid = b.addInstance(gid);
-          m.updateMatrix();
           b.setMatrixAt(iid, m.matrix);
           _col.copy(m.material.color || _col.set(0xcccccc));
           b.setColorAt(iid, _col);
@@ -22781,7 +22836,9 @@ function startApp() {
             _occlM4.copy(mo.matrixWorld);
             mate = _occlAdjFor(g, 0, posA, idxA, first, triCount);
           }
-          var det = _occlM4.determinant();
+          // three flips frontFace for a mirrored OBJECT matrix only; a mirrored
+          // batch instance already carries winding-flipped geometry.
+          var det = mo.matrixWorld.determinant();
           _occlM4.premultiply(cam.matrixWorldInverse);   // model-view, in double
           _occlGrow(vCount);
           var pa = posA.array, px = _occl.px, py = _occl.py, pz = _occl.pz, pvv = _occl.pv;

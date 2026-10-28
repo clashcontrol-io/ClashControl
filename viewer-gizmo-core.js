@@ -41,12 +41,14 @@
     return read;
   }
 
-  // Colour roles per gizmo part: token per state + opacity. Accent only on
-  // hover / drag; idle parts are neutral (DESIGN.md: calm, never decorative).
+  // Colour roles per gizmo part: token per state + opacity. Drag handles
+  // (box tabs, corner arcs, plane arrow + ring) are always the accent: a
+  // neutral idle colour vanished against the grey model (user report). The
+  // plane outline and box edges stay muted — they frame, they aren't grabbed.
   var STYLES = {
-    tab:     { fill: { idle: '--bg-secondary', hover: '--accent-bg', active: '--accent' }, fillOpacity: 1,
-               stroke: { idle: '--text-muted', hover: '--accent', active: '--accent' } },
-    handle:  { fill: { idle: '--text-secondary', hover: '--accent', active: '--accent' }, fillOpacity: 0.95 },
+    tab:     { fill: { idle: '--accent' }, fillOpacity: 1,
+               stroke: { idle: '--accent' } },
+    handle:  { fill: { idle: '--accent' }, fillOpacity: 0.95 },
     outline: { fill: { idle: '--accent' }, fillOpacity: 0.04,
                stroke: { idle: '--text-faint', hover: '--accent', active: '--accent' } },
     edge:    { stroke: { idle: '--text-faint' } },
