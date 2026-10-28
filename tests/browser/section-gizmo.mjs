@@ -373,10 +373,10 @@ try {
       // the theme change repainted the gizmo from the tokens
       const ok = await page.evaluate(() => {
         const S = window._ccState3d, tab = S._sboxFaceHandles[0];
-        const want = getComputedStyle(document.documentElement).getPropertyValue('--bg-secondary').trim().toLowerCase();
+        const want = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim().toLowerCase();
         return '#' + tab.material.color.getHexString() === want ? null : `${'#' + tab.material.color.getHexString()} != ${want}`;
       });
-      if (ok) fail(`${fx} ${theme}: tab colour not repainted from --bg-secondary: ${ok}`);
+      if (ok) fail(`${fx} ${theme}: tab colour not repainted from --accent: ${ok}`);
     }
     await page.close();
   }

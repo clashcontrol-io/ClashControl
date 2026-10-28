@@ -54,23 +54,31 @@ test('token reader caches until invalidated; create().color reads through it', (
 test('setState paints idle / hover / active from tokens and repaints on theme change', () => {
   let theme = 'light';
   const tok = {
-    light: { '--bg-secondary': '#ffffff', '--text-muted': '#6b7280', '--accent': '#4d9e75', '--accent-bg': '#ecf7f2' },
-    dark: { '--bg-secondary': '#1f1f1f', '--text-muted': '#a0a0a0', '--accent': '#1a6b4a', '--accent-bg': '#0d2b1e' },
+    light: { '--bg-secondary': '#ffffff', '--text-muted': '#6b7280', '--text-faint': '#9ca3af', '--accent': '#4d9e75', '--accent-bg': '#ecf7f2' },
+    dark: { '--bg-secondary': '#1f1f1f', '--text-muted': '#a0a0a0', '--text-faint': '#666666', '--accent': '#1a6b4a', '--accent-bg': '#0d2b1e' },
   };
   const read = G.makeTokenReader((n) => tok[theme][n]);
   const gz = G.create({ THREE, read });
-  const scene = new THREE.Scene(), tab = G.buildTab(THREE, 12);
-  scene.add(tab); gz.track(tab);
-  const stroke = tab.children[0];
-  assert.strictEqual('#' + tab.material.color.getHexString(), '#ffffff');
-  assert.strictEqual('#' + stroke.material.color.getHexString(), '#6b7280');
-  gz.setState(tab, 'hover');
-  assert.strictEqual('#' + stroke.material.color.getHexString(), '#4d9e75');
-  gz.setState(tab, 'active');
-  assert.strictEqual('#' + tab.material.color.getHexString(), '#4d9e75');
+  const scene = new THREE.Scene(), tab = G.buildTab(THREE, 12), arc = G.buildArc(THREE, 28);
+  scene.add(tab); gz.track(tab); scene.add(arc); gz.track(arc);
+  const stroke = tab.children[0], arcVis = arc.children[0];
+  // Drag handles are the accent in every state — never a neutral that
+  // disappears against the model.
+  for (const st of ['idle', 'hover', 'active']) {
+    gz.setState(tab, st); gz.setState(arc, st);
+    assert.strictEqual('#' + tab.material.color.getHexString(), '#4d9e75', 'tab fill ' + st);
+    assert.strictEqual('#' + stroke.material.color.getHexString(), '#4d9e75', 'tab stroke ' + st);
+    assert.strictEqual('#' + arcVis.material.color.getHexString(), '#4d9e75', 'arc ' + st);
+  }
   gz.setState(tab, 'idle');
   theme = 'dark'; gz.refreshTheme();
-  assert.strictEqual('#' + tab.material.color.getHexString(), '#1f1f1f');
+  assert.strictEqual('#' + tab.material.color.getHexString(), '#1a6b4a');
+  assert.strictEqual('#' + arcVis.material.color.getHexString(), '#1a6b4a');
+  // The plane outline stays muted when idle.
+  const outline = new THREE.LineLoop(new THREE.BufferGeometry(), new THREE.LineBasicMaterial());
+  outline.userData.ccGizmo = { style: 'outline' };
+  scene.add(outline); gz.track(outline); gz.setState(outline, 'idle');
+  assert.strictEqual('#' + outline.material.color.getHexString(), '#666666');
 });
 
 test('update() rescales tracked handles to their pixel size, billboards tabs, drops detached ones', () => {
