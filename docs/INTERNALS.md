@@ -532,11 +532,11 @@ Moves the section plane imperatively during a drag — the live clip plane (shar
 
 Superseded by §21.24 (`S.gz.update`): the arrow group is a tracked pixel-unit handle; the outline stays world-sized (it is the real cut).
 
-### 21.35 Section rotation ring — world-up reorient for vertical planes
+### 21.35 Section rotation ring — always around the plane normal
 
-**Code reference:** the ring re-orient block in the section-plane tick.
+**Code reference:** `buildArrow` in `viewer-gizmo-core.js` (ring at the arrow's base, local XY plane).
 
-For vertical section planes the plane normal is horizontal, so the ring (axis = local +Z = plane normal) ends up standing upright. The drag-rotate logic spins the plane around world up, so the ring visually mismatches the motion. Re-orient the ring each frame so its central axis is world-up whenever the plane is vertical — gives a horizontal "spinning record" handle to match the rotation.
+The ring always circles the plane normal, like the arrow points along it, whatever the plane's orientation (owner's call 2026-10-28). It used to be re-oriented every frame to lie flat (axis = world up) on a vertical plane to mirror the drag motion; that read as a ring belonging to a different face. Dragging the ring still spins the plane about world up (horizontal mouse motion).
 
 ### 21.36 Per-material clipping (instead of global)
 
@@ -901,3 +901,24 @@ Knobs and the last run's actions / heap peak on `window._ccDetectMemory` (`last:
 - **Properties.** The IFC attributes `model-diff-core.js` `ATTRS` lists (name, description, object / predefined type, IFC type, tag, storey, material, phase, workset, design option) and every pset value (`Pset.Name`), as strings; ids (express / type / host ids renumber), quantities and opening boxes (they follow the geometry) are not property changes. Psets are compared only when both versions carry them: the reload commits a first diff without the new version's lazy psets, and `job.afterProps` refines it once they landed (geometry verdicts reused, `UPD_MODEL` once the reload is the live model, `idbUpdateFileMeta`).
 - **Kinds.** added / removed / moved / reshaped / properties / moved+properties / reshaped+properties; `summary` = added, removed, moved, reshaped, geometry (moved + reshaped), properties, both, modified (any change), unchanged, psetsCompared. Old diffs (no records / no geometry split) still show "n changed".
 - **UI.** Model card: "12 added · 3 removed · 8 moved or reshaped · 20 property changes", Show / Hide changes, Report (printable, words only), Export CSV (one row per changed property with old → new, else one row per element). 3D (read from the live theme each time): added `--color-success`, changed `--text-primary` (a neutral; `--color-info` is the accent green and would read as "added"), unchanged the ghost; removed elements are not in the new version, so they are counted, not drawn; no amber. The card's legend uses the same tokens (`data-cc-diff-legend` swatches, unchanged = `--text-faint` faded), checked in both themes by `tests/browser/model-compare.mjs`. Navigator (Hierarchy / Flat list): "Model changes" All elements / Added and changed / Added, rows say the change after the IFC type. Clash review: tag `changed-element` (either side added or changed in its model's diff) and the suggested view "Clashes on changed elements"; the triage model's rows are keyed on the diff objects (`denv`), so a refined diff re-files them.
+
+### 21.64 State scope — project / view / session / ui
+
+**Code reference:** `_CC_STATE_SCOPE` next to `INIT` in `index.html`; addon `stateScope`; tests `tests/state-scope.test.js`, `tests/browser/state-scope.mjs`.
+
+Every state key belongs to exactly one lifecycle, and lifecycle events only touch their own scope:
+
+| Scope | What | Saved | Project switch | Refresh | Tab / workspace / selection |
+|---|---|---|---|---|---|
+| `project` | the project's data (models, clashes, issues, rules, viewpoints, smart views …) | autosave (+ project file for the codec's fields) | reset to default, then restored | restored | untouched |
+| `view` | how the project is looked at: section plane / box, hidden categories | autosave | reset, then the target's own | restored | untouched |
+| `session` | interaction state about the loaded models: active item, selected ids, tools, AI triage, IDS results, geo placement, point clouds | never | reset to default | default | untouched |
+| `ui` | chrome + preferences of this browser: workspace, tab, prefs, integration status | per-browser keys | kept | kept | — |
+
+- **Project switch** = `LOAD_PROJECT_STATE` with `_ccScopeDefaults(['project','view','session'])` (fresh copies of INIT's values), then `_restoreProjectFilesGlobal`. The hand-written reset list it replaces kept missing keys (selection ids, active comment, rules maps, AI triage, IDS results …).
+- **Undo / redo** replay actions against the project they were made in: the reducer empties both stacks on `SET_PROJECT` — in dispatch order, so the switch's own reset dispatches (queued before it) go too.
+- **The view** used to live in per-browser keys (`cc_section`, `cc_hiddenClasses`, `cc_smartViews`): one project's section showed up in another, and the first model of every refresh wiped it (`_resetView` on load). Now it is saved with the project; the first project restored on a page adopts the old keys once (`_ccTakeLegacyView`) and removes them. Loading a model only frames the camera (`S._frameHome`); `_resetView` (home, zf / za, NL, project switch) is the user's explicit "clear everything".
+- **Tab / selection** never change the view. Selecting a clash / issue lifts only a plane / box whose kept side its point is not on (App `activeId` effect), so the item is in sight. The tab-switch cleanup ends item-focus ghosting, never a user isolation (`window._ccIsIsolated`).
+- **Element-scoped viewer state** (Viewer: selection + multi-select refs + outline, isolation refs) follows its model: on every `meshKey` change, refs whose model is gone or no longer has the element are dropped (project switch, delete, park); an isolation naming such an element ends.
+- **Addons** declare the scope of their `initState` keys in `stateScope`; `window._ccStateScope.unclassified()` lists any key without one (asserted by the browser test).
+- **Not covered (per-browser by design so far):** the shared-folder link (`addons/shared-project.js`, restored on reload whatever project is open) and the cloud project key (`cc_sharedProjectId`) follow the browser, not the local project.

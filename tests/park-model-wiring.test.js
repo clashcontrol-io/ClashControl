@@ -26,10 +26,11 @@ test('action constants PARK_MODEL and UNPARK_MODEL are declared', () => {
   assert.match(html, /UNPARK_MODEL:'UNPARK_MODEL'/);
 });
 
-test('INIT state and the project-switch reset both seed parkedModels:[]', () => {
-  // Two occurrences: the INIT literal and the LOAD_PROJECT_STATE reset.
-  const count = (html.match(/parkedModels:\[\]/g) || []).length;
-  assert.ok(count >= 2, 'expected parkedModels:[] in INIT and the project reset, found ' + count);
+test('INIT seeds parkedModels:[] and the project switch resets it (project scope)', () => {
+  assert.match(html, /models:\[\], parkedModels:\[\], clashes:\[\]/);
+  // the switch resets every project-scoped key from the registry (tests/state-scope.test.js)
+  assert.match(html, /put\('project', 'models parkedModels /);
+  assert.match(html, /_ccScopeDefaults\(\['project','view','session'\]\)/);
 });
 
 test('PARK_MODEL reducer removes the model, pushes a stub, and clears its caches', () => {

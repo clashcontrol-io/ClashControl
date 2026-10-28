@@ -335,6 +335,14 @@ try {
       else console.log(`GIZMO OK — plane arrow drag moved the cut ${pos0.toFixed(2)} -> ${pos1.toFixed(2)}, gizmo stayed on the plane`);
       await page.evaluate(() => window.__gz.settle());
       const before = await page.evaluate(() => window._ccState3d._sectionPlaneVis.position.toArray());
+      // the ring circles the plane normal (like the arrow points along it)
+      const ringAxis = await page.evaluate(() => {
+        const S = window._ccState3d, T = window.THREE, g = S._sectionPlaneVis._secRotRing;
+        const ax = new T.Vector3(0, 0, 1).transformDirection(g.matrixWorld), n = window._ccActivePlanes[0].normal;
+        return Math.abs(ax.dot(n));
+      });
+      if (ringAxis < 0.999) fail(`rotate ring is not around the plane normal (|axis·n| = ${ringAxis.toFixed(4)})`);
+      else console.log('GIZMO OK — rotate ring circles the plane normal');
       // grab the ring on its rim: try a few points around it
       let grabbed = false;
       for (const ang of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {

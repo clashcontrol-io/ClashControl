@@ -494,6 +494,8 @@
     initState: {
       referenceLayers: []
     },
+    // scans loaded next to this project's models (dropped on project switch)
+    stateScope: { referenceLayers: 'session' },
 
     reducerCases: {
       'ADD_REFERENCE_LAYER': function(s, a) {

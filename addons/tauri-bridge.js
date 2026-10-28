@@ -459,6 +459,8 @@
       description: 'Runs the clash narrow phase natively on all CPU cores inside the ClashControl desktop app. Results are bit-identical to the browser engine.',
       alwaysOn: true,
       icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>',
+      // connection / engine status of this browser, kept across projects
+      stateScope: { nativeEngine: 'ui' },
       initState: { nativeEngine: { active: false, failed: false, threads: 0, selfCheckMs: 0 } },
       reducerCases: {
         UPD_NATIVE_ENGINE: function(s, a) { return Object.assign({}, s, { nativeEngine: Object.assign({}, s.nativeEngine, a.u) }); }

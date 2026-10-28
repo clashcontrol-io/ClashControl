@@ -121,6 +121,8 @@
     initState: {
       sharedProject: { enabled: false, folderName: '', fileName: '', userName: '', lastSync: null, syncing: false, conflicts: 0 }
     },
+    // the folder link is per browser (restored on reload whatever project is open)
+    stateScope: { sharedProject: 'ui' },
 
     reducerCases: {
       'UPD_SHARED_PROJECT': function(s, a) {
