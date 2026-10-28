@@ -13,15 +13,11 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 test('_switchProject resets runHistory, selectionSets, searchSets, assignmentRules, comments and changelog', () => {
   const start = src.indexOf('function _switchProject(newProjId, s, d) {');
   assert.ok(start !== -1, '_switchProject not found');
-  const end = src.indexOf('\n  }\n', start);
-  const body = src.slice(start, end);
-
-  const loadStateStart = body.indexOf('d({t:A.LOAD_PROJECT_STATE, data:{');
-  assert.ok(loadStateStart !== -1, 'LOAD_PROJECT_STATE dispatch not found in _switchProject');
-  const loadStateEnd = body.indexOf('}});', loadStateStart);
-  const payload = body.slice(loadStateStart, loadStateEnd);
-
-  ['runHistory:[]', 'selectionSets:[]', 'searchSets:[]', 'assignmentRules:[]', 'comments:[]', 'changelog:[]'].forEach((field) => {
-    assert.ok(payload.includes(field), '_switchProject must reset ' + field);
+  const body = src.slice(start, src.indexOf('\n  }\n', start));
+  // every key of the project / view / session scopes starts from its default
+  assert.match(body, /d\(\{t:A\.LOAD_PROJECT_STATE, data:Object\.assign\(_ccScopeDefaults\(\['project','view','session'\]\), \{switchingProject:true\}\)\}\);/);
+  const reg = src.slice(src.indexOf("    put('project', "), src.indexOf("    put('view', "));
+  ['runHistory', 'selectionSets', 'searchSets', 'assignmentRules', 'comments', 'changelog'].forEach((field) => {
+    assert.match(reg, new RegExp('\\b' + field + '\\b'), field + ' must be project-scoped (reset on switch)');
   });
 });

@@ -29,8 +29,8 @@
     // One-shot file handoff between / and /tour — written by one page,
     // consumed and cleared by the next load.
     { store: 'pending',  db: 'cc-handoff', retention: 'decay', scope: 'global' },
-    // shared-project's persisted FileSystem directory handle.
-    { store: 'handles',  db: 'cc_shared', retention: 'source', scope: 'global' },
+    // shared-project's persisted FileSystem directory handles (one per local project).
+    { store: 'handles',  db: 'cc_shared', retention: 'source', scope: 'per-project' },
     // shared-project's local copy of the shared folder's change log (records
     // and the file names already read, per shared project): the folder stays
     // the source, so a lost cache only means one full read.
@@ -61,6 +61,8 @@
     { family: 'align', retention: 'source', scope: 'per-target', owner: 'align', prefix: 'cc_align_' },
     { family: 'shared-project', retention: 'source', scope: 'global', owner: 'shared-project',
       keys: ['cc_sharedProjectId', 'cc_sharedProjectName', 'cc_sharedProjectEditKey', 'cc_username'] },
+    // the cloud shared project of one local project ({id, name, editKey})
+    { family: 'shared-project-link', retention: 'source', scope: 'per-project', owner: 'core', prefix: 'cc_sharedProject@' },
     { family: 'walk', retention: 'prefs', scope: 'global', owner: 'core',
       keys: ['cc_walkBookmarks', 'cc_walkViewpoints', 'cc_walkBob', 'cc_walkCollision', 'cc_walkFoot',
              'cc_walkFov', 'cc_walkHeight', 'cc_walkInvY', 'cc_walkSens'] },

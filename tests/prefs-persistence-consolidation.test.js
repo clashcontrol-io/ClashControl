@@ -74,8 +74,8 @@ test('the consolidated reducer cases route through _ccPersistUI, not a duplicate
   const reducerEnd = src.indexOf('\n  }', src.indexOf('case A.TRAINING_MODE', reducerStart) + 2000);
   const body = src.slice(reducerStart, reducerEnd);
 
-  assert.match(body, /_ccPersistUI\('smartViews', sv\.slice\(-50\)\);/);
-  assert.match(body, /_ccPersistUI\('smartViews', sv2\);/);
+  // smart views are project data now (saved with the project's autosave), never per browser
+  assert.doesNotMatch(body, /_ccPersistUI\('smartViews'/);
   assert.match(body, /_ccPersistUI\('defaultTolerances', a\.u\.defaultTolerances\);/);
   assert.match(body, /PERSISTED_PREF_KEYS\.forEach\(function\(k\)\{if\(a\.u\[k\]!==undefined\)\{_ccPersistUI\(k, a\.u\[k\]\);\}\}\);/);
   assert.match(body, /case A\.CLASH_GROUP_BY: _ccPersistUI\('clashGroupBy', a\.v\);/);

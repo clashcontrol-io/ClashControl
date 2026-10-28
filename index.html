@@ -1791,8 +1791,6 @@ function startApp() {
     // Re-check clashes automatically after a model changes (_ccScheduleAutoRerun): 'off' | 'replaced' (a same-name reload / Revit re-sync) | 'any' (every model load batch)
     autoRerun:(function(){ var v=null; try{ v=localStorage.getItem('cc_autoRerun'); }catch(e){} /* _ccPersistUI stores strings raw (not JSON) */ if(v&&v.charAt(0)==='"'){ try{ v=JSON.parse(v); }catch(e){} } return v==='off'||v==='any'||v==='replaced' ? v : 'replaced'; })(),
   };
-  // Restore section state persisted from previous session
-  var _savedSection=(function(){try{return JSON.parse(localStorage.getItem('cc_section')||'null');}catch(e){return null;}})();
   var INIT = {
     models:[], parkedModels:[], clashes:[], issues:[], activeId:null, lastActiveClashId:null, showModal:false, showSettings:false, modalElement:null, tab:null, isRecording:false, selectionSets:[], searchSets:[], assignmentRules:[],
     rules:{ modelA:'all', modelB:'all', hard:true, maxGap:50, minGap:0, duplicates:false, fullRerun:false, hideProvidedOpenings:true, roleChoices:{}, hideContacts:true, excludeSelf:true, excludeTypes:[], excludeTypePairs:[], minOverlapVolM3:0, toleranceByTypePair:{}, useSemanticFilter:true, includeSpaces:false, excludeSameDiscipline:true },
@@ -1806,18 +1804,18 @@ function startApp() {
     // project-codec), overview/list choice ('auto' = overview when the review
     // set is small enough and the run was interactive — autoOpen).
     triage:{facets:{}, view:'auto', autoOpen:false, savedViews:[], activeViewId:null},
-    sectionAxis:(_savedSection&&_savedSection.axis)||null,
-    sectionPos:(_savedSection&&_savedSection.pos!=null)?_savedSection.pos:0.5,
-    sectionCustom:(_savedSection&&_savedSection.custom)||null,
-    sectionStorey:null, sectionFlip:(_savedSection&&_savedSection.flip)||false,
-    sectionHatch:(_savedSection&&_savedSection.hatch)||false,
-    sectionBox:(_savedSection&&_savedSection.box)||null, // {enabled, min:[x,y,z], max:[x,y,z]} – 6-plane box clipping
+    // The section is the project's view (_CC_STATE_SCOPE 'view'): saved with
+    // the project, restored on refresh / project open, never reset by a tab,
+    // workspace or selection change.
+    sectionAxis:null, sectionPos:0.5, sectionCustom:null,
+    sectionStorey:null, sectionFlip:false, sectionHatch:false,
+    sectionBox:null, // {enabled, min:[x,y,z], max:[x,y,z]} – 6-plane box clipping
     filters:Object.assign({},INIT_FILTERS), floors:[],
     prefs:Object.assign({},INIT_PREFS),
     measurements:[], measureMode:null, // 'length','angle','area' or null
     viewpoints:[],
     classifications:{}, // { byType:{}, byStorey:{}, byDiscipline:{}, byMaterial:{} }
-    hiddenClasses:(function(){try{return JSON.parse(localStorage.getItem('cc_hiddenClasses')||'{}')||{};}catch(e){return {};}})(), // { 'byType:IfcWall':true, ... } – persisted so spatial-tree category filters survive refresh
+    hiddenClasses:{}, // { 'byType:IfcWall':true, ... } – project view: saved with the project so spatial-tree category filters survive refresh
     colorByClass:null, // null, 'byType', 'byStorey', 'byDiscipline', 'byMaterial', 'byProperty' (key in colorByProp)
     colorByProp:null, // 'Pset.Name' coloured by when colorByClass === 'byProperty' (§21.62)
     treeOpen:false,
@@ -1855,7 +1853,7 @@ function startApp() {
     commentMode: false,   // when true, next canvas click drops a pin
     activeCommentId: null,
     presenting: false,    // presentation/kiosk mode (fullscreen, chrome hidden, auto-rotate when idle)
-    smartViews: (function(){ try { var v = JSON.parse(localStorage.getItem('cc_smartViews')||'[]'); return Array.isArray(v)?v:[]; } catch(e){ return []; } })(),
+    smartViews: [],       // saved views of this project (camera, section, hidden models) — project data
     showSmartViews: false,
     /* ── UI shell state (workspace switcher, panels, diagnostics) ──
        Each value rehydrates from localStorage on boot so a reload returns
@@ -1868,6 +1866,96 @@ function startApp() {
     inspectorOpen:_ccLoadPref('inspectorOpen',false),
     avatarMenuOpen:false  // ephemeral, never persisted
   };
+
+  // ── State scope: which lifecycle owns each state key ── docs/INTERNALS.md §21.64
+  // Every state key belongs to exactly one scope, and lifecycle events only
+  // touch their own scope — instead of each event hand-picking fields (the
+  // project switch used to reset a hand-written list that kept missing keys,
+  // tab / selection changes wiped the section, the section and category
+  // filters were stored per browser instead of per project).
+  //  'project' — the project's data: saved with it (autosave / project file);
+  //              reset to the default and restored on every project switch.
+  //  'view'    — how this project is being looked at (section plane / box,
+  //              hidden categories): saved with the project's autosave,
+  //              survives a refresh; workspace / tab / selection changes never
+  //              reset it; replaced on a project switch.
+  //  'session' — interaction state about the loaded models (selection, active
+  //              tools, derived data): reset on a project switch, never saved.
+  //  'ui'      — app chrome and preferences of this browser: kept across
+  //              projects.
+  // A key missing here is reported by window._ccStateScope.unclassified()
+  // (asserted by tests/browser/state-scope.mjs).
+  var _CC_STATE_SCOPE = (function(){
+    var m = {};
+    function put(scope, keys) { keys.split(/\s+/).forEach(function(k){ if (k) m[k] = scope; }); }
+    put('project', 'models parkedModels clashes issues rules detectionSettings selectionSets searchSets assignmentRules ' +
+      'triage filters floors measurements viewpoints sheets activeSheetId sheetPins markups lastDeltaSummary runHistory ' +
+      'changelog propertyRules deniedPairs comments smartViews');
+    put('view', 'sectionAxis sectionPos sectionCustom sectionStorey sectionFlip sectionHatch sectionBox hiddenClasses');
+    put('session', 'activeId lastActiveClashId showModal modalElement detecting switchingProject triageResults measureMode ' +
+      'classifications colorByClass colorByProp floorPlan walkMode walkPlacing underlays activeUnderlay underlayMode ' +
+      'markupTool selected selectMode idsValidation lastIssueLifecycle lastAutoRerun commentMode activeCommentId ' +
+      'preRun lastRunExcluded');
+    put('ui', 'showSettings tab isRecording trainingMode clashGroupBy clashSortBy issueGroupBy issueSortBy chatOpen ' +
+      'runModalOpen prefs treeOpen activeProject projectList showShare shareTab presenting showSmartViews workspace ' +
+      'diagnostics autoParkInactive inspectorOpen avatarMenuOpen');
+    return m;
+  })();
+  // Defaults of every non-'ui' key (JSON, plain data only), snapshotted from
+  // INIT, so a reset always starts from fresh copies.
+  var _CC_SCOPE_DEFAULTS = {};
+  Object.keys(_CC_STATE_SCOPE).forEach(function(k){
+    if (_CC_STATE_SCOPE[k] !== 'ui') _CC_SCOPE_DEFAULTS[k] = JSON.stringify(INIT[k] === undefined ? null : INIT[k]);
+  });
+  // Addons add state through `initState` and declare each key's scope in
+  // `stateScope` (same four scopes) — see _ccRegisterAddon.
+  function _ccDeclareStateScope(scopes, defaults) {
+    Object.keys(scopes || {}).forEach(function(k){
+      var sc = scopes[k];
+      if (sc !== 'project' && sc !== 'view' && sc !== 'session' && sc !== 'ui') return;
+      _CC_STATE_SCOPE[k] = sc;
+      if (sc !== 'ui') _CC_SCOPE_DEFAULTS[k] = JSON.stringify(defaults && defaults[k] !== undefined ? defaults[k] : null);
+    });
+  }
+  function _ccScopeKeys(scope) { return Object.keys(_CC_STATE_SCOPE).filter(function(k){ return _CC_STATE_SCOPE[k] === scope; }); }
+  function _ccScopeDefaults(scopes) {
+    var out = {};
+    Object.keys(_CC_SCOPE_DEFAULTS).forEach(function(k){ if (scopes.indexOf(_CC_STATE_SCOPE[k]) >= 0) out[k] = JSON.parse(_CC_SCOPE_DEFAULTS[k]); });
+    return out;
+  }
+  var _CC_VIEW_KEYS = _ccScopeKeys('view');
+  function _ccPickView(st) { var o = {}; _CC_VIEW_KEYS.forEach(function(k){ o[k] = st[k]; }); return o; }
+  window._ccStateScope = {
+    scopeOf: function(k){ return _CC_STATE_SCOPE[k] || null; },
+    keys: _ccScopeKeys,
+    // state keys that belong to no scope (INIT and the live state)
+    unclassified: function(st){
+      var seen = {}, out = [];
+      Object.keys(INIT).concat(Object.keys(st || window._ccLatestState || {})).forEach(function(k){
+        if (seen[k]) return; seen[k] = true;
+        if (!_CC_STATE_SCOPE[k]) out.push(k);
+      });
+      return out;
+    }
+  };
+  // Before the view was project state it lived in three per-browser keys.
+  // The first project restored on this page adopts them (where its own save
+  // has none), then they are removed so no other project inherits them.
+  var _ccLegacyViewTaken = false;
+  function _ccTakeLegacyView() {
+    if (_ccLegacyViewTaken) return null;
+    _ccLegacyViewTaken = true;
+    var out = null;
+    function read(key) { try { var v = localStorage.getItem(key); localStorage.removeItem(key); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
+    var sec = read('cc_section'), hc = read('cc_hiddenClasses'), sv = read('cc_smartViews');
+    if (sec && typeof sec === 'object') {
+      out = {sectionAxis:sec.axis || null, sectionPos:sec.pos != null ? sec.pos : 0.5, sectionCustom:sec.custom || null,
+        sectionFlip:!!sec.flip, sectionHatch:!!sec.hatch, sectionBox:sec.box || null};
+    }
+    if (hc && typeof hc === 'object' && Object.keys(hc).length) (out = out || {}).hiddenClasses = hc;
+    if (Array.isArray(sv) && sv.length) (out = out || {}).smartViews = sv;
+    return out;
+  }
   function _ccPersistUI(key,val){ try{ localStorage.setItem('cc_'+key, typeof val==='string'?val:JSON.stringify(val)); }catch(e){} }
   // Quota-aware localStorage setter for growth-prone keys (also exposed to
   // addons). On QuotaExceeded it prunes derived/decay-class keys per
@@ -1909,9 +1997,6 @@ function startApp() {
     if (!keys || !keys.length) return;
     try { window.dispatchEvent(new CustomEvent('cc-ls-removed', {detail:{keys:keys.slice()}})); } catch (e) {}
   }
-  // Persist spatial-tree category visibility so the filter survives a refresh
-  // (models rehydrate from IndexedDB; hiddenClasses keys are model-independent).
-  function _persistHiddenClasses(hc){ _ccPersistUI('hiddenClasses', hc||{}); }
   // The exact set of UPD_PREFS keys that get individually persisted (one
   // localStorage entry per key, via _ccPersistUI) when present in the
   // action's `u` payload. Was an inline array literal recreated on every
@@ -2038,6 +2123,7 @@ function startApp() {
     if (def.initState) {
       Object.keys(def.initState).forEach(function(k){ if (!(k in INIT)) INIT[k] = def.initState[k]; });
     }
+    if (def.stateScope) _ccDeclareStateScope(def.stateScope, def.initState);
     // alwaysOn = pure capability with no background cost (engines, loaders):
     // always active, panel shows "Built in" instead of a do-nothing toggle.
     if (def.alwaysOn) _ccAddonActive[def.id] = true;
@@ -2663,6 +2749,10 @@ function startApp() {
     if (typeof _ccBuildUndoEntry === 'function' && typeof _ccPushUndoable === 'function') {
       var _ccUndoEntry = _ccBuildUndoEntry(s, a);
       if (_ccUndoEntry) _ccPushUndoable(_ccUndoEntry);
+      // Undo entries replay against the project they were made in: a project
+      // change empties both stacks — here, in dispatch order, so the switch's
+      // own reset dispatches (queued before it) are dropped too.
+      if (a.t === A.SET_PROJECT && a.id !== s.activeProject && window._ccClearUndo) window._ccClearUndo();
     }
     switch(a.t) {
       case A.ADD_MODEL:   var _am=a.v;
@@ -2874,7 +2964,9 @@ function startApp() {
         // *clash* id separately so "+ From clash" keeps working across tab
         // switches regardless of what's currently active.
         var _isClashId = a.id!=null && s.clashes.some(function(c){return c.id===a.id;});
-        return Object.assign({},s,{activeId:a.id,sectionAxis:null,sectionCustom:null,
+        // Selecting never changes the view (_CC_STATE_SCOPE): a section that
+        // hides the selected item is lifted by the App's activeId effect.
+        return Object.assign({},s,{activeId:a.id,
           lastActiveClashId:_isClashId?a.id:s.lastActiveClashId});
       case A.MODAL:       return Object.assign({},s,{showModal:a.v, modalElement:a.el||null});
       case A.UPD_RULES:   return Object.assign({},s,{rules:Object.assign({},s.rules,a.u)});
@@ -2911,7 +3003,7 @@ function startApp() {
       case A.SECTION_CUSTOM: return Object.assign({},s,{sectionAxis:null, sectionCustom:a.v, sectionPos:a.pos!=null?a.pos:0.5, sectionFlip:false});
       case A.SECTION_FLIP:  return Object.assign({},s,{sectionFlip:!s.sectionFlip});
       case A.SECTION_HATCH: return Object.assign({},s,{sectionHatch:!s.sectionHatch});
-      case A.TAB:         var tabUpd={tab:a.v,sectionAxis:null,sectionCustom:null};
+      case A.TAB:         var tabUpd={tab:a.v}; // chrome only — the section is project view state
                           // Closing the panel entirely (a.v===null — e.g. tapping a mobile
                           // nav icon again to dismiss the sheet, or the panel's ✕) must NOT
                           // drop the selection: the 3D view should keep focusing/ghosting the
@@ -2979,13 +3071,11 @@ function startApp() {
       case A.AVATAR_MENU:   return Object.assign({},s,{avatarMenuOpen:!!a.v});
       case A.SMART_VIEWS: return Object.assign({},s,{showSmartViews:!!a.v});
       case A.ADD_SMART_VIEW: {
-        var sv = (s.smartViews||[]).concat([a.v]);
-        _ccPersistUI('smartViews', sv.slice(-50));
+        var sv = (s.smartViews||[]).concat([a.v]).slice(-50);
         return Object.assign({},s,{smartViews:sv});
       }
       case A.DEL_SMART_VIEW: {
         var sv2 = (s.smartViews||[]).filter(function(v){return v.id!==a.id;});
-        _ccPersistUI('smartViews', sv2);
         return Object.assign({},s,{smartViews:sv2});
       }
       case A.COMMENT_MODE: return Object.assign({},s,{commentMode:!!a.v, walkMode:a.v?false:s.walkMode, measureMode:a.v?null:s.measureMode});
@@ -3020,10 +3110,10 @@ function startApp() {
       case A.UPD_VIEWPOINT: return Object.assign({},s,{viewpoints:s.viewpoints.map(function(v){return v.id===a.id?Object.assign({},v,a.u):v})});
       case A.SET_CLASSIFICATIONS: return Object.assign({},s,{classifications:a.v});
       case A.SECTION_BOX:  { var _sbOn=!!(a.v&&a.v.enabled!==false); return Object.assign({},s,{sectionBox:a.v, sectionAxis:_sbOn?null:s.sectionAxis, sectionCustom:_sbOn?null:s.sectionCustom, walkMode:a.v?false:s.walkMode}); } // turning the box on replaces a plane; turning it off keeps one added since
-      case A.TOGGLE_CLASS_VIS: var hc2=Object.assign({},s.hiddenClasses); if(hc2[a.key])delete hc2[a.key];else hc2[a.key]=true; _persistHiddenClasses(hc2); return Object.assign({},s,{hiddenClasses:hc2});
-      case A.SHOW_ALL_CLASSES: _persistHiddenClasses({}); return Object.assign({},s,{hiddenClasses:{}});
-      case '_REPLACE_HIDDEN_CLASSES': var hc3=Object.assign({},a.v||{}); _persistHiddenClasses(hc3); return Object.assign({},s,{hiddenClasses:hc3});
-      case A.HIDE_ALL_CLASSES: var hca={}; if(s.classifications[a.view]){Object.keys(s.classifications[a.view]).forEach(function(k){hca[a.view+':'+k]=true;});} _persistHiddenClasses(hca); return Object.assign({},s,{hiddenClasses:hca});
+      case A.TOGGLE_CLASS_VIS: var hc2=Object.assign({},s.hiddenClasses); if(hc2[a.key])delete hc2[a.key];else hc2[a.key]=true; return Object.assign({},s,{hiddenClasses:hc2});
+      case A.SHOW_ALL_CLASSES: return Object.assign({},s,{hiddenClasses:{}});
+      case '_REPLACE_HIDDEN_CLASSES': var hc3=Object.assign({},a.v||{}); return Object.assign({},s,{hiddenClasses:hc3});
+      case A.HIDE_ALL_CLASSES: var hca={}; if(s.classifications[a.view]){Object.keys(s.classifications[a.view]).forEach(function(k){hca[a.view+':'+k]=true;});} return Object.assign({},s,{hiddenClasses:hca});
       case A.COLOR_BY_CLASS: return Object.assign({},s,{colorByClass:s.colorByClass===a.v?null:a.v});
       // Colour by one property (Pset.Name); the same key again, or none, clears it.
       case A.COLOR_BY_PROPERTY: { var _cbOff=!a.v||(s.colorByClass==='byProperty'&&s.colorByProp===a.v&&!a.keep); return Object.assign({},s,{colorByClass:_cbOff?(s.colorByClass==='byProperty'?null:s.colorByClass):'byProperty', colorByProp:_cbOff?null:String(a.v)}); }
@@ -3755,6 +3845,8 @@ function startApp() {
   // both orphaned the project's localStorage keys (chat history) forever.
   function _ccDeleteProjectStorage(projectId) {
     try { localStorage.removeItem('cc_chat_msgs_' + projectId); } catch (e) {}
+    _ccClearShareLink(projectId); // its shared-project key (the shared project itself stays on the server)
+    if (typeof window._ccSharedFolderForget === 'function') window._ccSharedFolderForget(projectId); // and its linked folder
     return Promise.all([
       idbDeleteProjectFiles(projectId),
       idbDeleteProjectData(projectId)
@@ -4801,6 +4893,35 @@ function startApp() {
   function setActiveProjectId(id) {
     try { localStorage.setItem('cc_activeProject', id); } catch(e) {}
   }
+  // ── A shared project (cloud key) belongs to ONE local project ── INTERNALS §21.64
+  // Stored per local project (`cc_sharedProject@<local id>` → {id, name,
+  // editKey}). Leaving a local project stops its sync; opening one that is
+  // shared starts its own (`cc-project-leave` / _sharedStartPolling). The key
+  // used to be per browser, so it kept syncing the shared project of project
+  // A — reading and writing its change log — while project B was open. The
+  // old per-browser keys are adopted once by the project open at the time.
+  var _CC_SHARE_LINK_LS = 'cc_sharedProject@';
+  function _ccShareLink(localPid) {
+    try {
+      var v = JSON.parse(localStorage.getItem(_CC_SHARE_LINK_LS + (localPid || getActiveProjectId())) || 'null');
+      return v && typeof v.id === 'string' && v.id ? v : null;
+    } catch (e) { return null; }
+  }
+  function _ccSetShareLink(link, localPid) {
+    try { localStorage.setItem(_CC_SHARE_LINK_LS + (localPid || getActiveProjectId()), JSON.stringify({id:link.id, name:link.name || '', editKey:link.editKey || null})); } catch (e) {}
+  }
+  function _ccClearShareLink(localPid) {
+    try { localStorage.removeItem(_CC_SHARE_LINK_LS + (localPid || getActiveProjectId())); } catch (e) {}
+  }
+  (function _ccAdoptLegacyShareLink() {
+    try {
+      var id = localStorage.getItem('cc_sharedProjectId');
+      if (id && !_ccShareLink()) _ccSetShareLink({id:id, name:localStorage.getItem('cc_sharedProjectName') || '', editKey:localStorage.getItem('cc_sharedProjectEditKey') || null});
+      ['cc_sharedProjectId', 'cc_sharedProjectName', 'cc_sharedProjectEditKey'].forEach(function(k){ localStorage.removeItem(k); });
+    } catch (e) {}
+  })();
+  // for the share panels and the ?p= join link (outside this scope)
+  window._ccShareLink = { get: function(localPid){ return _ccShareLink(localPid); }, set: _ccSetShareLink, clear: _ccClearShareLink };
   function ensureDefaultProject() {
     var list = getProjects();
     if(!list.find(function(p){return p.id==='default';})){
@@ -16579,6 +16700,13 @@ function startApp() {
     _ccUndoChanged();
     return true;
   };
+  // Undo entries replay actions against the project they were made in, so a
+  // project switch starts with empty stacks.
+  window._ccClearUndo = function() {
+    window._ccUndoStack.length = 0;
+    window._ccRedoStack.length = 0;
+    _ccUndoChanged();
+  };
   window._ccUndoInfo = function() {
     return {canUndo: window._ccUndoStack.length > 0, canRedo: window._ccRedoStack.length > 0};
   };
@@ -17198,6 +17326,35 @@ function startApp() {
     // Multi-select: array of {modelId, expressId}. selectedEl is the most-recent.
     var selectedRefsRef = useRef([]);
     window._ccSelectedRefs = selectedRefsRef.current;
+    // ── Element-scoped state follows its model (_CC_STATE_SCOPE 'session') ──
+    // The selection (Details, outline, multi-select) and an isolation name
+    // elements of loaded models. When such a model goes away — project
+    // switch, delete, park — or no longer has that element, the refs would
+    // point at another building, so they are dropped here, in one place.
+    // (The selection used to be cleared only by a click on empty space.)
+    useEffect(function(){
+      var models = modelsRef.current, byId = {};
+      models.forEach(function(m){ byId[m.id] = m; });
+      function has(m, eid) { return !!(m && (m.elements || []).some(function(el){ return el.expressId === eid; })); }
+      function alive(ref) {
+        if (ref == null) return false;
+        if (typeof ref !== 'object') return models.some(function(m){ return has(m, ref); }); // bare expressId
+        if (ref.modelId != null) return has(byId[ref.modelId], ref.expressId);
+        return models.some(function(m){ return has(m, ref.expressId); });
+      }
+      var S = state3d.current;
+      var refs = selectedRefsRef.current, keep = refs.filter(alive);
+      if (keep.length !== refs.length) {
+        selectedRefsRef.current = keep;
+        window._ccSelectedRefs = keep;
+        if (keep.length && _highlightRefs) _highlightRefs(keep, false);
+        else if (S && S._clearHighlightGroups) S._clearHighlightGroups();
+      }
+      if (selectedEl && !alive({modelId: selectedEl.modelId, expressId: selectedEl.expressId})) setSelectedEl(null);
+      var iso = window._ccIsIsolated && window._ccLastIsolateRefs;
+      if (iso && !iso.every(alive) && S && S._unisolateCore) S._unisolateCore();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- meshKey changes whenever a model is added / removed or its elements are replaced; the refs are read from their refs at that moment
+    }, [meshKey]);
     // Compute the correct world-space bounding box from pre-computed element boxes.
     // This is reliable regardless of GPU instancing (InstancedMesh objects report
     // local-geometry bounds at origin when queried via setFromObject, which is wrong).
@@ -18041,9 +18198,13 @@ function startApp() {
         } catch(err) {}
       });
 
+      // The user's "reset view" (home button, zf / za, NL, project switch):
+      // clears every viewer overlay — isolation, section, walk, floor plan —
+      // then frames home. Loading a model only frames (_frameHome): it must
+      // never clear the project's view (a restored section used to be wiped
+      // by the first model of every refresh).
       _resetView = function() {
-        // Clear all viewer overlays — true "back to clean slate"
-        if (_unghostAll) _unghostAll();
+        if (S._unisolateCore) S._unisolateCore(); else if (_unghostAll) _unghostAll();
         var _rst = window._ccLatestState || {};
         if (window._ccDispatch) {
           if (_rst.sectionAxis || _rst.sectionCustom) window._ccDispatch({t:A.SECTION, axis:null, pos:0.5});
@@ -18051,7 +18212,11 @@ function startApp() {
           if (_rst.walkMode) window._ccDispatch({t:A.WALK_MODE, v:false});
           if (_rst.floorPlan) window._ccDispatch({t:A.FLOOR_PLAN, v:null});
         }
-        // Fly to saved home, or fit all as fallback
+        _frameHome();
+      };
+      // Fly to the saved home, or fit all as fallback. Camera only.
+      function _frameHome() {
+        var _rst = window._ccLatestState || {};
         var home = _rst.prefs && _rst.prefs.homeView;
         if (home && home.pos && home.target) {
           _animateFly(new THREE.Vector3(home.target[0],home.target[1],home.target[2]),
@@ -18071,7 +18236,8 @@ function startApp() {
         var d=Math.max(sz.x,sz.y,sz.z)*1.0*_ccFitAspectMargin();
         _animateFly(ctr, new THREE.Vector3(ctr.x+d, ctr.y+d*0.6, ctr.z+d));
         if (window._ccUpdateShadowFrustum) window._ccUpdateShadowFrustum();
-      };
+      }
+      S._frameHome = _frameHome;
       window._ccResetView = _resetView;
 
       // The 1.0x distance multiplier below was tuned against a desktop
@@ -18761,6 +18927,8 @@ function startApp() {
         window._ccIsIsolated = false;
         window._ccLastIsolateRefs = null;
       }
+      // Ends isolation without an undo entry (reset view, a model that went away).
+      S._unisolateCore = _ccUnisolateCore;
       window._ccIsolate = function(expressIds) {
         if(!expressIds||!expressIds.length) return;
         var wasIsolated = !!window._ccIsIsolated;
@@ -18971,6 +19139,7 @@ function startApp() {
         invalidate();
       };
       window._highlightRefs = _highlightRefs;
+      S._clearHighlightGroups = _clearHighlightGroups;
       S._findMeshByRef = _findMeshByRef; // tests/browser/scene-action-cost.mjs compares it with a full walk
 
       // ── Active Clash Point Marker (bright blue) ──
@@ -19665,6 +19834,27 @@ function startApp() {
           });
         },
         benchEngine:      function(pairLimit){ if (window._ccBenchEngine) return window._ccBenchEngine(pairLimit); },
+        // Projects, as the project selector does them (save the current
+        // project, reset everything project-scoped, restore the target).
+        projects: {
+          list:     function(){ return getProjects(); },
+          get active() { var st = window._ccLatestState; return st ? st.activeProject : null; },
+          switchTo: function(id){
+            var st = window._ccLatestState;
+            if (!st || !window._ccDispatch || id === st.activeProject || !getProjects().some(function(p){ return p.id === id; })) return false;
+            _switchProject(id, st, window._ccDispatch);
+            return true;
+          },
+          create:   function(name){
+            var st = window._ccLatestState;
+            if (!st || !window._ccDispatch) return null;
+            var id = uid(), list = getProjects().concat([{id:id, name:String(name || 'Project').trim() || 'Project', createdAt:Date.now()}]);
+            saveProjects(list);
+            window._ccDispatch({t:A.SET_PROJECT_LIST, v:list});
+            _switchProject(id, st, window._ccDispatch);
+            return id;
+          }
+        },
         storage: {
           report:        function(){ return window._ccStorageReport ? window._ccStorageReport() : Promise.resolve(null); },
           clearGeoCache: function(){ return window._ccClearGeoCache ? window._ccClearGeoCache() : Promise.resolve(); },
@@ -23464,14 +23654,6 @@ function startApp() {
         // arrow) — viewer-gizmo-core.js; no-op while no gizmo exists.
         if (S._sboxPlaceArc) S._sboxPlaceArc(S.camera.position);
         if (S.gz) S.gz.update(S.camera, renderer.domElement.clientHeight || 1);
-        // Section rotation ring: lies flat (spins about world up) on a vertical
-        // plane, stands on a horizontal one.  See docs/INTERNALS.md § 21.35
-        var _ring = S._sectionPlaneVis && S._sectionPlaneVis._secRotRing;
-        if (_ring) {
-          var _wq = S._sectionPlaneVis.quaternion.clone(), _wn = new THREE.Vector3(0, 0, 1).applyQuaternion(_wq);
-          if (Math.abs(_wn.y) < 0.7) _ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 1, 0).applyQuaternion(_wq.invert()));
-          else _ring.quaternion.identity();
-        }
 
         // Lower resolution while moving — but only once motion has actually
         // started (never on a plain mousedown/click) AND measured frame time
@@ -23761,7 +23943,7 @@ function startApp() {
             if(!needsSwap && window._ccUpdateShadowFrustum) window._ccUpdateShadowFrustum();
             // A progressive preview may already have framed this model (and
             // the user may have moved since): don't jump at commit then.
-            if(!needsSwap && Object.keys(S.map).length===1 && _resetView && !_ccLoadPreview.keepCamera(_elemsBBox)) _resetView();
+            if(!needsSwap && Object.keys(S.map).length===1 && S._frameHome && !_ccLoadPreview.keepCamera(_elemsBBox)) S._frameHome();
           }
           // The committed model is in the scene now: drop its preview.
           _ccLoadPreview.modelShown(model.id);
@@ -24031,14 +24213,6 @@ function startApp() {
       invalidate(2);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sectionAxis/sectionCustom are only read when the box is disabled, to avoid clearing an active section plane; the plane effect re-applies its own planes when they change; meshKey re-clips a new model's meshes
     }, [s.sectionBox, meshKey, s.prefs&&s.prefs.renderStyle]);
-
-    // Persist section state so it survives page refresh
-    useEffect(function(){
-      try{localStorage.setItem('cc_section',JSON.stringify({
-        axis:s.sectionAxis, pos:s.sectionPos, custom:s.sectionCustom,
-        flip:s.sectionFlip, hatch:s.sectionHatch, box:s.sectionBox
-      }));}catch(e){}
-    },[s.sectionAxis,s.sectionPos,s.sectionCustom,s.sectionFlip,s.sectionHatch,s.sectionBox]);
 
     var floorPlanCamRef = useRef(null);
     useEffect(function(){
@@ -26126,7 +26300,7 @@ function startApp() {
   // array without changing anything that is saved).
   var _AUTOSAVE_SLICES = ['clashes','issues','rules','floors','viewpoints','measurements','filters',
     'lastDeltaSummary','runHistory','sheets','activeSheetId','sheetPins','markups',
-    'selectionSets','searchSets','assignmentRules','modelMeta','triage','deniedPairs','propertyRules'];
+    'selectionSets','searchSets','assignmentRules','modelMeta','triage','deniedPairs','propertyRules','smartViews'].concat(_CC_VIEW_KEYS);
   function _ccModelMeta(models) {
     return (models||[]).map(function(m){return {id:m.id,name:m.name,discipline:m.discipline,color:m.color,visible:m.visible,tag:m.tag||'',georef:m.georef||null};});
   }
@@ -26172,8 +26346,12 @@ function startApp() {
       triage:s.triage ? Object.assign({}, s.triage, {autoOpen:false}) : undefined,
       deniedPairs:s.deniedPairs||{},
       propertyRules:s.propertyRules||[],
+      smartViews:s.smartViews||[],
       modelMeta:_ccModelMeta(s.models)
     }, 0);
+    // the project's view (section, hidden categories): restored on refresh
+    // and project open by the blind LOAD_PROJECT_STATE merge
+    Object.assign(data, _cloneSafe(_ccPickView(s), 0));
     data.clashes = _ccCloneListCached(s.clashes);
     data.issues = _ccCloneListCached(s.issues);
     return idbSaveProjectData(pid, data).then(function(r){
@@ -26183,6 +26361,11 @@ function startApp() {
     });
   }
 
+  // The open project's data and models are back (boot and project switch):
+  // what follows the project — its sharing link — attaches now.
+  function _ccProjectRestored() {
+    setTimeout(function(){ try { window.dispatchEvent(new Event('cc-project-restored')); } catch (e) {} }, 0);
+  }
   // ── Project file restoration (standalone, usable from App) ─────
   function _restoreProjectFilesGlobal(projectId, d) {
     var pid = projectId || 'default';
@@ -26215,6 +26398,12 @@ function startApp() {
       }
     }
     idbGetProjectData(pid).then(function(data){
+      // the old per-browser view keys go to the first project opened here
+      var legacy = _ccTakeLegacyView();
+      if (legacy) {
+        data = data || {};
+        Object.keys(legacy).forEach(function(k){ if (!(k in data)) data[k] = legacy[k]; });
+      }
       if(data) {
         if(data.clashes) data.clashes = data.clashes.map(function(c){ return c._delta ? Object.assign({},c,{_delta:null}) : c; });
         // Saved before the denied memory was project state: import the old
@@ -26225,7 +26414,7 @@ function startApp() {
     }).then(function(){
       return idbGetProjectFiles(pid);
     }).then(function(stored){
-      if(!stored.length) { d({t:A.SWITCHING_PROJECT, v:false}); return; }
+      if(!stored.length) { d({t:A.SWITCHING_PROJECT, v:false}); _ccProjectRestored(); return; }
       var chain = Promise.resolve();
       stored.forEach(function(entry){
         _ccNoteFileSidecar(entry.id, entry);
@@ -26305,6 +26494,7 @@ function startApp() {
       });
       chain.then(function(){
         d({t:A.SWITCHING_PROJECT, v:false});
+        _ccProjectRestored();
         // Re-enter walk mode at the saved pose if the previous session was
         // walking when the page was refreshed. Deferred so the model's
         // auto-fit / fly-to settles first; walk enter then overrides the
@@ -26329,6 +26519,12 @@ function startApp() {
   }
 
   function _switchProject(newProjId, s, d) {
+    // First, before any dispatch: the sharing sessions of the project being
+    // left detach (cloud key and shared folder), so neither the reset below
+    // nor the next project's restore is recorded into this project's shared
+    // log. The next project's own link starts once its restore is done
+    // (cc-project-restored / _sharedStartPolling).
+    try { window.dispatchEvent(new Event('cc-project-leave')); } catch (e) {}
     d({t:A.SWITCHING_PROJECT, v:true});
     _saveCurrentProjectData(s, {force:true});
     if(window._ccClearScene) window._ccClearScene();
@@ -26340,23 +26536,13 @@ function startApp() {
     _underlayImgCache = {};
     _underlayImgDataCache = {};
     _cc2DOutlines = null;
-    d({t:A.LOAD_PROJECT_STATE, data:{
-      models:[], parkedModels:[], clashes:[], issues:[], activeId:null, detecting:false,
-      switchingProject:true, lastDeltaSummary:null, lastAutoRerun:null,
-      sectionAxis:null, sectionPos:0.5, sectionCustom:null, sectionBox:null, sectionStorey:null,
-      filters:Object.assign({},INIT_FILTERS), floors:[],
-      measurements:[], measureMode:null, viewpoints:[],
-      classifications:{}, hiddenClasses:{}, colorByClass:null,
-      floorPlan:null,
-      sheets:[], activeSheetId:null, sheetPins:[], markups:[],
-      // Bug 9: these were never reset on project switch, so e.g. project
-      // A's assignment rules kept auto-assigning project B's newly
-      // detected clashes, and project A's run history/comments/changelog
-      // bled into project B's UI until the next full page reload.
-      runHistory:[], selectionSets:[], searchSets:[], assignmentRules:[],
-      comments:[], changelog:[], deniedPairs:{}, propertyRules:[], colorByProp:null, lastIssueLifecycle:null,
-      triage:Object.assign({},INIT.triage), // facets / saved views are per project (restored by project-codec)
-    }});
+    // Everything that belongs to the project, its view or the loaded models
+    // starts from its default (_CC_STATE_SCOPE); the new project's own data
+    // and view are then restored by _restoreProjectFilesGlobal. Only 'ui'
+    // keys carry over. (A hand-written list here kept missing keys: the
+    // selection, rules, AI triage, IDS results, active comment … bled into
+    // the next project.)
+    d({t:A.LOAD_PROJECT_STATE, data:Object.assign(_ccScopeDefaults(['project','view','session']), {switchingProject:true})});
     d({t:A.UPD_PREFS, u:{showMarkers:false}});
     d({t:A.SET_PROJECT, id:newProjId});
     setActiveProjectId(newProjId);
@@ -39043,10 +39229,7 @@ function startApp() {
           else if(it.point && _flyTo) _flyTo(it.point);
           return;
         }
-        d({t:A.ACTIVE,id:it.id});
-        if(window._ccCurrentSbox && window._ccDispatch){
-          window._ccDispatch({t:A.SECTION_BOX,v:null});
-        }
+        d({t:A.ACTIVE,id:it.id}); // a section hiding the item is lifted by the App's activeId effect
         if(pr.autoHighlight!==false){
           if(refs.length&&_ghostOthers) _ghostOthers(refs);
           if(refs.length&&_highlightRefs) _highlightRefs(refs,false);
@@ -40848,10 +41031,14 @@ function startApp() {
     function unlink(){ if(window._disconnectShared) window._disconnectShared(d); }
 
     // Quick Share via project key (no folder, no upload, no login)
-    var stKey = useState(function(){ try{return localStorage.getItem('cc_sharedProjectId')||'';}catch(e){return '';} });
+    // the shared project of the OPEN local project (_ccShareLink)
+    var stKey = useState(function(){ var l = _ccShareLink(); return l ? l.id : ''; });
     var pKey = stKey[0], setPKey = stKey[1];
-    var stKeyName = useState(function(){ try{return localStorage.getItem('cc_sharedProjectName')||'';}catch(e){return '';} });
+    var stKeyName = useState(function(){ var l = _ccShareLink(); return l ? l.name : ''; });
     var pKeyName = stKeyName[0], setPKeyName = stKeyName[1];
+    useEffect(function(){ var l = _ccShareLink(); setPKey(l ? l.id : ''); setPKeyName(l ? l.name : ''); },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setPKey / setPKeyName are useState setters (stable identity)
+    [s.activeProject]);
     var stCopied = useState(''); var copiedKind = stCopied[0], setCopiedKind = stCopied[1];
     var stCreating = useState(false); var creating=stCreating[0], setCreating=stCreating[1];
     var stCreateOpen = useState(false); var createOpen=stCreateOpen[0], setCreateOpen=stCreateOpen[1];
@@ -40914,7 +41101,7 @@ function startApp() {
         });
     }
     function leaveKey(){
-      try { localStorage.removeItem('cc_sharedProjectId'); localStorage.removeItem('cc_sharedProjectName'); } catch(e){}
+      _ccClearShareLink();
       if (typeof window._ccSharedStop === 'function') window._ccSharedStop(true);
       setPKey(''); setPKeyName('');
     }
@@ -40970,7 +41157,7 @@ function startApp() {
                 ${cloudSt.rejected.length > 5 && html`<div>${_cc_t('share.rejectedMore','and {n} more', {n: cloudSt.rejected.length - 5})}</div>`}
                 <button data-cc-cloud-rejected-dismiss="1" onClick=${function(){ if (window._ccCloudShare) window._ccCloudShare.dismissRejected(); }} style=${{...btnGhost,marginTop:'var(--space-1)'}}>${_cc_t('common.dismiss','Dismiss')}</button>
               </div>`}
-              ${folderHolds && html`<div data-cc-share-mode-note="cloud-paused" style=${{...S_NOTE,marginBottom:'var(--space-2)'}}>${_cc_t('share.keyPausedFolder','Not syncing: this browser shares the project through the folder {folder}. Only one sharing mode works at a time — unlink the folder to sync with this key, or leave the key.', {folder: linkHolder.label || '—'})}</div>`}
+              ${folderHolds && html`<div data-cc-share-mode-note="cloud-paused" style=${{...S_NOTE,marginBottom:'var(--space-2)'}}>${_cc_t('share.keyPausedFolder','Not syncing: this project is shared through the folder {folder}. Only one sharing mode works at a time — unlink the folder to sync with this key, or leave the key.', {folder: linkHolder.label || '—'})}</div>`}
               ${cloudSt.conflicts > 0 && html`<div data-cc-cloud-conflict-count="1" class="cc-status-pill" style=${{display:'inline-block',marginBottom:'var(--space-2)',textTransform:'none',letterSpacing:0,background:'var(--color-warning-bg)',color:'var(--color-warning-fg)'}}>
                 ${cloudSt.conflicts === 1 ? _cc_t('sharedConflict.countOne', '1 conflict to resolve') : _cc_t('sharedConflict.countMany', '{n} conflicts to resolve', {n: cloudSt.conflicts})}
               </div>`}
@@ -42363,15 +42550,14 @@ function startApp() {
             style=${{...S_INPUT,width:140,fontSize:'var(--text-sm)',textAlign:'right'}} />
         </div>
         ${function(){
-          var spId = null;
-          try { spId = localStorage.getItem('cc_sharedProjectId'); } catch(e) {}
+          var spLink = _ccShareLink(), spId = spLink ? spLink.id : null;
           var holder = _ccShareLinkHolder(), folderHolds = !!(holder && holder.src === 'folder');
           return html`<div>
             ${spId && html`<div style=${TROW}>
               <div>
                 <div style=${TLBL}>${_cc_t('settings.shared.projectKey','Project Key')}</div>
                 <div style=${TSUB}>${_cc_t('settings.shared.projectKeySub','Share this key with your team. Issue status, priority, assignee, title and description sync automatically.')}</div>
-                ${folderHolds && html`<div data-cc-share-mode-note="cloud-paused" style=${{...S_NOTE,marginTop:'var(--space-1)'}}>${_cc_t('share.keyPausedFolder','Not syncing: this browser shares the project through the folder {folder}. Only one sharing mode works at a time — unlink the folder to sync with this key, or leave the key.', {folder: holder.label || '—'})}</div>`}
+                ${folderHolds && html`<div data-cc-share-mode-note="cloud-paused" style=${{...S_NOTE,marginTop:'var(--space-1)'}}>${_cc_t('share.keyPausedFolder','Not syncing: this project is shared through the folder {folder}. Only one sharing mode works at a time — unlink the folder to sync with this key, or leave the key.', {folder: holder.label || '—'})}</div>`}
               </div>
               <div style=${{display:'flex',gap:'var(--space-1)',alignItems:'center',flexShrink:0}}>
                 <code style=${{fontSize:'var(--text-xs)',background:'var(--bg-secondary)',padding:'var(--space-1) var(--space-2)',borderRadius:'var(--radius-xs)',fontFamily:'var(--font-mono)',color:'var(--accent)'}}>${spId}</code>
@@ -42379,7 +42565,7 @@ function startApp() {
                   style=${{...S_BTN,padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'var(--text-xs)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)'}}>${_cc_t('settings.shared.copy','Copy')}</button>
                 <button onClick=${function(){if(window._ccSharedPull)window._ccSharedPull();}}
                   style=${{...S_BTN,padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--text-secondary)',fontSize:'var(--text-xs)',border:'1px solid var(--border)',borderRadius:'var(--radius-sm)'}}>${_cc_t('share.syncNow','Sync now')}</button>
-                <button onClick=${function(){try{localStorage.removeItem('cc_sharedProjectId');localStorage.removeItem('cc_sharedProjectName');}catch(e){}if(window._ccSharedStop)window._ccSharedStop(true);d({t:A.UPD_PREFS,u:{_sharedRefresh:Date.now()}});}}
+                <button onClick=${function(){_ccClearShareLink();if(window._ccSharedStop)window._ccSharedStop(true);d({t:A.UPD_PREFS,u:{_sharedRefresh:Date.now()}});}}
                   style=${{...S_BTN,padding:'var(--space-1) var(--space-2)',background:'var(--bg-secondary)',color:'var(--color-danger-fg)',fontSize:'var(--text-xs)',border:'1px solid var(--color-danger-border)',borderRadius:'var(--radius-sm)'}}>${_cc_t('share.leave','Leave')}</button>
                 ${function(){
                   // Only the creator's browser holds the editKey (set once,
@@ -42387,8 +42573,7 @@ function startApp() {
                   // naturally creator-only: nobody who only joined by key
                   // ever sees this button. The stored editKey was otherwise
                   // completely unused by the client.
-                  var editKey = null;
-                  try { editKey = localStorage.getItem('cc_sharedProjectEditKey'); } catch(e) {}
+                  var editKey = spLink && spLink.editKey;
                   if (!editKey) return null;
                   return html`<button onClick=${function(){
                     if (!confirm(_cc_t('share.deleteConfirm','Delete this shared project for everyone? This removes every synced issue and cannot be undone.'))) return;
@@ -45180,9 +45365,8 @@ function startApp() {
     synced: false, seeded: false, conflicts: 0, lastSync: null,
     stats: { pulls: 0, pushes: 0, changesIn: 0, changesOut: 0 } };
 
-  function _sharedProjectId() {
-    try { return localStorage.getItem('cc_sharedProjectId') || null; } catch(e) { return null; }
-  }
+  // the shared project of the open local project (_ccShareLink)
+  function _sharedProjectId() { var l = _ccShareLink(); return l ? l.id : null; }
   // The same per-browser id the shared folder uses (random, never personal).
   function _cloudUserId() {
     if (typeof window.__ccSharedTestUser === 'string' && window.__ccSharedTestUser) return window.__ccSharedTestUser;
@@ -45405,6 +45589,12 @@ function startApp() {
   function _sharedStopPolling(leave) { _cloudLeave(!!leave); }
 
   window.addEventListener('pagehide', function() { if (_cloud.sess && _cloud.sess.pending()) { _cloud.sess.saveOutbox(); _cloudPush(); } });
+  // Leaving the local project: its shared project stops syncing here (the
+  // outbox keeps unsent records for the next time it is open).
+  window.addEventListener('cc-project-leave', function() {
+    if (_cloud.sess && _cloud.sess.pending()) _cloud.sess.saveOutbox();
+    _sharedStopPolling(true);
+  });
 
   // Create / join are refused while a shared folder holds the link (one
   // sharing mode at a time) — before anything is created on the server.
@@ -45424,12 +45614,8 @@ function startApp() {
     })
       .then(function(r){ if (!r.ok) throw new Error('create failed'); return r.json(); })
       .then(function(data){
-        try {
-          localStorage.setItem('cc_sharedProjectId', data.id);
-          localStorage.setItem('cc_sharedProjectName', data.name);
-          // Creator-held; the API requires it for DELETE (never share it with the project key)
-          if (data.editKey) localStorage.setItem('cc_sharedProjectEditKey', data.editKey);
-        } catch(e) {}
+        // editKey: creator-held; the API requires it for DELETE (never share it with the project key)
+        _ccSetShareLink({id:data.id, name:data.name, editKey:data.editKey || null});
         _sharedStartPolling();
         return data;
       });
@@ -45441,10 +45627,7 @@ function startApp() {
     return fetch('/api/project?id=' + encodeURIComponent(key) + '&v=2&limit=1')
       .then(function(r){ if (!r.ok) { var e = new Error(); e.status = r.status; throw e; } return r.json(); })
       .then(function(data){
-        try {
-          localStorage.setItem('cc_sharedProjectId', key);
-          localStorage.setItem('cc_sharedProjectName', data.project.name);
-        } catch(e) {}
+        _ccSetShareLink({id:key, name:data.project.name});
         _sharedStartPolling();
         return data;
       });
@@ -45456,8 +45639,7 @@ function startApp() {
   function _sharedDeleteProject() {
     var key = _sharedProjectId();
     if (!key) return Promise.resolve(false);
-    var editKey = null;
-    try { editKey = localStorage.getItem('cc_sharedProjectEditKey'); } catch(e) {}
+    var link = _ccShareLink(), editKey = link && link.id === key ? link.editKey : null;
     if (!editKey) return Promise.resolve(false);
     return fetch('/api/project?id=' + encodeURIComponent(key) + '&scope=project', {
       method: 'DELETE',
@@ -45468,11 +45650,7 @@ function startApp() {
         if (ok) {
           _sharedStopPolling(true);
           _cloudCacheDrop(key);
-          try {
-            localStorage.removeItem('cc_sharedProjectId');
-            localStorage.removeItem('cc_sharedProjectName');
-            localStorage.removeItem('cc_sharedProjectEditKey');
-          } catch(e) {}
+          _ccClearShareLink();
         }
         return ok;
       })
@@ -52682,7 +52860,8 @@ function startApp() {
     var _prevMeasN = (window._ccMeasurementsRef||[]).length;
     window._ccMeasurementsRef = s.measurements;  // exposed for render loop label projection
     if ((s.measurements||[]).length !== _prevMeasN && typeof invalidate === 'function') invalidate(2);
-    try { if (typeof _sharedStartPolling === 'function') _sharedStartPolling(); } catch(e){}
+    // the open project's shared project — not while a switch is restoring
+    try { if (!s.switchingProject && typeof _sharedStartPolling === 'function') _sharedStartPolling(); } catch(e){}
     // A confirm creates its issue inside the reducer: the shared sessions
     // publish such issues once the new issues array is committed.
     useEffect(function(){
@@ -52767,9 +52946,26 @@ function startApp() {
       if (gids.length && window._revitHighlight) window._revitHighlight(gids);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on activeId/connection: the element lookup samples the current items only when the selection changes
     }, [s.activeId, s.revitDirect && s.revitDirect.connected]);
+    // ── A section that hides the selected clash / issue is lifted ──
+    // Selecting (list click, J/K, auto-select, undo, BCF …) never resets the
+    // view by itself (_CC_STATE_SCOPE); only the plane / box whose kept side
+    // the item's point is NOT on is turned off, so the item is in sight.
+    useEffect(function(){
+      if (s.activeId == null) return;
+      var item = s.clashes.find(function(c){return c.id===s.activeId;}) || s.issues.find(function(i){return i.id===s.activeId;});
+      var S3 = window._ccState3d;
+      if (!item || !item.point || item.point.length < 3 || !S3 || !window.THREE) return;
+      var p = new THREE.Vector3(item.point[0], item.point[1], item.point[2]);
+      function hides(planes) { return (planes || []).some(function(pl){ return pl.distanceToPoint(p) < -1e-4; }); }
+      if ((s.sectionAxis || s.sectionCustom) && hides(S3._sectionPlanes)) { d({t:A.SECTION, axis:null}); d({t:A.SECTION_CUSTOM, v:null}); }
+      if (s.sectionBox && s.sectionBox.enabled && hides(S3._sboxPlanes)) d({t:A.SECTION_BOX, v:null});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the selection: the section is sampled when an item becomes active, so moving the plane afterwards is never undone. d is App's useCallback([]) dispatch (stable identity)
+    }, [s.activeId]);
     // ── Clean up 3D state when switching tabs ──
     useEffect(function(){
-      if(_unghostAll) _unghostAll();
+      // Item focus ghosting ends with the tab; an isolation the user made is
+      // their view and stays (it ends with its own toggle / reset view).
+      if(_unghostAll && !window._ccIsIsolated) _unghostAll();
       if(window._ccRemoveActiveClashMarker) window._ccRemoveActiveClashMarker();
       if(s.tab==='issues' && s.issues.length>0 && !s.activeId){
         var first=s.issues[0];
@@ -52857,7 +53053,7 @@ function startApp() {
     // models persist only as modelMeta: keyed on its signature (a string), so
     // a storey hide or any other non-persisted model change saves nothing
     // eslint-disable-next-line react-hooks/exhaustive-deps -- persist keyed on the data fields that matter; depending on the whole state would save on every hover/selection change
-    }, [s.clashes, s.issues, s.viewpoints, s.measurements, s.rules, _ccModelMetaSig(s.models), s.triage && s.triage.savedViews, s.triage && s.triage.facets, s.deniedPairs, s.propertyRules]);
+    }, [s.clashes, s.issues, s.viewpoints, s.measurements, s.rules, _ccModelMetaSig(s.models), s.triage && s.triage.savedViews, s.triage && s.triage.facets, s.deniedPairs, s.propertyRules, s.smartViews].concat(_CC_VIEW_KEYS.map(function(k){ return s[k]; })));
     // on pagehide and on visibilitychange→hidden because beforeunload is
     useEffect(function(){
       function flush() {
@@ -53795,9 +53991,9 @@ function startApp() {
         var toast = function (m, kind) { if (typeof window._ccToast === 'function') window._ccToast(m, kind); };
         var dropKey = function () { try { var u = new URL(location.href); u.searchParams.delete('p'); history.replaceState(null, '', u.pathname + u.search + u.hash); } catch (e) {} };
         var cur = null;
-        try { cur = localStorage.getItem('cc_sharedProjectId'); } catch (e) {}
+        try { var curLink = window._ccShareLink && window._ccShareLink.get(); cur = curLink ? curLink.id : null; } catch (e) {}
         if (cur === wantKey) { dropKey(); return; }
-        if (cur && !window.confirm(t('share.linkSwitch', 'This browser is in the shared project {cur}. Switch to {key}?', { cur: cur, key: wantKey }))) { dropKey(); return; }
+        if (cur && !window.confirm(t('share.linkSwitch', 'This project is in the shared project {cur}. Switch it to {key}?', { cur: cur, key: wantKey }))) { dropKey(); return; }
         window._ccSharedJoin(wantKey).then(function (data) {
           toast(t('share.joinedFromLink', 'Joined the shared project “{name}”.', { name: (data && data.project && data.project.name) || wantKey }), 'success');
           try { window._ccDispatch({ t: 'UPD_PREFS', u: { _sharedRefresh: Date.now() } }); } catch (e) {}

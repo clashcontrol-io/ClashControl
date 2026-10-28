@@ -68,7 +68,7 @@ await ctx.addInitScript(() => {
   // the folder explicitly; reconnect-after-reload is not what this checks.
   const put = IDBObjectStore.prototype.put;
   IDBObjectStore.prototype.put = function (v, k) {
-    if (this.name === 'handles' && k === 'shared') return put.call(this, Object.assign({}, v, { dirHandle: null }), k);
+    if (this.name === 'handles' && typeof k === 'string' && /^shared(:|$)/.test(k)) return put.call(this, Object.assign({}, v, { dirHandle: null }), k); // 'shared:<local project id>'
     return put.apply(this, arguments);
   };
   // file-system cost counters: contents read (File.text), writes (createWritable)

@@ -70,6 +70,7 @@
   var _root = null;         // the folder the user picked
   var _proj = null;         // the <name>.ccshared folder in it
   var _projKey = null;      // project-<id>.json name (local cache key)
+  var _gen = 0;             // link generation: bumped when the link detaches (unlink / project switch)
   var _sess = null;         // shared-session-core session (owns the log + outbox)
   var _log = null;          // its shared-log-core log
   var _applied = new Set(); // change files ('changes/<u>/<f>') + snapshots already in the log
@@ -121,6 +122,8 @@
     initState: {
       sharedProject: { enabled: false, folderName: '', fileName: '', userName: '', lastSync: null, syncing: false, conflicts: 0 }
     },
+    // the folder link is per browser (restored on reload whatever project is open)
+    stateScope: { sharedProject: 'ui' },
 
     reducerCases: {
       'UPD_SHARED_PROJECT': function(s, a) {
@@ -131,12 +134,7 @@
     init: function(dispatch) {
       var nm = ''; try { nm = localStorage.getItem('cc_username') || ''; } catch (e) {}
       if (nm) dispatch({t:A_UPD, u:{userName:nm}});
-      _loadSharedHandle(function(saved) {
-        if (!saved || !saved.dirHandle || typeof saved.dirHandle.queryPermission !== 'function') return;
-        saved.dirHandle.queryPermission({mode:'readwrite'}).then(function(perm) {
-          if (perm === 'granted') _link(saved.dirHandle, dispatch, {restored:true}).catch(function(e) { console.warn('[shared-project] reconnect failed:', e); });
-        }).catch(function(){});
-      });
+      _reconnectSaved(dispatch);
     },
 
     destroy: function() { _stop(); },
@@ -194,23 +192,85 @@
       req.onerror = function() { cb(null); };
     } catch(e) { cb(null); }
   }
+  // The linked folder belongs to ONE local project (INTERNALS §21.64): its
+  // handle is saved per local project id, reconnected when that project is
+  // opened, and the link detaches when it is left. It used to be one handle
+  // per browser, reconnected whatever project was open. The old 'shared'
+  // entry is adopted once by the project open at the time.
+  function _localPid() { try { return localStorage.getItem('cc_activeProject') || 'default'; } catch (e) { return 'default'; } }
+  function _handleKey(pid) { return 'shared:' + (pid || _localPid()); }
+  // Handles saved on this page, by key: a project switch back and forth
+  // reconnects from here without an IndexedDB round trip (a reload reads IDB).
+  var _handleMem = {};
   function _saveSharedHandle(dirHandle, projName) {
+    var key = _handleKey();
+    _handleMem[key] = {dirHandle:dirHandle, fileName:projName};
     _openSharedDB(function(db) {
       if (!db) return;
-      db.transaction('handles', 'readwrite').objectStore('handles').put({dirHandle:dirHandle, fileName:projName}, 'shared');
+      db.transaction('handles', 'readwrite').objectStore('handles').put({dirHandle:dirHandle, fileName:projName}, key);
     });
   }
   function _loadSharedHandle(cb) {
+    var key = _handleKey();
+    if (_handleMem[key]) { cb(_handleMem[key]); return; }
     _openSharedDB(function(db) {
       if (!db) { cb(null); return; }
-      var get = db.transaction('handles', 'readonly').objectStore('handles').get('shared');
-      get.onsuccess = function() { cb(get.result || null); };
+      var st = db.transaction('handles', 'readwrite').objectStore('handles');
+      var get = st.get(key);
+      get.onsuccess = function() {
+        if (get.result) { cb(get.result); return; }
+        var old = st.get('shared');
+        old.onsuccess = function() {
+          if (old.result) { st.put(old.result, key); st.delete('shared'); }
+          cb(old.result || null);
+        };
+        old.onerror = function() { cb(null); };
+      };
       get.onerror = function() { cb(null); };
     });
   }
-  function _clearSharedHandle() {
-    _openSharedDB(function(db) { if (db) db.transaction('handles', 'readwrite').objectStore('handles').delete('shared'); });
+  function _clearSharedHandle(pid) {
+    var key = _handleKey(pid);
+    delete _handleMem[key];
+    _openSharedDB(function(db) { if (db) db.transaction('handles', 'readwrite').objectStore('handles').delete(key); });
   }
+  // the core calls this when a local project is deleted
+  window._ccSharedFolderForget = function(pid) { if (pid) _clearSharedHandle(pid); };
+  // Reconnects the open project's saved folder, without asking (a folder
+  // whose permission lapsed waits for Link Folder).
+  var _reconnecting = false; // boot init and the boot restore both ask: one attempt at a time
+  function _reconnectSaved(dispatch) {
+    if (_reconnecting || _sess) return;
+    _reconnecting = true;
+    var pid = _localPid();
+    function done() { _reconnecting = false; }
+    _loadSharedHandle(function(saved) {
+      // linked meanwhile / another project opened / nothing saved
+      if (_sess || pid !== _localPid() || !saved || !saved.dirHandle || typeof saved.dirHandle.queryPermission !== 'function') { done(); return; }
+      saved.dirHandle.queryPermission({mode:'readwrite'}).then(function(perm) {
+        if (perm !== 'granted' || _sess || pid !== _localPid()) return;
+        return _link(saved.dirHandle, dispatch, {restored:true});
+      }).catch(function(e) { console.warn('[shared-project] reconnect failed:', e); }).then(done);
+    });
+  }
+  // Leaving the local project: the link detaches (the saved handle stays with
+  // that project; unsent records stay in the outbox for its next visit).
+  function _detach() {
+    if (!_sess) return;
+    _gen++;
+    _stop();
+    var sess = _sess, SC = sessCore();
+    if (sess.pending()) sess.saveOutbox();
+    sess.clearMarkers();
+    if (SC) { SC.unregister(sess); SC.releaseLink('folder'); }
+    _root = _proj = _projKey = _log = _sess = null;
+    _applied = new Set();
+    _d({t:A_UPD, u:{enabled:false, folderName:'', fileName:'', lastSync:null, syncing:false, conflicts:0}});
+  }
+  window.addEventListener('cc-project-leave', _detach);
+  window.addEventListener('cc-project-restored', function() {
+    if (typeof window._ccIsAddonActive === 'function' && window._ccIsAddonActive('shared-project')) _reconnectSaved(_d);
+  });
   function _cacheLoad(pk) {
     return new Promise(function(resolve) {
       _openSharedDB(function(db) {
@@ -318,7 +378,7 @@
     var other = SC.claimLink('folder', dirHandle.name || '');
     if (other) {
       var msg = opts && opts.restored
-        ? _i18n('sharedProject.notReconnected', 'The shared folder {folder} was not reconnected: this browser shares the project with the project key {key}. Only one sharing mode works at a time — leave the project key to use the folder again.', {folder: dirHandle.name || '—', key: other.label || '—'})
+        ? _i18n('sharedProject.notReconnected', 'The shared folder {folder} was not reconnected: this project is shared with the project key {key}. Only one sharing mode works at a time — leave the project key to use the folder again.', {folder: dirHandle.name || '—', key: other.label || '—'})
         : _otherModeText(other);
       if (window._ccToast) window._ccToast(msg, 'error');
       return false;
@@ -327,6 +387,16 @@
     catch (e) { if (!_sess) SC.releaseLink('folder'); throw e; }
   }
   async function _linkClaimed(dirHandle, d, C) {
+    var pid = _localPid();
+    // the local project was left while linking: this folder is not its link
+    var left = function() {
+      if (pid === _localPid()) return false;
+      var SC0 = sessCore();
+      if (SC0 && _sess) SC0.unregister(_sess);
+      if (SC0) SC0.releaseLink('folder');
+      _root = _proj = _projKey = _log = _sess = null;
+      return true;
+    };
     _stop();
     _userId = _uid();
     _writer = 'w' + Date.now().toString(36) + _rand(12);
@@ -365,9 +435,11 @@
     });
     if (_sess.adoptOutboxes()) _scheduleFlush();
     if (legacy) { try { await _migrate(legacy); } catch (e) { console.warn('[shared-project] migration of the old project file failed:', e); } }
+    if (left()) return false;
     _saveSharedHandle(dirHandle, proj.name);
     d({t:A_UPD, u:{enabled:true, folderName:dirHandle.name || '', fileName:proj.name, lastSync:null, syncing:false, conflicts:C.conflictCount(_log)}});
     await _tick({force:true, full:true});
+    if (!_sess || left()) return false;
     _sess.seed(LS_SEEDED);
     _schedule();
     return true;
@@ -418,6 +490,7 @@
 
   function _disconnectShared(d) {
     var done = function() {
+      _gen++;
       _stop();
       if (_sess) { _sess.clearMarkers(); if (sessCore()) sessCore().unregister(_sess); }
       _root = _proj = _projKey = _log = _sess = null;
@@ -443,19 +516,23 @@
     if (!_proj || !_log) return;
     if (_busy) { _again = true; return; }
     _busy = true;
-    var C = core(), changed = false, noted = false, touched = new Set(), remote = [];
+    var C = core(), changed = false, noted = false, touched = new Set(), remote = [], gen = _gen;
+    // the link detached during an await (unlink / project switch): stop
+    // before anything of this folder reaches another link or project
+    var live = function() { return gen === _gen; };
     _stats.ticks++;
     try {
       if (_sess.adoptOutboxes()) _scheduleFlush();
       if (_sess.pending() && (opts.force || !_flushTimer)) await _flush();
       var listing = await _list();
+      if (!live()) return;
       // snapshots first (newest first): what they cover need not be read
       var snaps = listing.snapshots.filter(function(s) { return !_applied.has(s.name); }).sort(function(a, b) { return a.name < b.name ? 1 : -1; });
       var byFile = new Map();
       listing.files.forEach(function(f) { byFile.set(f.name, f); });
       var ingestFile = async function(f) {
         var parsedF = await _readParsed(f, 'changes');
-        if (!parsedF) return false;
+        if (!parsedF || !live()) return false;
         var addF = _sess.ingest(parsedF.changes, parsedF.names);
         _cacheRecs(addF.added);
         addF.touched.forEach(function(t) { touched.add(t); });
@@ -473,10 +550,12 @@
         // snapshot is removed only once a present snapshot holds it), so
         // nothing is skipped that this client does not hold.
         var head = await _readSnapshotHead(s);
+        if (!live()) return;
         if (head) {
           var missing = head.files.concat(head.snapshots).filter(function(n) { return !_applied.has(n); });
           if (missing.length && missing.length <= CFG.readAheadMax && missing.every(function(n) { return byFile.has(n); })) {
             for (var mi = 0; mi < missing.length; mi++) await ingestFile(byFile.get(missing[mi]));
+            if (!live()) return;
             missing = missing.filter(function(n) { return !_applied.has(n); });
           }
           if (!missing.length) {
@@ -489,6 +568,7 @@
           }
         }
         var parsed = await _readParsed(s, 'snapshot');
+        if (!live()) return;
         if (!parsed) continue;
         var add = _sess.ingest(parsed.changes, parsed.names);
         _cacheRecs(add.added);
@@ -503,6 +583,7 @@
       }
       var files = listing.files.filter(function(f) { return !_applied.has(f.name); });
       for (var j = 0; j < files.length; j++) await ingestFile(files[j]);
+      if (!live()) return;
       // what changed in the log, plus every target of a kind whose local
       // array was replaced (a detection run, a project load)
       var projected = _sess.sync({touched: touched, remote: remote, full: !!opts.full});
@@ -515,6 +596,7 @@
       }
       if (!changed && !projected) _stats.idleTicks++;
       await _maybeSnapshot(listing);
+      if (!live()) return;
       await _cleanup(listing);
     } catch (e) {
       console.warn('[shared-project] sync failed:', e);
@@ -588,7 +670,7 @@
   function _flush() {
     if (_flushing) return _flushing.then(function() { return _sess && _sess.pending() ? _flush() : null; });
     if (!_proj || !_sess || !_sess.pending()) return Promise.resolve();
-    var C = core(), sess = _sess, recs = sess.takeBatch();
+    var C = core(), sess = _sess, recs = sess.takeBatch(), gen = _gen;
     if (!recs.length) return Promise.resolve();
     if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null; }
     _flushing = (async function() {
@@ -598,6 +680,7 @@
       var name = C.changeFileName(_writer, seq);
       await _writeNew(mine, name, C.changeFile({user:_userId, name:_userName(), writer:_writer, seq:seq, ts:Date.now()}, recs));
       sess.done(recs);
+      if (gen !== _gen) return; // written to this folder; the bookkeeping belongs to the link that is gone
       _noteApplied('changes/' + _userId + '/' + name);
       var nm = {}; nm[_userId] = _userName(); C.addNames(sess.log, nm);
       _cacheRecs(recs);

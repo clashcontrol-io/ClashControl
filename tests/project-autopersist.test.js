@@ -31,12 +31,20 @@ function extractGateDecls() {
   return src.slice(start, end);
 }
 
+// The view keys saved with the project come from the state-scope registry.
+function extractScope() {
+  const start = src.indexOf('  var _CC_STATE_SCOPE = (function(){');
+  const end = src.indexOf('  // Before the view was project state', start);
+  assert.ok(start !== -1 && end > start, 'state-scope registry not found');
+  return 'var INIT = {};\n' + src.slice(start, end);
+}
+
 function makeRunner(windowStub) {
-  const bundle = extractGateDecls() + '\n' + extractFn('_cloneSafe') + '\nvar _ccSaveCloneCache = new WeakMap();\n' + extractFn('_ccCloneListCached') + '\n' + extractFn('_saveCurrentProjectData');
+  const bundle = extractScope() + '\n' + extractGateDecls() + '\n' + extractFn('_cloneSafe') + '\nvar _ccSaveCloneCache = new WeakMap();\n' + extractFn('_ccCloneListCached') + '\n' + extractFn('_saveCurrentProjectData');
   const calls = [];
   const idbSaveProjectData = (pid, data) => { calls.push({ pid, data }); return Promise.resolve(); };
   const save = new Function('idbSaveProjectData', 'window', bundle + '; return _saveCurrentProjectData;')(
-    idbSaveProjectData, windowStub);
+    idbSaveProjectData, windowStub || {});
   return { save, calls };
 }
 
@@ -176,7 +184,7 @@ test('gate ON: a model visibility toggle or rename (persisted modelMeta) writes'
 });
 
 test('gate ON: a failed write does not record the memo (the next save is not skipped)', async () => {
-  const bundle = extractGateDecls() + '\n' + extractFn('_cloneSafe') + '\nvar _ccSaveCloneCache = new WeakMap();\n' + extractFn('_ccCloneListCached') + '\n' + extractFn('_saveCurrentProjectData');
+  const bundle = extractScope() + '\n' + extractGateDecls() + '\n' + extractFn('_cloneSafe') + '\nvar _ccSaveCloneCache = new WeakMap();\n' + extractFn('_ccCloneListCached') + '\n' + extractFn('_saveCurrentProjectData');
   let n = 0;
   const save = new Function('idbSaveProjectData', 'window', bundle + '; return _saveCurrentProjectData;')(
     () => { n++; return Promise.resolve(n === 1 ? 'failed' : undefined); }, GATE_ON_WINDOW);
@@ -192,4 +200,15 @@ test('the autosave effect is keyed on the modelMeta signature, not on s.models i
   const deps = src.slice(i, src.indexOf(']);', i) + 3);
   assert.match(deps, /_ccModelMetaSig\(s\.models\)/);
   assert.doesNotMatch(deps, /s\.rules, s\.models,/);
+});
+
+test('the project view (section, hidden categories) and smart views are saved with the project', () => {
+  const box = { enabled: true, min: [0, 0, 0], max: [1, 1, 1] };
+  const { data } = run(baseState({ sectionAxis: 'x', sectionPos: 0.4, sectionBox: box, sectionFlip: true, hiddenClasses: { 'byType:IfcDoor': true }, smartViews: [{ id: 'sv' }] }));
+  assert.equal(data.sectionAxis, 'x');
+  assert.equal(data.sectionPos, 0.4);
+  assert.deepEqual(data.sectionBox, box);
+  assert.equal(data.sectionFlip, true);
+  assert.deepEqual(data.hiddenClasses, { 'byType:IfcDoor': true });
+  assert.deepEqual(data.smartViews, [{ id: 'sv' }]);
 });

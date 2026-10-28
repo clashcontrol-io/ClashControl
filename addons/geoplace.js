@@ -402,6 +402,8 @@
     initState: {
       modelGeo: null // {modelId, refLat, refLon, refElev, trueNorthDeg, radiusM, source}
     },
+    // the live placement of a loaded model (the georef itself stays with the model)
+    stateScope: { modelGeo: 'session' },
 
     reducerCases: {
       'SET_MODEL_GEO': function(s, a) {
