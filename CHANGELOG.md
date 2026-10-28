@@ -1,5 +1,8 @@
 # Changelog
 
+## v7.8.1 (2026-10-28)
+- Viewer: mirrored elements inside out, orbit drag past the top view, invisible idle drag handles (#721)
+
 ## v7.8.0 (2026-10-26)
 - Coordination on the level of the market leaders: matrix v2, lifecycle, auto re-run, penetrations, trends, grouping, model comparison, property rules (#720)
 
